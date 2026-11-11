@@ -1,0 +1,115 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLUGINVAL_VERSION: v1.0.4
+  BUNDLE: Vintage Synth.vst3
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-universal
+            os: macos-15
+            generator: -G Ninja -DCMAKE_BUILD_TYPE=Release
+            build_args: ""
+            artefacts: build/VintageSynth_artefacts/Release/VST3
+            pluginval: true
+          - name: windows-x64
+            os: windows-latest
+            generator: -G "Visual Studio 17 2022" -A x64
+            build_args: --config Release
+            artefacts: build/VintageSynth_artefacts/Release/VST3
+            pluginval: true
+          - name: windows-arm64
+            os: windows-11-arm
+            generator: -G "Visual Studio 17 2022" -A ARM64
+            build_args: --config Release
+            artefacts: build/VintageSynth_artefacts/Release/VST3
+            pluginval: false # no native ARM64 pluginval release yet
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        shell: bash
+        run: cmake -S . -B build ${{ matrix.generator }}
+
+      - name: Build
+        shell: bash
+        run: cmake --build build ${{ matrix.build_args }} --parallel
+
+      - name: Unit tests
+        shell: bash
+        run: ctest --test-dir build ${{ matrix.build_args != '' && '-C Release' || '' }} --output-on-failure
+
+      - name: Check architectures (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          archs=$(lipo -archs "${{ matrix.artefacts }}/$BUNDLE/Contents/MacOS/Vintage Synth")
+          echo "$archs"
+          [[ "$archs" == *x86_64* && "$archs" == *arm64* ]]
+
+      - name: pluginval (macOS)
+        if: matrix.pluginval && runner.os == 'macOS'
+        shell: bash
+        run: |
+          curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
+          unzip -q pv.zip
+          pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
+            --skip-gui-tests "${{ matrix.artefacts }}/$BUNDLE"
+
+      - name: pluginval (Windows)
+        if: matrix.pluginval && runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
+          unzip -q pv.zip
+          ./pluginval.exe --strictness-level 10 --validate-in-process \
+            --skip-gui-tests "${{ matrix.artefacts }}/$BUNDLE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vst3-${{ matrix.name }}
+          path: ${{ matrix.artefacts }}/${{ env.BUNDLE }}
+
+  # Merge Windows x64 + ARM64 into one .vst3 bundle (Contents/x86_64-win + Contents/arm64-win).
+  windows-bundle:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: vst3-windows-x64, path: x64 }
+      - uses: actions/download-artifact@v4
+        with: { name: vst3-windows-arm64, path: arm64 }
+      - name: Merge
+        run: |
+          mkdir -p "merged/$BUNDLE"
+          cp -R x64/. "merged/$BUNDLE/"
+          cp -R arm64/Contents/arm64-win "merged/$BUNDLE/Contents/"
+          ls -R "merged/$BUNDLE/Contents" | head -40
+          test -d "merged/$BUNDLE/Contents/x86_64-win" && test -d "merged/$BUNDLE/Contents/arm64-win"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vst3-windows-universal
+          path: merged
