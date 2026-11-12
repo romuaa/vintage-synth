@@ -38,7 +38,7 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 ### M4 — arpeggiator and step sequencer module, not wired in yet (2026-11-12)
 - Arpeggiator (Up, Down, Up & Down, Random, As Played; 1–4 octaves; hold; swing; gate length) and a
   16-step sequencer (offset, Note/Rest/Tie, velocity), locked sample-accurately to the host tempo
-  or an internal clock. Standalone module in `source/seq/` with tests; connected in a later step.
+  or an internal clock. Standalone module in `source/common/seq/` with tests; connected in a later step.
 
 ### Linux target and public-release preparation (2026-11-12)
 - Linux x86_64 VST3 is a supported target: built in CI on Ubuntu 22.04 (glibc 2.35 or newer, static
@@ -61,7 +61,7 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ### M5 — effect blocks, not wired in yet (2026-11-12)
 - Chorus (two modes, mix up to wet = dry), stereo/ping-pong delay with tape-style time glide, and a
-  16-line hall reverb, as standalone JUCE-free blocks in `source/fx/` with tests and `fx_bench`
+  16-line hall reverb, as standalone JUCE-free blocks in `source/common/fx/` with tests and `fx_bench`
   (all three: about 0.55 % of one core at 48 kHz). They are connected to the plugin in a later step.
 
 ### Developer tools (2026-11-12)

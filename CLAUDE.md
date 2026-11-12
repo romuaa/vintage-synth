@@ -55,7 +55,7 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Windows is green without a passing run. CI builds every target with Ninja and a compiler cache
   (ccache on macOS, sccache on Windows) inside the newest Visual Studio found by `vswhere`; never
   hardcode a VS version. LTO applies to the shipped plugin only; tests and `voice_bench` link
-  `vs_test_core` (same sources, no LTO), so add new source files to `VS_PLUGIN_SOURCES`.
+  `vs_test_core` (same sources, no LTO), so add new source files to `VS_COMMON_SOURCES` or `VS_VINTAGE_SOURCES` (`VS_PLUGIN_SOURCES` is their union).
   Runner images are pinned (`macos-26`, `windows-2025`, `windows-11-arm`, `ubuntu-26.04`);
   Dependabot doesn't bump them, so check github.com/actions/runner-images when touching CI.
   Pushing to `main` cancels a running build of `main` (concurrency group): wait for a run you
@@ -87,16 +87,20 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   and merge approval:** effects and arp/sequencer in the plugin (170 parameters), host bypass,
   parameter sanitising, tail length, the sine-sync alias fix and offline = real time for Cross Mod.
   Verified by the local gate only. Open for the owner: output level / hard clip (see decisions).
-- **Next:** extract the common library (S0), then M6 presets and banks; B-Side S1 after S0.
+- **S0 (common library) is done on branch `wave3/s0`** (pure restructuring, bit-identical renders,
+  identical parameter list; verified by the local gate), stacked on `wave3/product`.
+- **Next:** M6 presets and banks (`docs/architecture.md` 6b); B-Side S1 (contract, plugin shell,
+  oracle workflow) can start in parallel. Not yet shared: the processor skeleton and the display
+  formatter, which stay in `source/vintage/` until B-Side's first milestone designs the abstraction.
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
-  in `source/seq/`, not wired in. Audition approved by the owner.
+  in `source/common/seq/`, not wired in. Audition approved by the owner.
 - **CI is offline** (no Actions minutes) until the owner makes the repo public for a release.
   **Local-first verification is the permanent policy** (see decisions): run the local gates before
   any push; never trigger workflows; agents get no CI budget.
 - **Merged without Windows / Linux x86_64 verification** (check these first when CI is back):
   1. Linux ARM64 target, distro load tests, `scripts/linux-check.sh`, a GCC/ARM64 warning setting
-     in `CMakeLists.txt`, a float-comparison rewrite in `source/fx/FxCommon.h` (2026-11-12).
+     in `CMakeLists.txt`, a float-comparison rewrite in `source/common/fx/FxCommon.h` (2026-11-12).
   2. `scripts/preflight.sh` and the manual-only CI workflow (the reworked `build.yml` itself has
      never run on GitHub: its first dispatch is also its first test) (2026-11-12).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
@@ -112,7 +116,7 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - **Wave 0 (contracts): done** — `docs/architecture.md`; judgement calls in `docs/decisions.md`
   are marked (review) until the owner confirms them.
 - **Wave 1: done, awaiting the owner's merge approval** (one PR). Contains M2, the M5 effect blocks
-  (`source/fx/`, standalone, not wired in; first listen approved), the golden-render harness, the
+  (`source/common/fx/`, standalone, not wired in; first listen approved), the golden-render harness, the
   VST3 validator in CI, CI cost controls and the plugin-host script.
 - **Planned second instrument: "B-Side",** a chip synth as a separate plugin in this repository
   (`docs/architecture.md` section 8); starts with extracting a common library after M3.
@@ -126,15 +130,17 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 ## Layout
 
 ```
-source/dsp/      JUCE-free DSP blocks: Oscillator (+BlepTable), Filters, Envelope, Lfo, Drift
-source/engine/   Voice, Part, VoiceAllocator (note -> voice logic), NoteEvent/EventParser (MIDI),
-                 KeyRouter (Whole/Dual/Split), PartMixer (balance, pan, stereo),
-                 Modulation (shared per-part modulation), Oversampler
-source/fx/       JUCE-free effect blocks: Chorus, Delay, Reverb (not wired in yet)
-source/seq/      JUCE-free arpeggiator and step sequencer (ArpSeq; not wired in yet)
-source/params/   PartParamList.h (X-macro list of all per-part params), Mappings.h (value -> unit),
-                 ParameterLayout (APVTS layout + binding), StateVersion.h
-source/          PluginProcessor.*   (later: fx/ presets/ ui/)
+source/common/    shared by all instruments; must not include anything from source/vintage/
+  dsp/            FastMath, DspUtil, BlepTable (JUCE-free)
+  engine/         NoteEvent, EventParser, VoiceAllocator, KeyRouter, PartMixer (JUCE-free), Oversampler
+  fx/             Chorus, Delay, Reverb (JUCE-free)
+  seq/            arpeggiator and step sequencer (JUCE-free)
+  params/         parameter factories, effect and arp/seq parameters + bindings, shared Mappings.h
+source/vintage/   this instrument: PluginProcessor.*
+  dsp/            Oscillator, Filters, Envelope, Lfo, Drift (JUCE-free)
+  engine/         Voice, Part, Modulation (shared per-part modulation)
+  params/         PartParamList.h (X-macro list of all per-part params), PartMappings.h,
+                  ParameterLayout (assembles the layout), StateVersion.h
 tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
 tests/benchmarks/ voice_bench (CPU cost per voice)
 tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)
@@ -173,7 +179,7 @@ Put any physical mapping in `Mappings.h` so the display text and the DSP agree.
 - Panel Mode (Lower/Upper edit target) is UI state, not a host parameter.
 
 **DSP quality:**
-- Oscillators use the windowed-sinc BLEP/BLAMP table (`dsp/BlepTable.h`). Sync and cross-mod reset at
+- Oscillators use the windowed-sinc BLEP/BLAMP table (`common/dsp/BlepTable.h`). Sync and cross-mod reset at
   the exact sub-sample point. The alias gate is ≤ −100 dB (0–20 kHz) up to a 5 kHz fundamental; don't relax it.
 - The voice path is 2× oversampled in real time and 4× offline. Report total latency (decimator + BLEP).
 - The VCF is a ZDF/TPT 4-pole with a nonlinear feedback path.

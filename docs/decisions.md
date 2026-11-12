@@ -310,7 +310,7 @@ All are marked **(review)**: the owner has not confirmed them yet.
 | LFO waves | Sine, Triangle, Saw (falling), Square, Random (S&H), Noise (smoothed random at 8× rate). | Matches the six panel symbols. |
 | LFO delay | Zero output for the first half of the delay time, then a linear fade-in over the second half. Re-triggered when a note is played with no other keys held. | Classic delayed-vibrato feel. |
 
-### Ranges and tapers (`source/params/Mappings.h`)
+### Ranges and tapers (`source/common/params/Mappings.h`)
 These are the single source of truth: the parameter display text and the DSP both call these functions.
 
 - VCF cutoff 20 Hz – 20.48 kHz, exponential (10 octaves). Env mod up to 7 oct. LFO mod up to ±4 oct (squared taper). Key follow 0–100 %.

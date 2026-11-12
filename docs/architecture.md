@@ -24,7 +24,7 @@ host MIDI ─► EventParser ─► KeyRouter ─► [Arp/Seq] ─► Part "lowe
 
 ## 2. Note events (introduced in M2)
 
-`source/engine/NoteEvent.h`, JUCE-free, plain data:
+`source/common/engine/NoteEvent.h`, JUCE-free, plain data:
 
 ```cpp
 namespace vs
@@ -259,7 +259,7 @@ Appended after all existing ones, in this order: per-part float `mix.pan` (at th
 
 ### 5.1 Common interface
 
-Header-only, JUCE-free, in `source/fx/` (`Chorus.h`, `Delay.h`, `Reverb.h`), namespace `vs::fx`:
+Header-only, JUCE-free, in `source/common/fx/` (`Chorus.h`, `Delay.h`, `Reverb.h`), namespace `vs::fx`:
 
 ```cpp
 struct XParams { /* plain floats/ints in physical units (Hz, seconds, 0..1) */ };
@@ -310,7 +310,7 @@ public:
 
 ## 6. M4 — arpeggiator and sequencer (parallel track of Wave 2: module and tests only)
 
-Pure, JUCE-free event transformers in `source/seq/`, tested on event lists. Host parameters and
+Pure, JUCE-free event transformers in `source/common/seq/`, tested on event lists. Host parameters and
 wiring into the processor happen in Wave 3. One instance sits in front of a part.
 
 ```cpp
@@ -528,6 +528,10 @@ chip revisions are called **Model A** (early: warm, distorting filter) and **Mod
 filter).
 
 ### 8.1 Structure
+*S0 is done: `source/common/` and `source/vintage/` exist. Test helpers, the render-regression harness
+and the benchmarks stay under `tests/`. The processor skeleton and the display formatter are not
+shared yet; B-Side's first milestone designs that abstraction.*
+
 - **Separate plugin target, shared code.** Not a second engine inside Exitium Vintage Synth: hosts identify a
   plugin by its codes and parameter list, and the two instruments share neither parameters nor presets.
 - **Step S0 extracts a common library** (`source/common/`) from Exitium Vintage Synth, with no behaviour
