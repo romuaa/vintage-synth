@@ -42,7 +42,13 @@ target_sources(VintageSynthTests PRIVATE
     seq_unit/ArpTests.cpp
     seq_unit/SeqTests.cpp
     seq_unit/ModeTests.cpp
-    seq_unit/InvariantTests.cpp)
+    seq_unit/InvariantTests.cpp
+    seq_unit/PedalTests.cpp
+    seq_unit/OverflowTests.cpp
+    seq_unit/DriftTests.cpp
+    seq_unit/ArpPatternTests.cpp
+    seq_unit/MusicalTimeTests.cpp
+    seq_unit/FuzzTests.cpp)
 
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
