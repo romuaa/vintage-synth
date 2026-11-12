@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "kind": "program",
+  "name": "Placeholder Split",
+  "category": "Placeholder",
+  "author": "Exitium (placeholder: exercises the preset mechanism, replaced by the designed factory bank)",
+  "global": {
+    "key.mode": 2,
+    "key.split_point": 60,
+    "mix.balance": 0.1
+  },
+  "lower": {
+    "vco1.range": 1,
+    "vco2.range": 0,
+    "vcf.cutoff": 0.32,
+    "vcf.env_mod": 0.5,
+    "env1.decay": 0.3,
+    "env1.sustain": 0.1,
+    "env2.release": 0.2,
+    "assign.mode": 2
+  },
+  "upper": {
+    "vco1.waveform": 4,
+    "vcf.cutoff": 0.65,
+    "env2.attack": 0.1,
+    "env2.release": 0.4,
+    "vcomod.lfo_mod": 0.06
+  }
+}

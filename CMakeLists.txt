@@ -47,9 +47,16 @@ juce_add_plugin(VintageSynth
 # "vintage/..." with source/ as the include root.
 set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/params/ParamFactory.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/params/FxArpParams.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/params/FxArpParams.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetFormat.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/FactoryBank.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetBar.cpp)
 set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/PluginProcessor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/PluginEditor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/presets/VintagePresets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/params/ParameterLayout.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Modulation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Voice.cpp
@@ -57,6 +64,20 @@ set(VS_VINTAGE_SOURCES
 set(VS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${VS_VINTAGE_SOURCES})
 
 target_sources(VintageSynth PRIVATE ${VS_PLUGIN_SOURCES})
+
+# Factory presets: presets/factory/*.json are embedded in the binary (JUCE binary data), so the
+# plugin reads them from memory at run time and needs no file at an install path. One generated
+# C++ array source per target keeps all five platforms and the non-LTO test library identical (the
+# same static library links into the plugin and into vs_test_core); a CMake-generated source of
+# our own would have to be kept in step with five toolchains. A file's name starts with its slot
+# (A1 ... H8). The list is globbed with CONFIGURE_DEPENDS so a new file is picked up.
+file(GLOB VS_FACTORY_PRESETS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/presets/factory/*.json)
+juce_add_binary_data(VintageSynthFactoryData
+    HEADER_NAME FactoryData.h
+    NAMESPACE   vs_factory
+    SOURCES     ${VS_FACTORY_PRESETS})
+set_target_properties(VintageSynthFactoryData PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(VintageSynth PRIVATE VintageSynthFactoryData)
 
 target_include_directories(VintageSynth PRIVATE source)
 

@@ -6,6 +6,8 @@
 #include "common/engine/KeyRouter.h"
 #include "vintage/engine/Part.h"
 #include "common/engine/PartMixer.h"
+#include "common/presets/ApplyGate.h"
+#include "common/presets/PresetManager.h"
 #include "common/fx/Chorus.h"
 #include "common/fx/Delay.h"
 #include "common/fx/Reverb.h"
@@ -54,12 +56,16 @@ public:
     /** The synth's own part of the tail: the longest time a released voice can ring (ENV-2). */
     double getSynthTailSeconds() const noexcept;
 
-    // Programs (patch memory replaces these in M6)
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return "Manual"; }
-    void changeProgramName (int, const juce::String&) override {}
+    // Programs: the 64 programs of the current bank (docs/architecture.md 6b.3). setCurrentProgram
+    // is safe from any thread (applied on the message thread: at once if called there, else queued).
+    int getNumPrograms() override { return presets::kBankSize; }
+    int getCurrentProgram() override { return presetManager->currentIndex(); }
+    void setCurrentProgram (int index) override { presetManager->requestProgram (index); }
+    const juce::String getProgramName (int index) override { return presetManager->programName (index); }
+    void changeProgramName (int index, const juce::String& name) override { presetManager->renameProgram (index, name); }
+
+    /** Presets, banks and files (message thread). Owned by the processor: works without an editor. */
+    presets::PresetManager& getPresets() noexcept { return *presetManager; }
 
     // State
     void getStateInformation (juce::MemoryBlock& destData) override;
@@ -103,10 +109,14 @@ private:
     /** After a key-mode change: the module forgets keys and notes like the part, and is put back
         in step with the part's pedal (see the definition). */
     void resyncArpAfterKeyModeChange (seq::ArpSeq& arp, const Part& part, const seq::Transport& tr) noexcept;
+    /** The release a preset change asks for (ApplyGate): like a key-mode change, every voice of both
+        parts is released, held keys are forgotten, both arp/seq instances are resynchronised. */
+    void releaseForPresetChange() noexcept;
     void resetEngine() noexcept;
     void processInternal (juce::AudioBuffer<float>&, juce::MidiBuffer&) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
+    presets::ApplyGate presetGate; // message thread <-> audio thread hand-over (atomics only)
 
     PartParamBinding lowerBinding, upperBinding;
     PartParams lowerParams, upperParams;
@@ -159,6 +169,9 @@ private:
     static constexpr int kUpperIdleSamples = 256;
     bool upperActive = false;
     int upperQuietSamples = 0;
+
+    // Last member: destroyed first (it listens to the parameters above).
+    std::unique_ptr<presets::PresetManager> presetManager;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VintageSynthProcessor)
 };

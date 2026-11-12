@@ -13,7 +13,8 @@ namespace vs
     Channel is ignored (omni). Returns false for anything a Part does not use: system
     messages (SysEx, clock, ...), other controllers, program change, pressure, and malformed
     data (too short, or a data byte with the high bit set), which is rejected rather than
-    reinterpreted. Never allocates.
+    reinterpreted. Never allocates. (A program change is not a NoteEvent: EventParser::add picks it
+    up separately, see parseProgramChange.)
 */
 inline bool parseMidiMessage (const std::uint8_t* data, int numBytes, int offset, NoteEvent& out) noexcept
 {
@@ -65,6 +66,15 @@ inline bool parseMidiMessage (const std::uint8_t* data, int numBytes, int offset
     }
 }
 
+/** A raw MIDI Program Change (2 bytes: status 0xCn, program 0..127): the program number, else -1.
+    Channel is ignored (omni). Never allocates. */
+inline int parseProgramChange (const std::uint8_t* data, int numBytes) noexcept
+{
+    if (data == nullptr || numBytes != 2 || (data[0] & 0xF0) != 0xC0 || (data[1] & 0x80) != 0)
+        return -1;
+    return data[1];
+}
+
 /**
     Fixed-capacity NoteEvent buffer, filled once per render chunk on the audio thread.
 
@@ -89,11 +99,20 @@ public:
         count = 0;
         overflowed = false;
         lastOffset = 0;
+        programChange = -1;
     }
 
     /** Parses and appends one raw message; offsets must be ascending within a chunk. */
     void add (const std::uint8_t* data, int numBytes, int offset) noexcept
     {
+        // Program Change is not a note event: only the latest one of the chunk is kept, and it is
+        // not subject to the buffer's capacity (it takes no slot, so it can never be dropped).
+        if (const int pc = parseProgramChange (data, numBytes); pc >= 0)
+        {
+            programChange = pc;
+            return;
+        }
+
         NoteEvent e;
         if (! parseMidiMessage (data, numBytes, offset, e))
             return;
@@ -117,11 +136,14 @@ public:
     std::span<const NoteEvent> events() const noexcept { return { buffer.data(), static_cast<size_t> (count) }; }
     int capacity() const noexcept { return static_cast<int> (buffer.size()); }
     bool didOverflow() const noexcept { return overflowed; }
+    /** The latest Program Change added since clear(): 0..127, or -1 if none. */
+    int latestProgramChange() const noexcept { return programChange; }
 
 private:
     std::vector<NoteEvent> buffer;
     int count = 0;
     int lastOffset = 0;
     bool overflowed = false;
+    int programChange = -1;
 };
 } // namespace vs

@@ -5,6 +5,8 @@
 
 #include "vintage/params/ParameterLayout.h"
 #include "vintage/params/StateVersion.h"
+#include "vintage/PluginEditor.h"
+#include "vintage/presets/VintagePresets.h"
 
 #include <cstring>
 #include <limits>
@@ -15,6 +17,7 @@ namespace
 {
 constexpr const char* kStateTag = "VintageSynthState";
 constexpr const char* kVersionAttr = "stateVersion";
+constexpr const char* kPresetInfoType = "Preset"; // child of the state tree: the bank / program the sound came from
 constexpr float kOutputClamp = 4.0f; // +12 dBFS
 } // namespace
 
@@ -31,6 +34,12 @@ VintageSynthProcessor::VintageSynthProcessor()
     balance.bind (apvts, ParamID::mixBalance);
     fxBinding.bind (apvts);
     arpBinding.bind (apvts);
+
+    // Presets (after the parameters exist: the schema's defaults are their values right now).
+    auto schema = makeVintageSchema (*this);
+    auto factory = makeVintageFactoryBank (schema);
+    presetManager = std::make_unique<presets::PresetManager> (apvts, std::move (schema), std::move (factory), presetGate,
+                                                              presets::Locations::userDefault (kPresetProductFolder));
 }
 
 namespace
@@ -152,6 +161,23 @@ void VintageSynthProcessor::resetEngine() noexcept
     delay.reset();
     reverb.reset();
     playerPedal = false; // the parts cleared their pedal
+}
+
+void VintageSynthProcessor::releaseForPresetChange() noexcept
+{
+    // The same release as a key-mode change (processInternal): voices go into their release,
+    // the router and both arp/seq instances forget keys, and a release tail keeps the gain it
+    // was heard at until its part plays again, so the new program's balance and pan cannot
+    // make it jump.
+    lowerPart.releaseAllNotes();
+    upperPart.releaseAllNotes();
+    router.reset();
+    resyncArpAfterKeyModeChange (lowerArp, lowerPart, blockTransport);
+    resyncArpAfterKeyModeChange (upperArp, upperPart, blockTransport);
+    if (lowerPart.isSounding())
+        mixer.latch (0);
+    if (upperActive && upperPart.isSounding())
+        mixer.latch (1);
 }
 
 void VintageSynthProcessor::reset()
@@ -321,7 +347,12 @@ void VintageSynthProcessor::processBlockBypassed (juce::AudioBuffer<float>& buff
     }
     if (bypassFadeLeft <= 0)
     {
-        buffer.clear(); // bypassed: silence, MIDI ignored, nothing runs
+        // Bypassed: silence, MIDI ignored, nothing runs, so nothing sounds that a preset change
+        // would have to release: acknowledge it.
+        presetGate.blockStarted();
+        if (presetGate.takeReleaseRequest())
+            presetGate.acknowledgeRelease();
+        buffer.clear();
         return;
     }
     // Fading out: render on without the host's MIDI, ramp the output to 0 over the fade (per
@@ -353,39 +384,55 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
         return;
     }
 
-    const float vintageAmount = vintage.get();
-    lowerBinding.read (lowerParams);
-    upperBinding.read (upperParams);
-    lowerPart.setParams (lowerParams);
-    upperPart.setParams (upperParams);
-    lowerPart.setVintage (vintageAmount);
-    upperPart.setVintage (vintageAmount);
-    masterGain.setTargetValue (juce::Decibels::decibelsToGain (masterVolume.get()));
-
-    // Effects: once per block; the blocks smooth their continuous parameters themselves.
-    fxBinding.read (fxSettings);
-    chorus.setParams (fxSettings.chorus);
-    delay.setParams (fxSettings.delay);
-    reverb.setParams (fxSettings.reverb);
-
-    // Arp/seq settings, once per block; a part the arp/seq does not sit in front of (arp.target,
-    // or Upper in Whole mode) runs its module in Off, which releases what it played.
-    const auto mode = keyModeOf (keyMode);
-    arpBinding.read (arpSettings);
-    for (int p = 0; p < 2; ++p)
+    // A preset is being applied (message thread): keep the parameter values and the key mode of the
+    // last block until all of them are written, so no block can mix old and new values
+    // (presets/ApplyGate.h). The release a preset change asks for is done below, in this block.
+    presetGate.blockStarted();
+    const bool holding = presetGate.isHolding();
+    const auto mode = holding ? router.getMode() : keyModeOf (keyMode);
+    if (! holding)
     {
-        seq::Settings s = arpSettings.settings;
-        if (! partSelected (arpSettings.target, mode, p))
-            s.mode = seq::Mode::Off;
-        (p == 0 ? lowerArp : upperArp).setSettings (s);
+        const float vintageAmount = vintage.get();
+        lowerBinding.read (lowerParams);
+        upperBinding.read (upperParams);
+        lowerPart.setParams (lowerParams);
+        upperPart.setParams (upperParams);
+        lowerPart.setVintage (vintageAmount);
+        upperPart.setVintage (vintageAmount);
+        masterGain.setTargetValue (juce::Decibels::decibelsToGain (masterVolume.get()));
+
+        // Effects: once per block; the blocks smooth their continuous parameters themselves.
+        fxBinding.read (fxSettings);
+        chorus.setParams (fxSettings.chorus);
+        delay.setParams (fxSettings.delay);
+        reverb.setParams (fxSettings.reverb);
+
+        // Arp/seq settings, once per block; a part the arp/seq does not sit in front of (arp.target,
+        // or Upper in Whole mode) runs its module in Off, which releases what it played.
+        arpBinding.read (arpSettings);
+        for (int p = 0; p < 2; ++p)
+        {
+            seq::Settings s = arpSettings.settings;
+            if (! partSelected (arpSettings.target, mode, p))
+                s.mode = seq::Mode::Off;
+            (p == 0 ? lowerArp : upperArp).setSettings (s);
+        }
     }
     readTransport();
     blockTransport = transportAt (0);
 
+    // A preset change asked for a release: everything sounding is released now, before the new
+    // parameters are read (see ApplyGate.h), and the message thread is told.
+    if (presetGate.takeReleaseRequest())
+    {
+        releaseForPresetChange();
+        presetGate.acknowledgeRelease();
+    }
+
     // Key mode (docs/architecture.md 4.2). A change releases every voice of both parts (keeping
     // the controllers) and forgets the held keys. The split point only affects new notes.
-    const bool leavingWhole = router.getMode() == KeyMode::Whole && mode != KeyMode::Whole;
-    if (router.setMode (mode))
+    const bool leavingWhole = ! holding && router.getMode() == KeyMode::Whole && mode != KeyMode::Whole;
+    if (! holding && router.setMode (mode))
     {
         lowerPart.releaseAllNotes();
         upperPart.releaseAllNotes();
@@ -397,7 +444,8 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
         if (upperActive && upperPart.isSounding())
             mixer.latch (1);
     }
-    router.setSplitPoint (splitPoint.index());
+    if (! holding)
+        router.setSplitPoint (splitPoint.index());
 
     // Upper comes back from Whole mode clean: parameters at their targets (no glide from stale
     // values), LFO restarted, decimator cleared. Done whenever it is silent at that moment, not
@@ -409,7 +457,8 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
         upperActive = true;
         upperQuietSamples = 0;
     }
-    mixer.setTargets (balance.get(), lowerParams.pan, upperParams.pan, mode == KeyMode::Whole);
+    if (! holding)
+        mixer.setTargets (balance.get(), lowerParams.pan, upperParams.pan, mode == KeyMode::Whole);
 
     // Every event in the buffer is applied exactly once, whatever its position: negative
     // positions count as 0, positions at or past the end apply after the last sample, and a
@@ -426,6 +475,10 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
             events.add (meta.data, meta.numBytes, juce::jlimit (0, len, meta.samplePosition - start));
         }
         events.finish();
+        // MIDI Program Change: only handed over (atomic store, the latest wins); the message
+        // thread applies it (PresetManager::pollRequests).
+        if (const int program = events.latestProgramChange(); program >= 0)
+            presetGate.postMidiProgram (program);
         for (const auto& e : events.events())
         {
             if (e.type == EventType::SustainPedal)
@@ -582,18 +635,31 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
 
 juce::AudioProcessorEditor* VintageSynthProcessor::createEditor()
 {
-    // Placeholder until the custom panel UI (M7).
-    return new juce::GenericAudioProcessorEditor (*this);
+    // Placeholder until the custom panel UI (M7): the preset bar above the generic parameter editor.
+    return new VintageSynthEditor (*this);
 }
 
 void VintageSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty (kVersionAttr, kStateVersion, nullptr);
+    state.appendChild (presetManager->createSessionInfo(), nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
+
+namespace
+{
+/** Brings a state tree saved by an older version up to the current one. Before v1.0 the version
+    stays 1 and nothing needs migrating; from v1.0 on, each change adds a step here with a test
+    that loads a state saved by the previous version (tests/fixtures/state_m5.bin is the first). */
+void migrateState (juce::ValueTree& state)
+{
+    [[maybe_unused]] const int version = state.getProperty (kVersionAttr, 1);
+    // if (version < 2) { ... }
+}
+} // namespace
 
 void VintageSynthProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
@@ -602,8 +668,16 @@ void VintageSynthProcessor::setStateInformation (const void* data, int sizeInByt
         return;
 
     auto state = juce::ValueTree::fromXml (*xml);
-    // Migrations go here: if ((int) state.getProperty (kVersionAttr, 1) < N) { ... }
-    apvts.replaceState (state);
+    // The preset info (bank, program, modified flag) rides along as a child; sessions saved before
+    // presets existed have none. It is taken out before the parameters are restored.
+    auto info = state.getChildWithName (kPresetInfoType);
+    if (info.isValid())
+        state.removeChild (info, nullptr);
+    migrateState (state);
+
+    // The audio thread keeps its parameter values until all of them have been replaced.
+    presetManager->withParametersHeld ([&] { apvts.replaceState (state); });
+    presetManager->restoreSessionInfo (info);
 }
 } // namespace vs
 
