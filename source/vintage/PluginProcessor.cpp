@@ -93,8 +93,9 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     // Oversampling by host rate (docs/architecture.md 4.4): the internal rate stays >= 88.2 kHz.
     const int osFactor = voiceOversamplingFactor (sampleRate, isNonRealtime());
 
-    lowerBinding.read (lowerParams);
-    upperBinding.read (upperParams);
+    readBlockParams (blockParams); // not concurrent with an apply's hold in a correct host: no seqlock needed here
+    lowerParams = blockParams.lower;
+    upperParams = blockParams.upper;
     lowerPart.setParams (lowerParams);
     upperPart.setParams (upperParams);
     lowerPart.prepare (sampleRate, preparedBlockSize, osFactor, kLowerSeed, voiceOversamplingFactor (sampleRate, false));
@@ -147,6 +148,19 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     // Both parts share the factor, so they have the same latency.
     jassert (lowerPart.getLatencySamples() == upperPart.getLatencySamples());
     setLatencySamples (lowerPart.getLatencySamples());
+}
+
+void VintageSynthProcessor::readBlockParams (BlockParams& out) const noexcept
+{
+    lowerBinding.read (out.lower);
+    upperBinding.read (out.upper);
+    out.vintage = vintage.get();
+    out.masterDb = masterVolume.get();
+    out.balance = balance.get();
+    out.mode = keyModeOf (keyMode);
+    out.splitPoint = splitPoint.index();
+    fxBinding.read (out.fx);
+    arpBinding.read (out.arp);
 }
 
 void VintageSynthProcessor::resetEngine() noexcept
@@ -384,32 +398,43 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
         return;
     }
 
-    // A preset is being applied (message thread): keep the parameter values and the key mode of the
-    // last block until all of them are written, so no block can mix old and new values
-    // (presets/ApplyGate.h). The release a preset change asks for is done below, in this block.
+    // Every parameter this block uses is read here, at once, as a seqlock reader (presets/ApplyGate.h):
+    // while a preset is being applied or a state restored, or if one began while this block was
+    // reading, the copy is discarded and the block keeps the previous block's values and key mode,
+    // so no block can mix old and new values. Wait-free: the audio thread never waits for a writer.
     presetGate.blockStarted();
-    const bool holding = presetGate.isHolding();
-    const auto mode = holding ? router.getMode() : keyModeOf (keyMode);
+    const auto token = presetGate.beginRead();
+    bool holding = true;
+    if ((token & 1u) == 0u)
+    {
+        readBlockParams (readScratch);
+        holding = ! presetGate.endRead (token);
+    }
+    if (holding)
+        ++heldBlocks;
+    else
+        blockParams = readScratch;
+    const auto mode = holding ? router.getMode() : blockParams.mode;
     if (! holding)
     {
-        const float vintageAmount = vintage.get();
-        lowerBinding.read (lowerParams);
-        upperBinding.read (upperParams);
+        const float vintageAmount = blockParams.vintage;
+        lowerParams = blockParams.lower;
+        upperParams = blockParams.upper;
         lowerPart.setParams (lowerParams);
         upperPart.setParams (upperParams);
         lowerPart.setVintage (vintageAmount);
         upperPart.setVintage (vintageAmount);
-        masterGain.setTargetValue (juce::Decibels::decibelsToGain (masterVolume.get()));
+        masterGain.setTargetValue (juce::Decibels::decibelsToGain (blockParams.masterDb));
 
         // Effects: once per block; the blocks smooth their continuous parameters themselves.
-        fxBinding.read (fxSettings);
+        fxSettings = blockParams.fx;
         chorus.setParams (fxSettings.chorus);
         delay.setParams (fxSettings.delay);
         reverb.setParams (fxSettings.reverb);
 
         // Arp/seq settings, once per block; a part the arp/seq does not sit in front of (arp.target,
         // or Upper in Whole mode) runs its module in Off, which releases what it played.
-        arpBinding.read (arpSettings);
+        arpSettings = blockParams.arp;
         for (int p = 0; p < 2; ++p)
         {
             seq::Settings s = arpSettings.settings;
@@ -421,8 +446,9 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
     readTransport();
     blockTransport = transportAt (0);
 
-    // A preset change asked for a release: everything sounding is released now, before the new
-    // parameters are read (see ApplyGate.h), and the message thread is told.
+    // A preset change asked for a release: everything sounding is released now, and the writer is
+    // told. Acknowledged only after every parameter read of this block (all of them happened
+    // above): the writer starts writing new values only after this point (see ApplyGate.h).
     if (presetGate.takeReleaseRequest())
     {
         releaseForPresetChange();
@@ -445,7 +471,7 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
             mixer.latch (1);
     }
     if (! holding)
-        router.setSplitPoint (splitPoint.index());
+        router.setSplitPoint (blockParams.splitPoint);
 
     // Upper comes back from Whole mode clean: parameters at their targets (no glide from stale
     // values), LFO restarted, decimator cleared. Done whenever it is silent at that moment, not
@@ -458,7 +484,7 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
         upperQuietSamples = 0;
     }
     if (! holding)
-        mixer.setTargets (balance.get(), lowerParams.pan, upperParams.pan, mode == KeyMode::Whole);
+        mixer.setTargets (blockParams.balance, lowerParams.pan, upperParams.pan, mode == KeyMode::Whole);
 
     // Every event in the buffer is applied exactly once, whatever its position: negative
     // positions count as 0, positions at or past the end apply after the last sample, and a
@@ -476,7 +502,9 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
         }
         events.finish();
         // MIDI Program Change: only handed over (atomic store, the latest wins); the message
-        // thread applies it (PresetManager::pollRequests).
+        // thread applies it shortly afterwards (PresetManager::pollRequests). So notes in this
+        // block start on the current program and are released when the new one is applied, and
+        // offline the moment it takes effect depends on the message thread (not deterministic).
         if (const int program = events.latestProgramChange(); program >= 0)
             presetGate.postMidiProgram (program);
         for (const auto& e : events.events())
@@ -641,6 +669,8 @@ juce::AudioProcessorEditor* VintageSynthProcessor::createEditor()
 
 void VintageSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
+    // Under the presets' writer lock: never half an apply, and the parameters match the preset info.
+    const juce::ScopedLock w (presetManager->writerLock());
     auto state = apvts.copyState();
     state.setProperty (kVersionAttr, kStateVersion, nullptr);
     state.appendChild (presetManager->createSessionInfo(), nullptr);
@@ -675,9 +705,16 @@ void VintageSynthProcessor::setStateInformation (const void* data, int sizeInByt
         state.removeChild (info, nullptr);
     migrateState (state);
 
-    // The audio thread keeps its parameter values until all of them have been replaced.
-    presetManager->withParametersHeld ([&] { apvts.replaceState (state); });
-    presetManager->restoreSessionInfo (info);
+    // Hosts call this on any thread: no file I/O here (a user bank named by the session is looked
+    // up later on the message thread). One writer lock around both steps, so no apply on another
+    // thread can come between the parameters and the preset info; the audio thread keeps its
+    // parameter values until all of them have been replaced.
+    {
+        const juce::ScopedLock w (presetManager->writerLock());
+        presetManager->withParametersHeld ([&] { apvts.replaceState (state); });
+        presetManager->restoreSessionInfo (info);
+    }
+    presetManager->sessionRestored();
 }
 } // namespace vs
 

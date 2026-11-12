@@ -1,24 +1,39 @@
 #pragma once
 
-// The hand-over between the message thread (which applies presets) and the audio thread (which
-// must not be called, blocked or made to wait). Atomics only.
+// The hand-over between the threads that apply presets or restore state (the message thread, or a
+// host thread in setStateInformation) and the audio thread (which must not be called, blocked or
+// made to wait). Atomics only on the audio side.
 //
-// Applying a program has three steps on the message thread (PresetManager):
-//   1. beginHold()      the audio thread keeps using the parameter values it already has
-//                       (no re-read of the host parameters, no key-mode change handling), so the
-//                       170-odd parameter writes of step 3 can never be heard half done;
+// Writers are serialised by PresetManager (one mutex, never taken on the audio thread), so at most
+// one apply or state restore writes parameters at any time. Applying a program has three steps:
+//   1. beginHold()      the sequence counter becomes odd: the audio thread keeps using the parameter
+//                       values it already has (no key-mode change handling either), so the 170-odd
+//                       parameter writes of step 3 can never be heard half done;
 //   2. requestRelease   the audio thread releases every sounding note (the click-free release that
 //                       a key-mode change uses) at the start of its next block and acknowledges;
-//                       the message thread waits for that, but only while audio is running (a
-//                       heartbeat counter) and never longer than a timeout;
-//   3. the parameters are set, then endHold(): the next block reads them all at once.
-// If the wait times out (audio stopped, or a block longer than the timeout) the parameters are
-// set anyway: the request stays pending and the audio thread honours it at its next block, which
-// reads the new parameters in the same block, exactly as a key-mode change does. Nothing waits on
-// the audio thread to make progress, and the audio thread never waits for anything.
+//                       the writer waits for that, but only while audio is running (a heartbeat
+//                       counter) and never longer than a timeout;
+//   3. the parameters are set, then endHold(): the counter becomes even again and the next block
+//      reads them all at once.
+// Holds nest (a counter): the sequence changes only on the outermost begin and end.
+//
+// The audio thread reads the parameters as a seqlock reader, wait-free:
+//     token = beginRead();                 // odd: a hold is on, keep the previous block's values
+//     ... copy every parameter it uses ...
+//     if (endRead (token)) use the copy;   // false: a hold began (or ended) meanwhile: discard it
+// so a block never mixes values from before and after (or during) an apply, even when the hold
+// begins while it is copying. Parameter values themselves are atomics (APVTS), so the copy is not
+// a data race; the sequence only decides whether the copy is consistent.
+// If the wait in step 2 times out (audio stopped, or a block longer than the timeout) the
+// parameters are set anyway: the request stays pending and the audio thread honours it at its
+// next block, which reads the new parameters in the same block, exactly as a key-mode change does.
+// The audio thread acknowledges a release only after every parameter read of that block.
 //
 // MIDI Program Change: the audio thread posts the program number; the message thread takes the
-// latest one (older requests are overwritten) and applies it.
+// latest one (older requests are overwritten) and applies it shortly afterwards (its poll timer).
+// So notes in the same block as the Program Change start on the old program and are then
+// released by the apply; while rendering offline the moment it takes effect depends on when the
+// message thread runs, so it is not deterministic.
 
 #include <atomic>
 #include <cstdint>
@@ -30,11 +45,21 @@ namespace vs::presets
 class ApplyGate
 {
 public:
-    // ---- audio thread: lock-free, no allocation ----
+    // ---- audio thread: wait-free, no allocation ----
     /** Once per block, first thing (also for blocks that do no rendering). */
     void blockStarted() noexcept { heartbeat.fetch_add (1, std::memory_order_relaxed); }
-    /** True while a preset is being applied: keep the parameter values of the last block. */
-    bool isHolding() const noexcept { return hold.load (std::memory_order_acquire); }
+
+    /** Starts a parameter read. An odd token means a hold is on: do not use what is read. */
+    std::uint32_t beginRead() const noexcept { return sequence.load (std::memory_order_acquire); }
+    /** True if the parameters read since beginRead(token) form one consistent set. */
+    bool endRead (std::uint32_t token) const noexcept
+    {
+        std::atomic_thread_fence (std::memory_order_acquire); // the reads above happen before the re-check
+        return (token & 1u) == 0u && sequence.load (std::memory_order_relaxed) == token;
+    }
+    /** True while a preset is being applied (a hold is on). */
+    bool isHolding() const noexcept { return (sequence.load (std::memory_order_acquire) & 1u) != 0u; }
+
     /** True once per release request. The caller releases every note, then calls acknowledgeRelease(). */
     bool takeReleaseRequest() noexcept
     {
@@ -48,9 +73,23 @@ public:
     /** A MIDI Program Change arrived (0..127). The latest one wins. */
     void postMidiProgram (int program) noexcept { midiProgram.store (program, std::memory_order_release); }
 
-    // ---- message thread ----
-    void beginHold() noexcept { hold.store (true, std::memory_order_release); }
-    void endHold() noexcept { hold.store (false, std::memory_order_release); }
+    // ---- writers (serialised by the caller's mutex; never the audio thread) ----
+    void beginHold() noexcept
+    {
+        if (holds.fetch_add (1, std::memory_order_relaxed) == 0)
+        {
+            sequence.fetch_add (1, std::memory_order_relaxed); // odd
+            std::atomic_thread_fence (std::memory_order_release); // ... before any parameter write
+        }
+    }
+    void endHold() noexcept
+    {
+        const int before = holds.fetch_sub (1, std::memory_order_relaxed);
+        jassert (before > 0);
+        if (before == 1)
+            sequence.fetch_add (1, std::memory_order_release); // even: the writes above are visible first
+    }
+    int holdDepth() const noexcept { return holds.load (std::memory_order_relaxed); }
 
     /** The latest MIDI Program Change since the last call, or -1. */
     int takeMidiProgram() noexcept { return midiProgram.exchange (-1, std::memory_order_acq_rel); }
@@ -103,7 +142,8 @@ private:
     }
 
     std::atomic<std::uint32_t> requested { 0 }, acknowledged { 0 }, heartbeat { 0 };
-    std::atomic<bool> hold { false };
+    std::atomic<std::uint32_t> sequence { 0 }; // odd while a hold is on
+    std::atomic<int> holds { 0 };
     std::atomic<int> midiProgram { -1 };
     std::atomic<int> maxWaitMs { 250 }, idleWaitMs { 40 };
     std::uint32_t seen = 0; // audio thread only

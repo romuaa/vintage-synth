@@ -58,7 +58,7 @@ public:
 
     // Programs: the 64 programs of the current bank (docs/architecture.md 6b.3). setCurrentProgram
     // is safe from any thread (applied on the message thread: at once if called there, else queued).
-    int getNumPrograms() override { return presets::kBankSize; }
+    int getNumPrograms() override { return presetManager->bankSize(); }
     int getCurrentProgram() override { return presetManager->currentIndex(); }
     void setCurrentProgram (int index) override { presetManager->requestProgram (index); }
     const juce::String getProgramName (int index) override { return presetManager->programName (index); }
@@ -84,6 +84,20 @@ public:
     /** The events part 0 (Lower) / 1 (Upper) received in the last rendered chunk (offsets relative
         to that chunk). With host blocks no longer than the prepared size: the last block. */
     std::span<const NoteEvent> getLastPartEvents (int part) const noexcept { return part == 0 ? lowerChunk : upperChunk; }
+    /** Every parameter value one block uses, read together at the block's start (see processInternal). */
+    struct BlockParams
+    {
+        PartParams lower, upper;
+        float vintage = 0.0f, masterDb = 0.0f, balance = 0.0f;
+        KeyMode mode = KeyMode::Whole;
+        int splitPoint = 60;
+        FxSettings fx;
+        ArpSettings arp;
+    };
+    /** Test hook: the parameter set the last block used (read between blocks, on the audio thread). */
+    const BlockParams& getBlockParams() const noexcept { return blockParams; }
+    /** Test hook: blocks that kept the previous block's parameters because an apply was in progress. */
+    std::uint64_t getHeldBlocks() const noexcept { return heldBlocks; }
     /** The effect settings applied at the start of the last block. */
     const FxSettings& getAppliedFxSettings() const noexcept { return fxSettings; }
     /** The transport the arp/seq got for the first chunk of the last block. */
@@ -103,6 +117,8 @@ private:
     void renderChunk (float* const* out, int numChannels, int start, int len) noexcept;
     void readTransport() noexcept;
     seq::Transport transportAt (int sampleOffset) const noexcept;
+    /** Copies every parameter the block uses into `out` (atomic loads only). */
+    void readBlockParams (BlockParams& out) const noexcept;
     /** Runs one part's arp/seq over its routed chunk; returns the events the part gets. */
     std::span<const NoteEvent> arpChunk (seq::ArpSeq& arp, bool selected, std::span<const NoteEvent> routed,
                                          std::vector<NoteEvent>& out, const seq::Transport& tr, int len) noexcept;
@@ -126,6 +142,8 @@ private:
     FxParamBinding fxBinding;
     ArpParamBinding arpBinding;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
+    BlockParams blockParams, readScratch; // the set in use; a fresh read until it is known to be consistent
+    std::uint64_t heldBlocks = 0;
 
     EventParser events; // parsed once per render chunk, preallocated in prepareToPlay
     KeyRouter router;
