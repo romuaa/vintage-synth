@@ -1,7 +1,11 @@
 #include "common/presets/PresetManager.h"
 
+#include "common/presets/PresetFiles.h"
+#include "common/presets/StrictJson.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace vs::presets
 {
@@ -10,6 +14,21 @@ namespace
 constexpr const char* kInfoType = "Preset";
 
 juce::String errorFor (const juce::File& f, const juce::String& what) { return what + " (" + f.getFileName() + ")"; }
+
+bool sameBits (float a, float b) noexcept { return std::memcmp (&a, &b, sizeof (float)) == 0; }
+
+/** A session flag written as "1"/"0" (or "true"/"false"); anything else is `fallback`. */
+bool parseFlag (const juce::var& v, bool fallback)
+{
+    if (v.isBool())
+        return static_cast<bool> (v);
+    const auto s = v.toString();
+    if (s == "1" || s == "true")
+        return true;
+    if (s == "0" || s == "false")
+        return false;
+    return fallback;
+}
 } // namespace
 
 Locations Locations::userDefault (const juce::String& product)
@@ -23,7 +42,7 @@ PresetManager::PresetManager (juce::AudioProcessorValueTreeState& state, Schema 
     : apvts (state), schema (std::move (s)), factory (std::move (factoryBank)), gate (g), locations (std::move (loc))
 {
     jassert (schema.isValid());
-    jassert (static_cast<int> (factory.programs.size()) == kBankSize);
+    jassert (static_cast<int> (factory.programs.size()) == schema.bankSize());
 
     const auto n = static_cast<size_t> (schema.numParams());
     params.assign (n, nullptr);
@@ -47,7 +66,9 @@ PresetManager::PresetManager (juce::AudioProcessorValueTreeState& state, Schema 
 
     bank = factory;
     current = bank.programs[0].meta;
-    ensureTimer();
+    // JUCE timers may be started from any thread (a host can construct plugins off the message
+    // thread); the callback always runs on the message thread.
+    startTimer (kPollMs);
 }
 
 PresetManager::~PresetManager()
@@ -55,15 +76,6 @@ PresetManager::~PresetManager()
     stopTimer();
     for (auto* p : params)
         p->removeListener (this);
-}
-
-void PresetManager::ensureTimer()
-{
-    if (! timerStarted && onMessageThread())
-    {
-        timerStarted = true;
-        startTimer (kPollMs);
-    }
 }
 
 void PresetManager::setLocations (Locations l)
@@ -90,31 +102,33 @@ int PresetManager::currentIndex() const noexcept
 juce::String PresetManager::currentName() const { const juce::ScopedLock sl (lock); return current.name; }
 juce::String PresetManager::currentCategory() const { const juce::ScopedLock sl (lock); return current.category; }
 juce::String PresetManager::currentAuthor() const { const juce::ScopedLock sl (lock); return current.author; }
-juce::String PresetManager::bankName() const { const juce::ScopedLock sl (lock); return bank.name; }
-bool PresetManager::isFactoryBank() const { const juce::ScopedLock sl (lock); return bankIsFactory; }
+bool PresetManager::isFactoryBank() const { const juce::ScopedLock sl (lock); return status == BankStatus::Factory; }
+BankStatus PresetManager::bankStatus() const { const juce::ScopedLock sl (lock); return status; }
+
+juce::String PresetManager::bankName() const
+{
+    const juce::ScopedLock sl (lock);
+    return status == BankStatus::Pending || status == BankStatus::Missing ? bankDisplayName : bank.name;
+}
 
 juce::String PresetManager::programName (int i) const
 {
-    if (i < 0 || i >= kBankSize)
+    if (i < 0 || i >= bankSize())
         return {};
     const juce::ScopedLock sl (lock);
-    return i == index.load (std::memory_order_relaxed) ? current.name : bank.programs[static_cast<size_t> (i)].meta.name;
+    const bool isCurrent = ! detached.load (std::memory_order_relaxed) && i == index.load (std::memory_order_relaxed);
+    return isCurrent ? current.name : bank.programs[static_cast<size_t> (i)].meta.name;
 }
 
-juce::String PresetManager::positionName (int i)
-{
-    const int group = std::clamp (i, 0, kBankSize - 1) / 8, slot = std::clamp (i, 0, kBankSize - 1) % 8;
-    return juce::String::charToString (static_cast<juce::juce_wchar> ('A' + group)) + juce::String (slot + 1);
-}
-
-void PresetManager::setCurrent (int i, const Meta& meta, bool isModified)
+void PresetManager::setCurrent (int i, const Meta& meta, bool nowModified, bool nowDetached)
 {
     {
         const juce::ScopedLock sl (lock);
-        index.store (i, std::memory_order_relaxed);
+        index.store (nowDetached ? 0 : std::clamp (i, 0, bankSize() - 1), std::memory_order_relaxed);
+        detached.store (nowDetached, std::memory_order_relaxed);
         current = meta;
     }
-    modified.store (isModified, std::memory_order_relaxed);
+    modified.store (nowModified, std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -135,7 +149,7 @@ void PresetManager::parameterValueChanged (int parameterIndex, float newValue)
     if (i < 0)
         return;
     const float previous = lastNormalised[static_cast<size_t> (i)].exchange (newValue, std::memory_order_relaxed);
-    if (applying.load (std::memory_order_relaxed) || schema.isExcluded (i))
+    if (applying.load (std::memory_order_acquire) > 0 || schema.isExcluded (i))
         return;
     if (previous < newValue || previous > newValue)
         modified.store (true, std::memory_order_relaxed);
@@ -144,42 +158,51 @@ void PresetManager::parameterValueChanged (int parameterIndex, float newValue)
 void PresetManager::applyIndices (const std::vector<int>& indices, const std::vector<float>& values)
 {
     jassert (onMessageThread());
-    // 1. hold the audio thread's parameter values  2. have it release every note (it acknowledges
-    // at the start of its next block, or we give up when no audio runs)  3. write all the
-    // parameters, then let the audio thread read them at once. See ApplyGate.h.
-    applying.store (true, std::memory_order_release);
+    // Under the writer lock: 1. hold the audio thread's parameter values  2. have it release every
+    // note (it acknowledges at the start of its next block, or we give up when no audio runs)
+    // 3. write all the parameters, then let the audio thread read them at once. See ApplyGate.h.
+    const juce::ScopedLock w (writer);
+    applying.fetch_add (1, std::memory_order_acq_rel);
     gate.beginHold();
-    lastAcknowledged = gate.requestReleaseAndWait();
+    lastAcknowledged.store (gate.requestReleaseAndWait(), std::memory_order_relaxed);
     for (const int i : indices)
     {
         auto* p = params[static_cast<size_t> (i)];
         const float target = values[static_cast<size_t> (i)];
-        const auto& s = schema.spec (i);
-        const float now = raw[static_cast<size_t> (i)]->load (std::memory_order_relaxed);
-        if (std::abs (now - target) <= 1.0e-6f * (s.hi - s.lo))
-            continue; // already there: no needless host event
+        // Written unless the parameter holds exactly this value already (no needless host event;
+        // never "close enough": a loaded program is the file's values, as far as the host's
+        // normalised representation can carry them).
+        if (sameBits (raw[static_cast<size_t> (i)]->load (std::memory_order_relaxed), target))
+            continue;
         p->beginChangeGesture();
         p->setValueNotifyingHost (p->convertTo0to1 (target));
         p->endChangeGesture();
     }
     resyncLastValues();
     gate.endHold();
-    applying.store (false, std::memory_order_release);
+    applying.fetch_sub (1, std::memory_order_acq_rel);
 }
 
 void PresetManager::withParametersHeld (const std::function<void()>& restore)
 {
-    applying.store (true, std::memory_order_release);
+    const juce::ScopedLock w (writer);
+    applying.fetch_add (1, std::memory_order_acq_rel);
     gate.beginHold();
     restore();
     resyncLastValues();
     gate.endHold();
-    applying.store (false, std::memory_order_release);
+    applying.fetch_sub (1, std::memory_order_acq_rel);
 }
 
 void PresetManager::notifyHost()
 {
     apvts.processor.updateHostDisplay (juce::AudioProcessor::ChangeDetails().withProgramChanged (true).withNonParameterStateChanged (true));
+}
+
+void PresetManager::broadcastIfMessageThread()
+{
+    if (onMessageThread())
+        broadcaster.sendSynchronousChangeMessage();
 }
 
 void PresetManager::applyProgram (const Program& program, int slot, bool markModified, bool tellHost)
@@ -189,8 +212,12 @@ void PresetManager::applyProgram (const Program& program, int slot, bool markMod
     for (int t = 0; t < schema.numTones(); ++t)
         for (int k = 0; k < schema.toneSize(); ++k)
             indices.push_back (schema.toneParam (t, k));
-    applyIndices (indices, program.values);
-    setCurrent (std::clamp (slot, 0, kBankSize - 1), program.meta, markModified);
+    {
+        // Parameters and the program's name change together for anyone saving state meanwhile.
+        const juce::ScopedLock w (writer);
+        applyIndices (indices, program.values);
+        setCurrent (slot, program.meta, markModified, slot < 0);
+    }
     if (tellHost)
         notifyHost();
     broadcaster.sendSynchronousChangeMessage();
@@ -208,18 +235,30 @@ void PresetManager::applyTone (const Tone& tone, int part)
         indices.push_back (i);
         values[static_cast<size_t> (i)] = tone.values[static_cast<size_t> (k)];
     }
-    applyIndices (indices, values);
-    modified.store (true, std::memory_order_relaxed); // the sound no longer is the loaded program
+    {
+        const juce::ScopedLock w (writer);
+        applyIndices (indices, values);
+        modified.store (true, std::memory_order_relaxed); // the sound no longer is the loaded program
+    }
     broadcaster.sendSynchronousChangeMessage();
 }
 
 bool PresetManager::selectProgram (int i, bool tellHost)
 {
-    if (i < 0 || i >= kBankSize)
+    if (i < 0 || i >= bankSize())
         return false;
     Program p;
     {
         const juce::ScopedLock sl (lock);
+        if (status == BankStatus::Pending || status == BankStatus::Missing)
+        {
+            // Choosing a program of the bank that is shown (the factory bank) ends the wait for,
+            // or the report of, the session's user bank.
+            status = BankStatus::Factory;
+            bank = factory;
+            bankReference.clear();
+            ++generation;
+        }
         p = bank.programs[static_cast<size_t> (i)];
     }
     applyProgram (p, i, false, tellHost);
@@ -229,12 +268,12 @@ bool PresetManager::selectProgram (int i, bool tellHost)
 void PresetManager::initialise()
 {
     auto init = makeInitProgram (schema);
-    applyProgram (init, currentIndex(), true);
+    applyProgram (init, isDetached() ? -1 : currentIndex(), true);
 }
 
 void PresetManager::requestProgram (int i)
 {
-    if (i < 0 || i >= kBankSize)
+    if (i < 0 || i >= bankSize())
         return;
     if (onMessageThread())
         selectProgram (i, false); // the host asked: it knows already, and an edit of the same parameter must not be
@@ -246,11 +285,15 @@ void PresetManager::requestProgram (int i)
 void PresetManager::pollRequests()
 {
     jassert (onMessageThread());
+    if (resolvePending.exchange (false, std::memory_order_acq_rel))
+        resolvePendingBank();
     const int queued = queuedProgram.exchange (-1, std::memory_order_acq_rel);
     if (queued >= 0)
         selectProgram (queued);
+    // MIDI Program Change: applied here, some time after the block that carried it (see ApplyGate.h).
+    // Program Changes outside the bank (64..127) are ignored; there is no Bank Select.
     const int midi = gate.takeMidiProgram();
-    if (midi >= 0 && midi < kBankSize) // 64..127 is outside the bank: ignored
+    if (midi >= 0 && midi < bankSize())
         selectProgram (midi);
 }
 
@@ -270,18 +313,24 @@ Tone PresetManager::captureTone (int part) const
     return toneOf (schema, captureProgram(), part);
 }
 
-void PresetManager::setBank (Bank b, const juce::String& userFilePathOrEmpty)
+void PresetManager::setBank (Bank b, const juce::File& userFile)
 {
     {
         const juce::ScopedLock sl (lock);
-        bankIsFactory = userFilePathOrEmpty.isEmpty();
-        bankFile = bankIsFactory ? juce::File() : juce::File (userFilePathOrEmpty);
-        if (bankIsFactory)
+        ++generation;
+        bankReference.clear();
+        if (userFile == juce::File())
+        {
+            status = BankStatus::Factory;
+            bankFile = juce::File();
             bank = factory;
+        }
         else
         {
+            status = BankStatus::User;
+            bankFile = userFile;
             bank = std::move (b);
-            bank.programs.resize (static_cast<size_t> (kBankSize), makeInitProgram (schema));
+            bank.programs.resize (static_cast<size_t> (bankSize()), makeInitProgram (schema));
         }
     }
     notifyHost();
@@ -291,48 +340,29 @@ void PresetManager::setBank (Bank b, const juce::String& userFilePathOrEmpty)
 // ---------------------------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------------------------
-namespace
-{
-juce::String readFile (const juce::File& file, juce::MemoryBlock& data)
-{
-    if (! file.existsAsFile())
-        return errorFor (file, "The file does not exist");
-    if (static_cast<juce::uint64> (file.getSize()) > kMaxFileBytes)
-        return errorFor (file, "The file is too large to be a preset");
-    if (! file.loadFileAsData (data))
-        return errorFor (file, "The file could not be read");
-    return {};
-}
-} // namespace
-
 juce::String PresetManager::writeFile (const juce::File& file, const std::string& text) const
 {
     if (! file.getParentDirectory().createDirectory())
         return errorFor (file, "The folder could not be created");
-    // Written next to the target and moved over it, so a failed write never damages an existing file.
-    const auto tmp = file.getSiblingFile (file.getFileName() + ".tmp");
-    if (! tmp.replaceWithData (text.data(), text.size()))
-    {
-        tmp.deleteFile();
+    // Written to a uniquely named temporary file next to the target and moved over it, so a failed
+    // write never damages an existing file.
+    juce::TemporaryFile tmp (file, juce::TemporaryFile::useHiddenFile);
+    if (! tmp.getFile().replaceWithData (text.data(), text.size()))
         return errorFor (file, "The file could not be written");
-    }
-    if (! tmp.moveFileTo (file))
-    {
-        tmp.deleteFile();
+    if (! tmp.overwriteTargetFileWithTemporary())
         return errorFor (file, "The file could not be replaced");
-    }
     return {};
 }
 
 juce::String PresetManager::loadProgramFile (const juce::File& file)
 {
-    juce::MemoryBlock data;
-    if (auto e = readFile (file, data); e.isNotEmpty())
+    std::string data;
+    if (auto e = readPresetFile (file, kMaxFileBytes, true, data); e.isNotEmpty())
         return e;
-    const auto parsed = parseProgram (schema, static_cast<const char*> (data.getData()), data.getSize());
+    const auto parsed = parseProgram (schema, data);
     if (! parsed.ok)
         return errorFor (file, parsed.error);
-    applyProgram (parsed.value, currentIndex(), false);
+    applyProgram (parsed.value, isDetached() ? -1 : currentIndex(), false);
     return {};
 }
 
@@ -356,10 +386,10 @@ juce::String PresetManager::loadToneFile (const juce::File& file, int part)
 {
     if (part < 0 || part >= schema.numTones())
         return "No such part.";
-    juce::MemoryBlock data;
-    if (auto e = readFile (file, data); e.isNotEmpty())
+    std::string data;
+    if (auto e = readPresetFile (file, kMaxFileBytes, true, data); e.isNotEmpty())
         return e;
-    const auto parsed = parseTone (schema, static_cast<const char*> (data.getData()), data.getSize());
+    const auto parsed = parseTone (schema, data);
     if (! parsed.ok)
         return errorFor (file, parsed.error);
     applyTone (parsed.value, part);
@@ -378,13 +408,13 @@ juce::String PresetManager::saveToneFile (const juce::File& file, int part, cons
 
 juce::String PresetManager::loadBankFile (const juce::File& file)
 {
-    juce::MemoryBlock data;
-    if (auto e = readFile (file, data); e.isNotEmpty())
+    std::string data;
+    if (auto e = readPresetFile (file, kMaxFileBytes, true, data); e.isNotEmpty())
         return e;
-    const auto parsed = parseBank (schema, static_cast<const char*> (data.getData()), data.getSize());
+    const auto parsed = parseBank (schema, data);
     if (! parsed.ok)
         return errorFor (file, parsed.error);
-    setBank (parsed.value, file.getFullPathName());
+    setBank (parsed.value, file);
     selectProgram (0);
     return {};
 }
@@ -402,47 +432,95 @@ juce::String PresetManager::saveBankFile (const juce::File& file, const juce::St
         return e;
     {
         const juce::ScopedLock sl (lock);
+        ++generation;
         bank = b;
-        bankIsFactory = false;
+        status = BankStatus::User;
         bankFile = file;
+        bankReference.clear();
     }
     notifyHost();
     broadcaster.sendSynchronousChangeMessage();
     return {};
+}
+
+juce::String PresetManager::writeUserBank (const Bank& b, juce::File& fileOut) const
+{
+    {
+        const juce::ScopedLock sl (lock);
+        fileOut = bankFile;
+    }
+    if (fileOut == juce::File())
+        return "The bank has no file.";
+    return writeFile (fileOut, toJson (schema, b));
 }
 
 juce::String PresetManager::storeInBank (int i)
 {
-    if (i < 0 || i >= kBankSize)
+    if (i < 0 || i >= bankSize())
         return "No such slot.";
     auto p = captureProgram();
+    p.meta.name = sanitiseName (p.meta.name);
+    Bank updated;
+    std::uint32_t gen = 0;
     {
         const juce::ScopedLock sl (lock);
-        if (bankIsFactory)
+        if (status != BankStatus::User)
             return "The factory bank is read-only. Save the bank to a file first; then the copy can be edited.";
-        bank.programs[static_cast<size_t> (i)] = p;
+        updated = bank;
+        gen = generation;
     }
-    setCurrent (i, p.meta, false);
+    updated.programs[static_cast<size_t> (i)] = p;
+    juce::File written;
+    if (auto e = writeUserBank (updated, written); e.isNotEmpty())
+        return e; // memory unchanged: the slot still holds what the file holds
+    {
+        const juce::ScopedLock sl (lock);
+        if (gen != generation || bankFile != written)
+            return "The bank changed while it was being written.";
+        bank = std::move (updated);
+    }
+    setCurrent (i, p.meta, false, false);
     notifyHost();
-    broadcaster.sendSynchronousChangeMessage();
+    broadcastIfMessageThread();
     return {};
 }
 
-void PresetManager::renameProgram (int i, const juce::String& name)
+juce::String PresetManager::renameProgram (int i, const juce::String& name)
 {
-    if (i < 0 || i >= kBankSize)
-        return;
+    if (i < 0 || i >= bankSize())
+        return "No such slot.";
     const auto n = sanitiseName (name);
+    bool userBank = false;
+    Bank updated;
+    std::uint32_t gen = 0;
     {
         const juce::ScopedLock sl (lock);
-        if (i == index.load (std::memory_order_relaxed))
+        userBank = status == BankStatus::User;
+        if (userBank)
+        {
+            updated = bank;
+            gen = generation;
+        }
+    }
+    if (userBank)
+    {
+        updated.programs[static_cast<size_t> (i)].meta.name = n;
+        juce::File written;
+        if (auto e = writeUserBank (updated, written); e.isNotEmpty())
+            return e; // nothing renamed
+        const juce::ScopedLock sl (lock);
+        if (gen != generation || bankFile != written)
+            return "The bank changed while it was being written.";
+        bank = std::move (updated);
+    }
+    {
+        const juce::ScopedLock sl (lock);
+        if (! detached.load (std::memory_order_relaxed) && i == index.load (std::memory_order_relaxed))
             current.name = n;
-        if (! bankIsFactory)
-            bank.programs[static_cast<size_t> (i)].meta.name = n;
     }
     notifyHost();
-    if (onMessageThread())
-        broadcaster.sendSynchronousChangeMessage();
+    broadcastIfMessageThread();
+    return {};
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -452,10 +530,16 @@ juce::ValueTree PresetManager::createSessionInfo() const
 {
     juce::ValueTree t (kInfoType);
     const juce::ScopedLock sl (lock);
-    t.setProperty ("bankName", bank.name, nullptr);
-    t.setProperty ("bankKind", bankIsFactory ? "factory" : "user", nullptr);
-    t.setProperty ("bankPath", bankIsFactory ? juce::String() : bankFile.getFullPathName(), nullptr);
-    t.setProperty ("program", index.load (std::memory_order_relaxed), nullptr);
+    juce::String reference;
+    if (status == BankStatus::User)
+        reference = bankFile.getParentDirectory() == locations.banks() ? bankFile.getFileName() : juce::String(); // a plain name, never a path
+    else if (status == BankStatus::Pending || status == BankStatus::Missing)
+        reference = bankReference;
+    const bool isUser = status != BankStatus::Factory;
+    t.setProperty ("bankKind", isUser ? "user" : "factory", nullptr);
+    t.setProperty ("bank", reference, nullptr);
+    t.setProperty ("bankName", isUser && status != BankStatus::User ? bankDisplayName : bank.name, nullptr);
+    t.setProperty ("program", detached.load (std::memory_order_relaxed) ? -1 : index.load (std::memory_order_relaxed), nullptr);
     t.setProperty ("name", current.name, nullptr);
     t.setProperty ("category", current.category, nullptr);
     t.setProperty ("author", current.author, nullptr);
@@ -466,34 +550,27 @@ juce::ValueTree PresetManager::createSessionInfo() const
 void PresetManager::restoreSessionInfo (const juce::ValueTree& info)
 {
     // The sound itself came with the parameters; this only restores what the preset bar and the
-    // host program list show. Whatever the bank's fate, the sound is exactly the saved one.
+    // host program list show. No file is touched here: a user bank is looked up later, on the
+    // message thread (resolvePendingBank). Every value is untrusted and parsed with bounds.
+    const juce::ScopedLock w (writer);
     Meta meta;
     int slot = 0;
     bool wasModified = true;
-    Bank restoredBank = factory;
-    juce::String restoredPath;
+    bool userBank = false;
+    juce::String reference, displayName;
 
     if (info.isValid() && info.hasType (kInfoType))
     {
-        slot = std::clamp (static_cast<int> (info.getProperty ("program", 0)), 0, kBankSize - 1);
+        slot = json::parseBoundedInt (info.getProperty ("program", 0).toString().toStdString(), -1, bankSize() - 1, 0);
         meta.name = sanitiseName (info.getProperty ("name", "Untitled").toString());
         meta.category = sanitiseText (info.getProperty ("category", "").toString(), kMaxCategoryChars);
         meta.author = sanitiseText (info.getProperty ("author", "").toString(), kMaxAuthorChars);
-        wasModified = static_cast<bool> (info.getProperty ("modified", true));
-        if (info.getProperty ("bankKind", "factory").toString() == "user")
-        {
-            const juce::File f (info.getProperty ("bankPath", "").toString());
-            juce::MemoryBlock data;
-            if (f != juce::File() && readFile (f, data).isEmpty())
-            {
-                auto parsed = parseBank (schema, static_cast<const char*> (data.getData()), data.getSize());
-                if (parsed.ok)
-                {
-                    restoredBank = std::move (parsed.value);
-                    restoredPath = f.getFullPathName();
-                }
-            }
-        }
+        wasModified = parseFlag (info.getProperty ("modified", true), true);
+        userBank = info.getProperty ("bankKind", "factory").toString() == "user";
+        // Only a plain file name is ever used (checked again when it is resolved); an absolute
+        // "bankPath" from an earlier development build is ignored.
+        reference = info.getProperty ("bank", "").toString().substring (0, 256);
+        displayName = sanitiseName (info.getProperty ("bankName", "").toString());
     }
     else
     {
@@ -502,16 +579,82 @@ void PresetManager::restoreSessionInfo (const juce::ValueTree& info)
 
     {
         const juce::ScopedLock sl (lock);
-        bank = std::move (restoredBank);
-        bankIsFactory = restoredPath.isEmpty();
-        bankFile = bankIsFactory ? juce::File() : juce::File (restoredPath);
-        index.store (slot, std::memory_order_relaxed);
-        current = meta;
+        ++generation;
+        bank = factory;
+        bankFile = juce::File();
+        status = userBank ? BankStatus::Pending : BankStatus::Factory;
+        bankReference = userBank ? reference : juce::String();
+        bankDisplayName = userBank ? displayName : juce::String();
     }
-    modified.store (wasModified, std::memory_order_relaxed);
+    setCurrent (slot, meta, wasModified, slot < 0);
     queuedProgram.store (-1, std::memory_order_relaxed);
+    if (userBank)
+        resolvePending.store (true, std::memory_order_release);
+    // The host and the bar are told by sessionRestored(), after the caller released the writer lock.
+}
+
+void PresetManager::sessionRestored()
+{
     notifyHost();
-    if (onMessageThread())
-        broadcaster.sendSynchronousChangeMessage();
+    broadcastIfMessageThread();
+}
+
+void PresetManager::resolvePendingBank()
+{
+    jassert (onMessageThread());
+    juce::String reference;
+    std::uint32_t gen = 0;
+    juce::File folder;
+    {
+        const juce::ScopedLock sl (lock);
+        if (status != BankStatus::Pending)
+            return;
+        reference = bankReference;
+        gen = generation;
+        folder = locations.banks();
+    }
+    const auto& inst = schema.instrument();
+    Bank loaded;
+    bool ok = false;
+    const auto file = resolveBankFile (folder, reference, inst.bankExtension);
+    if (file != juce::File())
+    {
+        std::string data;
+        if (readPresetFile (file, kMaxFileBytes, false, data).isEmpty())
+        {
+            auto parsed = parseBank (schema, data);
+            if (parsed.ok)
+            {
+                loaded = std::move (parsed.value);
+                ok = true;
+            }
+        }
+    }
+    {
+        const juce::ScopedLock sl (lock);
+        if (gen != generation || status != BankStatus::Pending)
+            return; // something else changed the bank meanwhile
+        if (ok)
+        {
+            status = BankStatus::User;
+            bank = std::move (loaded);
+            bank.programs.resize (static_cast<size_t> (bankSize()), makeInitProgram (schema));
+            bankFile = file;
+            bankReference.clear();
+        }
+        else
+        {
+            // Not found (or unreadable, or refused): the restored sound and its name stay, but it
+            // belongs to no slot; the factory bank is shown, and the bar says the bank is missing.
+            status = BankStatus::Missing;
+            bank = factory;
+            index.store (0, std::memory_order_relaxed);
+            detached.store (true, std::memory_order_relaxed);
+        }
+    }
+    if (! ok)
+        modified.store (true, std::memory_order_relaxed);
+    notifyHost();
+    broadcaster.sendSynchronousChangeMessage();
 }
 } // namespace vs::presets
