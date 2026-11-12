@@ -48,6 +48,13 @@ struct NoteEvent
 - Buffer capacity is fixed at prepare time (2048 events per render call). On overflow the remaining
   events of that block are dropped and an `AllNotesOff` is appended at the last offset, so a note
   can never hang.
+- **Panic semantics:** `AllNotesOff` (CC 123 and the overflow marker) releases all keys **and clears
+  the sustain pedal**, so a held pedal can never keep notes hanging. `AllSoundOff` (CC 120) also
+  silences the voices immediately. `ResetControllers` (CC 121) resets pitch bend, mod wheel and
+  the sustain pedal (notes held only by the pedal are released).
+- Malformed channel messages (too short, or a data byte with the high bit set) are dropped, not
+  interpreted. Events positioned before the block are applied at offset 0; events at or after its
+  end are applied after the last sample; a zero-length block still applies its events.
 - `Part::render` takes `std::span<const NoteEvent>` instead of a `juce::MidiBuffer`. Events are applied
   sample-accurately by splitting the block, as today.
 - The same type is the input and output of the arpeggiator/sequencer (section 6), which is why it
@@ -157,7 +164,9 @@ Permitted means (implementer's choice):
 Must stay true (existing tests, do not relax): alias ≤ −100 dB up to a 5 kHz fundamental; VCF
 −12.04/−6.02 dB at fc; self-oscillation at fc ± 3 %; static pitch error ≤ 0.1 cent; envelope
 timing; sample-accurate note-on; deterministic renders; no zipper noise on parameter moves
-(add a test if smoothing changes).
+(add a test if smoothing changes). **Renders must not depend on the host block size or on where
+events split the block, at any Vintage amount** (tested with Vintage at maximum). Approximations
+return NaN for NaN input, so the processor's non-finite output guard still fires.
 
 ### 3.6 Gates for M2
 
