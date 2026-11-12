@@ -26,12 +26,14 @@ Run these in order and stop at the first failure. Report each step as pass, fail
    refuses the command, ask the user under "What I need from you" to run it with `! `.
 4. **VST3 validator** (not wired up yet; it gets built from the VST3 SDK once added):
    `validator "<path>.vst3"`
-5. **CPU benchmark:** `build/mac/tests/voice_bench`. M1 baseline on an Apple M5 Pro: 0.35–0.43 % of one core
-   per voice at 2×, and 0.71–0.75 % at 4× (run-to-run spread). Since the CI speed-up, `voice_bench`
-   links the non-LTO `vs_test_core`, which measured 0.47 % / 0.75 %. That is a slightly pessimistic
-   figure for the shipped (LTO) plugin; compare new runs against this one.
-   Budget: 16 voices per part with 2× oversampling, and 32 voices in Dual mode must stay under 15% of one
-   core at 48 kHz. Flag any regression above 5%.
+5. **CPU benchmark:** `build/mac/tests/voice_bench` (best of 3; run it with no build or other heavy
+   job running). It prints one Part with one voice, then 1/16/32 voices driven directly, the
+   per-part overhead and a projection against the budget. Baseline on an Apple M5 Pro, non-LTO
+   `vs_test_core`, 2026-11-12: Part with one voice 0.33–0.36 % at 2× and 0.72–0.74 % at 4×;
+   **32 voices at 2× = 11.1–11.5 % (0.35 % per voice)**; per-part overhead about 0.04 %.
+   This is slightly pessimistic for the shipped (LTO) plugin.
+   Budget: 32 voices at 2× oversampling (Dual mode) under 15 % of one core at 48 kHz, effects
+   included. 4× is offline only and has no real-time budget. Flag any regression above 5 %.
 
 Windows CI: after a push, check with `gh run list --limit 3` and `gh run view <id> --log-failed`.
 

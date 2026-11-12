@@ -30,7 +30,13 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   the plugin by them.
 - **pluginval: Claude runs it itself** (official Tracktion release v1.0.4, unpacked in the session
   scratchpad). Don't hand it to the user unless the harness refuses the command. See skill `validate-plugin`.
-- **Repo:** GitHub `romuaa/vintage-synth` (private), branch `main`. Commit and push only when the user asks.
+- **Repo:** GitHub `romuaa/vintage-synth` (private), branch `main`.
+- **Workflow: orchestrated agents, branches + PR** (skill `orchestrate`). Agents commit on feature
+  branches; the orchestrator pushes them as PRs so CI validates Windows. **Merge to `main` only after
+  the owner approves that milestone.** Never commit to `main` directly, never force-push.
+  The owner auditions at the end of M2, M5 and M6 and sets the UI direction before M7.
+- **Contracts:** `docs/architecture.md` defines the interfaces agents build against (note events,
+  voice allocation, new parameters, effects, arp/seq). Change it only in its own commit.
 - **CI:** `.github/workflows/build.yml` builds, tests, and runs pluginval on macOS and Win x64.
   Win ARM64 runs build, unit tests and host_smoke (there's no ARM64 pluginval). Check results with
   `gh run list` / `gh run view <id> --log-failed` (gh is installed and authenticated). Never claim
@@ -58,14 +64,14 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   all panel interpretations confirmed by the owner).
 - CI: green on macOS universal, Windows x64 and Windows ARM64 (build, tests, host_smoke, pluginval
   where available); Trivy green; Dependabot active. History: `CHANGELOG.md`.
-- Open CI item: confirm the compiler cache pays off. The first (cold) run after enabling it took
-  macOS 14 / Win x64 21 / Win ARM64 15.5 min. On the next push, compare the times and the cache hit
-  rate. If the warm run isn't clearly faster, revisit (`docs/engineering-notes.md`, CI section).
-- **Next: M2 polyphony** — 16 voices per part, Poly/Unison/Solo assign modes, portamento, voice
-  stealing with a 2–5 ms fade, velocity, configurable bend range. Replaces the mono last-note logic
-  in `engine/Part`; keep `voice_bench` within the CPU budget (see skill `validate-plugin`).
-- Later: M3 Upper part + Whole/Dual/Split, M4 arpeggiator + 16-step sequencer, M5 chorus/delay/reverb,
-  M6 presets/banks + golden renders, M7 custom UI, M8 hardening/signing/release.
+- Compiler cache confirmed: a warm CI run takes macOS 3.5 / Win x64 6.7 / Win ARM64 5.9 min (98 % hits).
+- **Wave 0 (contracts): done** — `docs/architecture.md`; judgement calls in `docs/decisions.md`
+  are marked (review) until the owner confirms them.
+- **Next: Wave 1** — serial: **M2 polyphony** (16 voices, Poly/Unison/Solo, portamento, 3 ms steal
+  fade, velocity, bend range, sustain pedal, mod wheel) including the per-voice CPU optimisation;
+  parallel: **M5 effect blocks** (JUCE-free, `source/fx/`), VST3 validator, golden-render harness.
+- Then: Wave 2 = M3 Upper part + Whole/Dual/Split, with M4 arp/sequencer in parallel;
+  Wave 3 = integrate M4/M5 + M6 presets/banks/goldens; Wave 4 = M7 custom UI + M8 release.
 
 ## Layout
 
@@ -78,6 +84,7 @@ source/          PluginProcessor.*   (later: fx/ presets/ ui/)
 tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
 tests/benchmarks/ voice_bench (CPU cost per voice)
 tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)
+docs/architecture.md  contracts between work streams (interfaces, behaviour, gates)
 docs/decisions.md  design decision log (what we chose and why)
 docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
 README.md        public overview, build and test instructions
@@ -149,6 +156,7 @@ Say plainly which of these steps you could not run locally (e.g. Windows ARM64 r
 | `add-parameter` | Adding or changing any parameter, preset field, or saved state |
 | `realtime-review` | Writing or reviewing any code reachable from `processBlock` |
 | `release` | Signing, notarization, installers, version bumps |
+| `orchestrate` | Starting or resuming milestone work with agents (`/orchestrate`) |
 
 ## Ending a turn — "What I need from you"
 

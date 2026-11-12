@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### Wave 0 — contracts and orchestration (2026-11-12)
+- `docs/architecture.md`: contracts for M2–M5 (note events, voice allocation, new per-part
+  parameters, CPU targets, effect block interface, arp/sequencer and test-infrastructure outlines).
+- Development workflow: agents on feature branches, pull requests for CI, owner approval per
+  milestone (skill `orchestrate`).
+- Compiler cache verified on a warm CI run: macOS 3.5 min, Windows x64 6.7 min, Windows ARM64 5.9 min.
+
 ### CI and project infrastructure (2026-11-12)
 - CI builds macOS universal, Windows x64 and Windows ARM64 on every push and pull request, runs the
   unit tests and the VST3 host smoke test on all three, and pluginval (strictness 10) on macOS and

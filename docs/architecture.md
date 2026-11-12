@@ -1,0 +1,248 @@
+# Architecture contracts
+
+The interfaces that let milestones be built in parallel. Each section is the contract for one work
+stream: what it must provide, what it may touch, and the gates it must pass. The *reasons* for the
+choices are in `docs/decisions.md`. Internals not specified here are the implementer's call.
+
+Change a contract only in its own commit, and only when no agent is working against it.
+
+## 1. Signal and event flow (target after M5)
+
+```
+host MIDI ─► EventParser ─► KeyRouter ─► [Arp/Seq] ─► Part "lower" ─┐ mono
+ (raw bytes)  (NoteEvent)   (M3: whole/   (M4, per     Part "upper" ─┤ mono
+                             dual/split)   part)                     ▼
+                                                    PartMixer (level, balance, pan) ─► stereo bus
+                                                    ─► Chorus ─► Delay ─► Reverb ─► master gain
+                                                    ─► NaN guard + clamp ─► host
+```
+
+- A **Part** is mono from its voices through its decimator (one decimator per part). Stereo starts at
+  the PartMixer. Voices run at the oversampled rate; everything after the decimator runs at the host rate.
+- FX add **no latency**. Reported latency stays decimator + BLEP delay.
+- Everything in this diagram runs on the audio thread: all `CLAUDE.md` real-time rules apply.
+
+## 2. Note events (introduced in M2)
+
+`source/engine/NoteEvent.h`, JUCE-free, plain data:
+
+```cpp
+namespace vs
+{
+enum class EventType : std::uint8_t { NoteOn, NoteOff, PitchBend, ModWheel, SustainPedal,
+                                      AllNotesOff, AllSoundOff, ResetControllers };
+
+struct NoteEvent
+{
+    int offset;          // sample position inside the current render call, host rate, ascending
+    EventType type;
+    std::uint8_t note;   // NoteOn / NoteOff
+    float value;         // NoteOn: velocity 0..1; PitchBend: -1..1; ModWheel: 0..1; SustainPedal: 0 or 1
+};
+}
+```
+
+- The processor parses raw MIDI bytes **once** per block into a preallocated `NoteEvent` buffer
+  (never build a `juce::MidiMessage`). NoteOn with velocity 0 becomes NoteOff. Channel is ignored
+  (omni) until M3 decides otherwise. Unknown messages are dropped.
+- Buffer capacity is fixed at prepare time (2048 events per render call). On overflow the remaining
+  events of that block are dropped and an `AllNotesOff` is appended at the last offset, so a note
+  can never hang.
+- `Part::render` takes `std::span<const NoteEvent>` instead of a `juce::MidiBuffer`. Events are applied
+  sample-accurately by splitting the block, as today.
+- The same type is the input and output of the arpeggiator/sequencer (section 6), which is why it
+  must stay JUCE-free and trivially copyable.
+
+## 3. M2 — polyphony (serial track)
+
+### 3.1 Files
+
+| File | Content |
+|---|---|
+| `engine/NoteEvent.h` (new) | Section 2 |
+| `engine/VoiceAllocator.h` (new, JUCE-free) | Pure note → voice decision logic, no DSP, unit-testable without audio |
+| `engine/Voice.*`, `engine/Part.*` | 16 voices, steal fade, portamento, velocity, optimisation |
+| `PluginProcessor.*` | Event parsing, `Part::render` call |
+| `params/PartParamList.h`, `Mappings.h`, `ParameterLayout.cpp` | New parameters (3.4) |
+| `tests/dsp_unit/` | `VoiceAllocatorTests.cpp` (new), `PartTests.cpp` (extended) |
+
+### 3.2 Behaviour
+
+`kMaxVoices = 16` per part. Voice `i` of a part is seeded `partSeed + i` (deterministic renders).
+One LFO per part, shared by all voices. The LFO delay restarts when a note starts with no other key held.
+
+**Assign modes** (per part):
+
+| Mode | Behaviour |
+|---|---|
+| Poly | One voice per note. Choice order for a new note: (1) a voice already sounding the same note (retrigger it), (2) the voice that has been idle longest, (3) steal. |
+| Unison | Monophonic, last-note priority. `unison voices` (2/4/8/16) voices play the note, detuned symmetrically across `unison detune` (0–50 ct total spread). Output is scaled by 1/√n so loudness stays roughly constant. |
+| Solo | One voice, last-note priority: a new note retriggers the envelopes; releasing a key while another is held returns to that note **without** retrigger (as in M1). |
+
+Changing the assign mode or the unison voice count releases all sounding voices (no reset click).
+
+**Stealing** (Poly, when all 16 are busy): steal the oldest voice in release; if none is in release,
+the oldest held voice, but never the most recently started one. The stolen voice fades out over
+**3 ms** (linear), is reset, and then starts the new note, so a stolen note starts 3 ms late.
+No extra voices are allocated for the fade.
+
+**Sustain pedal (CC 64):** key releases are deferred while the pedal is down and applied when it
+comes up. In Solo/Unison the pedal holds the sounding note.
+
+**Portamento** (per part): RC glide of the pitch (in semitones); `porta time` is the time to cover
+99 % of the interval, 0 = off. Mode `Always` or `Legato` (glide only when a key is already held).
+In Poly, a new voice glides from the pitch of the previously played note.
+
+**Velocity** (per part):
+- `vel → VCA`: gain = 1 − amount × (1 − velocity).
+- `vel → VCF`: the VCF envelope-mod depth is scaled by 1 − amount × (1 − velocity).
+
+**Pitch bend range** (per part): 0–12 semitones, default 2. **Mod wheel (CC 1)** adds vibrato: it
+adds `wheel × mod wheel depth` to the VCO LFO mod amount (same taper and target switch as the slider).
+
+### 3.3 Allocator requirements
+
+- No allocation, no JUCE, no DSP state. It tracks key state, pedal state and voice ages, and emits
+  actions for the Part to execute: *start(voice, note, velocity, glideFrom)*, *retarget(voice, note)*
+  (legato pitch change), *release(voice)*, *steal(voice, note, velocity, glideFrom)*.
+- The Part reports back when a voice has gone idle (ENV-2 finished).
+- Deterministic: the same event sequence gives the same voice assignment.
+- Exact signatures are the implementer's choice; the unit tests are written against behaviour in 3.2.
+
+### 3.4 New parameters (all per part, appended to the lists in this order)
+
+Float, appended to `VS_PART_FLOAT_PARAMS`:
+
+| Member | ID suffix | Name | Range (default) | Mapping |
+|---|---|---|---|---|
+| `portaTime` | `porta.time` | Portamento Time | 0..1 (0) | 0 = off, else 5 s × v² |
+| `unisonDetune` | `unison.detune` | Unison Detune | 0..1 (0.3) | 50 ct × v total spread |
+| `velToVca` | `vel.vca` | Velocity → VCA | 0..1 (0.5) | linear amount |
+| `velToVcf` | `vel.vcf` | Velocity → VCF | 0..1 (0) | linear amount |
+| `modWheelDepth` | `mod.wheel_vco` | Mod Wheel Vibrato | 0..1 (0.3) | added to VCO LFO mod |
+
+Choice, appended to `VS_PART_CHOICE_PARAMS`:
+
+| Member | ID suffix | Name | Choices (default) |
+|---|---|---|---|
+| `assignMode` | `assign.mode` | Assign Mode | Poly, Unison, Solo (Poly) |
+| `unisonVoices` | `assign.unison_voices` | Unison Voices | 2, 4, 8, 16 (4) |
+| `portaMode` | `porta.mode` | Portamento Mode | Always, Legato (Always) |
+| `bendRange` | `bend.range` | Bend Range | 0 … 12 semitones (2) |
+
+Follow the `add-parameter` skill. `stateVersion` stays 1 (pre-release). The host parameter count
+goes from 78 to 96; update `host_smoke` and `ProcessorTests`.
+
+### 3.5 CPU optimisation (part of M2, done **before** the voice count goes up)
+
+Budget: 32 voices at 2× oversampling, 48 kHz, under **15 % of one core** on the reference Mac,
+*including* part overhead and leaving room for the effects (≤ 1.5 %, section 5).
+
+Baseline (`voice_bench`, non-LTO, best of 3, 2026-11-12): **0.35 % per voice** at 2× with 32 voices
+running, so 32 voices ≈ 11.2–11.5 %. Per-part overhead (smoothing, LFO, decimator) is about 0.04 %.
+That fits, but M2 adds per-voice work (glide, velocity, steal fade, unison detune) and the effects
+need their share. Target for M2: **≤ 0.30 % per voice** with all 32 running, measured the same way.
+Where the time goes inside a voice has not been profiled yet; profile before optimising.
+
+Permitted means (implementer's choice):
+- Control-rate coefficient updates (pitch → phase increment, cutoff → `g`) with interpolation
+  between updates. Audio-rate accuracy is required only where the modulator is audio-rate
+  (cross-mod, sync).
+- Parameter smoothing at control rate instead of 23 one-poles per oversampled sample.
+- Voice-by-voice block rendering into an accumulation buffer; skip idle voices entirely.
+- Bounded-error fast approximations of `exp2`/`tan`, with the error stated and tested.
+- SIMD only as portable code (plain loops the compiler vectorises, or `juce::dsp::SIMDRegister`);
+  no x86-only intrinsics without a NEON path.
+
+Must stay true (existing tests, do not relax): alias ≤ −100 dB up to a 5 kHz fundamental; VCF
+−12.04/−6.02 dB at fc; self-oscillation at fc ± 3 %; static pitch error ≤ 0.1 cent; envelope
+timing; sample-accurate note-on; deterministic renders; no zipper noise on parameter moves
+(add a test if smoothing changes).
+
+### 3.6 Gates for M2
+
+1. All existing tests pass unchanged, except where the contract changes behaviour (state that per test).
+2. New tests: allocator (every row of 3.2), 16-note chord renders 16 distinct pitches, 17th note
+   steals without a click (bounded sample-to-sample step during the fade), sustain pedal, portamento
+   timing, velocity scaling, bend range, mod wheel, unison detune spread and loudness, mode change
+   without click, event-buffer overflow never hangs a note.
+3. `voice_bench`: 16 and 32 voices inside the budget; per-voice target met or the gap explained.
+4. pluginval strictness 10; `realtime-review` by a fresh reviewer; CI green on all three targets.
+5. Audition render (`[.render]`) updated with a polyphonic demo for the owner's ear.
+
+## 4. M3 — bi-timbral (outline; refined before Wave 2)
+
+- `KeyRouter` (JUCE-free): Whole = all notes to Lower; Dual = all notes to both parts;
+  Split = notes below the split point to Lower, the rest to Upper. Non-note events go to both parts.
+- `PartMixer`: per-part level via balance, constant-power pan per part, mono → stereo.
+- Global parameters, added in the M3 parameter step: `key.mode`, `key.split_point`, `mix.balance`,
+  and per-part `mix.pan`.
+- Two `Part` instances with different seeds; latency is identical for both.
+
+## 5. M5 — effects (parallel track, new files only)
+
+### 5.1 Common interface
+
+Header-only, JUCE-free, in `source/fx/` (`Chorus.h`, `Delay.h`, `Reverb.h`), namespace `vs::fx`:
+
+```cpp
+struct XParams { /* plain floats/ints in physical units (Hz, seconds, 0..1) */ };
+
+class X
+{
+public:
+    void prepare (double sampleRate, int maxBlockSize);   // the only place that allocates
+    void reset() noexcept;                                // clear all state, no allocation
+    void setParams (const XParams&) noexcept;             // once per block; the block smooths internally
+    void process (float* left, float* right, int numSamples) noexcept;  // in place, dry + wet
+    double tailSeconds() const noexcept;                  // for getTailLengthSeconds()
+};
+```
+
+- Sample rates 44.1–192 kHz; `numSamples` from 1 to `maxBlockSize`; results must not depend on
+  the block size (same output for 1-sample and 512-sample blocks, within float tolerance).
+- No latency. No allocation, locks or exceptions after `prepare`. No denormal stalls with silent input.
+- With the effect at level/mix 0 or mode Off the output equals the input **bit-exactly**, and
+  switching it on or off never clicks (short crossfade).
+- Own implementations only (AGPLv3). Published algorithms are fine; copied code needs a compatible
+  licence and a note in `docs/decisions.md`.
+- Parameter IDs, host mappings and wiring into the processor are **not** part of this track; they
+  happen in the Wave 3 integration step. Do not touch `source/params/` or `PluginProcessor.*`.
+
+### 5.2 The three effects
+
+| Effect | Character and parameters | Must-pass tests |
+|---|---|---|
+| **Chorus** | Classic bucket-brigade style stereo chorus: mono sum in, L/R modulated in anti-phase, band-limited wet path, clean (no added noise). Params: `mode` (Off, I, II; I slow and deep, II faster), `mix`. | Mono-compatible (L+R has no deep notches at 1 kHz sine), delay modulation stays inside the delay line, interpolation alias/THD ≤ −80 dB for a 1 kHz sine, mode switch click-free. |
+| **Delay** | Stereo delay, `time` 1 ms–2 s, `feedback` 0–95 %, `damping` (low-pass in the feedback path), `pingPong` on/off, `level`. Time changes glide (no zipper, no clicks). | Echo spacing exact to ±1 sample, feedback decay per repeat matches the setting ±0.5 dB, stable at max feedback for 60 s of noise, time sweep without discontinuities. |
+| **Reverb** | Algorithmic hall/plate (FDN or plate topology), lush and smooth to suit pads. Params: `decay` 0.3–20 s (RT60), `damping`, `preDelay` 0–200 ms, `level`. | RT60 at 1 kHz within ±15 % of the setting and independent of sample rate, bounded energy for any parameter combination, L/R tail correlation < 0.5, tail falls below −120 dBFS after silence, no metallic ringing peaks > 6 dB above the mean tail spectrum. |
+
+### 5.3 Gates for M5 blocks
+
+- Tests in `tests/fx_unit/` (Catch2, added to `VintageSynthTests`).
+- `tests/benchmarks/FxBench.cpp` (`fx_bench` target): all three effects together **≤ 1.5 % of one
+  core** at 48 kHz stereo.
+- A hidden `[.render]` test writes an audition WAV (dry pad phrase, then each effect, then all three).
+- `realtime-review` by a fresh reviewer.
+
+## 6. M4 — arpeggiator and sequencer (outline; refined before Wave 2)
+
+A JUCE-free event transformer in `source/seq/`, one instance per part, between the KeyRouter and the Part:
+
+```cpp
+struct Transport { double sampleRate; double bpm; double ppqPosition; bool playing; };
+
+int process (std::span<const NoteEvent> in, const Transport&, int numSamples,
+             std::span<NoteEvent> out) noexcept;   // returns the number of events written, ascending offsets
+```
+
+It never allocates, emits a NoteOff for every NoteOn it emits (also on bypass, mode change and
+transport stop), and is tested purely on event lists.
+
+## 7. Test and validation infrastructure (parallel track in Wave 1)
+
+- **VST3 validator** wired into `ctest` and CI (macOS and Windows x64) next to pluginval.
+- **Golden-render harness** (`tests/render_regression/`): renders a fixed event script offline through
+  the processor and compares against a stored reference. The comparison must tolerate cross-platform
+  float differences (arm64 / x64, clang / MSVC math libraries): compare perceptual features
+  (band energies and envelope over time), not samples. Goldens themselves are created in M6.
