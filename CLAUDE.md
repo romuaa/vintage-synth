@@ -8,6 +8,8 @@ arpeggiator, 16-step sequencer, patch banks, Chorus/Delay/Reverb sends.
 
 The panel is functionally inspired by a classic 80s poly. **Never use third-party brand names,
 logos, or copied panel artwork** in code, UI, presets, or docs. The look and naming are our own.
+The custom UI (M7) also uses **its own layout**, designed for plugin use; it does not reproduce the
+reference panel's arrangement (owner decision).
 
 ## Open decisions (do not assume — ask if work depends on them)
 
