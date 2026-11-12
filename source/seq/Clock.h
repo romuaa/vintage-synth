@@ -13,15 +13,30 @@
 
 #include "Settings.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
 namespace vs::seq
 {
-/** Largest difference (quarter notes) between the position we expect (end of the previous block)
-    and the one the host reports that still counts as continuous playback. Hosts that ramp tempo
-    inside a block deviate by far less; a loop or locate jump is at least a few beats. */
-inline constexpr double kJumpTolerancePpq = 1.0 / 64.0;
+/** Host tempo range the clock accepts; anything else (and non-finite values) is unusable and the
+    internal clock takes over. */
+inline constexpr double kMinHostBpm = 1.0;
+inline constexpr double kMaxHostBpm = 1000.0;
+
+/** How far (quarter notes) the host position may differ from where the previous block ended and
+    still count as the same playback ("drift": tempo ramps, rounding, a host that reports tempo once
+    per block). Larger differences are jumps (loop, locate): the module releases and resynchronises.
+
+    Threshold = half a step, but never less than the duration of the block just rendered (a tempo
+    ramp can mis-predict the end of a block by a fraction of its length), and never more than one
+    step: with less than a step of drift at most one step can be overdue, so it can be fired once
+    (never skipped, never doubled); with more, steps would have to be skipped or bunched up, and
+    resynchronising on the new position is the honest handling. */
+inline double driftLimitPpq (double stepPpq, double lastBlockPpq) noexcept
+{
+    return std::min (std::max (0.5 * stepPpq, lastBlockPpq), stepPpq);
+}
 
 namespace detail
 {
@@ -32,8 +47,8 @@ inline std::int64_t ceilSamples (double x) noexcept
 {
     constexpr double kEps = 1.0e-6;
     constexpr double kLimit = 1.0e15;
-    if (! std::isfinite (x))
-        return 0;
+    if (std::isnan (x))
+        return static_cast<std::int64_t> (kLimit); // "never"
     const double c = std::ceil (x - kEps);
     return static_cast<std::int64_t> (std::clamp (c, -kLimit, kLimit));
 }
@@ -84,10 +99,10 @@ public:
     void reset() noexcept { *this = Clock {}; }
 
     /** Call once at the start of every process call. `internalBpm` is used when the host is not playing. */
-    Block begin (const Transport& tr, int numSamples, double internalBpm) noexcept
+    Block begin (const Transport& tr, int numSamples, double internalBpm, double stepPpq = 0.25) noexcept
     {
-        const double sr = (std::isfinite (tr.sampleRate) && tr.sampleRate > 0.0) ? tr.sampleRate : 44100.0;
-        const bool hostOk = tr.playing && std::isfinite (tr.bpm) && tr.bpm > 0.0
+        const double sr = (std::isfinite (tr.sampleRate) && tr.sampleRate >= 1000.0 && tr.sampleRate <= 1.0e7) ? tr.sampleRate : 44100.0;
+        const bool hostOk = tr.playing && std::isfinite (tr.bpm) && tr.bpm >= kMinHostBpm && tr.bpm <= kMaxHostBpm
                             && std::isfinite (tr.ppqPosition) && std::fabs (tr.ppqPosition) < 1.0e9;
         Block b;
         if (hostOk)
@@ -99,9 +114,10 @@ public:
                 b.jumped = true;
             else if (! prevHost_)
                 b.sourceChanged = b.jumped = true;
-            else if (std::fabs (tr.ppqPosition - expectedPpq_) > kJumpTolerancePpq)
+            else if (std::fabs (tr.ppqPosition - expectedPpq_) > driftLimitPpq (stepPpq, lastBlockPpq_))
                 b.jumped = true;
-            expectedPpq_ = tr.ppqPosition + static_cast<double> (std::max (numSamples, 0)) / b.view.spp;
+            lastBlockPpq_ = static_cast<double> (std::max (numSamples, 0)) / b.view.spp;
+            expectedPpq_ = tr.ppqPosition + lastBlockPpq_;
             intRunning_ = false;
         }
         else
@@ -148,6 +164,7 @@ private:
     bool havePrev_ = false;
     bool prevHost_ = false;
     double expectedPpq_ = 0.0; // host position expected at the start of the next block
+    double lastBlockPpq_ = 0.0; // length of the previous host block in quarter notes
     std::int64_t counter_ = 0; // samples processed so far (internal clock time base)
     bool intRunning_ = false;
     double intAnchorPpq_ = 0.0;

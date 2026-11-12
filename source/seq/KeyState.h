@@ -5,7 +5,9 @@
 // A key is "held" while it is physically down. It is "in the pattern" while held, or after its
 // release while something retains it: the sustain pedal or Hold (latch).
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 
 namespace vs::seq
@@ -33,7 +35,7 @@ public:
             held_[idx (note)] = true;
             ++heldCount_;
         }
-        velocity_[idx (note)] = velocity;
+        velocity_[idx (note)] = sanitiseVelocity (velocity);
         if (inPattern_[idx (note)])
             removeFromOrder (note);
         inPattern_[idx (note)] = true;
@@ -105,6 +107,14 @@ public:
             if (inPattern_[idx (n)])
                 return n;
         return -1;
+    }
+
+    /** Velocity as the module emits it: finite, in [1/127, 1]; NaN becomes 0.8. */
+    static float sanitiseVelocity (float v) noexcept
+    {
+        if (! std::isfinite (v))
+            return 0.8f;
+        return std::clamp (v, 1.0f / 127.0f, 1.0f);
     }
 
 private:

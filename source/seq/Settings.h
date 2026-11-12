@@ -82,15 +82,16 @@ inline constexpr int kMaxOctaves = 4;
 
 /** Everything the user can set. Every field is in musical/physical units; `sanitised()` clamps
     out-of-range or non-finite values (the module applies it on `setSettings`). Settings are
-    applied at the start of the next `process` call; rate/swing/mode/hold changes act at that
-    sample, everything else (pattern, octaves, steps, gate) from the next step. */
+    applied at the start of the next `process` call; mode/hold/rate changes act at that sample (a
+    rate change continues after the last step that fired), everything else (pattern, octaves,
+    steps, gate, swing) from the next step. */
 struct Settings
 {
     // ---- Shared ---------------------------------------------------------------------------
     Mode mode = Mode::Off;
     Rate rate = Rate::Sixteenth;    // step length
-    float swing = 0.5f;             // 0.50..0.75; every second step starts at `swing` of the step pair
-    float gate = 0.5f;              // 0.05..1.0 of the (swung) step; 1.0 releases exactly at the next step
+    double swing = 0.5;             // 0.50..0.75; every second step starts at `swing` of the step pair (double: 0.6 must not land a sample late)
+    double gate = 0.5;              // 0.05..1.0 of the (swung) step; 1.0 = legato: releases exactly at the next step, after the next note starts
     bool hold = false;              // latch; ignored while mode == Off
     double internalBpm = 120.0;     // 20..300; clock tempo while the host transport is not playing
 
@@ -106,8 +107,8 @@ struct Settings
     Settings sanitised() const noexcept
     {
         Settings s = *this;
-        s.swing = clampValue (s.swing, 0.5f, 0.75f, 0.5f);
-        s.gate = clampValue (s.gate, 0.05f, 1.0f, 0.5f);
+        s.swing = clampValue (s.swing, 0.5, 0.75, 0.5);
+        s.gate = clampValue (s.gate, 0.05, 1.0, 0.5);
         s.internalBpm = clampValue (s.internalBpm, 20.0, 300.0, 120.0);
         s.arpOctaves = std::clamp (s.arpOctaves, 1, kMaxOctaves);
         s.seqLength = std::clamp (s.seqLength, 1, kMaxSeqSteps);

@@ -1,6 +1,6 @@
 // Shared clock of the arpeggiator and sequencer: grid positions, sample mapping, host/internal
 // source handling and discontinuity detection. Expectations are computed with integer ticks
-// (1/6144 quarter note) in SeqTestUtil.h, not with the module's own arithmetic.
+// (1/kTick quarter note) in SeqTestUtil.h, not with the module's own arithmetic.
 #include <catch2/catch_test_macros.hpp>
 
 #include "SeqTestUtil.h"
@@ -28,16 +28,16 @@ TEST_CASE ("Rate: steps per quarter note for every rate", "[seq][clock]")
 TEST_CASE ("Grid: step positions equal the exact tick model for every rate and swing", "[seq][clock]")
 {
     for (int r = 0; r < 6; ++r)
-        for (int m = 8; m <= 12; ++m)
+        for (int m = 40; m <= 60; m += 2)
         {
-            const Grid g { kStepsPerQuarter[r], static_cast<double> (m) / 16.0 };
+            const Grid g { kStepsPerQuarter[r], static_cast<double> (m) / 80.0 };
             MCfg c;
             c.d = kStepsPerQuarter[r];
-            c.swing16 = m;
+            c.swing80 = m;
             for (std::int64_t k = -9; k < 200; ++k)
             {
                 INFO ("rate " << r << " swing " << m << " k " << k);
-                CHECK (std::fabs (g.pos (k) * 6144.0 - static_cast<double> (c.pos (k))) < 1.0e-7);
+                CHECK (std::fabs (g.pos (k) * static_cast<double> (kTick) - static_cast<double> (c.pos (k))) < 1.0e-2);
             }
         }
 }
@@ -70,7 +70,9 @@ TEST_CASE ("ceilSamples: first sample at or after a position, with a tolerance o
     CHECK (ceilSamples (-0.5) == 0);
     CHECK (ceilSamples (-1.0) == -1);
     CHECK (ceilSamples (-1.5) == -1);
-    CHECK (ceilSamples (std::nan ("")) == 0);
+    CHECK (ceilSamples (std::nan ("")) == 1000000000000000LL);    // "never", not 0
+    CHECK (ceilSamples (HUGE_VAL) == 1000000000000000LL);
+    CHECK (ceilSamples (-HUGE_VAL) == -1000000000000000LL);
     CHECK (ceilSamples (1.0e300) <= 1000000000000000LL);
 }
 
@@ -154,7 +156,7 @@ TEST_CASE ("Clock: loop jumps, locates and transport start/stop are detected", "
     }
     SECTION ("a jump just above the tolerance")
     {
-        const auto b = clock.begin (host (sr, 120.0, ppq + kJumpTolerancePpq * 1.5), n, 120.0);
+        const auto b = clock.begin (host (sr, 120.0, ppq + driftLimitPpq (0.25, 480.0 / 24000.0) * 1.5), n, 120.0);
         CHECK (b.jumped);
     }
     SECTION ("transport stops, then starts")

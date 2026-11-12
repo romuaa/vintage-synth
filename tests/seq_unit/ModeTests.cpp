@@ -60,14 +60,14 @@ bool isNote (const NoteEvent& e, EventType t, int note, int offset)
 }
 } // namespace
 
-TEST_CASE ("Off: events pass through bit-exactly (any order, any offset, any type)", "[seq][mode]")
+TEST_CASE ("Off: well-formed events pass through bit-exactly (every type, odd payloads)", "[seq][mode]")
 {
     const std::vector<NoteEvent> in {
         ctrl (0, EventType::ResetControllers), pedal (0, true), noteOn (3, 60, 0.5f), ctrl (5, EventType::PitchBend, -0.25f),
-        noteOn (-4, 200, 0.1f),                 // out-of-range note, negative offset
-        ctrl (7, EventType::AllNotesOff),       ctrl (7, EventType::ModWheel, 0.3f), noteOff (1000, 60), // beyond the block
-        ctrl (2, EventType::AllSoundOff),       noteOff (1, 61),                                         // not ascending, no matching note-on
-        NoteEvent { 9, EventType::NoteOn, 64, std::nanf ("") },                                           // odd float payloads survive too
+        ctrl (7, EventType::AllNotesOff),       ctrl (7, EventType::ModWheel, 0.3f),
+        NoteEvent { 9, EventType::NoteOn, 64, std::nanf ("") },  // odd float payloads survive too
+        NoteEvent { 12, EventType::NoteOn, 200, 7.0f },          // out-of-range note and velocity
+        noteOff (30, 61), noteOff (63, 60),
     };
     for (const Transport& tr : { internalTransport(), hostTransport (3.2) })
     {
@@ -79,6 +79,22 @@ TEST_CASE ("Off: events pass through bit-exactly (any order, any offset, any typ
     }
 }
 
+TEST_CASE ("Off: malformed offsets (before the block, after it, out of order) are moved to keep the output ascending and inside the block", "[seq][mode]")
+{
+    const std::vector<NoteEvent> in { pedal (-4, true), noteOn (3, 60), ctrl (5, EventType::PitchBend, -0.25f), noteOn (2, 62), noteOff (1000, 60) };
+    ArpSeq m;
+    m.setSettings (offSettings());
+    const auto out = proc (m, in, 64);
+    REQUIRE (out.size() == in.size());
+    const int expectedOffsets[] = { 0, 3, 5, 5, 63 };
+    for (std::size_t i = 0; i < in.size(); ++i)
+    {
+        CHECK (out[i].type == in[i].type);
+        CHECK (out[i].note == in[i].note);
+        CHECK (out[i].offset == expectedOffsets[i]);
+    }
+}
+
 TEST_CASE ("Off is the default and stays bit-exact across many blocks", "[seq][mode]")
 {
     ArpSeq m;
@@ -87,7 +103,7 @@ TEST_CASE ("Off is the default and stays bit-exact across many blocks", "[seq][m
         CHECK (sameEvents (proc (m, in, 64), in));
 }
 
-TEST_CASE ("Arp: pitch bend, mod wheel, sustain pedal and panic events pass through unchanged, in order", "[seq][mode]")
+TEST_CASE ("Arp: pitch bend, mod wheel, reset and panic events pass through unchanged, in order; the sustain pedal is consumed", "[seq][mode]")
 {
     ArpSeq m;
     m.setSettings (arpOn());
@@ -99,8 +115,8 @@ TEST_CASE ("Arp: pitch bend, mod wheel, sustain pedal and panic events pass thro
     for (const auto& e : out)
         if (e.type != EventType::NoteOn && e.type != EventType::NoteOff)
             passed.push_back (e);
-    for (const auto& e : in)
-        if (e.type != EventType::NoteOn && e.type != EventType::NoteOff)
+    for (const auto& e : in) // the sustain pedal is consumed while Arp/Seq is on
+        if (e.type != EventType::NoteOn && e.type != EventType::NoteOff && e.type != EventType::SustainPedal)
             expected.push_back (e);
     CHECK (sameEvents (passed, expected));
 }

@@ -1,8 +1,8 @@
 // Sample-exact timing of the step clock, through the front-end with one held key.
 //
 // Every expectation comes from the integer tick model in SeqTestUtil.h: positions are integers in
-// 1/6144 quarter notes, tempi are integers in 1/100 bpm, and a sample is
-// ceil(ticks * 6000 * sr / (6144 * bpm100)), all in 64-bit integer arithmetic. The module uses
+// 1/kTick quarter notes, tempi are integers in 1/100 bpm, and a sample is
+// ceil(ticks * 6000 * sr / (kTick * bpm100)), all in 64-bit integer arithmetic. The module uses
 // doubles; the two must agree on every event, to the sample (tolerance 0).
 #include <catch2/catch_test_macros.hpp>
 
@@ -44,34 +44,34 @@ int rateIndex (int d)
     return 3;
 }
 
-Settings arpSettings (int d, int swing16, int gate16)
+Settings arpSettings (int d, int swing80, int gate80)
 {
     Settings s;
     s.mode = Mode::Arp;
     s.rate = kRates[rateIndex (d)];
-    s.swing = static_cast<float> (swing16) / 16.0f;
-    s.gate = static_cast<float> (gate16) / 16.0f;
+    s.swing = static_cast<double> (swing80) / 80.0;
+    s.gate = static_cast<double> (gate80) / 80.0;
     s.arpPattern = ArpPattern::Up;
     return s;
 }
 
 std::string describe (const MCfg& c, std::int64_t bpm100, int block)
 {
-    return "sr " + std::to_string (c.sr) + " bpm100 " + std::to_string (bpm100) + " d " + std::to_string (c.d) + " swing16 "
-           + std::to_string (c.swing16) + " gate16 " + std::to_string (c.gate16) + " block " + std::to_string (block);
+    return "sr " + std::to_string (c.sr) + " bpm100 " + std::to_string (bpm100) + " d " + std::to_string (c.d) + " swing80 "
+           + std::to_string (c.swing80) + " gate80 " + std::to_string (c.gate80) + " block " + std::to_string (block);
 }
 
 /** Samples after which a stretch at this tempo advances a whole number of ticks. */
 std::int64_t lenUnit (std::int64_t bpm100, int sr)
 {
-    const std::int64_t num = 6144 * bpm100;
+    const std::int64_t num = kTick * bpm100;
     const std::int64_t den = 6000 * static_cast<std::int64_t> (sr);
     return den / std::gcd (num, den);
 }
 
 std::int64_t ticksOver (std::int64_t len, std::int64_t bpm100, int sr)
 {
-    return len * 6144 * bpm100 / (6000 * static_cast<std::int64_t> (sr));
+    return len * kTick * bpm100 / (6000 * static_cast<std::int64_t> (sr));
 }
 
 /** The note events a one-key arpeggio must produce for a single host segment. */
@@ -84,7 +84,7 @@ bool checkSingleSegment (const MCfg& c, std::int64_t bpm100, std::int64_t anchor
     r.total = total;
     r.block = block;
     r.segs = { HostSeg { 0, true, bpm100, anchor } };
-    r.changes = { Change { 0, arpSettings (c.d, c.swing16, c.gate16) } };
+    r.changes = { Change { 0, arpSettings (c.d, c.swing80, c.gate80) } };
     r.input = { noteOn (static_cast<int> (keyDown), 60) };
     const RunResult res = run (m, r);
     if (! res.wellFormed)
@@ -108,16 +108,16 @@ bool checkSingleSegment (const MCfg& c, std::int64_t bpm100, std::int64_t anchor
 TEST_CASE ("Timing, host synced: every rate, swing and gate at 120 bpm / 48 kHz is exact to the sample", "[seq][timing]")
 {
     for (int d : kD)
-        for (int swing16 : { 8, 9, 10, 11, 12 })
-            for (int gate16 : { 1, 4, 8, 12, 16 })
+        for (int swing80 : { 40, 45, 48, 50, 53, 55, 60 })
+            for (int gate80 : { 4, 5, 20, 24, 40, 60, 79, 80 })
             {
                 MCfg c;
                 c.sr = 48000;
                 c.d = d;
-                c.swing16 = swing16;
-                c.gate16 = gate16;
+                c.swing80 = swing80;
+                c.gate80 = gate80;
                 std::string why;
-                const bool ok = checkSingleSegment (c, 12000, 6144 * 7 + 1500, 0, 48000 * 2, 480, why);
+                const bool ok = checkSingleSegment (c, 12000, kTick * 7 + 1500, 0, 48000 * 2, 480, why);
                 INFO (describe (c, 12000, 480) << ": " << why);
                 CHECK (ok);
             }
@@ -132,12 +132,12 @@ TEST_CASE ("Timing, host synced: random tempi (non-integer too), sample rates, b
         MCfg c;
         c.sr = kSampleRates[rng.below (6)];
         c.d = kD[rng.below (6)];
-        c.swing16 = 8 + rng.below (5);
-        c.gate16 = 1 + rng.below (16);
+        c.swing80 = 40 + rng.below (21);
+        c.gate80 = 4 + rng.below (77);
         const std::int64_t bpm100 = kTempi[rng.below (8)];
         const int block = kBlocks[i % 6];
         // Start anywhere in a bar (any tick, so also off the sample grid); key a little into the block.
-        const std::int64_t anchor = static_cast<std::int64_t> (rng.below (6144 * 16)) + 6144 * 100;
+        const std::int64_t anchor = static_cast<std::int64_t> (rng.below (static_cast<int> (kTick * 16))) + kTick * 100;
         const std::int64_t keyDown = rng.below (3000);
         // At least a few steps, at most a couple of seconds; fewer samples for 1-sample blocks.
         const std::int64_t stepSamples = 60 * static_cast<std::int64_t> (c.sr) * 100 / (bpm100 * c.d);
@@ -156,17 +156,17 @@ TEST_CASE ("Timing: two blocks split anywhere give the same events as one, at ev
     MCfg c;
     c.sr = 44100;
     c.d = 6;
-    c.swing16 = 11;
-    c.gate16 = 10;
+    c.swing80 = 53;
+    c.gate80 = 49;
     const std::int64_t bpm100 = 13337;
     std::vector<NoteEvent> reference;
     std::string why;
-    REQUIRE (checkSingleSegment (c, bpm100, 6144 * 3 + 77, 211, 44100 * 3, 44100 * 3, why, true, &reference));
+    REQUIRE (checkSingleSegment (c, bpm100, kTick * 3 + 77, 211, 44100 * 3, 44100 * 3, why, true, &reference));
     REQUIRE (reference.size() > 20);
     for (const int block : { 1, 2, 3, 5, 8, 64, 127, 128, 480, 1000, 4096, 10007 })
     {
         std::vector<NoteEvent> events;
-        REQUIRE (checkSingleSegment (c, bpm100, 6144 * 3 + 77, 211, 44100 * 3, block, why, true, &events));
+        REQUIRE (checkSingleSegment (c, bpm100, kTick * 3 + 77, 211, 44100 * 3, block, why, true, &events));
         INFO ("block " << block);
         CHECK (sameEvents (events, reference));
     }
@@ -181,7 +181,7 @@ TEST_CASE ("Timing: sub-sample step positions round up to the first sample at or
     r.total = 20000;
     r.block = 100;
     r.segs = { HostSeg { 0, true, 9750, 0 } };
-    r.changes = { Change { 0, arpSettings (4, 8, 8) } };
+    r.changes = { Change { 0, arpSettings (4, 40, 40) } };
     r.input = { noteOn (0, 60) };
     const auto notes = notesOnly (run (m, r).events);
     REQUIRE (notes.size() == 6);
@@ -200,8 +200,8 @@ TEST_CASE ("Timing, tempo changes: stepwise tempo changes between blocks, non-in
         MCfg c;
         c.sr = kSampleRates[rng.below (6)];
         c.d = kD[rng.below (6)];
-        c.swing16 = 8 + rng.below (5);
-        c.gate16 = 1 + rng.below (16);
+        c.swing80 = 40 + rng.below (21);
+        c.gate80 = 4 + rng.below (77);
         const int block = kBlocks[i % 6];
 
         // Four stretches with different tempi; each one a whole number of ticks long so the host
@@ -209,7 +209,7 @@ TEST_CASE ("Timing, tempo changes: stepwise tempo changes between blocks, non-in
         std::vector<HostSeg> hs;
         std::vector<MSeg> ms;
         std::int64_t start = 0;
-        std::int64_t anchor = 6144 * 50 + rng.below (6144);
+        std::int64_t anchor = kTick * 50 + rng.below (static_cast<int> (kTick));
         bool feasible = true;
         for (int k = 0; k < 4 && feasible; ++k)
         {
@@ -244,7 +244,7 @@ TEST_CASE ("Timing, tempo changes: stepwise tempo changes between blocks, non-in
         r.total = start;
         r.block = block;
         r.segs = hs;
-        r.changes = { Change { 0, arpSettings (c.d, c.swing16, c.gate16) } };
+        r.changes = { Change { 0, arpSettings (c.d, c.swing80, c.gate80) } };
         r.input = { noteOn (5, 60) };
         const RunResult res = run (m, r);
         std::int64_t steps = 0;
@@ -270,8 +270,8 @@ TEST_CASE ("Timing, loop jumps: backward and forward jumps resynchronise on the 
         MCfg c;
         c.sr = kSampleRates[rng.below (6)];
         c.d = kD[rng.below (6)];
-        c.swing16 = 8 + rng.below (5);
-        c.gate16 = (i % 3 == 0) ? 16 : 1 + rng.below (16); // 100 % gates so that a note is usually sounding at the jump
+        c.swing80 = 40 + rng.below (21);
+        c.gate80 = (i % 3 == 0) ? 80 : 4 + rng.below (77); // 100 % gates so that a note is usually sounding at the jump
         const int block = kBlocks[i % 6];
         const std::int64_t bpm100 = kTempi[rng.below (8)];
         const std::int64_t seg = block == 1 ? c.sr / 5 : c.sr / 2;
@@ -279,16 +279,16 @@ TEST_CASE ("Timing, loop jumps: backward and forward jumps resynchronise on the 
         std::vector<HostSeg> hs;
         std::vector<MSeg> ms;
         std::int64_t start = 0;
-        std::int64_t anchor = 6144 * 300 + rng.below (6144 * 4);
+        std::int64_t anchor = kTick * 300 + rng.below (static_cast<int> (kTick * 4));
         for (int k = 0; k < 4; ++k)
         {
             const std::int64_t len = seg + rng.below (997);
             hs.push_back (HostSeg { start, true, bpm100, anchor });
             ms.push_back (MSeg { start, len, bpm100, anchor, k > 0 });
             start += len;
-            // Next stretch: loop back or jump forward by 200 ticks (more than the 96-tick continuity
-            // tolerance) to several beats, relative to where playback would have continued.
-            const std::int64_t delta = (rng.below (2) == 0 ? -1 : 1) * (200 + rng.below (6144 * 4) + 6144 * rng.below (8));
+            // Next stretch: loop back or jump forward by more than a quarter note (more than any drift
+            // limit, which is at most one step) up to several beats, relative to where playback would have continued.
+            const std::int64_t delta = (rng.below (2) == 0 ? -1 : 1) * (kTick + kTick / 10 + rng.below (static_cast<int> (kTick * 4)) + kTick * rng.below (8));
             anchor = anchor + ticksOver (len, bpm100, c.sr) + delta;
         }
         ArpSeq m;
@@ -297,7 +297,7 @@ TEST_CASE ("Timing, loop jumps: backward and forward jumps resynchronise on the 
         r.total = start;
         r.block = block;
         r.segs = hs;
-        r.changes = { Change { 0, arpSettings (c.d, c.swing16, c.gate16) } };
+        r.changes = { Change { 0, arpSettings (c.d, c.swing80, c.gate80) } };
         r.input = { noteOn (0, 60) };
         const RunResult res = run (m, r);
         std::int64_t steps = 0;
@@ -319,8 +319,8 @@ TEST_CASE ("Timing, loop jump with a note sounding: the note-off lands at offset
     r.sr = 48000;
     r.total = 60000;
     r.block = 4096;
-    r.segs = { HostSeg { 0, true, 12000, 0 }, HostSeg { 30000, true, 12000, 6144 * 8 } };
-    r.changes = { Change { 0, arpSettings (1, 8, 16) } };
+    r.segs = { HostSeg { 0, true, 12000, 0 }, HostSeg { 30000, true, 12000, kTick * 8 } };
+    r.changes = { Change { 0, arpSettings (1, 40, 80) } };
     r.input = { noteOn (0, 60) };
     const auto notes = notesOnly (run (m, r).events);
     // on @0, off+on @24000 (gate 100 %), off @30000 (the jump), on @30000 (the grid point 8.0 is at the jump), ...
@@ -346,8 +346,8 @@ TEST_CASE ("Timing, internal clock: starts on the first key and runs at the modu
         MCfg c;
         c.sr = kSampleRates[rng.below (6)];
         c.d = kD[rng.below (6)];
-        c.swing16 = 8 + rng.below (5);
-        c.gate16 = 1 + rng.below (16);
+        c.swing80 = 40 + rng.below (21);
+        c.gate80 = 4 + rng.below (77);
         const int block = kBlocks[i % 6];
         const std::int64_t bpm100 = 2000 + rng.below (28001); // 20..300 bpm in 0.01 steps
         const std::int64_t keyDown = rng.below (5000);
@@ -359,7 +359,7 @@ TEST_CASE ("Timing, internal clock: starts on the first key and runs at the modu
         r.total = total;
         r.block = block;
         r.segs = { HostSeg { 0, false, 12000, 0 } }; // transport stopped; its tempo is ignored
-        Settings s = arpSettings (c.d, c.swing16, c.gate16);
+        Settings s = arpSettings (c.d, c.swing80, c.gate80);
         s.internalBpm = static_cast<double> (bpm100) / 100.0;
         r.changes = { Change { 0, s } };
         r.input = { noteOn (static_cast<int> (keyDown), 60) };
@@ -385,7 +385,7 @@ TEST_CASE ("Timing, internal clock: nothing is generated before the first key an
     r.total = 48000 * 3;
     r.block = 128;
     r.segs = { HostSeg { 0, false, 12000, 0 } };
-    Settings s = arpSettings (4, 8, 8);
+    Settings s = arpSettings (4, 40, 40);
     s.internalBpm = 120.0;
     r.changes = { Change { 0, s } };
     r.input = { noteOn (30000, 60), noteOff (60500, 60) };
@@ -412,7 +412,7 @@ TEST_CASE ("Timing, internal clock: a new key after silence restarts the clock a
     r.total = 48000 * 4;
     r.block = 100;
     r.segs = { HostSeg { 0, false, 12000, 0 } };
-    Settings s = arpSettings (4, 8, 8);
+    Settings s = arpSettings (4, 40, 40);
     s.internalBpm = 120.0;
     r.changes = { Change { 0, s } };
     r.input = { noteOn (1000, 60), noteOff (7000, 60), noteOn (100123, 62), noteOff (120000, 62) };
@@ -438,7 +438,7 @@ TEST_CASE ("Timing, internal tempo changes between blocks continue from the curr
     r.total = 130000;
     r.block = 500;
     r.segs = { HostSeg { 0, false, 12000, 0 } };
-    Settings s = arpSettings (1, 8, 4);
+    Settings s = arpSettings (1, 40, 20);
     s.internalBpm = 120.0;
     Settings s2 = s;
     s2.internalBpm = 60.0;
@@ -464,15 +464,15 @@ TEST_CASE ("Timing: transport start mid-bar and stop/start with the key held, th
         MCfg c;
         c.sr = kSampleRates[rng.below (6)];
         c.d = kD[rng.below (6)];
-        c.swing16 = 8 + rng.below (5);
-        c.gate16 = (i % 2 == 0) ? 16 : 1 + rng.below (16);
+        c.swing80 = 40 + rng.below (21);
+        c.gate80 = (i % 2 == 0) ? 80 : 4 + rng.below (77);
         const int block = kBlocks[i % 6];
         const std::int64_t hostBpm = kTempi[rng.below (8)];
         const std::int64_t intBpm = 3000 + rng.below (20000);
         const std::int64_t len = block == 1 ? c.sr / 8 : c.sr / 2;
         const std::int64_t keyDown = rng.below (500);
-        const std::int64_t a1 = 6144 * 40 + rng.below (6144 * 4); // host start mid-bar
-        const std::int64_t a2 = 6144 * 3 + rng.below (6144 * 4);
+        const std::int64_t a1 = kTick * 40 + rng.below (static_cast<int> (kTick * 4)); // host start mid-bar
+        const std::int64_t a2 = kTick * 3 + rng.below (static_cast<int> (kTick * 4));
 
         // stopped (internal) -> playing (host) -> stopped (internal) with the key held throughout.
         std::vector<HostSeg> hs { HostSeg { 0, false, 12000, 0 }, HostSeg { len, true, hostBpm, a1 }, HostSeg { 2 * len, false, 12000, 0 },
@@ -485,7 +485,7 @@ TEST_CASE ("Timing: transport start mid-bar and stop/start with the key held, th
         r.total = 4 * len;
         r.block = block;
         r.segs = hs;
-        Settings s = arpSettings (c.d, c.swing16, c.gate16);
+        Settings s = arpSettings (c.d, c.swing80, c.gate80);
         s.internalBpm = static_cast<double> (intBpm) / 100.0;
         r.changes = { Change { 0, s } };
         r.input = { noteOn (static_cast<int> (keyDown), 60) };
@@ -511,7 +511,7 @@ TEST_CASE ("Timing: a rate or swing change acts at the next block on the new gri
     r.total = 80000;
     r.block = 256;
     r.segs = { HostSeg { 0, true, 12000, 0 } };
-    r.changes = { Change { 0, arpSettings (1, 8, 8) }, Change { 30000, arpSettings (2, 8, 8) } };
+    r.changes = { Change { 0, arpSettings (1, 40, 40) }, Change { 30000, arpSettings (2, 40, 40) } };
     r.input = { noteOn (0, 60) };
     const auto notes = notesOnly (run (m, r).events);
     const std::vector<std::pair<std::int64_t, bool>> expected { { 0, true }, { 12000, false }, { 24000, true }, { 36000, false },
@@ -538,7 +538,7 @@ TEST_CASE ("Timing: a host position that jitters slightly (tempo ramps inside bl
             return (static_cast<double> ((r >> 8) % 2001u) - 1000.0) / 1000.0 * 0.004;
         };
         ArpSeq m;
-        m.setSettings (arpSettings (4, 8, 8));
+        m.setSettings (arpSettings (4, 40, 40));
         std::vector<NoteEvent> out (256);
         std::vector<std::int64_t> ons;
         SoundLedger led;
@@ -572,7 +572,7 @@ TEST_CASE ("Timing: a host position that jitters slightly (tempo ramps inside bl
 TEST_CASE ("Timing: a block far longer than any host sends is handled in bounded work", "[seq][timing]")
 {
     ArpSeq m;
-    Settings s = arpSettings (8, 8, 8);
+    Settings s = arpSettings (8, 40, 40);
     s.internalBpm = 300.0;
     m.setSettings (s);
     constexpr int n = 20'000'000; // 7 minutes at 48 kHz: 20000 steps of 1/32 at 300 bpm
@@ -595,15 +595,15 @@ TEST_CASE ("Timing: a block far longer than any host sends is handled in bounded
 
 TEST_CASE ("Timing: gate 100 % releases exactly at the next step and the off precedes the on of the same pitch", "[seq][timing]")
 {
-    for (int swing16 : { 8, 10, 12 })
+    for (int swing80 : { 40, 50, 60 })
     {
         ArpSeq m;
         Run r;
         r.sr = 44100;
         r.total = 44100 * 2;
         r.block = 97;
-        r.segs = { HostSeg { 0, true, 13337, 6144 * 5 + 11 } };
-        r.changes = { Change { 0, arpSettings (4, swing16, 16) } };
+        r.segs = { HostSeg { 0, true, 13337, kTick * 5 + 11 } };
+        r.changes = { Change { 0, arpSettings (4, swing80, 80) } };
         r.input = { noteOn (0, 60) };
         const auto res = run (m, r);
         const auto notes = notesOnly (res.events);
@@ -611,7 +611,7 @@ TEST_CASE ("Timing: gate 100 % releases exactly at the next step and the off pre
         // Strictly alternating off/on pairs at identical offsets, the off first.
         for (std::size_t i = 1; i + 1 < notes.size(); i += 2)
         {
-            INFO ("swing16 " << swing16 << " pair " << i);
+            INFO ("swing80 " << swing80 << " pair " << i);
             CHECK (notes[i].type == vs::EventType::NoteOff);
             CHECK (notes[i + 1].type == vs::EventType::NoteOn);
             CHECK (notes[i].offset == notes[i + 1].offset);

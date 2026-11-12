@@ -63,8 +63,12 @@ inline std::vector<NoteEvent> notesOnly (const std::vector<NoteEvent>& v)
 // ---- Driver -----------------------------------------------------------------------------------
 
 /** Host transport from sample `start` on. The ppq at a block start is
-    anchorTicks / 6144 + (sample - start) * bpm / (60 * sr); one tick is 1/6144 of a quarter note,
-    the unit in which every grid position of every rate/swing/gate used by the tests is an integer. */
+    anchorTicks / kTick + (sample - start) * bpm / (60 * sr); one tick is 1/kTick of a quarter note
+    (kTick = 6144 * 6400), the unit in which every grid position of every rate and every swing and
+    gate that is a multiple of 1/80 is an integer. */
+/** Ticks per quarter note of the exact model. */
+inline constexpr std::int64_t kTick = 6144 * 6400;
+
 struct HostSeg
 {
     std::int64_t start = 0;
@@ -125,7 +129,7 @@ inline RunResult run (ArpSeq& m, const Run& r)
         tr.sampleRate = static_cast<double> (r.sr);
         tr.playing = seg->playing;
         tr.bpm = static_cast<double> (seg->bpm100) / 100.0;
-        tr.ppqPosition = static_cast<double> (seg->anchorTicks) / 6144.0
+        tr.ppqPosition = static_cast<double> (seg->anchorTicks) / static_cast<double> (kTick)
                          + static_cast<double> (s - seg->start) * tr.bpm / (60.0 * static_cast<double> (r.sr));
 
         blockIn.clear();
@@ -167,22 +171,22 @@ struct MCfg
 {
     int sr = 48000;
     int d = 4;     // steps per quarter note: 1 2 3 4 6 8
-    int swing16 = 8; // swing = swing16 / 16 (8 = 50 % .. 12 = 75 %)
-    int gate16 = 8;  // gate = gate16 / 16
+    int swing80 = 40; // swing = swing80 / 80 (40 = 50 % .. 60 = 75 %)
+    int gate80 = 40;  // gate = gate80 / 80
 
-    /** Start of step k in ticks (1 tick = 1/6144 quarter): pair start + swing * pair for odd k. */
+    /** Start of step k in ticks (1 tick = 1/kTick quarter): pair start + swing * pair for odd k. */
     std::int64_t pos (std::int64_t k) const
     {
-        const std::int64_t step = 6144 / d;
+        const std::int64_t step = kTick / d;
         std::int64_t p = step * k;
         if ((k & 1) != 0)
-            p += (step / 16) * (2 * swing16 - 16);
+            p += (step / 80) * (2 * swing80 - 80);
         return p;
     }
     std::int64_t gateEnd (std::int64_t k) const
     {
         const std::int64_t p = pos (k);
-        return p + (gate16 * (pos (k + 1) - p)) / 16;
+        return p + (gate80 * (pos (k + 1) - p)) / 80;
     }
 };
 
@@ -210,14 +214,26 @@ struct MEvent
     int note;
 };
 
-/** Samples (relative to the segment start) of tick position p: ceil((p - anchor) * 60 * sr / (6144 * bpm)). */
+/** Samples (relative to the segment start) of tick position p: ceil((p - anchor) * 60 * sr / (kTick * bpm)). */
 inline std::int64_t relSample (const MCfg& c, const MSeg& s, std::int64_t ticks)
 {
-    return ceilDiv ((ticks - s.anchorTicks) * 6000 * c.sr, 6144 * s.bpm100);
+    return ceilDiv ((ticks - s.anchorTicks) * 6000 * c.sr, kTick * s.bpm100);
 }
 
 /** What a correct module emits (note-ons and note-offs, in output order) for a pattern of steps
-    that cycles from the first step fired, with the pattern active from sample `activation`. */
+    that cycles from the first step fired, with the pattern active from sample `activation`.
+
+    The rules below are contract decisions, stated here once as the spec:
+      - an event at musical time T happens at the first sample at or after T (a step that is already
+        overdue, after a jump or a late activation, happens at the segment's first sample);
+      - the first step is the first one at or after the activation sample;
+      - at a jump (`MSeg::jump`) or a source change what sounds is released at the segment's first sample;
+      - at a step, what is still sounding is released first (before the new note-on), except legato:
+        gate = 100 % and a different pitch next puts the new note-on first;
+      - a Tie extends a sounding note, the gate applying to the last tied step.
+    Nothing here limits the spacing of steps or the length of a note: the tests use tempi where steps
+    are thousands of samples apart (implementation guards such as "a note lasts at least one sample"
+    never matter and are not modelled). */
 inline std::vector<MEvent> model (const MCfg& c, const std::vector<MSeg>& segs, std::int64_t activation,
                                   const std::vector<MStep>& pattern, std::int64_t& stepsFired)
 {
@@ -226,7 +242,7 @@ inline std::vector<MEvent> model (const MCfg& c, const std::vector<MSeg>& segs, 
     std::int64_t nextK = 0;
     bool pending = false, open = false;
     int pendingNote = 0;
-    std::int64_t pendingEnd = 0, pendingMin = 0, lastOn = -2;
+    std::int64_t pendingEnd = 0;
 
     for (std::size_t i = 0; i < segs.size(); ++i)
     {
@@ -239,19 +255,22 @@ inline std::vector<MEvent> model (const MCfg& c, const std::vector<MSeg>& segs, 
                 pending = open = false;
             // First step whose sample is at or after max(segment start, activation).
             const std::int64_t minRel = std::max<std::int64_t> (activation - sg.start, 0);
-            nextK = floorDiv (sg.anchorTicks * c.d, 6144) - 4;
+            nextK = floorDiv (sg.anchorTicks * c.d, kTick) - 4;
             while (relSample (c, sg, c.pos (nextK)) < minRel)
                 ++nextK;
         }
         for (;;)
         {
             const std::int64_t zero = 0;
-            const std::int64_t stepAbs = sg.start + std::max (std::max (relSample (c, sg, c.pos (nextK)), zero), lastOn + 1 - sg.start);
+            const std::int64_t stepAbs = sg.start + std::max (relSample (c, sg, c.pos (nextK)), zero);
             std::int64_t offAbs = INT64_MAX;
             if (pending && ! open)
-                offAbs = sg.start + std::max (std::max (relSample (c, sg, pendingEnd), zero), pendingMin - sg.start);
+                offAbs = sg.start + std::max (relSample (c, sg, pendingEnd), zero);
             const std::int64_t endAbs = sg.start + sg.len;
-            if (offAbs < endAbs && offAbs <= stepAbs)
+            // Spec (legato): with gate = 100 % a note that ends exactly where the next step starts is
+            // released by that step, after the next note-on if the pitch differs (handled at the step).
+            const bool legatoHold = c.gate80 >= 80 && offAbs == stepAbs;
+            if (offAbs < endAbs && offAbs <= stepAbs && ! legatoHold)
             {
                 out.push_back ({ offAbs, false, pendingNote });
                 pending = false;
@@ -264,27 +283,32 @@ inline std::vector<MEvent> model (const MCfg& c, const std::vector<MSeg>& segs, 
             const bool tieFollows = pattern[static_cast<std::size_t> ((count + 1) % static_cast<std::int64_t> (pattern.size()))].kind == StepType::Tie;
             ++count;
             const std::int64_t k = nextK++;
-            lastOn = stepAbs;
             if (st.kind == StepType::Tie && pending && open)
             {
                 open = tieFollows;
                 pendingEnd = c.gateEnd (k);
-                pendingMin = stepAbs + 1;
                 continue;
             }
-            if (pending)
+            const bool overlap = st.kind == StepType::Note && pending && ! open && c.gate80 >= 80 && st.note != pendingNote;
+            if (overlap)
+            {
+                out.push_back ({ stepAbs, true, st.note });
+                out.push_back ({ stepAbs, false, pendingNote });
+                pending = false;
+            }
+            else if (pending)
             {
                 out.push_back ({ stepAbs, false, pendingNote });
                 pending = false;
             }
             if (st.kind == StepType::Note)
             {
-                out.push_back ({ stepAbs, true, st.note });
+                if (! overlap)
+                    out.push_back ({ stepAbs, true, st.note });
                 pending = true;
                 open = tieFollows;
                 pendingNote = st.note;
                 pendingEnd = c.gateEnd (k);
-                pendingMin = stepAbs + 1;
             }
         }
     }
@@ -348,5 +372,139 @@ struct SoundLedger
         else if (panicClears && (e.type == EventType::AllNotesOff || e.type == EventType::AllSoundOff))
             sounding.clear();
     }
+};
+
+/** What a polyphonic part does with the events it receives (enough to see hanging notes and the
+    sustain pedal's deferral of note-offs). */
+struct PartModel
+{
+    std::set<int> sounding;
+    std::set<int> heldByPedal;
+    bool pedalDown = false;
+
+    void feed (const NoteEvent& e)
+    {
+        switch (e.type)
+        {
+            case EventType::NoteOn:
+                sounding.insert (e.note);
+                heldByPedal.erase (e.note);
+                break;
+            case EventType::NoteOff:
+                if (pedalDown)
+                    heldByPedal.insert (e.note);
+                else
+                    sounding.erase (e.note);
+                break;
+            case EventType::SustainPedal:
+                setPedal (e.value >= 0.5f);
+                break;
+            case EventType::AllNotesOff:
+            case EventType::AllSoundOff:
+                sounding.clear();
+                heldByPedal.clear();
+                pedalDown = false;
+                break;
+            case EventType::ResetControllers:
+                setPedal (false);
+                break;
+            case EventType::PitchBend:
+            case EventType::ModWheel:
+                break;
+        }
+    }
+
+private:
+    void setPedal (bool down)
+    {
+        pedalDown = down;
+        if (! down)
+        {
+            for (int n : heldByPedal)
+                sounding.erase (n);
+            heldByPedal.clear();
+        }
+    }
+};
+
+/** Checks an output stream event by event, remembering where each sounding note came from:
+    `gen` = started by the module (mode on), `user` = passed through while Off. A user panic in
+    Off must not be able to hide a note the module still owes. */
+struct StreamChecker
+{
+    std::set<int> gen, user;
+    PartModel part;
+    std::string firstError;
+    std::int64_t noteOns = 0, orphanOffsOff = 0;
+
+    void fail (const std::string& s)
+    {
+        if (firstError.empty())
+            firstError = s;
+    }
+
+    /** `mode`: the module's mode while this event was produced. `blockStart`: the event was written
+        at offset 0 of a call (a pedal sync is allowed there). `markerPossible`: the call may have
+        closed with an overflow marker (small output buffer), which clears everything downstream. */
+    void feed (const NoteEvent& e, Mode mode, bool blockStart, bool markerPossible = false)
+    {
+        const std::string where = " (note " + std::to_string (e.note) + " @" + std::to_string (e.offset) + ")";
+        switch (e.type)
+        {
+            case EventType::NoteOn:
+                ++noteOns;
+                if (e.note > 127 && mode != Mode::Off) // Off passes the player's malformed events on as they are
+                    fail ("generated note out of range" + where);
+                if (mode != Mode::Off && ! (e.value > 0.0f && e.value <= 1.0f))
+                    fail ("generated velocity outside (0, 1]" + where);
+                // The player's own repeated note-ons while Off are the player's business; the module must never
+                // start a pitch the part holds because of it, nor let a player's note-on double one of its own.
+                if (gen.count (e.note) > 0 || (mode != Mode::Off && user.count (e.note) > 0))
+                    fail ("note-on for a pitch the part already holds" + where);
+                if (mode == Mode::Off)
+                {
+                    if (e.note < 128) // note numbers the part cannot play are not tracked
+                        user.insert (e.note);
+                }
+                else
+                {
+                    gen.insert (e.note);
+                    if (part.pedalDown && ! markerPossible)
+                        fail ("generated note-on while the part's sustain pedal is down" + where);
+                }
+                break;
+            case EventType::NoteOff:
+                if (gen.erase (e.note) == 0 && user.erase (e.note) == 0)
+                {
+                    if (mode != Mode::Off)
+                        fail ("note-off without note-on outside Off" + where);
+                    ++orphanOffsOff;
+                }
+                break;
+            case EventType::AllNotesOff:
+            case EventType::AllSoundOff:
+                if (mode != Mode::Off && ! gen.empty() && ! markerPossible)
+                    fail ("panic passed on while the module still owed note-offs" + where);
+                if (mode == Mode::Off && ! gen.empty() && ! markerPossible)
+                    fail ("user panic in Off while the module still owed note-offs" + where);
+                if (mode != Mode::Off && ! user.empty() && ! markerPossible)
+                    fail ("panic passed on while passed-through notes were never released" + where);
+                gen.clear();
+                user.clear();
+                break;
+            case EventType::SustainPedal:
+                if (mode != Mode::Off && ! (e.value < 0.5f && blockStart))
+                    fail ("sustain pedal passed on while the module is on" + where);
+                break;
+            case EventType::PitchBend:
+            case EventType::ModWheel:
+            case EventType::ResetControllers:
+                break;
+        }
+        part.feed (e);
+    }
+
+    /** After the final panic with everything released. */
+    bool clean() const { return gen.empty() && user.empty() && part.sounding.empty() && ! part.pedalDown && firstError.empty(); }
 };
 } // namespace vs::seq::test

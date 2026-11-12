@@ -163,7 +163,7 @@ Scenario makeScenario (std::uint64_t seed, int sr, std::int64_t duration, std::i
     // Settings, transport: changed only at segment boundaries (the same absolute samples for any block size).
     bool playing = g.chance (50);
     std::int64_t bpm100 = 4000 + g.below (20001);
-    std::int64_t anchor = static_cast<std::int64_t> (g.below (6144 * 64));
+    std::int64_t anchor = static_cast<std::int64_t> (g.below (static_cast<int> (kTick * 16)));
     std::int64_t start = 0;
     while (start < duration)
     {
@@ -177,17 +177,17 @@ Scenario makeScenario (std::uint64_t seed, int sr, std::int64_t duration, std::i
         }
         // The next stretch: continue, change tempo, loop-jump, or toggle the transport.
         const std::int64_t next = start + len;
-        const std::int64_t elapsedTicks = len * 6144 * bpm100 / (6000 * static_cast<std::int64_t> (sr));
+        const std::int64_t elapsedTicks = len * kTick * bpm100 / (6000 * static_cast<std::int64_t> (sr));
         anchor += elapsedTicks;
         if (g.chance (6))
         {
             playing = ! playing;
-            anchor = static_cast<std::int64_t> (g.below (6144 * 64));
+            anchor = static_cast<std::int64_t> (g.below (static_cast<int> (kTick * 16)));
         }
         if (g.chance (15))
             bpm100 = 4000 + g.below (20001);
         if (g.chance (6))
-            anchor = static_cast<std::int64_t> (g.below (6144 * 64)); // loop or locate
+            anchor = static_cast<std::int64_t> (g.below (static_cast<int> (kTick * 16))); // loop or locate
         start = next;
     }
 
@@ -221,6 +221,7 @@ struct Verdict
     bool ok = true;
     std::string why;
     std::int64_t noteOns = 0;
+    std::int64_t orphanOffsInOff = 0;
 };
 
 Verdict verify (const Scenario& sc, const RunResult& res)
@@ -236,50 +237,56 @@ Verdict verify (const Scenario& sc, const RunResult& res)
     if (! res.wellFormed)
         fail ("offsets not ascending / outside the block");
 
-    std::set<int> sounding;
-    std::vector<NoteEvent> passed;
+    std::set<std::int64_t> modeTimes;
+    for (const auto& c : sc.modeChanges)
+        modeTimes.insert (c.first);
+
+    StreamChecker chk;
+    std::vector<NoteEvent> passed, pedalsOut;
     for (const auto& e : res.events)
     {
-        switch (e.type)
-        {
-            case EventType::NoteOn:
-                ++v.noteOns;
-                if (e.note > 127)
-                    fail ("note out of range");
-                if (! (e.value > 0.0f && e.value <= 1.0f))
-                    fail ("velocity out of (0, 1]");
-                if (! sounding.insert (e.note).second)
-                    fail ("note-on for a note that already sounds: " + std::to_string (e.note) + " @" + std::to_string (e.offset));
-                if (e.offset >= sc.settleStart)
-                    fail ("note-on after the final All Notes Off @" + std::to_string (e.offset));
-                break;
-            case EventType::NoteOff:
-                if (sounding.erase (e.note) == 0 && sc.modeAt (e.offset) != Mode::Off)
-                    fail ("note-off without note-on outside Off mode: " + std::to_string (e.note) + " @" + std::to_string (e.offset));
-                break;
-            case EventType::AllNotesOff:
-            case EventType::AllSoundOff:
-                // Off passes the user's panic on (it releases what the user's keys started downstream); in every
-                // other mode the module's own note-offs must already have been emitted before the panic.
-                if (sc.modeAt (e.offset) == Mode::Off)
-                    sounding.clear();
-                else if (! sounding.empty())
-                    fail ("panic passed on while the module still owed note-offs @" + std::to_string (e.offset));
-                passed.push_back (e);
-                break;
-            case EventType::PitchBend:
-            case EventType::ModWheel:
-            case EventType::SustainPedal:
-            case EventType::ResetControllers:
-            default:
-                passed.push_back (e);
-                break;
-        }
+        const Mode mode = sc.modeAt (e.offset);
+        chk.feed (e, mode, modeTimes.count (e.offset) > 0);
+        if (e.type == EventType::NoteOn && e.offset >= sc.settleStart)
+            fail ("note-on after the final All Notes Off @" + std::to_string (e.offset));
+        if (e.type == EventType::SustainPedal)
+            pedalsOut.push_back (e);
+        else if (e.type != EventType::NoteOn && e.type != EventType::NoteOff)
+            passed.push_back (e);
     }
-    if (! sounding.empty())
-        fail ("notes left sounding at the end: " + std::to_string (sounding.size()));
-    if (! sameEvents (passed, sc.expectedPass))
+    v.noteOns = chk.noteOns;
+    v.orphanOffsInOff = chk.orphanOffsOff;
+    if (! chk.firstError.empty())
+        fail (chk.firstError);
+    if (! chk.clean())
+        fail ("notes or the pedal left held downstream at the end: gen " + std::to_string (chk.gen.size()) + " user " + std::to_string (chk.user.size())
+              + " part " + std::to_string (chk.part.sounding.size()));
+
+    // Controllers other than the pedal pass through unchanged and in order; the pedal does so while Off
+    // (the module consumes it otherwise and only adds syncs at the moment the mode changes).
+    std::vector<NoteEvent> expectedPass, expectedPedals;
+    for (const auto& e : sc.expectedPass)
+    {
+        if (e.type == EventType::SustainPedal)
+        {
+            if (sc.modeAt (e.offset) == Mode::Off)
+                expectedPedals.push_back (e);
+        }
+        else
+            expectedPass.push_back (e);
+    }
+    if (! sameEvents (passed, expectedPass))
         fail ("controller events were changed, dropped, reordered or moved");
+    std::size_t matched = 0;
+    for (const auto& e : pedalsOut)
+    {
+        if (matched < expectedPedals.size() && sameEvent (e, expectedPedals[matched]))
+            ++matched;
+        else if (modeTimes.count (e.offset) == 0)
+            fail ("unexpected sustain pedal event @" + std::to_string (e.offset));
+    }
+    if (matched != expectedPedals.size())
+        fail ("a sustain pedal event of the player was lost while Off");
     return v;
 }
 } // namespace
@@ -348,24 +355,34 @@ TEST_CASE ("Invariants: settings and transport changed at arbitrary block bounda
         Gen g (9000 + static_cast<std::uint64_t> (trial));
         ArpSeq m;
         EventSource src;
-        SoundLedger ledger;
+        StreamChecker chk;
         std::vector<NoteEvent> out (ArpSeq::kRecommendedCapacity);
         std::vector<NoteEvent> in;
         double ppq = 0.0;
         double bpm = 120.0;
         bool playing = g.chance (50);
-        std::int64_t doubles = 0, orphansOutsideOff = 0, ons = 0;
-        Mode mode = Mode::Off;
+        std::int64_t ons = 0;
         const double sr = 48000.0;
+        const auto runBlock = [&] (int n, const Transport& tr) {
+            const Mode mode = m.settings().mode;
+            const int count = m.process (in, tr, n, out);
+            int prev = 0;
+            for (int i = 0; i < count; ++i)
+            {
+                const NoteEvent& e = out[static_cast<std::size_t> (i)];
+                REQUIRE (e.offset >= prev);
+                REQUIRE (e.offset < n);
+                prev = e.offset;
+                if (e.type == EventType::NoteOn)
+                    ++ons;
+                chk.feed (e, mode, e.offset == 0);
+            }
+        };
         for (int block = 0; block < 1500; ++block)
         {
             const int n = 1 + g.below (700);
             if (g.chance (10))
-            {
-                const Settings s = randomSettings (g);
-                m.setSettings (s);
-                mode = m.settings().mode;
-            }
+                m.setSettings (randomSettings (g));
             if (g.chance (5))
                 playing = ! playing;
             if (g.chance (10))
@@ -381,53 +398,27 @@ TEST_CASE ("Invariants: settings and transport changed at arbitrary block bounda
                 in.push_back (src.next (g, t));
                 t += g.below (200);
             }
-            const Transport tr { sr, bpm, ppq, playing };
-            const int count = m.process (in, tr, n, out);
+            runBlock (n, Transport { sr, bpm, ppq, playing });
             ppq += static_cast<double> (n) * bpm / (60.0 * sr);
-            int prev = 0;
-            for (int i = 0; i < count; ++i)
-            {
-                const NoteEvent& e = out[static_cast<std::size_t> (i)];
-                REQUIRE (e.offset >= prev);
-                REQUIRE (e.offset < n);
-                prev = e.offset;
-                if (e.type == EventType::NoteOn)
-                    ++ons;
-                if (e.type == EventType::NoteOff && ledger.sounding.count (e.note) == 0 && mode != Mode::Off)
-                    ++orphansOutsideOff;
-                if (e.type == EventType::AllNotesOff || e.type == EventType::AllSoundOff)
-                {
-                    if (mode == Mode::Off)
-                        ledger.sounding.clear();
-                    else
-                        REQUIRE (ledger.sounding.empty()); // the module's note-offs precede the panic it passes on
-                }
-                ledger.feed (e);
-            }
-            doubles = ledger.doubleOns;
         }
         // All keys up, pedal up, All Notes Off: the module must release everything it owns, by itself.
         in.clear();
         for (std::size_t n = 0; n < 128; ++n)
             if (src.held[n])
-                in.push_back (noteOff (0, static_cast<int>(n)));
+                in.push_back (noteOff (0, static_cast<int> (n)));
+        if (src.pedalDown)
+            in.push_back (pedal (0, false));
         in.push_back (ctrl (0, EventType::AllNotesOff));
         for (int block = 0; block < 3; ++block)
         {
-            const Transport tr { sr, bpm, ppq, playing };
-            const int count = m.process (in, tr, 480, out);
+            const std::int64_t before = chk.noteOns;
+            runBlock (480, Transport { sr, bpm, ppq, playing });
             ppq += 480.0 * bpm / (60.0 * sr);
-            for (int i = 0; i < count; ++i)
-            {
-                REQUIRE (out[static_cast<std::size_t> (i)].type != EventType::NoteOn);
-                ledger.feed (out[static_cast<std::size_t> (i)]);
-            }
+            CHECK (chk.noteOns == before);
             in.clear();
         }
-        INFO ("trial " << trial);
-        CHECK (doubles == 0);
-        CHECK (orphansOutsideOff == 0);
-        CHECK (ledger.sounding.empty());
+        INFO ("trial " << trial << ": " << chk.firstError);
+        CHECK (chk.clean());
         CHECK (ons > 0);
         CHECK_FALSE (m.isSounding());
     }
@@ -518,7 +509,7 @@ TEST_CASE ("Real time: process() and setSettings() do not allocate", "[seq][real
                 seg = &sg;
         const double bpm = static_cast<double> (seg->bpm100) / 100.0;
         j.tr = Transport { static_cast<double> (sr), bpm,
-                           static_cast<double> (seg->anchorTicks) / 6144.0 + static_cast<double> (s - seg->start) * bpm / (60.0 * sr), seg->playing };
+                           static_cast<double> (seg->anchorTicks) / static_cast<double> (kTick) + static_cast<double> (s - seg->start) * bpm / (60.0 * sr), seg->playing };
         jobs.push_back (j);
     }
     std::vector<NoteEvent> out (ArpSeq::kRecommendedCapacity);

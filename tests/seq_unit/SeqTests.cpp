@@ -318,8 +318,8 @@ TEST_CASE ("Seq: random sequences match the exact timing model (host synced and 
         c.sr = kSr[rng.below (4)];
         const int di = rng.below (6);
         c.d = kD[di];
-        c.swing16 = 8 + rng.below (5);
-        c.gate16 = 1 + rng.below (16);
+        c.swing80 = 40 + rng.below (21);
+        c.gate80 = (i % 4 == 0) ? 80 : 4 + rng.below (77); // every 4th run is legato (gate 100 %)
         const std::int64_t bpm100 = kBpm[rng.below (5)];
         const int block = kBlocks[i % 5];
         const bool internal = i % 2 == 1;
@@ -327,8 +327,8 @@ TEST_CASE ("Seq: random sequences match the exact timing model (host synced and 
         Settings s;
         s.mode = Mode::Seq;
         s.rate = kRates[di];
-        s.swing = static_cast<float> (c.swing16) / 16.0f;
-        s.gate = static_cast<float> (c.gate16) / 16.0f;
+        s.swing = static_cast<double> (c.swing80) / 80.0;
+        s.gate = static_cast<double> (c.gate80) / 80.0;
         s.internalBpm = static_cast<double> (bpm100) / 100.0;
         s.seqLength = 1 + rng.below (16);
         const int root = 30 + rng.below (60);
@@ -345,7 +345,7 @@ TEST_CASE ("Seq: random sequences match the exact timing model (host synced and 
         const std::int64_t stepSamples = 60 * static_cast<std::int64_t> (c.sr) * 100 / (bpm100 * c.d);
         const std::int64_t keyDown = rng.below (2000);
         const std::int64_t total = std::min<std::int64_t> (keyDown + 3 * stepSamples * s.seqLength + 5, static_cast<std::int64_t> (c.sr) * (block == 1 ? 1 : 6) / (block == 1 ? 2 : 1));
-        const std::int64_t anchor = 6144 * 33 + rng.below (6144 * 9);
+        const std::int64_t anchor = kTick * 33 + rng.below (static_cast<int> (kTick * 9));
 
         ArpSeq m;
         Run r;
@@ -361,7 +361,7 @@ TEST_CASE ("Seq: random sequences match the exact timing model (host synced and 
         const auto expected = model (c, { seg }, keyDown, pattern, steps);
         std::string why;
         const bool ok = res.wellFormed && matchesModel (res.events, expected, total, &why);
-        INFO ("sr " << c.sr << " bpm100 " << bpm100 << " d " << c.d << " swing16 " << c.swing16 << " gate16 " << c.gate16 << " block " << block
+        INFO ("sr " << c.sr << " bpm100 " << bpm100 << " d " << c.d << " swing80 " << c.swing80 << " gate80 " << c.gate80 << " block " << block
                     << (internal ? " internal" : " host") << " length " << s.seqLength << ": " << why);
         CHECK (ok);
         for (const auto& e : expected)
