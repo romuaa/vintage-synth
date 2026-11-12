@@ -1,0 +1,33 @@
+# Effects (Wave 3): a slow pad through chorus I, the 700 ms ping-pong delay and the hall reverb,
+# then chorus II from 2.0 s and the delay off at 3.0 s (its echoes fade out in 20 ms, the reverb
+# tail rings on). Stereo: the effects are what makes the two channels differ.
+rate 48000
+channels 2
+length 5.0
+
+param lower.env2.attack 0.3
+param lower.env2.release 0.5
+param lower.vcf.cutoff 0.5
+param lower.vco2.fine_tune 0.12
+param fx.chorus.mode 1
+param fx.delay.level 0.4
+param fx.delay.feedback 0.4
+param fx.reverb.level 0.35
+param fx.reverb.decay 0.55
+
+0.00 on 48 90
+0.00 on 55 85
+0.00 on 64 80
+0.90 off 48
+0.90 off 55
+0.90 off 64
+2.00 param fx.chorus.mode 2
+2.00 on 50 90
+2.00 on 57 85
+2.00 on 65 80
+2.60 off 50
+2.60 off 57
+2.60 off 65
+3.00 param fx.delay.level 0
+3.40 on 72 100
+3.60 off 72

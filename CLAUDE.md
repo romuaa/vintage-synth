@@ -83,9 +83,12 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
+- **Wave 2 merged** (M3 + M4 module). **Wave 3 in progress:** wiring effects and arp/sequencer into the
+  plugin (`docs/architecture.md` 6a; ends with the owner's M5 audition), then extracting the common
+  library (S0), then M6 presets. Side tracks: cross-mod aliasing study, Linux containers + ARM64.
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
-  in `source/seq/`, not wired in. Awaiting the owner's audition (`m3_demo`) and merge approval.
+  in `source/seq/`, not wired in. Audition approved by the owner.
 - **CI is offline** (no Actions minutes) until the owner makes the repo public for a release.
   **Local-first verification is the permanent policy** (see decisions): run the local gates before
   any push; never trigger workflows; agents get no CI budget.

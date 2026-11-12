@@ -1381,7 +1381,7 @@ TEST_CASE ("Spec parameters: the nine new parameters exist for both parts with t
     JuceEnv env;
     vs::VintageSynthProcessor proc;
     auto& state = proc.getState();
-    CHECK (proc.getParameters().size() == 101); // M3: 96 + lower/upper mix.pan + key.mode, key.split_point, mix.balance
+    CHECK (proc.getParameters().size() == 170); // M3: 96 + lower/upper mix.pan + key.mode, key.split_point, mix.balance; Wave 3: + 69
 
     struct F { const char* id; const char* name; float def; };
     const F floats[] { { "porta.time", "Portamento Time", 0.0f },

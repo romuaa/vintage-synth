@@ -50,6 +50,8 @@ inline void retarget (float& tgt, Dev& d, float newTarget, double logKeep) noexc
     if (std::bit_cast<std::uint32_t> (tgt) == std::bit_cast<std::uint32_t> (newTarget))
         return; // unchanged
     d.d0 = (static_cast<double> (tgt) + devValue (d, logKeep)) - static_cast<double> (newTarget);
+    if (! std::isfinite (d.d0))
+        d.d0 = 0.0; // leaving a non-finite value (a NaN from a host): jump, or it would stay NaN forever
     d.k = 0;
     tgt = newTarget;
 }

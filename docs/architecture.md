@@ -369,6 +369,89 @@ int process (std::span<const NoteEvent> in, const Transport&, int numSamples,
 - No allocation (the existing allocation counter test pattern), sanitizer-clean, independent review.
 - Does not touch `source/engine/`, `source/params/` or `PluginProcessor.*`.
 
+## 6a. Wave 3 integration: effects and arpeggiator/sequencer in the plugin (serial track)
+
+Wires the standalone modules of sections 5 and 6 into the processor and defines their host
+parameters. No change to the modules' DSP or logic unless a defect is found (then fix it there,
+with a test).
+
+### 6a.1 Signal and event flow
+```
+host MIDI → EventParser → KeyRouter → ArpSeq (one per part) → Part lower / Part upper
+          → PartMixer → Chorus → Delay → Reverb → master gain → non-finite guard + clamp → host
+```
+- The effects run on the stereo bus at the host rate, add no latency, and are skipped bit-exactly
+  when off (chorus mode Off, delay and reverb level 0).
+- `getTailLengthSeconds()` is the largest of the effects' static `tailSeconds (params)` (each
+  capped at 30 s), computed from the parameter values, callable from any thread.
+- When the non-finite guard fires it resets both parts, both arp/seq instances and all three effects.
+- `reset()` and `prepareToPlay` reset everything together (parts, router, arp/seq, effects).
+- **Transport** comes from the host play head on the audio thread: tempo, musical position and the
+  playing flag. If any of them is missing, the transport counts as stopped (internal clock). When
+  the host block is larger than the prepared size and is rendered in chunks, the position for each
+  chunk is advanced from the block's start position.
+- Arp/seq settings are built from the parameter atomics once per host block on the audio thread.
+- Event buffers behind each arp/seq are sized with `ArpSeq::minimumCapacity` for the prepared block.
+
+### 6a.2 New host parameters (global; appended after all existing ones, in this order)
+Effects:
+
+| ID | Name | Range (default) | Mapping |
+|---|---|---|---|
+| `fx.chorus.mode` | Chorus | Off, I, II (Off) | |
+| `fx.chorus.mix` | Chorus Mix | 0..1 (0.5) | the block's mix curve |
+| `fx.delay.time` | Delay Time | 0..1 (700 ms) | 1 ms … 2 s, exponential |
+| `fx.delay.feedback` | Delay Feedback | 0..1 (0.35) | 0 … 95 % |
+| `fx.delay.damping` | Delay Damping | 0..1 (0.3) | |
+| `fx.delay.ping_pong` | Delay Ping-Pong | Off, On (On) | |
+| `fx.delay.level` | Delay Level | 0..1 (0) | |
+| `fx.reverb.decay` | Reverb Decay | 0..1 (2.5 s) | 0.3 … 20 s, exponential |
+| `fx.reverb.damping` | Reverb Damping | 0..1 (0.5) | |
+| `fx.reverb.predelay` | Reverb Pre-Delay | 0..1 (20 ms) | 0 … 200 ms |
+| `fx.reverb.level` | Reverb Level | 0..1 (0) | |
+
+Arpeggiator and sequencer (one settings set; both instances use it):
+
+| ID | Name | Range (default) |
+|---|---|---|
+| `arp.mode` | Arp/Seq Mode | Off, Arpeggiator, Sequencer (Off) |
+| `arp.target` | Arp/Seq Part | Lower, Upper, Both (Both) |
+| `arp.rate` | Arp/Seq Rate | 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 (1/16) |
+| `arp.swing` | Arp/Seq Swing | 50 … 75 % (50) |
+| `arp.gate` | Arp/Seq Gate | 5 … 100 % (50) |
+| `arp.hold` | Arp/Seq Hold | Off, On (Off) |
+| `arp.tempo` | Internal Tempo | 20 … 300 bpm (120) |
+| `arp.pattern` | Arp Pattern | Up, Down, Up & Down, Random, As Played (Up) |
+| `arp.octaves` | Arp Octaves | 1 … 4 (1) |
+| `seq.length` | Seq Length | 1 … 16 (16) |
+| `seq.stepNN.note` (NN = 01…16) | Seq Step NN Note | −24 … +24 semitones (0) |
+| `seq.stepNN.type` | Seq Step NN Type | Note, Rest, Tie (Note) |
+| `seq.stepNN.velocity` | Seq Step NN Velocity | 0..1 (0.8) |
+
+The step parameters are appended step by step (note, type, velocity for step 01, then step 02, …).
+69 new parameters: host parameter count 101 → 170. Display text and DSP share the mappings in
+`params/Mappings.h`. Continuous effect parameters are smoothed by the blocks themselves; switches
+are not smoothed. `stateVersion` stays 1 (pre-release). A part not selected by `arp.target` gets
+its events unchanged. The random seed is fixed, so renders are reproducible.
+
+### 6a.3 Gates
+1. All existing tests pass; changed expectations (parameter count, tail length) are listed.
+2. New tests: every parameter reaches its module with the documented mapping (display ↔ value
+   round-trip); effects off = bit-identical to the M3 output; each effect audible and stereo when
+   on; tail length matches the parameters; the guard resets effects and arp/seq; arp/seq through
+   the real parts — pedal consumed while on, no pile-up; legato glide in Solo at 100 % gate;
+   Off ↔ on with held keys; `arp.target` routing in Whole, Dual and Split; host transport
+   (start, stop, loop, tempo change, missing play head) through the processor; chunked rendering
+   keeps step timing; random streams never hang a note; block-size independence with arp and
+   effects on; state round-trip of all 170 parameters; no allocation in `processBlock`.
+3. `voice_bench`/`fx_bench`: Dual with 32 voices, arp on and all three effects on, inside 15 % of a
+   core at 48 kHz, and reported at 192 kHz.
+4. Golden scripts with effects and with the arpeggiator (host-synced).
+5. Sanitizer run, pluginval strictness 10, VST3 validator and all targets in CI, independent review.
+6. **Audition render `m5_demo` for the owner (the M5 audition gate):** pads with chorus I and II,
+   a lead with the 700 ms ping-pong delay, the hall reverb at several decays, all three together,
+   an arpeggiated chord over a Split bass, and a short step-sequencer line.
+
 ## 7. Test and validation infrastructure (parallel track in Wave 1)
 
 - **VST3 validator** wired into `ctest` and CI (macOS and Windows x64) next to pluginval.
