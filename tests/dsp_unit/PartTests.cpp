@@ -2,10 +2,10 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "TestHelpers.h"
-#include "engine/EventParser.h"
-#include "engine/Oversampler.h"
-#include "engine/Part.h"
-#include "params/Mappings.h"
+#include "common/engine/EventParser.h"
+#include "common/engine/Oversampler.h"
+#include "vintage/engine/Part.h"
+#include "common/params/Mappings.h"
 
 #include <functional>
 

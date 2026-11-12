@@ -12,10 +12,10 @@
 #pragma once
 
 #include "TestHelpers.h"
-#include "dsp/FastMath.h"
-#include "dsp/Oscillator.h"
-#include "engine/Oversampler.h"
-#include "engine/Part.h"
+#include "common/dsp/FastMath.h"
+#include "vintage/dsp/Oscillator.h"
+#include "common/engine/Oversampler.h"
+#include "vintage/engine/Part.h"
 
 #include <algorithm>
 #include <cmath>

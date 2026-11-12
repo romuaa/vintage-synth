@@ -1,6 +1,6 @@
 #pragma once
 
-#include "params/Mappings.h"
+#include "common/params/Mappings.h"
 
 #include <array>
 #include <bit>

@@ -1,10 +1,10 @@
-#include "PluginProcessor.h"
+#include "vintage/PluginProcessor.h"
 
-#include "dsp/Drift.h"
-#include "engine/Oversampler.h"
+#include "vintage/dsp/Drift.h"
+#include "common/engine/Oversampler.h"
 
-#include "params/ParameterLayout.h"
-#include "params/StateVersion.h"
+#include "vintage/params/ParameterLayout.h"
+#include "vintage/params/StateVersion.h"
 
 #include <cstring>
 #include <limits>

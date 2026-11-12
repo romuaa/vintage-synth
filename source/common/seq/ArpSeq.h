@@ -32,7 +32,7 @@
 #include "KeyState.h"
 #include "Settings.h"
 #include "StepSequencer.h"
-#include "engine/NoteEvent.h"
+#include "common/engine/NoteEvent.h"
 
 #include <algorithm>
 #include <array>

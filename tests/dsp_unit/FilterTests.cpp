@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "TestHelpers.h"
-#include "dsp/Filters.h"
+#include "vintage/dsp/Filters.h"
 
 using namespace vs::dsp;
 

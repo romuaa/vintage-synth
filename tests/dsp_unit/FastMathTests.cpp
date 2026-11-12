@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "dsp/FastMath.h"
+#include "common/dsp/FastMath.h"
 
 #include <algorithm>
 #include <bit>

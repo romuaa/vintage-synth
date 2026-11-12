@@ -9,12 +9,12 @@
 //   6. the full plugin path (Wave 3): section 5 plus the arpeggiator on both parts (1/32, host
 //      transport playing) and chorus, delay and reverb on, 32 voices sounding.
 // Run: build/mac-arm64/tests/voice_bench [base sample rate, default 48000] [Vintage, default 0.5]
-#include "PluginProcessor.h"
-#include "engine/Modulation.h"
-#include "engine/Oversampler.h"
-#include "engine/Part.h"
-#include "engine/Voice.h"
-#include "params/Mappings.h"
+#include "vintage/PluginProcessor.h"
+#include "vintage/engine/Modulation.h"
+#include "common/engine/Oversampler.h"
+#include "vintage/engine/Part.h"
+#include "vintage/engine/Voice.h"
+#include "common/params/Mappings.h"
 
 #include <algorithm>
 #include <chrono>

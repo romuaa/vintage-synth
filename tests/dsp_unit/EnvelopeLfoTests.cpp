@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "TestHelpers.h"
-#include "dsp/Envelope.h"
-#include "dsp/Lfo.h"
+#include "vintage/dsp/Envelope.h"
+#include "vintage/dsp/Lfo.h"
 
 using namespace vs::dsp;
 

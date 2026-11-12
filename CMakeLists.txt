@@ -40,12 +40,19 @@ juce_add_plugin(VintageSynth
     COPY_PLUGIN_AFTER_BUILD     FALSE)
 
 # Our sources. Also compiled (without LTO) into vs_test_core for the tests; see tests/CMakeLists.txt.
-set(VS_PLUGIN_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/PluginProcessor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/params/ParameterLayout.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Modulation.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Voice.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Part.cpp)
+#   VS_COMMON_SOURCES   shared by every instrument in this repository (source/common/)
+#   VS_VINTAGE_SOURCES  this instrument only (source/vintage/)
+# A second instrument adds its own juce_add_plugin target and its own VS_<NAME>_SOURCES list and
+# links VS_COMMON_SOURCES the same way as below. Everything is included as "common/..." or
+# "vintage/..." with source/ as the include root.
+set(VS_COMMON_SOURCES)
+set(VS_VINTAGE_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/PluginProcessor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/params/ParameterLayout.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Modulation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Voice.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Part.cpp)
+set(VS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${VS_VINTAGE_SOURCES})
 
 target_sources(VintageSynth PRIVATE ${VS_PLUGIN_SOURCES})
 

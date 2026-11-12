@@ -1,10 +1,10 @@
 #pragma once
 
-#include "engine/Modulation.h"
-#include "engine/NoteEvent.h"
-#include "engine/Voice.h"
-#include "engine/VoiceAllocator.h"
-#include "params/PartParamList.h"
+#include "vintage/engine/Modulation.h"
+#include "common/engine/NoteEvent.h"
+#include "vintage/engine/Voice.h"
+#include "common/engine/VoiceAllocator.h"
+#include "vintage/params/PartParamList.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>

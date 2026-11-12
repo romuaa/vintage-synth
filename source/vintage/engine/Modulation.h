@@ -1,7 +1,7 @@
 #pragma once
 
-#include "dsp/Lfo.h"
-#include "params/PartParamList.h"
+#include "vintage/dsp/Lfo.h"
+#include "vintage/params/PartParamList.h"
 
 #include <array>
 #include <cstdint>

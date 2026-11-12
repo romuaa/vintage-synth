@@ -12,11 +12,11 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "IntegrationRig.h"
-#include "engine/EventParser.h"
-#include "engine/KeyRouter.h"
-#include "engine/PartMixer.h"
-#include "params/Mappings.h"
-#include "params/ParameterLayout.h"
+#include "common/engine/EventParser.h"
+#include "common/engine/KeyRouter.h"
+#include "common/engine/PartMixer.h"
+#include "common/params/Mappings.h"
+#include "vintage/params/ParameterLayout.h"
 
 #include <cmath>
 #include <cstdio>

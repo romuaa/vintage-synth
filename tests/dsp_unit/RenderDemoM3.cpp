@@ -3,8 +3,8 @@
 // Output: $VS_RENDER_DIR (if set) or <working dir>/renders: m3_demo.wav + m3_demo_scenes.txt
 #include <catch2/catch_test_macros.hpp>
 
-#include "PluginProcessor.h"
-#include "params/ParameterLayout.h"
+#include "vintage/PluginProcessor.h"
+#include "vintage/params/ParameterLayout.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 

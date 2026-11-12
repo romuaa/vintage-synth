@@ -1,7 +1,7 @@
 // VoiceAllocator: every behaviour row of docs/architecture.md 3.2 at decision level (no audio).
 #include <catch2/catch_test_macros.hpp>
 
-#include "engine/VoiceAllocator.h"
+#include "common/engine/VoiceAllocator.h"
 
 #include <algorithm>
 #include <cmath>

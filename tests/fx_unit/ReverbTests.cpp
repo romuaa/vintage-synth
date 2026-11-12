@@ -1,5 +1,5 @@
 #include "FxTestHelpers.h"
-#include "fx/Reverb.h"
+#include "common/fx/Reverb.h"
 
 using namespace vs::fx;
 using namespace vs::fxtest;

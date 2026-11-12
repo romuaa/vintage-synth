@@ -1,12 +1,12 @@
 #pragma once
 
-#include "dsp/Drift.h"
-#include "dsp/Envelope.h"
-#include "dsp/FastMath.h"
-#include "dsp/Filters.h"
-#include "dsp/Oscillator.h"
-#include "engine/Modulation.h"
-#include "params/PartParamList.h"
+#include "vintage/dsp/Drift.h"
+#include "vintage/dsp/Envelope.h"
+#include "common/dsp/FastMath.h"
+#include "vintage/dsp/Filters.h"
+#include "vintage/dsp/Oscillator.h"
+#include "vintage/engine/Modulation.h"
+#include "vintage/params/PartParamList.h"
 
 #include <array>
 

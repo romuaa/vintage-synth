@@ -1,6 +1,6 @@
-#include "params/ParameterLayout.h"
+#include "vintage/params/ParameterLayout.h"
 
-#include "params/Mappings.h"
+#include "common/params/Mappings.h"
 
 namespace vs
 {

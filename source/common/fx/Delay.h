@@ -24,7 +24,7 @@
 //   anything older), so no buffer is ever wiped on the audio thread. Waking up fades the line
 //   input in as well, so the first echo has no hard onset.
 
-#include "fx/FxCommon.h"
+#include "common/fx/FxCommon.h"
 
 namespace vs::fx
 {

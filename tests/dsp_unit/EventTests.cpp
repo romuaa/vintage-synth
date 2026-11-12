@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "PluginProcessor.h"
+#include "vintage/PluginProcessor.h"
 #include "TestHelpers.h"
-#include "engine/EventParser.h"
+#include "common/engine/EventParser.h"
 
 #include <algorithm>
 #include <atomic>

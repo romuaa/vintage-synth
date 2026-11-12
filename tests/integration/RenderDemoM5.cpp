@@ -6,9 +6,9 @@
 // m5_demo.wav and m5_demo_scenes.txt (start time of every scene).
 #include <catch2/catch_test_macros.hpp>
 
-#include "PluginProcessor.h"
-#include "params/Mappings.h"
-#include "params/ParameterLayout.h"
+#include "vintage/PluginProcessor.h"
+#include "common/params/Mappings.h"
+#include "vintage/params/ParameterLayout.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 

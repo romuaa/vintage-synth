@@ -1,7 +1,7 @@
 #pragma once
 
-#include "dsp/DspUtil.h"
-#include "dsp/FastMath.h"
+#include "common/dsp/DspUtil.h"
+#include "common/dsp/FastMath.h"
 
 namespace vs::dsp
 {

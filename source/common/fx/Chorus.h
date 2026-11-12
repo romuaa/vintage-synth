@@ -31,7 +31,7 @@
 // - Mode changes glide (rate and depth are smoothed); Off/On and mix changes ramp over 20 ms.
 // - Delay reads use 4-point Lagrange interpolation (artefacts below -100 dB at 1 kHz).
 
-#include "fx/FxCommon.h"
+#include "common/fx/FxCommon.h"
 
 namespace vs::fx
 {

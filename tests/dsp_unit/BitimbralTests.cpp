@@ -16,12 +16,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
-#include "PluginProcessor.h"
+#include "vintage/PluginProcessor.h"
 #include "TestHelpers.h"
-#include "engine/EventParser.h"
-#include "engine/PartMixer.h"
-#include "params/Mappings.h"
-#include "params/ParameterLayout.h"
+#include "common/engine/EventParser.h"
+#include "common/engine/PartMixer.h"
+#include "common/params/Mappings.h"
+#include "vintage/params/ParameterLayout.h"
 
 #include <algorithm>
 #include <cmath>

@@ -1,8 +1,8 @@
-#include "engine/Modulation.h"
+#include "vintage/engine/Modulation.h"
 
-#include "dsp/FastMath.h"
-#include "dsp/Filters.h"
-#include "params/Mappings.h"
+#include "common/dsp/FastMath.h"
+#include "vintage/dsp/Filters.h"
+#include "common/params/Mappings.h"
 
 #include <bit>
 #include <cmath>

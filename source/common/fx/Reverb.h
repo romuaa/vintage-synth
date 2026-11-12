@@ -30,7 +30,7 @@
 // Low frequencies then decay slightly slower than 1 kHz (at most about 1.3x RT60 at full damping),
 // like a real hall.
 
-#include "fx/FxCommon.h"
+#include "common/fx/FxCommon.h"
 
 #include <array>
 

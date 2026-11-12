@@ -1,14 +1,14 @@
 #pragma once
 
-#include "dsp/BlepTable.h"
-#include "dsp/DspUtil.h"
+#include "common/dsp/BlepTable.h"
+#include "common/dsp/DspUtil.h"
 
 #include <array>
 #include <cstddef>
 
 namespace vs::dsp
 {
-/** Order matches kVcoWaveLabels in params/PartParamList.h. */
+/** Order matches kVcoWaveLabels in vintage/params/PartParamList.h. */
 enum class Wave
 {
     Sine,

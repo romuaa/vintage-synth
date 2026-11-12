@@ -17,8 +17,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "PluginProcessor.h"
-#include "engine/NoteEvent.h"
+#include "vintage/PluginProcessor.h"
+#include "common/engine/NoteEvent.h"
 
 #include <algorithm>
 #include <cmath>

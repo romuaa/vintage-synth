@@ -33,14 +33,14 @@ add_executable(VintageSynthTests
     dsp_unit/RenderDemo.cpp
     dsp_unit/RenderDemoM3.cpp)
 
-# M5 effect blocks (header-only, source/fx/).
+# M5 effect blocks (header-only, source/common/fx/).
 target_sources(VintageSynthTests PRIVATE
     fx_unit/ChorusTests.cpp
     fx_unit/DelayTests.cpp
     fx_unit/ReverbTests.cpp
     fx_unit/FxRenderDemo.cpp)
 
-# M4 arpeggiator and step sequencer (header-only, source/seq/).
+# M4 arpeggiator and step sequencer (header-only, source/common/seq/).
 target_sources(VintageSynthTests PRIVATE
     seq_unit/ClockTests.cpp
     seq_unit/TimingTests.cpp

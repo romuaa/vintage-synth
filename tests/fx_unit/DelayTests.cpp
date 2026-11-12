@@ -1,5 +1,5 @@
 #include "FxTestHelpers.h"
-#include "fx/Delay.h"
+#include "common/fx/Delay.h"
 
 using namespace vs::fx;
 using namespace vs::fxtest;

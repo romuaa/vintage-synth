@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/NoteEvent.h"
+#include "common/engine/NoteEvent.h"
 
 #include <cstdint>
 #include <span>

@@ -1,12 +1,12 @@
 #pragma once
 
-#include "dsp/DspUtil.h"
+#include "common/dsp/DspUtil.h"
 
 #include <cstddef>
 
 namespace vs::dsp
 {
-/** Order matches kLfoWaveLabels in params/PartParamList.h. */
+/** Order matches kLfoWaveLabels in vintage/params/PartParamList.h. */
 enum class LfoWave
 {
     Sine,

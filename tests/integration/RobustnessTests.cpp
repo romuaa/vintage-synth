@@ -5,8 +5,8 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "IntegrationRig.h"
-#include "params/Mappings.h"
-#include "params/ParameterLayout.h"
+#include "common/params/Mappings.h"
+#include "vintage/params/ParameterLayout.h"
 
 #if defined(__APPLE__)
  #include "../seq_unit/AllocationCounter.h"

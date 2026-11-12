@@ -11,7 +11,7 @@
 // juce::String from it directly asserts in debug builds (non-ASCII char*) and mangles the arrow.
 // Guarded by the ProcessorTests "parameter names" test.
 // Float params are normalised slider values (0..1, or -1..1 for fine tune and pan).
-// Physical mappings live in params/Mappings.h, shared by DSP and display text.
+// Physical mappings live in common/params/Mappings.h, shared by DSP and display text.
 
 #include <array>
 

@@ -4,9 +4,9 @@
 // (so the wake and fade paths run constantly). Budget (docs/architecture.md 5.3): all three
 // together <= 1.5 % at 48 kHz.
 // Run: build/mac-arm64/tests/fx_bench
-#include "fx/Chorus.h"
-#include "fx/Delay.h"
-#include "fx/Reverb.h"
+#include "common/fx/Chorus.h"
+#include "common/fx/Delay.h"
+#include "common/fx/Reverb.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 

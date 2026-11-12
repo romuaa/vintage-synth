@@ -3,7 +3,7 @@
 // leave a key held in a part.
 #include <catch2/catch_test_macros.hpp>
 
-#include "engine/KeyRouter.h"
+#include "common/engine/KeyRouter.h"
 
 #include <array>
 #include <cmath>

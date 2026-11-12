@@ -10,13 +10,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
-#include "PluginProcessor.h"
+#include "vintage/PluginProcessor.h"
 #include "TestHelpers.h"
-#include "engine/NoteEvent.h"
-#include "engine/Oversampler.h"
-#include "engine/Part.h"
-#include "params/Mappings.h"
-#include "params/PartParamList.h"
+#include "common/engine/NoteEvent.h"
+#include "common/engine/Oversampler.h"
+#include "vintage/engine/Part.h"
+#include "common/params/Mappings.h"
+#include "vintage/params/PartParamList.h"
 
 #include <algorithm>
 #include <cmath>

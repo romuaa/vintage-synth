@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "PluginProcessor.h"
-#include "params/Mappings.h"
-#include "params/ParameterLayout.h"
+#include "vintage/PluginProcessor.h"
+#include "common/params/Mappings.h"
+#include "vintage/params/ParameterLayout.h"
 
 #include <cmath>
 #include <cstring>

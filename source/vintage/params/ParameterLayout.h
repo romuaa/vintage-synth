@@ -2,12 +2,12 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include "fx/Chorus.h"
-#include "fx/Delay.h"
-#include "fx/Reverb.h"
-#include "params/Mappings.h"
-#include "params/PartParamList.h"
-#include "seq/Settings.h"
+#include "common/fx/Chorus.h"
+#include "common/fx/Delay.h"
+#include "common/fx/Reverb.h"
+#include "common/params/Mappings.h"
+#include "vintage/params/PartParamList.h"
+#include "common/seq/Settings.h"
 
 namespace vs
 {

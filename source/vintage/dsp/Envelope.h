@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dsp/DspUtil.h"
+#include "common/dsp/DspUtil.h"
 
 namespace vs::dsp
 {

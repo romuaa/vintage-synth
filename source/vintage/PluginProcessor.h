@@ -2,15 +2,15 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include "engine/EventParser.h"
-#include "engine/KeyRouter.h"
-#include "engine/Part.h"
-#include "engine/PartMixer.h"
-#include "fx/Chorus.h"
-#include "fx/Delay.h"
-#include "fx/Reverb.h"
-#include "params/ParameterLayout.h"
-#include "seq/ArpSeq.h"
+#include "common/engine/EventParser.h"
+#include "common/engine/KeyRouter.h"
+#include "vintage/engine/Part.h"
+#include "common/engine/PartMixer.h"
+#include "common/fx/Chorus.h"
+#include "common/fx/Delay.h"
+#include "common/fx/Reverb.h"
+#include "vintage/params/ParameterLayout.h"
+#include "common/seq/ArpSeq.h"
 
 namespace vs
 {
