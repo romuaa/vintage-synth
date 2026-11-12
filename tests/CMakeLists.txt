@@ -51,3 +51,24 @@ target_link_libraries(host_smoke PRIVATE
 add_dependencies(host_smoke VintageSynth_VST3)
 add_test(NAME host_smoke
          COMMAND host_smoke "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+
+# Golden-render regression harness (ctest label "render").
+add_subdirectory(render_regression)
+
+# Steinberg VST3 validator (optional). Pass the path of a built `validator` binary, e.g. from CI:
+#   cmake ... -DVS_VST3_VALIDATOR=/path/to/validator
+# Unset (the default): no test is added and nothing else changes.
+set(VS_VST3_VALIDATOR "" CACHE FILEPATH "Path to the VST3 SDK validator executable (optional)")
+if(VS_VST3_VALIDATOR)
+    if(NOT EXISTS "${VS_VST3_VALIDATOR}")
+        message(FATAL_ERROR "VS_VST3_VALIDATOR does not exist: ${VS_VST3_VALIDATOR}")
+    endif()
+    add_test(NAME vst3_validator
+             COMMAND "${VS_VST3_VALIDATOR}"
+                     "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+    # Exit code alone is not enough: require the validator's own summary with at least one test
+    # run and none failed, so a validator that loads nothing cannot pass silently.
+    set_tests_properties(vst3_validator PROPERTIES
+        LABELS vst3
+        PASS_REGULAR_EXPRESSION "Result: [1-9][0-9]* tests passed, 0 tests failed")
+endif()
