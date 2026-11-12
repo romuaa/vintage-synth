@@ -6,6 +6,11 @@ name: security
 # The SARIF report is always uploaded as a workflow artifact. Upload to GitHub code scanning only
 # works when code scanning is enabled (private repos need GitHub Advanced Security); set the
 # repository variable CODE_SCANNING=true to turn that step on.
+#
+# Triggers: unlike the build workflow (manual only, see build.yml), this one stays automatic on
+# pull requests and main because it is cheap (one Linux job, about 30 s) and catches what the
+# local gate's `scan` step (scripts/preflight.sh, same scanner version) might have missed.
+# Keep TRIVY_VERSION below in step with the image pinned in scripts/preflight.sh.
 
 on:
   push:

@@ -87,6 +87,12 @@ Constraints behind this plan:
 **Commit messages and PR descriptions never contain a `Claude-Session:` link** (owner decision);
 end commit messages with the Co-Authored-By line only, and say so in every brief.
 
+**Local-first (owner decision, permanent):** agents run `scripts/preflight.sh` (at least `--quick`;
+the full set for engine changes) and never push or trigger CI. You dispatch at most ONE CI run per
+merge-ready branch (`gh workflow run build.yml --ref <branch> -f targets=no-macos`), only when the
+owner has CI minutes; while CI is offline, record merges in `CLAUDE.md` under "Merged without
+Windows / Linux x86_64 verification". Warn the owner before any batch of CI runs.
+
 **CI minutes are billed while the repo is private.** Push each branch once, after steps 2–5 and a
 local sanitizer run and `scripts/linux-check.sh` (GCC in a container); batch docs with code; never push docs-only commits to a code PR. Open PRs as
 drafts (Windows x64 only) and mark them ready for the full matrix once, at the end.

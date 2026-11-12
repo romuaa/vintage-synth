@@ -23,7 +23,8 @@ ln -sfn /deps/Catch2 "$src/external/Catch2"
 export LC_ALL=C
 (cd "$src" && find . -type f -not -path './external/*' -print0 | sort -z) > /work/have.lst
 sort -z /list | sed -z 's|^|./|' > /work/want.lst
-comm -z -23 /work/have.lst /work/want.lst | xargs -0 -r rm -f --
+# (the listed paths are relative to the snapshot, so run in it)
+(cd "$src" && comm -z -23 /work/have.lst /work/want.lst | xargs -0 -r rm -f --)
 
 # Parallel jobs: one per CPU, but at most one per GB of the Docker VM's memory (GCC needs ~1 GB per
 # JUCE translation unit; more jobs get cc1plus killed by the OOM killer).

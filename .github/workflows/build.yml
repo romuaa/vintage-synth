@@ -1,29 +1,33 @@
 name: build
 
-# Cost control (private repo: macOS minutes are billed at a multiple of Linux, Windows at 2x):
-#  - Docs-only changes don't build.
-#  - Draft pull requests build Windows x64 and Linux x64 only (MSVC is what can't be tested
-#    locally; Linux is the cheapest runner). The full matrix runs when the PR is marked "ready
-#    for review", on main and on manual dispatch.
-#  - A manual dispatch with targets=linux builds only the Linux row, the multi-distribution load
-#    check of its bundle (linux-distros) and the sanitizer job.
-#  - The sanitizer job (ASan + UBSan, Linux) runs in every tier.
-#  - Every job has a timeout, so a hung test can't burn hours.
-# Once the repository is public (free standard runners), the draft tier can be removed.
+# CI policy: LOCAL FIRST, CI IS A DELIBERATE CONFIRMATION STEP.
+# Everything that can be checked on the developer's Mac is checked there, by scripts/preflight.sh
+# (macOS universal build + tests + pluginval, sanitizers, the Linux ARM64 container, a security scan,
+# repository hygiene). What only a runner can do is Windows (MSVC, x64 and ARM64), the real
+# Linux x86_64 binary on the real distributions, and the Steinberg VST3 validator. So:
+#  - Nothing here runs automatically: no build on pull requests, none on pushes to any branch,
+#    none on main. A maintainer starts a run by hand (Actions tab, or
+#    `gh workflow run build.yml --ref <branch> -f targets=<value>`).
+#  - Pick `targets` (default no-macos, the normal pre-merge confirmation after the local gate is green):
+#      windows    Windows x64 + ARM64 and the merged Windows bundle
+#      linux-x64  the Linux x86_64 row and the distribution load tests
+#      linux      both Linux rows, the sanitizers, the distribution tests and the Linux bundle
+#      no-macos   everything except the macOS row (macOS is fully covered locally and is the most
+#                 expensive runner)
+#      all        everything: the release confirmation, run on main before a release
+#  - Each run's summary page lists the commit and the selected rows, so a green run on the
+#    branch tip is the recorded confirmation for the merge. The workflow file must exist on the
+#    default branch for the dispatch to be offered; run it from the branch you want to confirm.
+#  - Every job has a timeout, so a hung test can't burn hours. The security workflow (cheap,
+#    Linux only) is separate and keeps its own triggers.
 on:
-  push:
-    branches: [main]
-    paths-ignore: ["**.md", "docs/**", ".claude/**", "LICENSE"]
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore: ["**.md", "docs/**", ".claude/**", "LICENSE"]
   workflow_dispatch:
     inputs:
       targets:
-        description: "Which targets to build: all, or only the Linux row and the sanitizer job"
+        description: "What to build (see the header of this file). Default: no-macos"
         type: choice
-        options: [all, linux]
-        default: all
+        options: [no-macos, windows, linux-x64, linux, all]
+        default: no-macos
 
 permissions:
   contents: read
@@ -46,31 +50,74 @@ env:
   VST3_SDK_SHA: 3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96
 
 jobs:
+  # The ONE place that maps `targets` to what runs. The `if:` of every job below reads these
+  # outputs, so they cannot drift apart. scripts/preflight/docs-check.sh runs this step's script
+  # for every target and compares the result with the documented table.
+  plan:
+    name: plan (${{ inputs.targets }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      distros: ${{ steps.plan.outputs.distros }}
+      sanitizers: ${{ steps.plan.outputs.sanitizers }}
+      windows_bundle: ${{ steps.plan.outputs.windows_bundle }}
+      linux_bundle: ${{ steps.plan.outputs.linux_bundle }}
+    steps:
+      - name: Select rows
+        id: plan
+        env:
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          set -euo pipefail
+          # Rows of the build matrix (JSON):
+          #  macos-universal  macos-26 (Apple silicon, pinned, not -latest); ccache handles the
+          #                   multi-arch (-arch arm64 -arch x86_64) universal compile.
+          #  windows-x64      windows-2025 (VS 2026 image, pinned); sccache.
+          #  windows-arm64    windows-11-arm (VS 2026 image); no native ARM64 pluginval release yet;
+          #                   the VST3 SDK validator build on ARM64 is untested (set validator true to try).
+          #  linux-x64        ubuntu-22.04, the OLDEST image GitHub offers: the binary must not need a
+          #                   newer glibc than the oldest distributions we support; ccache.
+          #  linux-arm64      ubuntu-22.04-arm (same Ubuntu, glibc 2.35). No pluginval: v1.0.4 has no
+          #                   Linux ARM64 release asset.
+          MACOS='{"name":"macos-universal","os":"macos-26","cache":"ccache","pluginval":true,"validator":true}'
+          WIN_X64='{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true}'
+          WIN_ARM64='{"name":"windows-arm64","os":"windows-11-arm","msvc_arch":"arm64","cache":"sccache","pluginval":false,"validator":false}'
+          LIN_X64='{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true,"arch_dir":"x86_64-linux"}'
+          LIN_ARM64='{"name":"linux-arm64","os":"ubuntu-22.04-arm","cache":"ccache","pluginval":false,"validator":true,"arch_dir":"aarch64-linux"}'
+          # target -> rows, and which extra jobs run. The bundle jobs need both of their inputs.
+          case "$TARGETS" in
+            windows)   rows=("$WIN_X64" "$WIN_ARM64");                          distros=false sanitizers=false windows_bundle=true  linux_bundle=false ;;
+            linux-x64) rows=("$LIN_X64");                                       distros=true  sanitizers=false windows_bundle=false linux_bundle=false ;;
+            linux)     rows=("$LIN_X64" "$LIN_ARM64");                          distros=true  sanitizers=true  windows_bundle=false linux_bundle=true  ;;
+            no-macos)  rows=("$WIN_X64" "$WIN_ARM64" "$LIN_X64" "$LIN_ARM64");  distros=true  sanitizers=true  windows_bundle=true  linux_bundle=true  ;;
+            all)       rows=("$MACOS" "$WIN_X64" "$WIN_ARM64" "$LIN_X64" "$LIN_ARM64"); distros=true sanitizers=true windows_bundle=true linux_bundle=true ;;
+            *) echo "unknown targets '$TARGETS'" >&2; exit 1 ;;
+          esac
+          matrix=$(printf '%s\n' "${rows[@]}" | jq -c -s '.')
+          {
+            echo "matrix=$matrix"
+            echo "distros=$distros"
+            echo "sanitizers=$sanitizers"
+            echo "windows_bundle=$windows_bundle"
+            echo "linux_bundle=$linux_bundle"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### CI run: targets = \`$TARGETS\`"
+            echo "- commit: \`$GITHUB_SHA\` (ref \`$GITHUB_REF_NAME\`)"
+            echo "- build rows: $(echo "$matrix" | jq -r 'map(.name) | join(", ")')"
+            echo "- distribution tests: $distros, sanitizers: $sanitizers, Windows bundle: $windows_bundle, Linux bundle: $linux_bundle"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
     name: ${{ matrix.name }}
+    needs: plan
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # Rows (JSON, because the draft tier is chosen by an expression):
-        #  macos-universal  macos-26 (Apple silicon, pinned, not -latest); ccache handles the
-        #                   multi-arch (-arch arm64 -arch x86_64) universal compile.
-        #  windows-x64      windows-2025 (VS 2026 image, pinned); sccache.
-        #  linux-x64        ubuntu-22.04, the OLDEST image GitHub offers: the binary must not need a
-        #                   newer glibc than the oldest distributions we support; ccache.
-        #  linux-arm64      ubuntu-22.04-arm (same Ubuntu, glibc 2.35); full tier and targets=linux
-        #                   only. No pluginval: v1.0.4 has no Linux ARM64 release asset.
-        #  windows-arm64    windows-11-arm (VS 2026 image); no native ARM64 pluginval release yet;
-        #                   the VST3 SDK validator build on ARM64 is untested (set validator true to try).
-        include: >-
-          ${{ fromJSON(
-          (github.event_name == 'workflow_dispatch' && inputs.targets == 'linux')
-          && '[{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true,"arch_dir":"x86_64-linux"},{"name":"linux-arm64","os":"ubuntu-22.04-arm","cache":"ccache","pluginval":false,"validator":true,"arch_dir":"aarch64-linux"}]'
-          || (github.event_name == 'pull_request' && github.event.pull_request.draft)
-          && '[{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true,"arch_dir":"x86_64-linux"}]'
-          || '[{"name":"macos-universal","os":"macos-26","cache":"ccache","pluginval":true,"validator":true},{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"windows-arm64","os":"windows-11-arm","msvc_arch":"arm64","cache":"sccache","pluginval":false,"validator":false},{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true,"arch_dir":"x86_64-linux"},{"name":"linux-arm64","os":"ubuntu-22.04-arm","cache":"ccache","pluginval":false,"validator":true,"arch_dir":"aarch64-linux"}]'
-          ) }}
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -264,11 +311,12 @@ jobs:
   # distribution; the entry marked NEGATIVE is older than the glibc floor (2.35, the build image)
   # and asserts that the plugin is refused with "GLIBC_x.y not found", so the documented floor is
   # tested, not assumed. Tags are pinned by hand (Dependabot doesn't bump them): check Docker Hub
-  # for newer releases when touching CI. Runs wherever the Linux row ran (every tier).
+  # for newer releases when touching CI. Runs when the linux-x64 row was selected.
   linux-distros:
     name: distro ${{ matrix.name }}
-    needs: build
-    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
+    needs: [plan, build]
+    # Runs when the linux-x64 row was selected, even if another row failed (fail-fast is off).
+    if: ${{ !cancelled() && needs.plan.outputs.distros == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -342,9 +390,9 @@ jobs:
 
   # Merge Windows x64 + ARM64 into one .vst3 bundle (Contents/x86_64-win + Contents/arm64-win).
   windows-bundle:
-    needs: build
-    # Needs both Windows builds, so it is skipped in the draft tier and in Linux-only dispatches.
-    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.targets == 'linux') }}
+    needs: [plan, build]
+    # Needs both Windows builds (and, implicitly, every selected build to have succeeded).
+    if: ${{ needs.plan.outputs.windows_bundle == 'true' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -367,9 +415,9 @@ jobs:
 
   # Merge Linux x86_64 + ARM64 into one .vst3 bundle (Contents/x86_64-linux + Contents/aarch64-linux).
   linux-bundle:
-    needs: build
-    # Needs both Linux builds: skipped in the draft tier (x86_64 only).
-    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
+    needs: [plan, build]
+    # Needs both Linux builds (and, implicitly, every selected build to have succeeded).
+    if: ${{ needs.plan.outputs.linux_bundle == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -391,9 +439,11 @@ jobs:
           path: merged
 
   # AddressSanitizer + UndefinedBehaviorSanitizer on the unit and render-regression tests.
-  # Cheap, so it runs in every tier. Clang on the newest-but-one LTS image: best diagnostics.
+  # Clang on the newest-but-one LTS image: best diagnostics. Runs for linux, no-macos and all.
   linux-sanitizers:
     name: linux-sanitizers
+    needs: plan
+    if: ${{ needs.plan.outputs.sanitizers == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:

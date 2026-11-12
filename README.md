@@ -114,6 +114,15 @@ time on Apple silicon) and opens the host with MIDI Input → Exitium Vintage Sy
 
 What to check by hand: [docs/ui-test-checklist.md](docs/ui-test-checklist.md).
 
+## Before you push
+
+Run `scripts/preflight.sh --quick` while working and `scripts/preflight.sh` before you push (needs
+CMake, Ninja and Docker; the first run downloads pluginval, the VST3 validator sources and a scanner
+image into `~/Library/Caches/vs-preflight/`). It builds and tests the macOS universal plugin, runs
+pluginval and the VST3 validator, the sanitizers, the Linux ARM64 container build, a security scan
+and repository checks. `scripts/preflight.sh --clean` removes what it cached. Windows and Linux
+x86_64 are confirmed by a manually started CI run.
+
 ## Testing
 
 ```bash

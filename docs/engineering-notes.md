@@ -12,6 +12,9 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | The first container build was killed for lack of memory. | 18 parallel compile jobs in an 8 GB container VM. | Cap parallel jobs by the VM's memory. |
 | The container check's sanitizer mode could not write the build volume. | The two base images gave the unprivileged build user different numeric ids. | Create the user with the same fixed id in every image. |
 | The security scan failed on the new Dockerfile. | It ran as root and installed recommended packages. | Unprivileged user; `--no-install-recommends`; name the sanitizer runtime package explicitly (its name differs between distribution versions). |
+| The container check reported a bogus failure ("unknown parameter id") after another branch had used it. | Files deleted since the last run were never removed from the shared build volume (the cleanup ran in the wrong directory), and two runs could overlap. | Fixed; runs now take a lock. A shared cache must mirror deletions too. |
+| A helper printed a progress note that ended up inside a file path. | Command substitution captures stdout. | Functions that return a value on stdout send notes to stderr. |
+| A plain-text deny-list of brand names would itself put the names into the repository. | The rule forbids the names everywhere. | The list is stored as SHA-256 hashes of normalised names; the check hashes words and short phrases (`scripts/preflight/name-check.py`). |
 | pluginval has no Linux ARM64 release. | Upstream. | The ARM64 row runs tests, `host_smoke` and the VST3 validator only, like Windows ARM64. |
 | A plugin built for glibc 2.35 really needs it. | Verified by a negative test: on a glibc 2.31 distribution loading fails with "version GLIBC_2.35 not found". | The floor is tested in CI, not assumed. |
 
