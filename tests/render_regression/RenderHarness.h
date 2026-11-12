@@ -19,6 +19,14 @@
 //   [t] cc <controller> <value 0..127> [channel]
 //   [t] bend <0..16383> [channel]    8192 = centre
 //   [t] alloff [channel]
+//
+// Host transport (Wave 3; the play head the processor reads, as a host would provide it). Until
+// the first `play` the transport is stopped. Like `param`, these split the block, so they act at
+// the same sample for any block size:
+//   [t] play <bpm> [ppq]             start playback at musical position ppq (default 0) and tempo bpm
+//   [t] tempo <bpm>                  tempo change; the position continues (no jump)
+//   [t] locate <ppq>                 position jump while playing (a loop or a locate)
+//   [t] stop                         stop playback
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -30,11 +38,12 @@ namespace vs::rr
 {
 struct Event
 {
-    enum class Kind { param, noteOn, noteOff, cc, bend, allOff };
+    enum class Kind { param, noteOn, noteOff, cc, bend, allOff, play, tempo, locate, stop };
     double time = 0.0;
     Kind kind = Kind::param;
     std::string id;     // param only
-    double value = 0.0; // param value, or note/controller number, or bend
+    double value = 0.0; // param value, or note/controller number, or bend; bpm (play, tempo), ppq (locate)
+    double ppq = 0.0;   // play only
     int data = 0;       // velocity / controller value
     int channel = 1;
 };

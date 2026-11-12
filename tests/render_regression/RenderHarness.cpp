@@ -128,6 +128,36 @@ Script parseScript (const std::string& text)
             e.kind = Event::Kind::allOff;
             e.channel = channelAt (0);
         }
+        else if (cmd == "play")
+        {
+            if (args < 1 || args > 2)
+                fail ("play <bpm> [ppq]");
+            e.kind = Event::Kind::play;
+            e.value = arg (0);
+            e.ppq = args > 1 ? arg (1) : 0.0;
+            if (e.value <= 0.0)
+                fail ("play: tempo must be positive");
+        }
+        else if (cmd == "tempo")
+        {
+            if (args != 1 || arg (0) <= 0.0)
+                fail ("tempo <bpm>");
+            e.kind = Event::Kind::tempo;
+            e.value = arg (0);
+        }
+        else if (cmd == "locate")
+        {
+            if (args != 1)
+                fail ("locate <ppq>");
+            e.kind = Event::Kind::locate;
+            e.value = arg (0);
+        }
+        else if (cmd == "stop")
+        {
+            if (args != 0)
+                fail ("stop takes no arguments");
+            e.kind = Event::Kind::stop;
+        }
         else
             fail ("unknown command: " + cmd);
 
@@ -161,10 +191,56 @@ std::vector<std::vector<float>> renderScriptChannels (const Script& script, int 
     return both;
 }
 
+namespace
+{
+/** The host transport of a script: stopped until `play`; the position of a block's first sample
+    is computed from the last play/tempo/locate anchor (never accumulated per block). */
+struct ScriptPlayHead final : public juce::AudioPlayHead
+{
+    bool playing = false;
+    double bpm = 120.0, anchorPpq = 0.0, sampleRate = 48000.0;
+    long long anchor = 0, now = 0;
+
+    double ppqAt (long long sample) const { return anchorPpq + static_cast<double> (sample - anchor) * bpm / (60.0 * sampleRate); }
+
+    void apply (const Event& e, long long at)
+    {
+        switch (e.kind)
+        {
+            case Event::Kind::play:   playing = true; bpm = e.value; anchorPpq = e.ppq; anchor = at; break;
+            case Event::Kind::tempo:  anchorPpq = ppqAt (at); anchor = at; bpm = e.value; break;
+            case Event::Kind::locate: anchorPpq = e.value; anchor = at; break;
+            case Event::Kind::stop:   playing = false; break;
+            case Event::Kind::param: case Event::Kind::noteOn: case Event::Kind::noteOff:
+            case Event::Kind::cc: case Event::Kind::bend: case Event::Kind::allOff: break;
+        }
+    }
+
+    juce::Optional<PositionInfo> getPosition() const override
+    {
+        PositionInfo info;
+        info.setIsPlaying (playing);
+        info.setBpm (bpm);
+        info.setPpqPosition (playing ? ppqAt (now) : 0.0);
+        return info;
+    }
+};
+
+/** Parameter and transport commands: applied between blocks, they split the block. */
+bool isBlockEvent (Event::Kind k)
+{
+    return k == Event::Kind::param || k == Event::Kind::play || k == Event::Kind::tempo || k == Event::Kind::locate
+           || k == Event::Kind::stop;
+}
+} // namespace
+
 std::vector<std::vector<float>> renderScriptStereo (const Script& script, int blockSize)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
     vs::VintageSynthProcessor proc;
+    ScriptPlayHead playHead;
+    playHead.sampleRate = script.sampleRate;
+    proc.setPlayHead (&playHead);
     proc.setPlayConfigDetails (0, 2, script.sampleRate, blockSize);
     proc.prepareToPlay (script.sampleRate, blockSize);
 
@@ -193,12 +269,15 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
         for (size_t k = 0; k < script.events.size(); ++k)
         {
             const auto& e = script.events[k];
-            if (e.kind != Event::Kind::param || applied[k])
+            if (! isBlockEvent (e.kind) || applied[k])
                 continue;
             const int s = sampleOf (e);
             if (s <= pos)
             {
-                applyParam (e);
+                if (e.kind == Event::Kind::param)
+                    applyParam (e);
+                else
+                    playHead.apply (e, pos);
                 applied[k] = true;
             }
             else if (s < end)
@@ -210,7 +289,7 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
         for (const auto& e : script.events)
         {
             const int s = sampleOf (e);
-            if (e.kind == Event::Kind::param || s < pos || s >= end)
+            if (isBlockEvent (e.kind) || s < pos || s >= end)
                 continue;
             const auto note = static_cast<int> (e.value);
             switch (e.kind)
@@ -220,12 +299,14 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
                 case Event::Kind::cc:      midi.addEvent (juce::MidiMessage::controllerEvent (e.channel, note, e.data), s - pos); break;
                 case Event::Kind::bend:    midi.addEvent (juce::MidiMessage::pitchWheel (e.channel, note), s - pos); break;
                 case Event::Kind::allOff:  midi.addEvent (juce::MidiMessage::allNotesOff (e.channel), s - pos); break;
-                case Event::Kind::param:   break;
+                case Event::Kind::param: case Event::Kind::play: case Event::Kind::tempo:
+                case Event::Kind::locate: case Event::Kind::stop: break;
             }
         }
 
         buffer.setSize (2, len, false, false, true);
         buffer.clear();
+        playHead.now = pos;
         proc.processBlock (buffer, midi);
         const float* l = buffer.getReadPointer (0);
         const float* r = buffer.getReadPointer (1);

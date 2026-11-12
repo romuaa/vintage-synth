@@ -57,7 +57,8 @@ target_sources(VintageSynthTests PRIVATE
 # Wave 3 integration: effects and arpeggiator/sequencer in the processor (docs/architecture.md 6a).
 target_sources(VintageSynthTests PRIVATE
     integration/FxIntegrationTests.cpp
-    integration/ArpIntegrationTests.cpp)
+    integration/ArpIntegrationTests.cpp
+    integration/RenderDemoM5.cpp)
 
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
