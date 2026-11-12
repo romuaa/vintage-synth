@@ -1,7 +1,7 @@
 #include "vintage/engine/Voice.h"
 
 #include "common/dsp/FastMath.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 
 #include <algorithm>
 #include <bit>

@@ -45,7 +45,9 @@ juce_add_plugin(VintageSynth
 # A second instrument adds its own juce_add_plugin target and its own VS_<NAME>_SOURCES list and
 # links VS_COMMON_SOURCES the same way as below. Everything is included as "common/..." or
 # "vintage/..." with source/ as the include root.
-set(VS_COMMON_SOURCES)
+set(VS_COMMON_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/params/ParamFactory.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/params/FxArpParams.cpp)
 set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/params/ParameterLayout.cpp

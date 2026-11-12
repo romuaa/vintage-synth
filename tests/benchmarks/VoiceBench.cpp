@@ -14,7 +14,7 @@
 #include "common/engine/Oversampler.h"
 #include "vintage/engine/Part.h"
 #include "vintage/engine/Voice.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 
 #include <algorithm>
 #include <chrono>

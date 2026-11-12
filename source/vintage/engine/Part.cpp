@@ -1,7 +1,7 @@
 #include "vintage/engine/Part.h"
 
 #include "common/engine/Oversampler.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 
 #include <cmath>
 

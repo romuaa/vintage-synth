@@ -20,7 +20,7 @@
 #include "TestHelpers.h"
 #include "common/engine/EventParser.h"
 #include "common/engine/PartMixer.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 #include "vintage/params/ParameterLayout.h"
 
 #include <algorithm>

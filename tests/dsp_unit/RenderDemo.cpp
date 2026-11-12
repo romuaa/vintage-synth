@@ -4,7 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "vintage/engine/Part.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_dsp/juce_dsp.h>

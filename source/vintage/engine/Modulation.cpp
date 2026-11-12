@@ -2,7 +2,7 @@
 
 #include "common/dsp/FastMath.h"
 #include "vintage/dsp/Filters.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 
 #include <bit>
 #include <cmath>

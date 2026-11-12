@@ -15,6 +15,8 @@
 
 #include <array>
 
+#include "common/params/CommonLabels.h"
+
 namespace vs
 {
 // ---- Choice labels. Order == enum order in the DSP (static_asserted there). ----
@@ -25,7 +27,6 @@ inline constexpr std::array<const char*, 6> kVco1RangeLabels { "32'", "16'", "8'
 inline constexpr std::array<const char*, 4> kVco2RangeLabels { "16'", "8'", "4'", "2'" };
 inline constexpr std::array<const char*, 6> kVcoWaveLabels { "Sine", "Triangle", "Saw", "Square", "Pulse", "Noise" };
 inline constexpr std::array<const char*, 2> kVco2ModeLabels { "Normal", "Lo Freq" };
-inline constexpr std::array<const char*, 2> kOffOnLabels { "Off", "On" };
 inline constexpr std::array<const char*, 2> kSlopeLabels { "-12 dB", "-24 dB" };
 inline constexpr std::array<const char*, 2> kEnvSourceLabels { "ENV-1", "ENV-2" };
 inline constexpr std::array<const char*, 4> kVcaLfoLabels { "0", "1", "2", "3" };

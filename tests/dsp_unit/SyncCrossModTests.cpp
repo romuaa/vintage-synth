@@ -13,7 +13,7 @@
 #include "vintage/dsp/Oscillator.h"
 #include "common/engine/Oversampler.h"
 #include "vintage/engine/Part.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 

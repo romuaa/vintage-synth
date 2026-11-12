@@ -15,7 +15,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "IntegrationRig.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 #include "vintage/params/ParameterLayout.h"
 
 #if defined(__APPLE__)

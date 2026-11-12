@@ -15,7 +15,7 @@
 #include "common/engine/NoteEvent.h"
 #include "common/engine/Oversampler.h"
 #include "vintage/engine/Part.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 #include "vintage/params/PartParamList.h"
 
 #include <algorithm>

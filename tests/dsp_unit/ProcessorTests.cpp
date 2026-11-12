@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "vintage/PluginProcessor.h"
-#include "common/params/Mappings.h"
+#include "vintage/params/PartMappings.h"
 #include "vintage/params/ParameterLayout.h"
 
 #include <cmath>
