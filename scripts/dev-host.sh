@@ -2,7 +2,8 @@
 # Build Vintage Synth + JUCE's AudioPluginHost (from the JUCE submodule) for this Mac's native
 # architecture and launch the host with a graph: MIDI in -> Vintage Synth -> audio out.
 #
-#   scripts/dev-host.sh              build (incremental) and launch
+#   scripts/dev-host.sh              build (incremental), launch the host detached and return
+#   scripts/dev-host.sh --wait       launch the host and stay attached until it is closed
 #   scripts/dev-host.sh --build-only build, don't launch
 #   scripts/dev-host.sh --no-build   launch what is already built
 #   scripts/dev-host.sh --debug      Debug build in build/dev-host-debug
@@ -14,14 +15,15 @@ set -euo pipefail
 die() { echo "dev-host: error: $*" >&2; exit 1; }
 info() { echo "dev-host: $*"; }
 
-DO_BUILD=1; DO_LAUNCH=1; DO_INSTALL=0; CONFIG=Release; BDIR_NAME=dev-host
+DO_BUILD=1; DO_LAUNCH=1; DO_INSTALL=0; DO_WAIT=0; CONFIG=Release; BDIR_NAME=dev-host
 for a in "$@"; do
   case "$a" in
     --build-only) DO_LAUNCH=0 ;;
     --no-build)   DO_BUILD=0 ;;
     --debug)      CONFIG=Debug; BDIR_NAME=dev-host-debug ;;
     --install)    DO_INSTALL=1 ;;
-    -h|--help)    sed -n '2,11p' "$0"; exit 0 ;;
+    --wait)       DO_WAIT=1 ;;
+    -h|--help)    sed -n '2,12p' "$0"; exit 0 ;;
     *)            die "unknown option '$a' (see --help)" ;;
   esac
 done
@@ -120,14 +122,26 @@ info "plugin : $PLUGIN"
 info "host   : $HOST_APP"
 [[ $GRAPH_OK -eq 1 ]] && info "graph  : $GRAPH"
 
+# Detached by default: the host keeps running after this script returns (output in host.log).
+# --wait keeps it attached to the terminal until the host is closed.
+launch() {
+  if [[ $DO_WAIT -eq 1 ]]; then
+    "$HOST_BIN" "$@"
+  else
+    nohup "$HOST_BIN" "$@" >"$BUILD/host.log" 2>&1 </dev/null &
+    disown $! 2>/dev/null || true
+    info "host started (pid $!), log: $BUILD/host.log"
+  fi
+}
+
 if [[ $DO_LAUNCH -eq 1 ]]; then
   if [[ $GRAPH_OK -eq 1 ]]; then
     info "launching host with the graph (open the plugin window by double-clicking its node)"
-    exec "$HOST_BIN" "$GRAPH"
+    launch "$GRAPH"
   else
     info "could not generate the graph (moduleinfo.json unreadable). Launching the bare host."
     info "In the host: Options > Edit the list of available plug-ins > Scan for new or updated VST3 plug-ins,"
     info "or drag '$PLUGIN' onto the host window; then wire Midi Input -> plugin -> Audio Output."
-    exec "$HOST_BIN"
+    launch
   fi
 fi

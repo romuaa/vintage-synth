@@ -67,6 +67,14 @@ endif()
 
 set_target_properties(VintageSynth PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
+# Linux: link the C++ runtime statically into the shipped plugin, so it depends only on glibc and
+# the usual system libraries (a host may load a different libstdc++ than the one we built with).
+# --exclude-libs keeps the statically linked runtime's symbols out of the plugin's exports.
+if(UNIX AND NOT APPLE AND TARGET VintageSynth_VST3)
+    target_link_options(VintageSynth_VST3 PRIVATE
+        -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL)
+endif()
+
 if(VS_BUILD_TESTS)
     enable_testing()
     add_subdirectory(external/Catch2)

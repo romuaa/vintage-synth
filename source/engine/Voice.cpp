@@ -263,7 +263,7 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
     // Portamento (semitones above the note, closed-form RC) and velocity (smoothed per voice).
     float glideSemis[kN], vel[kN], levelScale[kN];
     {
-        if (glideDev != 0.0f)
+        if (std::fpclassify (glideDev) != FP_ZERO) // same as != 0.0f; GCC's -Wfloat-equal rejects the operator
         {
             if (! glideAnchored || std::bit_cast<std::uint64_t> (m.glideLog) != std::bit_cast<std::uint64_t> (glideLog))
             {
