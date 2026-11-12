@@ -5,6 +5,15 @@ Anything marked **(review)** is a judgement call that the product owner may want
 
 ## Wave 1 — M2 polyphony, effect blocks, owner decisions (2026-11-12)
 
+### Public-release audit (2026-11-12)
+- Full-history scan found no secrets, keys, home-directory paths or third-party brand names. Three
+  comments that pointed at specific hardware (a filter chip type, "panel photo", "the original")
+  were reworded.
+- pluginval downloads in CI get a SHA-256 check; CI artifacts are kept 7 days.
+- Added `SECURITY.md`, `CONTRIBUTING.md` (AGPLv3-only contributions) and a PR template.
+- Statements about the repository being private and CI cost are updated in the follow-up change
+  right after the visibility flip, together with removing the draft-PR cost tier.
+
 ### Owner decisions and approvals
 - **M2 audition approved by ear** (polyphonic demo: pads, steals, unison lead, pedal, velocity, solo bass).
 - **Effects, first listen on the standalone blocks:** chorus approved at the stronger maximum;
@@ -112,10 +121,10 @@ All are marked **(review)**: the owner has not confirmed them yet.
 |---|---|---|
 | Sync switch | **VCO-1 is the slave and is hard-synced to VCO-2.** | Matches the classic architecture, where VCO-2 is the modulator for both Cross Mod and Sync, and VCO-2's Lo Freq mode makes it a usable sync/FM master. The parameter ID stays `vco2.sync` because the switch sits in the VCO-2 section. |
 | Cross Mod | VCO-2 → VCO-1 **exponential** audio-rate FM, max ±4 oct (squared taper). | Classic analog cross-mod behaviour; the squared taper gives fine control at low settings. |
-| VCO-2 Lo Freq | VCO-2 stops tracking the keyboard and pitch bend and runs at 1–8 Hz (16'..2'), adjusted by Fine Tune. VCO pitch mods still apply. | Turns VCO-2 into a second, sync-capable LFO, as on the original. |
-| Waveforms | Both VCOs offer Sine, Triangle, Saw, Square, Pulse, Noise. | The panel photo can't be read reliably per VCO, so a superset costs nothing. (confirmed by owner 2026-11-12) |
+| VCO-2 Lo Freq | VCO-2 stops tracking the keyboard and pitch bend and runs at 1–8 Hz (16'..2'), adjusted by Fine Tune. VCO pitch mods still apply. | Turns VCO-2 into a second, sync-capable LFO. |
+| Waveforms | Both VCOs offer Sine, Triangle, Saw, Square, Pulse, Noise. | The reference layout is ambiguous per VCO, so a superset costs nothing. (confirmed by owner 2026-11-12) |
 | VCO ranges | VCO-1: 32'..1' (6 steps). VCO-2: 16'..2' (4 steps). 8' = keyboard pitch. | As printed on the panel. |
-| VCA 0-1-2-3 switch | **VCA LFO Mod depth** (tremolo dips of 0 / 25 / 50 / 100 %). | Its position under "LFO MOD" in the VCA section matches the original's 4-step VCA LFO switch. (confirmed by owner 2026-11-12) |
+| VCA 0-1-2-3 switch | **VCA LFO Mod depth** (tremolo dips of 0 / 25 / 50 / 100 %). | Its position under "LFO MOD" in the VCA section matches the usual 4-step VCA LFO switch of this kind of panel. (confirmed by owner 2026-11-12) |
 | ENV-1 shape switch | **ENV-1 polarity** (Normal / Inverted). Inverted gives -ENV-1 for pitch and VCF; for PWM it gives 1 - ENV-1 (PWM is unipolar). | The shape icon under ENV-1 marks the classic polarity switch. (confirmed by owner 2026-11-12) |
 | ENV key follow (KYBD) | Per envelope on/off. When on, all times halve every 2 octaves above C4. | Common analog key-follow behaviour. |
 | "1 / ALL / 2" ENV selector | UI edit target only (which envelope the faders edit). **Not a host parameter.** | Same reasoning as Panel Mode Lower/Upper. |

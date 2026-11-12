@@ -45,6 +45,11 @@ Run these in order and stop at the first failure. Report each step as pass, fail
    Budget: 32 voices at 2× oversampling (Dual mode) under 15 % of one core at 48 kHz, effects
    included. 4× is offline only and has no real-time budget. Flag any regression above 5 %.
 
+Linux and sanitizers in CI: the `linux-x64` row (ubuntu-22.04, GCC) runs everything including
+pluginval and the validator; the `linux-sanitizers` job (ubuntu-24.04, Clang, ASan + UBSan,
+`halt_on_error`) runs the tests without `host_smoke` in every CI tier. A Linux-only manual run:
+`gh workflow run build.yml --ref <branch> -f targets=linux`.
+
 Windows CI: after a push, check with `gh run list --limit 3` and `gh run view <id> --log-failed`.
 CI minutes cost money while the repo is private: push a branch once, when everything above is green.
 Draft PRs build Windows x64 only; mark the PR ready (`gh pr ready <n>`) for the full matrix.

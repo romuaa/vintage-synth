@@ -2,8 +2,11 @@ name: build
 
 # Cost control (private repo: macOS minutes are billed at a multiple of Linux, Windows at 2x):
 #  - Docs-only changes don't build.
-#  - Draft pull requests build Windows x64 only (MSVC is what can't be tested locally).
-#    The full matrix runs when the PR is marked "ready for review", on main and on manual dispatch.
+#  - Draft pull requests build Windows x64 and Linux x64 only (MSVC is what can't be tested
+#    locally; Linux is the cheapest runner). The full matrix runs when the PR is marked "ready
+#    for review", on main and on manual dispatch.
+#  - A manual dispatch with targets=linux builds only the Linux row and the sanitizer job.
+#  - The sanitizer job (ASan + UBSan, Linux) runs in every tier.
 #  - Every job has a timeout, so a hung test can't burn hours.
 # Once the repository is public (free standard runners), the draft tier can be removed.
 on:
@@ -14,6 +17,12 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore: ["**.md", "docs/**", ".claude/**", "LICENSE"]
   workflow_dispatch:
+    inputs:
+      targets:
+        description: "Which targets to build: all, or only the Linux row and the sanitizer job"
+        type: choice
+        options: [all, linux]
+        default: all
 
 permissions:
   contents: read
@@ -23,7 +32,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # pluginval release and the SHA-256 of each downloaded asset. Bump the version and all three
+  # hashes together, deliberately (GitHub publishes no digest for these assets).
   PLUGINVAL_VERSION: v1.0.4
+  PLUGINVAL_SHA256_MACOS: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
+  PLUGINVAL_SHA256_WINDOWS: c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab
+  PLUGINVAL_SHA256_LINUX: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
   BUNDLE: Vintage Synth.vst3
   # Steinberg VST3 SDK, built only for its `validator` tool (MIT; not linked into the plugin).
   # Pinned by commit SHA; the tag is for humans. Bump both together, deliberately.
@@ -42,13 +56,17 @@ jobs:
         #  macos-universal  macos-26 (Apple silicon, pinned, not -latest); ccache handles the
         #                   multi-arch (-arch arm64 -arch x86_64) universal compile.
         #  windows-x64      windows-2025 (VS 2026 image, pinned); sccache.
+        #  linux-x64        ubuntu-22.04, the OLDEST image GitHub offers: the binary must not need a
+        #                   newer glibc than the oldest distributions we support; ccache.
         #  windows-arm64    windows-11-arm (VS 2026 image); no native ARM64 pluginval release yet;
         #                   the VST3 SDK validator build on ARM64 is untested (set validator true to try).
         include: >-
           ${{ fromJSON(
-          (github.event_name == 'pull_request' && github.event.pull_request.draft)
-          && '[{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true}]'
-          || '[{"name":"macos-universal","os":"macos-26","cache":"ccache","pluginval":true,"validator":true},{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"windows-arm64","os":"windows-11-arm","msvc_arch":"arm64","cache":"sccache","pluginval":false,"validator":false}]'
+          (github.event_name == 'workflow_dispatch' && inputs.targets == 'linux')
+          && '[{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true}]'
+          || (github.event_name == 'pull_request' && github.event.pull_request.draft)
+          && '[{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true}]'
+          || '[{"name":"macos-universal","os":"macos-26","cache":"ccache","pluginval":true,"validator":true},{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"windows-arm64","os":"windows-11-arm","msvc_arch":"arm64","cache":"sccache","pluginval":false,"validator":false},{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true}]'
           ) }}
 
     steps:
@@ -59,6 +77,17 @@ jobs:
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
         run: brew install ninja
+
+      # JUCE's Linux build dependencies (docs/Linux Dependencies.md in the JUCE submodule), minus
+      # webkit and curl (disabled: JUCE_WEB_BROWSER=0, JUCE_USE_CURL=0). curl is only for pluginval.
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libjack-jackd2-dev ladspa-sdk libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxrender-dev libxi-dev libcurl4-openssl-dev
 
       # Ninja + cl.exe needs the VS developer environment. Use the newest installed Visual Studio
       # (never a hardcoded version); its bundled Ninja comes onto PATH with it.
@@ -107,7 +136,7 @@ jobs:
           extra=()
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             extra+=(-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0)
-          else
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
             extra+=(-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl)
           fi
           cmake -S vst3sdk/src -B vst3sdk/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -144,16 +173,23 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cmake --build build --parallel
+        # -k 0: keep going after the first error, so one CI run reports every compiler error.
+        run: cmake --build build --parallel -- -k 0
 
       - name: Compiler cache statistics
         if: always()
         shell: bash
         run: ${{ matrix.cache }} --show-stats || true
 
+      # host_smoke loads the VST3 through JUCE's host, which may want a display on Linux.
       - name: Unit tests
         shell: bash
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run -a ctest --test-dir build --output-on-failure
+          else
+            ctest --test-dir build --output-on-failure
+          fi
 
       - name: Check architectures (macOS)
         if: runner.os == 'macOS'
@@ -168,6 +204,7 @@ jobs:
         shell: bash
         run: |
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
+          echo "$PLUGINVAL_SHA256_MACOS  pv.zip" | shasum -a 256 -c -
           unzip -q pv.zip
           pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
             --skip-gui-tests "build/VintageSynth_artefacts/Release/VST3/$BUNDLE"
@@ -177,20 +214,51 @@ jobs:
         shell: bash
         run: |
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
+          echo "$PLUGINVAL_SHA256_WINDOWS  pv.zip" | sha256sum -c -
           unzip -q pv.zip
           ./pluginval.exe --strictness-level 10 --validate-in-process \
+            --skip-gui-tests "build/VintageSynth_artefacts/Release/VST3/$BUNDLE"
+
+      # The binary must depend only on glibc and the usual system libraries (the C++ runtime is
+      # linked statically); report the oldest glibc it can run on.
+      - name: Check bundle and dependencies (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          so="build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/x86_64-linux/Vintage Synth.so"
+          test -f "$so"
+          ldd "$so"
+          objdump -p "$so" | grep -E "NEEDED|SONAME"
+          ! ldd "$so" | grep -q "not found"
+          ! ldd "$so" | grep -q "libstdc++"
+          echo "Highest required glibc symbol version:"
+          objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1
+          echo "Highest required GLIBCXX symbol version (should be none, runtime is static):"
+          objdump -T "$so" | grep -o 'GLIBCXX_[0-9.]*' | sort -uV | tail -n 1 || true
+
+      - name: pluginval (Linux)
+        if: matrix.pluginval && runner.os == 'Linux'
+        shell: bash
+        run: |
+          curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Linux.zip"
+          echo "$PLUGINVAL_SHA256_LINUX  pv.zip" | sha256sum -c -
+          unzip -q pv.zip
+          chmod +x pluginval
+          xvfb-run -a ./pluginval --strictness-level 10 --validate-in-process \
             --skip-gui-tests "build/VintageSynth_artefacts/Release/VST3/$BUNDLE"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vst3-${{ matrix.name }}
+          retention-days: 7
           path: build/VintageSynth_artefacts/Release/VST3/${{ env.BUNDLE }}
 
   # Merge Windows x64 + ARM64 into one .vst3 bundle (Contents/x86_64-win + Contents/arm64-win).
   windows-bundle:
     needs: build
-    # Needs both Windows builds, so it is skipped in the draft tier.
-    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
+    # Needs both Windows builds, so it is skipped in the draft tier and in Linux-only dispatches.
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.targets == 'linux') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -208,4 +276,55 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vst3-windows-universal
+          retention-days: 7
           path: merged
+
+  # AddressSanitizer + UndefinedBehaviorSanitizer on the unit and render-regression tests.
+  # Cheap, so it runs in every tier. Clang on the newest-but-one LTS image: best diagnostics.
+  linux-sanitizers:
+    name: linux-sanitizers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang \
+            libasound2-dev libjack-jackd2-dev ladspa-sdk libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxrender-dev libxi-dev
+
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@dbeefd73e8e2ffc1bbc412570072735eb4db3607 # v1.2.25
+        with:
+          key: linux-sanitizers
+          variant: ccache
+          max-size: 2G
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      # Only the test binaries: the plugin bundle and host_smoke are covered by the linux-x64 row.
+      - name: Build
+        run: cmake --build build --parallel --target VintageSynthTests render_regression
+
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache --show-stats || true
+
+      - name: Tests (ASan + UBSan)
+        run: xvfb-run -a ctest --test-dir build --output-on-failure -E '^host_smoke$'

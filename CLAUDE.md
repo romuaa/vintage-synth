@@ -1,5 +1,7 @@
 # CLAUDE.md — Vintage Synth (VST3 instrument)
 
+This file instructs AI coding agents working on this repository. Humans: start with `README.md`.
+
 Bi-timbral, 16-voice-per-part analog-style polysynth plugin: two VCOs (sync, cross-mod), HPF,
 12/24 dB VCF, VCA, 2× ADSR, LFO with delay, Lower/Upper parts (Whole/Dual/Split), Solo/Unison/Poly,
 arpeggiator, 16-step sequencer, patch banks, Chorus/Delay/Reverb sends.
@@ -24,7 +26,10 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Upgrade them deliberately, in their own commit. C++20, CMake ≥ 3.28, Ninja on macOS.
 - **Targets:** macOS universal (`arm64;x86_64`, min macOS 11, the default in `CMakeLists.txt`); Windows
   x64 + ARM64 merged into one `.vst3` bundle (`Contents/x86_64-win`, `Contents/arm64-win`) by CI.
-  MSVC static runtime.
+  MSVC static runtime. **Linux x86_64** (owner decision): built on `ubuntu-22.04` for a glibc 2.35
+  floor, GCC, static libstdc++/libgcc, bundle `Contents/x86_64-linux`. Never raise that runner image
+  above the oldest one offered without a decision. Linux can't be built on this Mac: use
+  `gh workflow run build.yml --ref <branch> -f targets=linux` (Linux row + sanitizer job only).
 - **Identity:** company "Exitium", bundle ID `com.exitium.vintagesynth`, manufacturer code
   `Exit`, plugin code `Vsy1`. **Never change these after the first release**, because hosts identify
   the plugin by them.
@@ -78,8 +83,9 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - **Wave 1: done, awaiting the owner's merge approval** (one PR). Contains M2, the M5 effect blocks
   (`source/fx/`, standalone, not wired in; first listen approved), the golden-render harness, the
   VST3 validator in CI, CI cost controls and the plugin-host script.
-- **After the merge:** public-release audit (the owner flips visibility), Linux x86_64 target with a
-  sanitizer CI job, then Wave 2. Open engine item for M3: 1× oversampling at host rates ≥ 88.2 kHz
+- **Done after Wave 1:** Linux x86_64 target with a sanitizer CI job; public-release audit
+  (`SECURITY.md`, `CONTRIBUTING.md`). The owner flips visibility; then one follow-up change removes
+  the draft-PR cost tier and the "private repo" wording. **Next: Wave 2** (M3 + M4). Open engine item for M3: 1× oversampling at host rates ≥ 88.2 kHz
   (32 voices cost 18 % of a core at 192 kHz).
 - Then: Wave 2 = M3 Upper part + Whole/Dual/Split, with M4 arp/sequencer in parallel;
   Wave 3 = integrate M4/M5 + M6 presets/banks/goldens; Wave 4 = M7 custom UI + M8 release.
@@ -137,7 +143,7 @@ Put any physical mapping in `Mappings.h` so the display text and the DSP agree.
 - Analog drift is seeded per voice, so renders are deterministic.
 
 **Portability:** no x86-only intrinsics without a NEON path and runtime dispatch. Every change
-must build for all three targets (mac universal, win x64, win ARM64).
+must build for all four targets (mac universal, win x64, win ARM64, Linux x86_64 with GCC).
 
 ## Known traps (details in `docs/engineering-notes.md`)
 
@@ -150,6 +156,7 @@ must build for all three targets (mac universal, win x64, win ARM64).
 - A new continuous parameter is not smoothed unless added to `PartModulator::next`.
 - Per-voice state inherited by a later note must be reset or computed from absolute time; a
   block-size test only proves something if voices are reused.
+- GCC rejects float `==`/`!=` (`-Wfloat-equal` is an error); Clang and MSVC accept it. Use `std::fpclassify`.
 - Rosetta isn't installed: the x86_64 slice is checked with `lipo` only, never run locally.
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
