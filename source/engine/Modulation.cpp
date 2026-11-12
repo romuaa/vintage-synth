@@ -87,6 +87,7 @@ void PartModulator::updateGlideTable (float seconds) noexcept
     for (size_t k = 0; k < glide.size(); ++k)
     {
         glide[k] = static_cast<float> (g);
+        glideD[k] = g;
         g *= perSample;
     }
 }
@@ -113,6 +114,7 @@ void PartModulator::next (int n, ModBlock& block) noexcept
     block.vintage = vintage;
     block.smoothDecay = decay.data();
     block.glideDecay = glide.data();
+    block.glideDecayD = glideD.data();
     block.glideLog = glideLog;
 
     const float* d = decay.data();

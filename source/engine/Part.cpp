@@ -31,6 +31,7 @@ void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor,
     silence.setSize (1, maxBlock);
     silence.clear();
 
+    partSeed = seed;
     modulator.prepare (osRate, seed ^ 0x5bd1e995u);
     for (size_t i = 0; i < voices.size(); ++i)
     {
@@ -48,6 +49,9 @@ void Part::reset() noexcept
     for (auto& v : voices)
         v.reset();
     pending.fill (Pending {});
+    releaseCountdown.fill (-1);
+    late.fill (false);
+    unisonRng.setSeed (partSeed * 2654435761u + 0x7f4a7c15u);
     allocator.reset();
     allocator.initMode (assignModeOf (target), map::unisonVoices (target.unisonVoices));
     allocator.setLegatoGlideOnly (target.portaMode == 1);
@@ -129,20 +133,30 @@ void Part::renderOversampled (float* os, int n) noexcept
     for (int pos = 0; pos < n;)
     {
         int len = juce::jmin (maxSubBlock, n - pos);
-        // A stolen voice starts its new note exactly at the end of its fade: split there.
+        // A stolen voice starts its new note exactly at the end of its fade, and a delayed
+        // release lands on its exact sample: split there.
         for (size_t v = 0; v < voices.size(); ++v)
+        {
             if (pending[v].active)
                 len = juce::jmin (len, juce::jmax (1, voices[v].getFadeRemaining()));
+            if (releaseCountdown[v] > 0)
+                len = juce::jmin (len, releaseCountdown[v]);
+        }
 
         modulator.next (len, modBlock);
         Voice::renderBlock (voicePtrs.data(), kMaxVoices, modBlock, os + pos);
         pos += len;
+        for (auto& c : releaseCountdown)
+            if (c > 0)
+                c -= len;
         afterSubBlock();
     }
 }
 
 void Part::afterSubBlock() noexcept
 {
+    int finished[kMaxVoices];
+    int numFinished = 0;
     for (size_t i = 0; i < voices.size(); ++i)
     {
         auto& v = voices[i];
@@ -154,14 +168,35 @@ void Part::afterSubBlock() noexcept
             v.reset();
             p.active = false;
             startVoice (p.action);
-            if (p.release)
-                v.noteOff();
+            late[i] = true;
         }
-        else if (! v.isActive() && allocator.isVoiceBusy (static_cast<int> (i)))
+        if (releaseCountdown[i] == 0)
         {
-            allocator.voiceIdle (static_cast<int> (i));
+            releaseCountdown[i] = -1;
+            v.noteOff();
         }
+        if (! p.active && ! v.isActive() && allocator.isVoiceBusy (static_cast<int> (i)))
+            finished[numFinished++] = static_cast<int> (i);
     }
+
+    // Report in the order the voices finished (exact sample inside the sub-block, then index):
+    // the allocator's "idle longest" choice must not depend on how the render is split.
+    for (int a = 1; a < numFinished; ++a)
+    {
+        const int v = finished[a];
+        int b = a;
+        for (; b > 0; --b)
+        {
+            const int u = finished[b - 1];
+            const int tu = voices[static_cast<size_t> (u)].getIdleAt(), tv = voices[static_cast<size_t> (v)].getIdleAt();
+            if (tu < tv || (tu == tv && u < v))
+                break;
+            finished[b] = u;
+        }
+        finished[b] = v;
+    }
+    for (int a = 0; a < numFinished; ++a)
+        allocator.voiceIdle (finished[a]);
 }
 
 void Part::handleEvent (const NoteEvent& e) noexcept
@@ -169,8 +204,9 @@ void Part::handleEvent (const NoteEvent& e) noexcept
     switch (e.type)
     {
         case EventType::NoteOn:
-            // The LFO delay restarts when a note starts with no other key held.
-            if (! allocator.anyPhysicalKeyExcept (e.note))
+            // The LFO delay restarts when a note starts with no other note held (by a key or by
+            // the sustain pedal).
+            if (! allocator.anyNoteHeldExcept (e.note))
                 modulator.triggerLfo();
             allocator.noteOn (e.note, e.value, sink());
             break;
@@ -217,6 +253,8 @@ void Part::allSoundOff() noexcept
     for (auto& v : voices)
         v.reset();
     pending.fill (Pending {});
+    releaseCountdown.fill (-1);
+    late.fill (false);
 }
 
 void Part::execute (const VoiceAction& a) noexcept
@@ -229,22 +267,23 @@ void Part::execute (const VoiceAction& a) noexcept
     {
         case VoiceAction::Type::Start:
         case VoiceAction::Type::Steal:
+            releaseCountdown[i] = -1; // a new note cancels a delayed release of the old one
             if (p.active)
             {
                 // Still fading out for an earlier steal: the newest note starts when the fade ends.
                 p.action = a;
-                p.release = false;
             }
             else if (a.type == VoiceAction::Type::Steal && v.isActive())
             {
                 v.startFade (stealFadeSamples);
-                p = Pending { true, false, a };
+                p = Pending { true, a };
             }
             else
             {
                 if (a.type == VoiceAction::Type::Steal)
                     v.reset(); // finished meanwhile: no fade needed
                 startVoice (a);
+                late[i] = false;
             }
             break;
 
@@ -256,10 +295,16 @@ void Part::execute (const VoiceAction& a) noexcept
             break;
 
         case VoiceAction::Type::Release:
-            if (p.active)
-                p.release = true;
+            // A stolen note (fading in, or started late) is released as late as it started.
+            if (p.active || late[i])
+            {
+                if (releaseCountdown[i] < 0)
+                    releaseCountdown[i] = stealFadeSamples;
+            }
             else
+            {
                 v.noteOff();
+            }
             break;
     }
 }
@@ -291,6 +336,20 @@ void Part::startVoice (const VoiceAction& a) noexcept
         const int n = allocator.getUnisonCount();
         level = 1.0f / std::sqrt (static_cast<float> (n));
         pos = static_cast<float> (a.voice) / static_cast<float> (n - 1) - 0.5f; // symmetric, -0.5 .. 0.5
+
+        // Voices starting from idle get a fixed phase pattern on a random base: quadratic phases
+        // k^2 / (2n) cycles have a phasor sum of magnitude exactly sqrt(n) for even n, so the
+        // 1/sqrt(n) level holds also at detune 0, the same on every note (random independent
+        // phases gave -4.8 .. -26.7 dB). The allocator starts the group with voice 0.
+        if (a.voice == 0)
+        {
+            unisonBase1 = unisonRng.unipolar();
+            unisonBase2 = unisonRng.unipolar();
+        }
+        const double k = static_cast<double> (a.voice);
+        const double offset = k * k / (2.0 * static_cast<double> (n));
+        auto wrap = [] (double x) { return static_cast<float> (x - std::floor (x)); };
+        v.setRestartPhases (wrap (unisonBase1 + offset), wrap (unisonBase2 + offset));
     }
 
     v.start (a.note, a.velocity, level, pos);

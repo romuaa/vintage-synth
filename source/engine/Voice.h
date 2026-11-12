@@ -51,19 +51,33 @@ public:
     void glideFrom (float fromSemis) noexcept
     {
         glideDev = fromSemis - static_cast<float> (currentNote);
+        glideCur = static_cast<double> (glideDev);
         glideAnchored = false; // anchored to the part's glide rate in the next beginBlock()
     }
 
-    /** Legato pitch change, no envelope retrigger. With glide, the pitch glides from where it is now. */
-    void setNote (int note, bool glide) noexcept
+    /**
+        Legato pitch change, no envelope retrigger. With glide, the pitch glides from where it is
+        now. Key-follow envelope times follow the new note at once (as the keyboard CV would).
+    */
+    void setNote (int note, bool glide) noexcept;
+
+    /**
+        Unison: the oscillator start phases (cycles, 0..1) used if the next start() begins from
+        idle, so the voices of a unison group start in a fixed phase relationship.
+    */
+    void setRestartPhases (float vco1Phase, float vco2Phase) noexcept
     {
-        const float from = getPitch();
-        currentNote = note;
-        if (glide)
-            glideFrom (from);
-        else
-            glideDev = 0.0f;
+        restartPhase1 = vco1Phase;
+        restartPhase2 = vco2Phase;
+        restartPhasesSet = true;
     }
+
+    /**
+        After a sub-block in which ENV-2 finished: how many samples of it the voice was still
+        sounding (the finish position inside the sub-block). The Part reports idle voices in this
+        order, so the allocator's idle ages do not depend on how the render is split.
+    */
+    int getIdleAt() const noexcept { return idleAt; }
 
     void noteOff() noexcept;
 
@@ -137,6 +151,10 @@ private:
     // prepare() keeps the prepare-time phases.
     dsp::Random restartRng;
     bool freshPhases = true;
+    float restartPhase1 = 0.0f, restartPhase2 = 0.0f;
+    bool restartPhasesSet = false;
+    int idleAt = 0;
+    bool driftValid = false; // driftWalk holds the walk at the last control point (Vintage > 0)
 
     int currentNote = 60;
 
@@ -146,6 +164,7 @@ private:
     // depend on how the render is split: a stepped deviation's rounding differences integrate
     // into a phase difference over a long glide (measured -74 dB between host block sizes).
     float glideDev = 0.0f;       // at the start of the next sub-block (0 = not gliding)
+    double glideCur = 0.0;       // the same in double precision (the per-sample base)
     double glideStart = 0.0;     // deviation at the anchor
     double glideLog = 0.0;       // ln g per sample the anchor was made with
     std::int64_t glideK = 0;     // samples since the anchor

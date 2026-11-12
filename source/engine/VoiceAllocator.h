@@ -238,6 +238,26 @@ public:
         return false;
     }
 
+    /**
+        True if a note other than `note` is held by a key or by the sustain pedal (LFO delay
+        restart rule: ringing pedal-held notes count, so delayed vibrato does not drop out when
+        the next note is played with all keys up). Notes merely in their release do not count.
+    */
+    bool anyNoteHeldExcept (int note) const noexcept
+    {
+        for (int k = 0; k < numKeys; ++k) // Poly: keys down; Unison/Solo: keys down or pedal-held
+            if (keys[idx (k)].note != note)
+                return true;
+        if (mode == AssignMode::Poly)
+            for (int v = 0; v < kMaxVoices; ++v)
+            {
+                const auto& s = voices[idx (v)];
+                if (s.busy && s.sustained && ! s.released && s.note != note)
+                    return true;
+            }
+        return false;
+    }
+
     int numPhysicalKeys() const noexcept
     {
         int n = 0;

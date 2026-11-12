@@ -73,8 +73,7 @@ public:
 private:
     struct Pending
     {
-        bool active = false;  // a steal fade is running; `action` starts when it ends
-        bool release = false; // the note was released during the fade
+        bool active = false; // a steal fade is running; `action` starts when it ends
         VoiceAction action;
     };
 
@@ -113,5 +112,16 @@ private:
     std::array<Voice, kMaxVoices> voices;
     std::array<Voice*, kMaxVoices> voicePtrs {};
     std::array<Pending, kMaxVoices> pending {};
+
+    // A stolen note starts kStealFadeSeconds late. Its releases are delayed by the same time
+    // (oversampled samples, -1 = none), so it keeps its gate length: a key released during the
+    // fade still gives a note as long as the key was held.
+    std::array<int, kMaxVoices> releaseCountdown {};
+    std::array<bool, kMaxVoices> late {};
+
+    // Unison: one random base phase per note for the group (deterministic sequence).
+    dsp::Random unisonRng;
+    std::uint32_t partSeed = 0;
+    float unisonBase1 = 0.0f, unisonBase2 = 0.0f;
 };
 } // namespace vs

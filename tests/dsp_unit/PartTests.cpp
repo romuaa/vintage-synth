@@ -163,38 +163,45 @@ TEST_CASE ("Last-note priority returns to held notes (legato)", "[part]")
 
 TEST_CASE ("Every waveform/switch combination renders finite, bounded audio", "[part]")
 {
-    // One voice per combination (M1 semantics): in Poly (the M2 default) the 36 un-released
-    // notes would stack up, so the test runs in Solo.
-    Rig rig;
-    rig.params.assignMode = 2; // Solo
-    rig.params.vcfResonance = 1.0f;
-    rig.params.vco1CrossMod = 1.0f;
-    rig.params.vcoModLfo = 1.0f;
-    rig.params.vcoModEnv = 1.0f;
-    rig.params.pwmDepth = 1.0f;
-    rig.params.vcfEnvMod = 1.0f;
-    rig.params.vcfLfoMod = 1.0f;
-    rig.params.vcaLevel = 1.0f;
-    rig.params.lfoRate = 1.0f;
+    // Solo: one voice per combination (M1 semantics). Poly: each note is released after 2000
+    // samples, so with the 63 ms release at most two voices overlap (in Poly un-released notes
+    // would stack up to 16 voices).
+    for (const int mode : { 2, 0 })
+    {
+        Rig rig;
+        rig.params.assignMode = mode;
+        rig.params.vcfResonance = 1.0f;
+        rig.params.vco1CrossMod = 1.0f;
+        rig.params.vcoModLfo = 1.0f;
+        rig.params.vcoModEnv = 1.0f;
+        rig.params.pwmDepth = 1.0f;
+        rig.params.vcfEnvMod = 1.0f;
+        rig.params.vcfLfoMod = 1.0f;
+        rig.params.vcaLevel = 1.0f;
+        rig.params.lfoRate = 1.0f;
 
-    for (int w1 = 0; w1 < 6; ++w1)
-        for (int w2 = 0; w2 < 6; ++w2)
-        {
-            rig.params.vco1Wave = w1;
-            rig.params.vco2Wave = w2;
-            rig.params.vcoSync = (w1 + w2) % 2;
-            rig.params.vcfSlope = w1 % 2;
-            rig.params.vco2Mode = w2 % 2;
-            rig.params.pwmSource = w1 % 3;
-            rig.params.env1Polarity = w2 % 2;
-            rig.params.vcaLfoMod = w1 % 4;
-            const auto out = rig.render (2400, notes ({ { 0, 36 + w1 * 8 + w2, true } }));
-            for (const float s : out)
+        for (int w1 = 0; w1 < 6; ++w1)
+            for (int w2 = 0; w2 < 6; ++w2)
             {
-                REQUIRE (std::isfinite (s));
-                REQUIRE (std::abs (s) < 4.0f);
+                rig.params.vco1Wave = w1;
+                rig.params.vco2Wave = w2;
+                rig.params.vcoSync = (w1 + w2) % 2;
+                rig.params.vcfSlope = w1 % 2;
+                rig.params.vco2Mode = w2 % 2;
+                rig.params.pwmSource = w1 % 3;
+                rig.params.env1Polarity = w2 % 2;
+                rig.params.vcaLfoMod = w1 % 4;
+                const int note = 36 + w1 * 8 + w2;
+                const auto out = rig.render (2400, mode == 0 ? notes ({ { 0, note, true }, { 2000, note, false } })
+                                                             : notes ({ { 0, note, true } }));
+                INFO ("mode " << mode << " waves " << w1 << "/" << w2);
+                for (const float s : out)
+                {
+                    REQUIRE (std::isfinite (s));
+                    REQUIRE (std::abs (s) < 4.0f);
+                }
             }
-        }
+    }
 }
 
 TEST_CASE ("Rendering is deterministic", "[part]")
@@ -976,7 +983,10 @@ TEST_CASE ("Changing the assign mode or unison count releases the voices without
         const double after = maxStep (out, changeAt, changeAt + 4800);
         INFO ("steady max step " << steady << ", after the change " << after);
         CHECK (after <= 1.1 * steady);
-        CHECK (vs::test::rms (out.data() + changeAt + 4800, 2400) > 0.01);    // a release, not a cut
+        // A release (0.3 s), not a cut: 100 ms after the change the level is still above -20 dB
+        // of the level before it (a 0.3 s release is at about -13 dB there).
+        const double before = vs::test::rms (out.data() + changeAt - 4800, 4800);
+        CHECK (vs::test::rms (out.data() + changeAt + 4800, 2400) > 0.1 * before);
         CHECK (vs::test::rms (out.data() + changeAt + 40000, 8000) < 1.0e-4); // and it ends
         CHECK_FALSE (rig.part.isSounding());
     };
@@ -1048,6 +1058,453 @@ TEST_CASE ("Render does not depend on the host block size when a voice is reused
         {
             const double db = differenceDb (run (512, mode, porta), run (97, mode, porta));
             INFO ("mode " << mode << ", portamento " << porta << ": " << db << " dB");
-            CHECK (db < -100.0);
+            WARN ("voice reuse, mode " << mode << ", portamento " << porta << ": " << db << " dB");
+            CHECK (db < -120.0); // a float glide base rounded per sub-block gave about -102 dB
         }
+}
+
+// =============================================================================================
+// M2b review follow-up: voice reuse, idle order, legato key follow, unison phases, stolen gates,
+// LFO delay with the pedal, events during a steal fade, glide changes, steal-fade stress.
+// =============================================================================================
+namespace
+{
+/** Max - min of the per-period pitch (cents) in [from, from + len). */
+double pitchSpreadCents (const std::vector<float>& x, int from, int len)
+{
+    const auto track = pitchTrack (x, from, from + len);
+    REQUIRE (track.size() > 4);
+    double lo = 1.0e9, hi = -1.0e9;
+    for (const auto& p : track)
+    {
+        lo = std::min (lo, p.semis);
+        hi = std::max (hi, p.semis);
+    }
+    return 100.0 * (hi - lo);
+}
+
+/** Energy of the first difference of (a - b) from `from` on: emphasises a high note over a low chord. */
+double hfDifferenceDb (const std::vector<float>& a, const std::vector<float>& b, size_t from)
+{
+    double e = 0.0;
+    for (size_t i = std::max<size_t> (from, 1); i < a.size(); ++i)
+    {
+        const double d = static_cast<double> ((a[i] - a[i - 1]) - (b[i] - b[i - 1]));
+        e += d * d;
+    }
+    return 10.0 * std::log10 (e + 1.0e-30);
+}
+} // namespace
+
+TEST_CASE ("Poly: a voice reused after idle starts ENV-1 from zero; renders independent of block size", "[part][control][poly]")
+{
+    // ENV-1 release (1.6 s) far longer than ENV-2's (0.16 s): when ENV-2 finishes, ENV-1 is still
+    // open. It used to freeze at the end of that sub-block and the next note on the voice started
+    // its filter envelope from there (-82 .. -92 dB between block sizes before the fix).
+    auto run = [] (int blockSize) {
+        Rig rig;
+        rig.params.env1Attack = 0.55f; // 158 ms: a part-way-open start is audible for a while
+        rig.params.env1Release = 0.8f;
+        rig.params.env2Release = 0.55f;
+        rig.params.vcfEnvMod = 0.6f;
+        rig.params.env1Sustain = 0.8f;
+        rig.apply();
+        std::vector<vs::NoteEvent> e;
+        std::uint32_t r = 7;
+        for (int i = 0; i < 200; ++i)
+        {
+            r = r * 1664525u + 1013904223u;
+            const int pos = i * 480 + static_cast<int> (r >> 24);
+            const int note = 40 + static_cast<int> ((r >> 8) % 24);
+            e.push_back (on (pos, note));
+            e.push_back (off (pos + 300 + static_cast<int> ((r >> 16) % 2000), note));
+        }
+        std::stable_sort (e.begin(), e.end(), [] (const auto& a, const auto& b) { return a.offset < b.offset; });
+        return rig.render (148000, e, blockSize);
+    };
+    const auto ref = run (512);
+    for (const int bs : { 500, 37, 1 })
+    {
+        const double db = differenceDb (ref, run (bs));
+        INFO ("512 vs " << bs << ": " << db << " dB");
+        WARN ("ENV-1 reuse after idle, 512 vs " << bs << ": " << db << " dB");
+        CHECK (db < -110.0);
+    }
+
+    // Behaviour: a note on a reused voice sounds like the same note on a fresh voice.
+    auto noteOnVoice = [] (bool reuse) {
+        Rig rig;
+        sinePatch (rig.params);
+        rig.params.vco1Wave = 2;
+        rig.params.vcfCutoff = 0.3f;
+        rig.params.vcfEnvMod = 0.6f;
+        rig.params.env1Attack = 0.55f;
+        rig.params.env1Sustain = 0.8f;
+        rig.params.env1Release = 0.8f;
+        rig.params.env2Release = 0.3f;
+        rig.params.assignMode = 2; // Solo: always voice 0
+        rig.apply();
+        std::vector<vs::NoteEvent> e;
+        if (reuse)
+        {
+            e.push_back (on (0, 48));
+            e.push_back (off (4800, 48)); // ENV-2 done after ~10 ms, ENV-1 still at ~0.8
+        }
+        e.push_back (on (24000, 48));
+        const auto out = rig.render (36000, e);
+        return std::vector<float> (out.begin() + 24000, out.end());
+    };
+    const auto fresh = noteOnVoice (false);
+    const auto reused = noteOnVoice (true);
+    // Different oscillator start phases are expected; the filter envelope must start from 0, so
+    // the brightness (energy of the first difference) over the attack matches within 0.5 dB.
+    const double hfFresh = hfDifferenceDb (fresh, std::vector<float> (fresh.size()), 0);
+    const double hfReused = hfDifferenceDb (reused, std::vector<float> (reused.size()), 0);
+    INFO ("HF energy fresh " << hfFresh << " dB, reused " << hfReused << " dB");
+    CHECK (std::abs (hfFresh - hfReused) < 0.5);
+}
+
+TEST_CASE ("Poly: idle voices are reported in the order they finished, whatever the block size", "[part][control][poly]")
+{
+    // Voices of 41 and 40 finish 3 samples apart, often in the same sub-block. The voice that
+    // finished first (41's, voice 1) has been idle longest and takes the next note.
+    auto run = [] (int bs, int* voiceOf72) {
+        Rig rig;
+        sinePatch (rig.params);
+        rig.apply();
+        std::vector<vs::NoteEvent> e;
+        for (int n = 40; n <= 55; ++n)
+            e.push_back (on (0, n));
+        e.push_back (off (1000, 41));
+        e.push_back (off (1003, 40));
+        for (int n = 42; n <= 55; ++n)
+            e.push_back (off (5000, n));
+        e.push_back (on (40000, 72));
+        auto out = rig.render (48000, e, bs);
+        *voiceOf72 = -1;
+        for (int v = 0; v < vs::kMaxVoices; ++v)
+            if (rig.part.getAllocator().isVoiceBusy (v) && rig.part.getAllocator().getVoiceNote (v) == 72)
+                *voiceOf72 = v;
+        return out;
+    };
+    int v512 = -1;
+    const auto ref = run (512, &v512);
+    CHECK (v512 == 1);
+    for (const int bs : { 500, 64, 100, 7, 256, 37, 33, 1 })
+    {
+        int v = -1;
+        const auto o = run (bs, &v);
+        INFO ("block size " << bs);
+        CHECK (v == 1);
+        CHECK (differenceDb (ref, o) < -120.0);
+    }
+}
+
+TEST_CASE ("Solo: a legato note change applies key-follow envelope times at the event", "[part][control][solo]")
+{
+    // Decision: key follow tracks the keyboard at the legato change (as a keyboard CV would), not
+    // latched at the note start: a legato line upwards gets the shorter times of the new note.
+    auto run = [] (int bs) {
+        Rig rig;
+        rig.params.assignMode = 2;
+        rig.params.env1KeyFollow = 1;
+        rig.params.env2KeyFollow = 1;
+        rig.apply();
+        return rig.render (48000, { on (0, 36), on (5003, 96), off (9001, 96) }, bs);
+    };
+    const auto ref = run (512);
+    for (const int bs : { 500, 37, 1 })
+    {
+        const double db = differenceDb (ref, run (bs));
+        INFO ("512 vs " << bs << ": " << db << " dB");
+        CHECK (db < -120.0); // -57 dB before the fix
+    }
+
+    // Behaviour: ENV-2 release 1 s at middle C. Hold 96, play 36 (retrigger: 36's times), release
+    // 36: legato return to 96. Releasing 96 right after must take 96's time,
+    // 1 s x 2^(-(96 - 60) / 24) = 0.354 s to fall 40 dB (latched at 36 it would take 2 s).
+    Rig rig;
+    sinePatch (rig.params);
+    rig.params.assignMode = 2;
+    rig.params.env2KeyFollow = 1;
+    rig.params.env2Release = vs::map::envTimeFromSec (1.0f);
+    rig.apply();
+    const int offAt = 24001;
+    const auto out = rig.render (offAt + 48000, { on (0, 96), on (12000, 36), off (24000, 36), off (offAt, 96) }, 512);
+    const double sustained = vs::test::rms (out.data() + offAt - 4800, 4800);
+    double reach = -1.0;
+    for (int w = offAt; w + 240 <= static_cast<int> (out.size()) && reach < 0.0; w += 48)
+        if (vs::test::rms (out.data() + w, 240) < 0.01 * sustained)
+            reach = static_cast<double> (w + 120 - offAt) / kFs;
+    INFO ("release to -40 dB after " << reach << " s (expected 0.354 s)");
+    WARN ("legato key follow: release to -40 dB after " << reach << " s (expected 0.354 s)");
+    CHECK (std::abs (reach - 0.3536) < 0.02);
+}
+
+TEST_CASE ("Unison: the level is the same on every note and equals one voice, also at detune 0", "[part][unison]")
+{
+    auto soloLevel = [] {
+        Rig rig;
+        sinePatch (rig.params);
+        rig.params.assignMode = 2;
+        rig.apply();
+        const auto out = rig.render (9600, { on (0, 69) });
+        return vs::test::toDb (vs::test::rms (out.data() + 2400, 4800));
+    }();
+
+    for (const float detune : { 0.0f, 0.3f })
+        for (int idx = 0; idx < 4; ++idx)
+        {
+            Rig rig;
+            sinePatch (rig.params);
+            rig.params.assignMode = 1;
+            rig.params.unisonVoices = idx;
+            rig.params.unisonDetune = detune;
+            rig.params.env2Release = 0.0f; // 1 ms: every note starts from idle
+            rig.apply();
+            double lo = 1.0e9, hi = -1.0e9;
+            // detune 0: a short window per note; detune 0.3 (default): long enough to average the beats.
+            const int len = detune > 0.0f ? 4 * 48000 : 9600;
+            for (int k = 0; k < 8; ++k)
+            {
+                const auto out = rig.render (len + 4800, { on (0, 69), off (len, 69) });
+                const double db = vs::test::toDb (vs::test::rms (out.data() + len / 4, static_cast<size_t> (len / 2)));
+                lo = std::min (lo, db);
+                hi = std::max (hi, db);
+            }
+            INFO ("unison " << (2 << idx) << " detune " << detune << ": " << lo - soloLevel << " .. " << hi - soloLevel << " dB vs one voice");
+            WARN ("unison " << (2 << idx) << " detune " << detune << ": levels " << lo - soloLevel << " .. " << hi - soloLevel << " dB vs one voice");
+            if (detune <= 0.0f)
+                CHECK (hi - lo < 0.05); // was -4.8 .. -26.7 dB (random phases)
+            CHECK (std::abs (lo - soloLevel) < 1.0);
+            CHECK (std::abs (hi - soloLevel) < 1.0);
+        }
+}
+
+TEST_CASE ("Poly: a stolen note keeps its gate length (released during the fade it still sounds)", "[part][poly][steal]")
+{
+    // High note (84) over a low sine chord; its contribution is measured as the energy of the first
+    // difference of (render - the same render with the note at velocity 0). Velocity -> VCA is 1,
+    // so the reference note is silent but steals and fades exactly the same voice. Stolen
+    // (16-note chord) vs unstolen (15 notes).
+    for (const int os : { 2, 4 })
+        for (const int gate : { 1, 20, 143, 160, 2000 })
+        {
+            double energy[2] {};
+            for (int stolen = 0; stolen < 2; ++stolen)
+            {
+                const int chord = stolen != 0 ? 16 : 15;
+                auto render = [&] (bool withNote) {
+                    Rig rig (os);
+                    sinePatch (rig.params);
+                    rig.params.velToVca = 1.0f;
+                    rig.apply();
+                    std::vector<vs::NoteEvent> e;
+                    for (int n = 0; n < chord; ++n)
+                        e.push_back (on (0, 30 + n, 1.0f));
+                    e.push_back (on (4800, 84, withNote ? 1.0f : 0.0f));
+                    e.push_back (off (4800 + gate, 84));
+                    return rig.render (14400, e);
+                };
+                energy[stolen] = hfDifferenceDb (render (true), render (false), 4801);
+            }
+            INFO (os << "x, gate " << gate << " samples: unstolen " << energy[0] << " dB, stolen " << energy[1] << " dB");
+            WARN ("stolen gate " << gate << " (" << os << "x): unstolen " << energy[0] << " dB, stolen " << energy[1] << " dB");
+            CHECK (std::abs (energy[1] - energy[0]) < 1.0);
+        }
+}
+
+TEST_CASE ("Poly: events during a steal fade (release, re-steal, retrigger)", "[part][poly][steal]")
+{
+    auto chord = [] {
+        std::vector<vs::NoteEvent> e;
+        for (int n = 0; n < vs::kMaxVoices; ++n)
+            e.push_back (on (0, 40 + n));
+        return e;
+    };
+
+    SECTION ("released, then the fading voice is stolen again: the newest note starts and sustains")
+    {
+        Rig rig;
+        sinePatch (rig.params);
+        rig.apply();
+        auto e = chord();
+        e.push_back (on (4800, 80));  // steals voice 0 (note 40)
+        e.push_back (off (4820, 80)); // released during the fade -> voice 0 is first in release
+        e.push_back (on (4840, 82));  // steals voice 0 again, still fading
+        rig.render (4800 + 2000, e);
+        CHECK (rig.part.getVoice (0).getNote() == 82);
+        CHECK (rig.part.getAllocator().getVoiceNote (0) == 82);
+        CHECK_FALSE (rig.part.getAllocator().isVoiceReleased (0));
+        rig.render (24000); // 0.5 s later 82 still sounds (no stale release of 80 reached it)
+        CHECK (rig.part.getVoice (0).isActive());
+        CHECK (rig.part.numSoundingVoices() == vs::kMaxVoices);
+    }
+
+    SECTION ("the stolen note is pressed again during the fade: one start, at the end of the fade")
+    {
+        Rig rig;
+        sinePatch (rig.params);
+        rig.apply();
+        auto e = chord();
+        e.push_back (on (4800, 80));
+        e.push_back (on (4850, 80, 0.5f)); // retrigger rule: same voice, replaces the pending start
+        rig.render (4800 + 100, e);
+        CHECK (rig.part.getVoice (0).getNote() == 40); // still fading
+        rig.render (200);
+        CHECK (rig.part.getVoice (0).getNote() == 80);
+        CHECK (rig.part.numSoundingVoices() == vs::kMaxVoices);
+        int with80 = 0;
+        for (int v = 0; v < vs::kMaxVoices; ++v)
+            with80 += rig.part.getAllocator().getVoiceNote (v) == 80 ? 1 : 0;
+        CHECK (with80 == 1);
+    }
+}
+
+TEST_CASE ("Steal fade is click-free with a self-oscillating filter, on voices in attack and in release (2x and 4x)", "[part][poly][steal]")
+{
+    // Same bound as the basic steal test: the largest sample step around the fade stays within
+    // the signal's own steps just before and after it.
+    enum Case { Attack, Release, SelfOsc };
+    for (const int os : { 2, 4 })
+        for (const auto c : { Attack, Release, SelfOsc })
+        {
+            Rig rig (os);
+            sinePatch (rig.params);
+            if (c == Attack)
+                rig.params.env2Attack = vs::map::envTimeFromSec (0.2f);
+            if (c == Release)
+                rig.params.env2Release = vs::map::envTimeFromSec (2.0f);
+            if (c == SelfOsc)
+            {
+                rig.params.vco1Wave = 1; // triangle into a self-oscillating, key-tracked filter
+                rig.params.vcfResonance = 1.0f;
+                rig.params.vcfCutoff = 0.4f;
+                rig.params.vcfKeyFollow = 1.0f;
+                rig.params.vcaLevel = 0.2f;
+            }
+            rig.apply();
+            const int stealAt = c == Attack ? 4800 : 24000;
+            std::vector<vs::NoteEvent> e;
+            for (int n = 0; n < vs::kMaxVoices; ++n)
+                e.push_back (on (0, 24 + n));
+            if (c == Release)
+                e.push_back (off (12000, 24)); // voice 0 releasing: stolen first
+            e.push_back (on (stealAt, 26 + vs::kMaxVoices)); // a low note, no high-frequency onset
+            const auto out = rig.render (stealAt + 9600, e);
+            const int fadeHost = 144, latency = rig.part.getLatencySamples();
+            const double before = maxStep (out, stealAt - 2400, stealAt);
+            const double after = maxStep (out, stealAt + fadeHost + latency + 1, stealAt + fadeHost + latency + 2400);
+            const double fade = maxStep (out, stealAt, stealAt + fadeHost + latency);
+            INFO (os << "x case " << static_cast<int> (c) << ": before " << before << ", fade " << fade << ", after " << after);
+            WARN ("steal fade " << os << "x " << (c == Attack ? "attack" : (c == Release ? "release" : "self-osc"))
+                                << ": max step before " << before << ", during the fade " << fade << ", after " << after);
+            CHECK (fade <= 1.1 * std::max (before, after));
+        }
+}
+
+TEST_CASE ("LFO delay restarts only when no note is held by a key or by the pedal (audio)", "[part][lfo]")
+{
+    // Poly. A first note (velocity ~0 with velocity -> VCA 1, so inaudible) starts the 1 s LFO delay.
+    // At 2 s the vibrato is at full depth. The probe note B (A4) then shows whether the delay restarted:
+    // its pitch spread over its first 0.25 s is small after a restart and full otherwise.
+    auto probe = [] (bool keyHeld, bool pedal) {
+        Rig rig;
+        sinePatch (rig.params);
+        rig.params.velToVca = 1.0f;
+        rig.params.lfoWave = 0;
+        rig.params.lfoRate = vs::map::lfoRateFromHz (8.0f);
+        rig.params.lfoDelay = vs::map::lfoDelayFromSec (1.0f);
+        rig.params.vcoModLfo = 0.3f;
+        rig.apply();
+        std::vector<vs::NoteEvent> e { on (0, 40, 0.0005f) };
+        if (pedal)
+            e.push_back (ev (100, EventType::SustainPedal, 0, 1.0f));
+        if (! keyHeld)
+            e.push_back (off (200, 40));
+        const int bAt = 96000;
+        e.push_back (on (bAt, 69));
+        const auto out = rig.render (bAt + 24000, e);
+        return pitchSpreadCents (out, bAt + 480, 12000);
+    };
+    const double held = probe (true, false);
+    const double pedalHeld = probe (false, true);
+    const double none = probe (false, false);
+    INFO ("vibrato spread of the second note: key held " << held << " ct, pedal-held " << pedalHeld << " ct, nothing held " << none << " ct");
+    WARN ("LFO delay rule: key held " << held << " ct, pedal-held " << pedalHeld << " ct, nothing held " << none << " ct");
+    REQUIRE (held > 50.0);
+    CHECK (pedalHeld > 0.8 * held); // decision: a ringing pedal-held note counts as held
+    CHECK (none < 0.3 * held);      // restarted: still inside the delay
+}
+
+TEST_CASE ("Portamento: changing the target or the time mid-glide keeps the pitch continuous", "[part][porta]")
+{
+    auto maxJump = [] (const std::vector<PitchPoint>& t, double from, double to) {
+        double m = 0.0;
+        for (size_t i = 1; i < t.size(); ++i)
+            if (t[i].t > from && t[i].t < to)
+                m = std::max (m, std::abs (t[i].semis - t[i - 1].semis));
+        return m;
+    };
+
+    SECTION ("new target mid-glide (Solo, legato)")
+    {
+        Rig rig;
+        sinePatch (rig.params);
+        rig.params.assignMode = 2;
+        rig.params.portaTime = vs::map::portaFromSec (0.4f);
+        rig.apply();
+        const int changeAt = 24000 + 9600; // 0.2 s into a 0.4 s glide 57 -> 69
+        const auto out = rig.render (changeAt + 48000, { on (0, 57), on (24000, 69), on (changeAt, 64) });
+        const auto track = pitchTrack (out, 24000 + 500, static_cast<int> (out.size()));
+        // A period is ~2.3 ms; the RC glide moves at most ~0.4 semitone per period here.
+        const double jump = maxJump (track, changeAt - 2000, changeAt + 4000);
+        INFO ("largest period-to-period pitch change around the new target: " << jump << " st");
+        CHECK (jump < 0.5);
+        CHECK (std::abs (pitchAt (track, changeAt + 40000) - 64.0) < 0.02);
+        // The new glide starts from where the old one was (about 69 - 1.2 = 67.8), not from 69 or 57.
+        const double startPitch = pitchAt (track, changeAt + 300);
+        INFO ("pitch just after the change " << startPitch);
+        CHECK (std::abs (startPitch - 67.8) < 0.4);
+    }
+
+    SECTION ("portamento time changed mid-glide")
+    {
+        Rig rig;
+        sinePatch (rig.params);
+        rig.params.assignMode = 2;
+        rig.params.portaTime = vs::map::portaFromSec (0.8f);
+        rig.apply();
+        const int changeBlock = (24000 + 9600) / kBlock;
+        const auto out = rig.render (24000 + 72000, { on (0, 57), on (24000, 69) }, kBlock, [=] (int b, vs::PartParams& p) {
+            if (b >= changeBlock)
+                p.portaTime = vs::map::portaFromSec (0.1f);
+        });
+        const auto track = pitchTrack (out, 24000 + 500, static_cast<int> (out.size()));
+        const double jump = maxJump (track, changeBlock * kBlock - 2000, changeBlock * kBlock + 4000);
+        INFO ("largest period-to-period pitch change around the time change: " << jump << " st");
+        CHECK (jump < 0.5);
+        // After the change the rest of the glide is fast: within 0.12 st 0.15 s later.
+        CHECK (std::abs (pitchAt (track, changeBlock * kBlock + 7200) - 69.0) < 0.12);
+    }
+
+    SECTION ("Unison glide (4 voices, detune 0) follows the same RC curve")
+    {
+        Rig rig;
+        sinePatch (rig.params);
+        rig.params.assignMode = 1;
+        rig.params.unisonDetune = 0.0f;
+        rig.params.portaTime = vs::map::portaFromSec (0.4f);
+        rig.apply();
+        const auto out = rig.render (24000 + 28800, { on (0, 57), on (24000, 69) });
+        const auto track = pitchTrack (out, 24000 + 500, static_cast<int> (out.size()));
+        const int latency = rig.part.getLatencySamples();
+        for (const double frac : { 0.25, 0.5, 1.0 })
+        {
+            const double expected = 69.0 - 12.0 * std::pow (100.0, -frac);
+            const double got = pitchAt (track, 24000 + latency + frac * 0.4 * kFs);
+            INFO ("t = " << frac << " T: " << got << ", expected " << expected);
+            CHECK (std::abs (got - expected) < 0.06);
+        }
+    }
 }

@@ -56,6 +56,7 @@ struct ModBlock
     // (k = 0 .. kMaxSubBlock). Owned by the PartModulator; valid while it lives.
     const float* smoothDecay = nullptr; // parameter smoothing (5 ms): per-voice velocity and level
     const float* glideDecay = nullptr;  // portamento (RC, 99 % in the portamento time)
+    const double* glideDecayD = nullptr; // the same in double precision
     double glideLog = 0.0;              // ln of the portamento's per-sample factor (glideDecay[1])
 };
 
@@ -99,6 +100,7 @@ private:
     // decay[k] = (1 - a)^k: what is left of a one-pole smoother's distance to target after k samples.
     std::array<float, kMaxSubBlock + 1> decay {};
     std::array<float, kMaxSubBlock + 1> glide {};
+    std::array<double, kMaxSubBlock + 1> glideD {};
 
     void updateGlideTable (float seconds) noexcept;
 

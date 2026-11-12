@@ -449,6 +449,24 @@ TEST_CASE ("Allocator: physical-key queries (LFO delay retrigger)", "[alloc]")
     CHECK (h.alloc.numPhysicalKeys() == 0);
 }
 
+TEST_CASE ("Allocator: held-note query for the LFO delay counts pedal-held notes, not releasing ones", "[alloc][lfo]")
+{
+    for (const auto mode : { AssignMode::Poly, AssignMode::Unison, AssignMode::Solo })
+    {
+        Harness h (mode, 2);
+        CHECK_FALSE (h.alloc.anyNoteHeldExcept (62));
+        h.on (60);
+        CHECK (h.alloc.anyNoteHeldExcept (62));
+        CHECK_FALSE (h.alloc.anyNoteHeldExcept (60)); // only itself
+        h.pedal (true);
+        h.off (60);
+        CHECK (h.alloc.anyNoteHeldExcept (62));       // ringing on the pedal: counts
+        CHECK_FALSE (h.alloc.anyPhysicalKeyExcept (62)); // but not for Legato glide
+        h.pedal (false);
+        CHECK_FALSE (h.alloc.anyNoteHeldExcept (62)); // released (in release): does not count
+    }
+}
+
 TEST_CASE ("Allocator: out-of-range notes are ignored", "[alloc]")
 {
     Harness h;

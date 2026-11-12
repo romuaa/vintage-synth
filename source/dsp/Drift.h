@@ -29,7 +29,7 @@ public:
         logDecay = std::log (1.0 - a);
         retargetSamples = std::max (1, static_cast<int> (0.25f * sampleRate)); // >= 1: advance() always progresses
         counter = 0;
-        target = dev = 0.0f;
+        target = 0.0f;
         dev0 = 0.0;
         sinceRetarget = 0;
     }
@@ -37,8 +37,9 @@ public:
     static constexpr int kMaxAdvance = 64;
 
     /**
-        Advance the slow drift by n (<= kMaxAdvance) samples at once; returns the dynamic drift at
-        the end, in units of kDynamicCents at full amount. A retarget is applied at its exact sample
+        Advance the slow drift by n (<= kMaxAdvance) samples at once (cheap: counters, and an exp
+        only at a retarget). current() gives the dynamic drift, in units of kDynamicCents at full
+        amount; it is computed on demand, so a voice at Vintage 0 never pays for it. A retarget is applied at its exact sample
         (the n samples are split there), so the walk is the same however a render is cut into
         blocks: n per-sample steps and one n-sample step differ only by float rounding.
         The walk is kept as target + deviation (only the deviation decays): a value-form one-pole
@@ -46,7 +47,7 @@ public:
         when stepped per sample, but not when stepped per 32 samples. The deviation is computed
         from the time since the retarget, so it does not depend on how calls are split.
     */
-    float advance (int n) noexcept
+    void advance (int n) noexcept
     {
         n = clamp (n, 0, kMaxAdvance);
         while (n > 0)
@@ -55,10 +56,9 @@ public:
             {
                 counter = retargetSamples;
                 const float newTarget = rng.bipolar();
-                dev = static_cast<float> (dev0 * std::exp (logDecay * static_cast<double> (sinceRetarget))); // at this sample
-                dev = (target + dev) - newTarget;
+                const float dev = deviation(); // at this sample
+                dev0 = static_cast<double> ((target + dev) - newTarget);
                 target = newTarget;
-                dev0 = static_cast<double> (dev);
                 sinceRetarget = 0;
             }
             const int k = n < counter ? n : counter;
@@ -66,14 +66,14 @@ public:
             counter -= k;
             n -= k;
         }
-        // From the absolute time since the retarget, not stepped per call: stepping rounded
-        // differently for different splits, and a pitch difference integrates into a phase
-        // difference (-102 dB between 37- and 512-sample host blocks with one voice).
-        dev = static_cast<float> (dev0 * std::exp (logDecay * static_cast<double> (sinceRetarget)));
-        return current();
     }
 
-    float current() const noexcept { return target + dev; }
+    /**
+        The walk now. From the absolute time since the retarget, not stepped per call: stepping
+        rounded differently for different splits, and a pitch difference integrates into a phase
+        difference (-102 dB between 37- and 512-sample host blocks with one voice).
+    */
+    float current() const noexcept { return target + deviation(); }
 
     // Full-scale ranges at Vintage = 1.
     static constexpr float kStaticCents = 6.0f;
@@ -85,7 +85,12 @@ public:
 
 private:
     Random rng;
-    float target = 0.0f, dev = 0.0f; // walk = target + dev
+    float deviation() const noexcept
+    {
+        return static_cast<float> (dev0 * std::exp (logDecay * static_cast<double> (sinceRetarget)));
+    }
+
+    float target = 0.0f; // walk = target + deviation()
     int retargetSamples = 1, counter = 0;
     double dev0 = 0.0;           // deviation right after the last retarget
     double logDecay = 0.0;       // ln (1 - a) of the walk's one-pole

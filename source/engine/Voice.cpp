@@ -42,6 +42,7 @@ void Voice::prepare (float oversampledRate, std::uint32_t seed) noexcept
     env2.setSampleRate (fs);
     drift.prepare (fs, seed);
     driftWalk = drift.current();
+    driftValid = false;
     vco1.setSeed (seed * 2654435761u + 1u);
     vco2.setSeed (seed * 2246822519u + 7u);
     // Free-running oscillators: start each voice at a different phase.
@@ -60,9 +61,11 @@ void Voice::reset() noexcept
     hpf.reset();
     vcf.reset();
     glideDev = 0.0f;
+    glideCur = 0.0;
     glideAnchored = false;
     velDev = scaleDev = 0.0f;
     fadeRemaining = 0;
+    restartPhasesSet = false;
 }
 
 void Voice::setBlockParams (const PartParams& p, float vintage) noexcept
@@ -104,21 +107,45 @@ void Voice::applyEnvTimes() noexcept
     env2.setTimes (env2Times[0] * s2, env2Times[1] * s2, env2Times[2] * s2);
 }
 
+void Voice::setNote (int note, bool glide) noexcept
+{
+    const float from = getPitch();
+    currentNote = note;
+    if (glide)
+        glideFrom (from);
+    else
+    {
+        glideDev = 0.0f;
+        glideCur = 0.0;
+    }
+    // Key follow tracks the keyboard at the event, not at the next host block (block-size
+    // independence; a legato line upwards gets the shorter times of the higher note at once).
+    applyEnvTimes();
+}
+
 void Voice::restartFromIdle() noexcept
 {
-    if (freshPhases)
+    // The voice is silent here (ENV-2 idle), so none of this is audible. ENV-1 may still have
+    // been releasing when ENV-2 finished; it froze at a level that depends on where the
+    // sub-block ended, and a new note must not start its filter/pitch envelope part-way open.
+    env1.reset();
+    hpf.reset();
+    vcf.reset();
+
+    const bool forced = restartPhasesSet;
+    restartPhasesSet = false;
+    if (freshPhases && ! forced)
     {
-        freshPhases = false;
+        freshPhases = false; // the first note keeps the prepare-time phases
         return;
     }
-    // The voice is silent here (ENV-2 idle), so none of this is audible.
+    freshPhases = false;
     const std::uint32_t s = restartRng.nextUInt();
     vco1.setSeed (s * 2654435761u + 1u);
     vco2.setSeed (s * 2246822519u + 7u);
-    vco1.reset (restartRng.unipolar());
-    vco2.reset (restartRng.unipolar());
-    hpf.reset();
-    vcf.reset();
+    const float p1 = restartRng.unipolar(), p2 = restartRng.unipolar();
+    vco1.reset (forced ? restartPhase1 : p1);
+    vco2.reset (forced ? restartPhase2 : p2);
 }
 
 void Voice::start (int note, float vel, float levelScale, float pos) noexcept
@@ -140,6 +167,7 @@ void Voice::start (int note, float vel, float levelScale, float pos) noexcept
     scaleTgt = levelScale;
     unisonPos = pos;
     glideDev = 0.0f;
+    glideCur = 0.0;
     currentNote = note;
     applyEnvTimes();
     env1.noteOn();
@@ -159,6 +187,7 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
     {
         // A steal fade keeps counting even if the old note has finished meanwhile.
         fadeRemaining = fadeRemaining > n ? fadeRemaining - n : 0;
+        idleAt = 0;
         return false;
     }
 
@@ -205,8 +234,15 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
                 break;
             }
     }
-    const float walk0 = driftWalk;
-    driftWalk = drift.advance (activeN);
+    idleAt = activeN;
+    // The walk itself (an exp) is only evaluated when Vintage can make it audible.
+    float walk0 = 0.0f;
+    if (vintage > 0.0f)
+        walk0 = driftValid ? driftWalk : drift.current();
+    drift.advance (activeN);
+    if (vintage > 0.0f)
+        driftWalk = drift.current();
+    driftValid = vintage > 0.0f;
     const float dynScale = dsp::Drift::kDynamicCents * vintage / 1200.0f;
     const float dyn0 = walk0 * dynScale;
     const float dynStep = (driftWalk - walk0) * dynScale * invN;
@@ -232,19 +268,22 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
             if (! glideAnchored || std::bit_cast<std::uint64_t> (m.glideLog) != std::bit_cast<std::uint64_t> (glideLog))
             {
                 // New glide, or the portamento time changed: continue from the current deviation.
-                glideStart = static_cast<double> (glideDev);
+                glideStart = glideCur;
                 glideLog = m.glideLog;
                 glideK = 0;
                 glideAnchored = true;
             }
-            const float g0 = glideDev; // = glideStart * g^glideK
-            const float* gd = m.glideDecay;
+            // Per sample in double, rounded to float once: the values are then the same however
+            // the render is split (a float base rounded per sub-block left -91 dB at 1-sample blocks).
+            const double g0 = glideCur; // = glideStart * g^glideK
+            const double* gd = m.glideDecayD;
             for (int i = 0; i < n; ++i)
-                glideSemis[i] = g0 * gd[i + 1];
+                glideSemis[i] = static_cast<float> (g0 * gd[i + 1]);
             glideK += n;
             const double next = glideStart * std::exp (glideLog * static_cast<double> (glideK));
             // 1e-9 semitone: what is left can no longer shift the phase measurably.
-            glideDev = std::abs (next) < 1.0e-9 ? 0.0f : static_cast<float> (next);
+            glideCur = std::abs (next) < 1.0e-9 ? 0.0 : next;
+            glideDev = static_cast<float> (glideCur);
         }
         else
         {
