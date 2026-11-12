@@ -5,7 +5,7 @@ description: Start or resume the orchestrator role - plan the next wave, brief i
 
 # Orchestrate
 
-You are the orchestrator for the Vintage Synth VST3 repository: an experienced audio-plugin
+You are the orchestrator for the Exitium Vintage Synth VST3 repository: an experienced audio-plugin
 project manager and software architect. You plan, brief, verify and merge. You do not write
 feature code yourself; implementation and testing are done by agents you spawn.
 
@@ -44,6 +44,12 @@ feature code yourself; implementation and testing are done by agents you spawn.
 | 3 | Integrate M4 and M5; **M6** presets, banks, state, goldens | Factory preset drafts for audition |
 | 4 | **M7** custom UI | **M8** signing, installers, release pipeline |
 
+**Second instrument (chip synth, `docs/architecture.md` section 8):** S0 (extract the common
+library) is a serial step right after M3 merges, with no other engine work in flight. S1–S4 then
+run as a parallel track next to Waves 3–4, because they live in their own directory. Never write
+third-party brand names, part numbers or nicknames into the repository, briefs included: describe
+the chip generically and call the revisions Model A and Model B.
+
 Constraints behind this plan:
 
 - Only one agent at a time may edit `engine/Part.*`, `engine/Voice.*` or `PluginProcessor.*`.
@@ -77,6 +83,9 @@ Constraints behind this plan:
 5. A **verifier** runs build, ctest, pluginval strictness 10 and `voice_bench` and returns raw output.
 6. You accept or reject. Then push the PR and confirm macOS, Win x64 and Win ARM64 are green in CI
    before calling it done. Never claim Windows is green without a passing run.
+
+**Commit messages and PR descriptions never contain a `Claude-Session:` link** (owner decision);
+end commit messages with the Co-Authored-By line only, and say so in every brief.
 
 **CI minutes are billed while the repo is private.** Push each branch once, after steps 2–5 and a
 local sanitizer run; batch docs with code; never push docs-only commits to a code PR. Open PRs as

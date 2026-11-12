@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in Vintage Synth. Bug reports, fixes and ideas are welcome.
+Thanks for your interest in Exitium Vintage Synth. Bug reports, fixes and ideas are welcome.
 
 **Licence:** by submitting a contribution you agree that it is licensed under the GNU Affero
 General Public License v3.0 only, the same as the project (inbound = outbound); there is no
@@ -48,7 +48,7 @@ what you built and tested, and CI covers the rest.
 
 ## How the project is developed
 
-Vintage Synth is built by a human owner directing AI coding agents. Agents write and review much
+Exitium Vintage Synth is built by a human owner directing AI coding agents. Agents write and review much
 of the code against written contracts in `docs/architecture.md`; the owner makes the product
 decisions. Judgement calls and their reasons are logged in `docs/decisions.md`, and lessons learned
 in `docs/engineering-notes.md`. If your change makes a new judgement call, add a line there.

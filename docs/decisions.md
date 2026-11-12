@@ -3,6 +3,90 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Linux ARM64 and container checks (owner decision, 2026-11-12)
+
+- **Linux ARM64 (aarch64) is a supported target,** built and validated in CI only; the owner has no
+  such machine yet, so there is no manual DAW check. It is not performance-tuned for small boards.
+  x86_64 and ARM64 are merged into one Linux bundle, like the Windows one.
+- **Local Linux pre-flight runs in a native ARM64 container on the Mac** (`scripts/linux-check.sh`).
+  x86_64 Linux is not emulated locally: it would be slow and unreliable under emulation, and CI
+  builds and tests the real binary on real hardware.
+- **CI runs the Linux bundle in containers of several distributions** to prove it loads above the
+  glibc floor, not only on the image it was built on.
+- A headless render through a real DAW in CI is being studied; no proprietary software is
+  downloaded or run for that without the owner's approval.
+
+## Wave 2 results: M3 and M4 (2026-11-12)
+
+All (review) unless marked.
+
+| Decision | Why |
+|---|---|
+| **Pan and balance never boost:** unity at centre, the near side stays at unity, the far side falls to 0. | The first version boosted the remaining side by 3 dB per stage (+6 dB with both at an extreme). |
+| **Mixer gains latch across a key-mode change** until the part starts a new note or is silent. | Dual → Whole made Lower's release tails audible that the balance had silenced. |
+| **Key-mode change releases all voices of both parts** (even with the pedal down; pedal, bend and wheel are kept). A note-off for a key nobody owns is dropped; a key re-pressed after a split move can be owned by both parts and its note-off goes to both. | No hung or orphaned notes; verified by a 300,000-sequence fuzz against the real allocators. |
+| **In Whole mode the Upper part is not rendered** (it still receives controllers); when it comes back its parameters jump to target and its LFO restarts. | No CPU for a silent part; the result does not depend on block size. |
+| **Key mode and split point changes take effect at the start of the host block.** | Hosts deliver parameters per block; quantising further was not worth it. |
+| **Oversampling: 4× below 44.1 kHz, 2× up to 88.2 kHz, 1× above (offline 4×/4×/2×).** Reported latency is the measured decimator delay plus BLEP: 6, 5 and 8 samples. | Internal rate ≥ 88.2 kHz everywhere; 32 voices at 192 kHz cost about 10 % of a core (was 19 %). The old latency figure included an upsampler the voice path does not use. |
+| **Slow per-sample state is double precision** (envelope level, LFO phase, timers) and coefficients use `expm1`. | At 384 kHz internal a 10 s attack was 7.7 % off and decays stalled 0.4 dB above sustain. |
+| **Behaviour suites run at 48 kHz (2×), 96 kHz (1×) and 192 kHz (1×).** Parameter, state and gain-law tests run at 48 kHz only. | Contract gate 4.4. Running them at high rates exposed a smoother rounding problem (fixed). |
+| **Golden references can be stereo** (format version 2: one body per channel). | Upper's pan was barely covered by left-channel-only references. |
+| **OPEN — hard sync combined with audio-rate cross-mod aliases at −44 to −71 dB**, at every oversampling factor; it predates M3 (the alias gate only measured plain waveforms and sync alone, which pass at ≤ −100 dB). The check stays at −100 dB and is tagged as an expected failure, so it is reported on every run. | Frequency modulation creates bandwidth that BLEP correction cannot remove. Needs a study: band-limit the modulator, raise oversampling while cross-mod is active, or define a separate, documented budget for cross-mod. **Owner decision needed after the study**, because the project rule says the gate must not be relaxed. |
+| **The sub-block-equivalence test uses a smooth patch at −90 dB** and bounds the chaotic sync + cross-mod patch at −55 dB. | That patch amplifies 1e-7 differences; a real control-rate step still fails both bounds. |
+| **After v1.0, parameter *IDs* are frozen, not list positions.** JUCE derives each VST3 parameter ID from a hash of the string ID; hosts key automation on it and our state is keyed by string ID. Order only affects generic parameter lists. A test checks the IDs are distinct. | Lets per-part parameters be added after release without breaking sessions. The "never reorder" wording in `CLAUDE.md` is to be refined before v1.0 (owner). |
+| **Arp/sequencer: consumes the sustain pedal while on** (decision); legato overlap at 100 % gate when the pitch changes; host-position drift up to about one step is absorbed, larger is a jump; swing and rate changes keep the step count; a pattern change continues from the last played note; with the host playing, the first key waits for the next grid step; the sequencer starts on the grid step after the key press and takes its root from the lowest key in the pattern. | Review findings and choices the contract left open. Passing the pedal on made arpeggiated notes pile up in the synth. |
+| **An intermittent crash of pluginval at process exit was seen once on Linux CI** (after SUCCESS; a re-run and later runs were clean). No cause found in our code. | Watch for it; capture a backtrace if it recurs. No CI retries added. |
+
+## Product names (owner decision, 2026-11-12)
+
+- **Every product name carries the company prefix: "Exitium Vintage Synth" and "Exitium B-Side".**
+  This is the name shown in hosts, the bundle file name, the README and any site. Plugin codes and
+  bundle identifiers do not change.
+- The names are considered good enough for an open-source project and **can still be changed
+  before the first release** if a conflict turns up. An official trademark search is optional, not
+  a gate. After the first release the host-visible name stays.
+- The rename of Vintage Synth is done at the start of M3 (it touches CMake, CI, tests and scripts).
+
+## Wave 2 contracts (2026-11-12)
+
+All (review).
+
+| Decision | Why |
+|---|---|
+| Key modes: Whole = Lower only; Dual = both; Split = below the split point to Lower. The router remembers which part received each key's note-on. | A moved split point can never hang a note. |
+| Changing the key mode releases all voices and forgets held keys. | Same rule as the assign-mode change in M2. |
+| Balance is constant-power with both parts at unity in the centre; pan per part. Mono output is (L + R) / 2. | Predictable levels; Dual at centre is simply the sum of both parts. |
+| Oversampling follows the host rate: 2× below 88.2 kHz, 1× at or above (offline 4× / 2×). | Keeps the internal rate at 88.2 kHz or more everywhere and brings 192 kHz sessions back inside the CPU budget (was 18 % for 32 voices). |
+| MIDI stays omni; no per-part channels yet. | Not needed for Whole/Dual/Split; can be appended later. |
+| Arpeggiator and sequencer follow the host transport when it plays and an internal clock when it is stopped. | Works in a DAW and when just playing the plugin in a host. |
+| Arp modes: Up, Down, Up & Down, Random, As Played; 1–4 octaves; hold; swing; gate length. Sequencer: 16 steps with offset, Note/Rest/Tie and velocity; transposed by the lowest held key. | The classic set plus the two things players expect today (as-played order, swing). |
+
+## M7 UI direction (owner decision, 2026-11-12)
+
+- **The custom UI does not reproduce the reference panel's layout.** It gets its own arrangement,
+  designed for plugin use (screen proportions, mouse and trackpad, resizing, clear signal flow,
+  controls that are inactive in the current mode shown as inactive), with our own look and naming.
+  The reference panel only defined *which functions exist*.
+- Consequence for M7: the first deliverable is a layout proposal for the owner to choose from,
+  before any UI code. The visual style is still to be decided with the owner.
+- Noted from hands-on testing: Unison Detune and Unison Voices must look inactive outside Unison mode.
+
+## Second instrument: chip synth (owner decision, 2026-11-12)
+
+| Decision | Why |
+|---|---|
+| **A second instrument is planned:** a polyphonic synth modelled on a classic 3-voice sound chip from early-1980s home computers. (owner) | Owner's request. |
+| **Separate plugin in this repository, sharing a common library** extracted after M3. | A host identifies a plugin by its codes and parameter list; the instruments share neither parameters nor presets, but they do share the allocator, events, parameter plumbing, effects, tests and CI. |
+| **Own behavioural model, not an embedded emulator.** Digital parts bit-exact, analog parts modelled, one whole chip voice per note. | Research: the established emulators simulate every chip clock cycle, so 16 notes need 16 chips at an estimated 17–26 % of a core or more (estimate from a stand-in benchmark, not the real engine); they allocate and start threads at setup, quantise pitch and cutoff, and their sources contain third-party brand names. The own model is estimated at 2.5–5 % for 16 voices. Their licence (GPL v2 or later) would have been compatible. |
+| **Every patch has a program sequencer** (wave/note, pulse and filter lanes on a tick clock), hard restart is a patch feature with explicit policies, and tables are patch data with a text format. (owner prompt, research) | The owner pointed out that the signature sounds come from how the chip was driven, not from the chip alone. Research confirmed it: every serious playable instrument of this kind added a per-patch table sequencer, and the classic drums, arpeggio chords and attack snap cannot be made without one. It must be in the first sounding milestone so the engine is not designed into a corner. |
+| **Program-driven values step at the tick, unsmoothed; automation stays smooth.** | The stepped vibrato, per-tick cutoff steps and restart click are part of the character; smoothing them would also break the envelope-quirk timing. |
+| **Filter per note by default, with a shared-filter topology per part.** | Per-note filters make a playable poly; the shared filter is needed for paraphonic patches, the early revision's summed overdrive, and replaying register traces against the oracle. |
+| **Chip arpeggio (in-voice, tick rate, gate held) is separate from the shared arpeggiator.** | They are different things musically and technically. |
+| **An established emulator is the test oracle, in CI only.** Never vendored, linked or shipped; reference data is committed under neutral names. (review) | Authenticity must be measurable; the brand rule and the real-time rules stay intact. |
+| **Own name; no official names, part numbers or nicknames.** Revisions are "Model A" and "Model B". (owner) | Project brand rule; the original computer brand is in active commercial use again. |
+| **Product name: "B-Side"** (owner). Always shown with the company name ("Exitium B-Side") in the plugin name, metadata, README and site. "Broadside", "Topside", "Flipside" and "Vicious" are reserved for modes and preset banks. | A music term that also nods at the chip. A web check found no synth, plugin or hardware with this name, but the term is common and crowded in search; US trademark filings for "B SIDE" exist in software and DJ-equipment classes for unrelated goods. **Open: the owner runs the official trademark searches (USPTO, EUIPO/TMview, WIPO, UKIPO; classes 9, 15, 41, 42) before release.** "Vicious" as a bank name could be read as a nod to an existing preset maker with a longer name (low to moderate risk). |
+| **Listening reference: public recordings of the original hardware, by the owner's ear.** They are not downloaded into the repository or used as test data. | Recordings are lossy, of unknown chip revision, and copyrighted; the oracle covers objective tests. |
+
 ## Wave 1 — M2 polyphony, effect blocks, owner decisions (2026-11-12)
 
 ### Public-release audit (2026-11-12)

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <iterator>
 #include <sstream>
 #include <stdexcept>
 
@@ -47,6 +48,17 @@ Script parseScript (const std::string& text)
                 fail ("not a number: " + s);
             return v;
         };
+
+        if (tok[0] == "channels")
+        {
+            if (tok.size() != 2)
+                fail ("channels takes one value");
+            const double c = number (tok[1]);
+            if (c < 0.5 || c > 2.5)
+                fail ("channels must be 1 or 2");
+            script.channels = c < 1.5 ? 1 : 2;
+            continue;
+        }
 
         if (tok[0] == "rate" || tok[0] == "length")
         {
@@ -138,6 +150,19 @@ Script parseScript (const std::string& text)
 
 std::vector<float> renderScript (const Script& script, int blockSize)
 {
+    return renderScriptStereo (script, blockSize)[0];
+}
+
+std::vector<std::vector<float>> renderScriptChannels (const Script& script, int blockSize)
+{
+    auto both = renderScriptStereo (script, blockSize);
+    if (script.channels == 1)
+        both.resize (1);
+    return both;
+}
+
+std::vector<std::vector<float>> renderScriptStereo (const Script& script, int blockSize)
+{
     juce::ScopedJuceInitialiser_GUI juceInit;
     vs::VintageSynthProcessor proc;
     proc.setPlayConfigDetails (0, 2, script.sampleRate, blockSize);
@@ -147,8 +172,9 @@ std::vector<float> renderScript (const Script& script, int blockSize)
     const auto sampleOf = [&] (const Event& e) { return static_cast<int> (std::llround (e.time * script.sampleRate)); };
 
     std::vector<bool> applied (script.events.size(), false);
-    std::vector<float> out;
+    std::vector<float> out, outR;
     out.reserve (static_cast<size_t> (total));
+    outR.reserve (static_cast<size_t> (total));
     juce::AudioBuffer<float> buffer (2, blockSize);
 
     const auto applyParam = [&] (const Event& e) {
@@ -202,12 +228,14 @@ std::vector<float> renderScript (const Script& script, int blockSize)
         buffer.clear();
         proc.processBlock (buffer, midi);
         const float* l = buffer.getReadPointer (0);
+        const float* r = buffer.getReadPointer (1);
         out.insert (out.end(), l, l + len);
+        outR.insert (outR.end(), r, r + len);
         pos = end;
     }
 
     proc.releaseResources();
-    return out;
+    return { out, outR };
 }
 
 // ------------------------------------------------------------------ features
@@ -435,6 +463,75 @@ Features featuresFromText (const std::string& text)
     if (! in)
         throw std::runtime_error ("golden file: truncated");
     return f;
+}
+
+std::string channelFeaturesToText (const std::vector<Features>& channels)
+{
+    if (channels.size() == 1)
+        return featuresToText (channels[0]);
+    std::string out = "vsgolden 2\nchannels " + std::to_string (channels.size()) + "\n";
+    for (const auto& f : channels)
+        out += featuresToText (f);
+    return out;
+}
+
+std::vector<Features> channelFeaturesFromText (const std::string& text)
+{
+    std::istringstream in (text);
+    std::string word;
+    int version = 0;
+    if (! (in >> word) || word != "vsgolden" || ! (in >> version))
+        throw std::runtime_error ("golden file: expected 'vsgolden <version>'");
+    if (version == 1)
+        return { featuresFromText (text) };
+    if (version != 2)
+        throw std::runtime_error ("golden file: unsupported version");
+    int channels = 0;
+    if (! (in >> word) || word != "channels" || ! (in >> channels) || channels < 1 || channels > 2)
+        throw std::runtime_error ("golden file: expected 'channels 1|2'");
+    // The rest is N version-1 bodies, each starting with "vsgolden 1".
+    std::string rest ((std::istreambuf_iterator<char> (in)), std::istreambuf_iterator<char>());
+    std::vector<Features> out;
+    size_t from = rest.find ("vsgolden 1");
+    while (from != std::string::npos)
+    {
+        const size_t next = rest.find ("vsgolden 1", from + 1);
+        out.push_back (featuresFromText (rest.substr (from, next == std::string::npos ? std::string::npos : next - from)));
+        from = next;
+    }
+    if (static_cast<int> (out.size()) != channels)
+        throw std::runtime_error ("golden file: channel count mismatch");
+    return out;
+}
+
+void maybeWriteWav (const std::vector<std::vector<float>>& channels, double sampleRate, const std::string& name)
+{
+    if (channels.size() == 1)
+    {
+        maybeWriteWav (channels[0], sampleRate, name);
+        return;
+    }
+    const auto dir = juce::SystemStats::getEnvironmentVariable ("VS_RENDER_DIR", {});
+    if (dir.isEmpty() || channels.empty())
+        return;
+    juce::File d (dir);
+    d.createDirectory();
+    auto file = d.getChildFile (juce::String (name) + ".wav");
+    file.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
+    if (stream == nullptr)
+        return;
+    auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions{}
+                                                   .withSampleRate (sampleRate)
+                                                   .withNumChannels (static_cast<int> (channels.size()))
+                                                   .withBitsPerSample (24));
+    if (writer == nullptr)
+        return;
+    std::vector<const float*> ptrs;
+    for (const auto& c : channels)
+        ptrs.push_back (c.data());
+    writer->writeFromFloatArrays (ptrs.data(), static_cast<int> (ptrs.size()), static_cast<int> (channels[0].size()));
 }
 
 void maybeWriteWav (const std::vector<float>& mono, double sampleRate, const std::string& name)

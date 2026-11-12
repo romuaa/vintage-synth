@@ -94,6 +94,17 @@ public:
     int getFadeRemaining() const noexcept { return fadeRemaining; }
 
     bool isActive() const noexcept { return env2.isActive(); }
+
+    /**
+        Samples until this voice's drift walk retargets, if that matters for rendering (sounding,
+        Vintage on), else a large number. The voice ramps the walk linearly across a sub-block, so
+        a retarget (a kink in the walk) inside a sub-block would be approximated differently for
+        different splits: the Part ends sub-blocks there.
+    */
+    int samplesToDriftRetarget() const noexcept
+    {
+        return env2.isActive() && vintageAmount > 0.0f ? drift.samplesToRetarget() : 1 << 30;
+    }
     int getNote() const noexcept { return currentNote; }
     /** Current keyboard pitch in MIDI note units, including any glide in progress. */
     float getPitch() const noexcept { return static_cast<float> (currentNote) + glideDev; }

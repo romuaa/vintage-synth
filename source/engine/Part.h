@@ -33,9 +33,29 @@ class Part
 public:
     static constexpr float kStealFadeSeconds = 0.003f;
 
-    /** Allocates. Call from prepareToPlay only. Voice i is seeded seed + i. */
+    /**
+        Allocates. Call from prepareToPlay only. Voice i is seeded seed + i.
+        @param oversamplingFactor 1, 2 or 4. At 1 the voices render straight into the output
+                                  (no decimator); the latency is then the BLEP delay only.
+    */
     void prepare (double sampleRate, int maxBlockSize, int oversamplingFactor, std::uint32_t seed);
     void reset() noexcept;
+
+    /**
+        Key-mode change (docs/architecture.md 4.2): releases every sounding voice and forgets the
+        held keys, like All Notes Off, but keeps the controllers (pitch bend, mod wheel, sustain
+        pedal). Envelope release, no click.
+    */
+    void releaseAllNotes() noexcept;
+
+    /**
+        For a part that was not rendered for a while (Upper in Whole mode, its voices idle):
+        clears the decimator, jumps the smoothed parameters to the current targets (setParams
+        first) and restarts the LFO, so it starts as cleanly as after prepare(). Keeps the
+        controllers (pitch bend, mod wheel and pedal, which it kept receiving through zero-length
+        renders) and the allocator's voice ages.
+    */
+    void resume() noexcept;
 
     void setParams (const PartParams& p) noexcept { target = p; }
     void setVintage (float v) noexcept { vintage = v; }
@@ -58,6 +78,10 @@ public:
     void setMaxSubBlock (int n) noexcept { maxSubBlock = juce::jlimit (1, kMaxSubBlock, n); }
 
     int getLatencySamples() const noexcept { return latencySamples; }
+    /** The latency before rounding to whole samples (decimator phase delay + BLEP delay). */
+    double getExactLatency() const noexcept { return exactLatency; }
+    /** Samples rendered since prepare() (zero-length renders don't count). For tests: CPU use. */
+    std::int64_t getRenderedSamples() const noexcept { return renderedSamples; }
     int getOversamplingFactor() const noexcept { return osFactor; }
     bool isSounding() const noexcept { return numSoundingVoices() > 0; }
     /** Voices that are sounding or waiting for the end of a steal fade. */
@@ -95,6 +119,8 @@ private:
     int maxBlock = 0;
     int osFactor = 2;
     int latencySamples = 0;
+    double exactLatency = 0.0;
+    std::int64_t renderedSamples = 0;
     float osRate = 96000.0f;
     int stealFadeSamples = 288;
 

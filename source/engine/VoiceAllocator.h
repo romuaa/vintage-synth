@@ -200,6 +200,18 @@ public:
         releaseAll (sink);
     }
 
+    /**
+        Key-mode change (docs/architecture.md 4.2): every key forgotten (later note-offs are
+        ignored) and every sounding voice released, but the pedal keeps its state: notes played
+        after the change are sustained as usual while it stays down.
+    */
+    template <typename Sink>
+    void releaseAllKeepPedal (Sink&& sink) noexcept
+    {
+        numKeys = 0;
+        releaseAll (sink);
+    }
+
     /** All Sound Off: like allNotesOff, and every voice is idle at once (the Part resets them). */
     void killAll() noexcept
     {

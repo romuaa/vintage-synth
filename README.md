@@ -1,17 +1,21 @@
-# Vintage Synth
+# Exitium Vintage Synth
 
 A bi-timbral, analog-style polyphonic synthesizer instrument in VST3 format, by **Exitium**.
 It's a two-oscillator subtractive synth in the style of the classic 80s flagship polys, with our own
 naming and design.
 
-> **Status: in development (pre-release).** Milestone M2 is done: one part (Lower) plays as a
-> 16-voice polyphonic synth with the complete voice. Upper part, arpeggiator, sequencer, effects in
+> **Status: in development (pre-release).** Milestone M3 is done: two 16-voice parts (Lower and
+> Upper) with Whole, Dual and Split modes and stereo output. Arpeggiator, sequencer and effects in
 > the plugin, presets and the custom UI come in later milestones (see [Roadmap](#roadmap)). The
 > plugin currently shows JUCE's generic parameter editor.
 
 ## Features
 
-Working now (M2):
+Working now (M3):
+
+- **Two parts:** Lower and Upper, each a complete 16-voice synth. Whole (one sound), Dual (both
+  layered, up to 32 voices) or Split (bass below, lead above, movable split point), with balance,
+  pan per part and stereo output.
 
 - **16 voices** with Poly, Unison (2–16 voices with detune) and Solo modes, click-free voice stealing,
   sustain pedal, portamento (always or legato), velocity to level and filter, bend range up to an
@@ -30,8 +34,8 @@ Working now (M2):
 - **Sound quality:** anti-aliased oscillators (measured aliasing ≤ −113 dB up to a 5 kHz fundamental),
   2× oversampling in real time and 4× when rendering offline. Latency (about 7 samples) is reported to the host.
 
-Planned: the Upper part with Whole/Dual/Split, arpeggiator, 16-step sequencer, patch banks, and
-chorus, delay and reverb (the effect blocks exist and are tested, but are not connected yet).
+Planned: arpeggiator and 16-step sequencer, chorus, delay and reverb (these modules exist and are
+tested, but are not connected to the plugin yet), and patch banks.
 
 ## Platforms
 
@@ -61,7 +65,7 @@ cmake -S . -B build/mac -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/mac --parallel
 ```
 
-The plugin is at `build/mac/VintageSynth_artefacts/Release/VST3/Vintage Synth.vst3`. Copy it to
+The plugin is at `build/mac/VintageSynth_artefacts/Release/VST3/Exitium Vintage Synth.vst3`. Copy it to
 `~/Library/Audio/Plug-Ins/VST3/` to use it in a DAW.
 
 **Windows:**
@@ -82,7 +86,7 @@ sudo apt install build-essential cmake ninja-build libasound2-dev libjack-jackd2
   libxinerama-dev libxrandr-dev libxrender-dev libxi-dev
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
-mkdir -p ~/.vst3 && cp -r "build/VintageSynth_artefacts/Release/VST3/Vintage Synth.vst3" ~/.vst3/
+mkdir -p ~/.vst3 && cp -r "build/VintageSynth_artefacts/Release/VST3/Exitium Vintage Synth.vst3" ~/.vst3/
 ```
 
 The Linux build links the C++ runtime statically; at run time it needs glibc 2.35 or newer,
@@ -92,9 +96,9 @@ libfontconfig and libfreetype. CI builds it on Ubuntu 22.04. So far Linux is val
 ## Try it in a plugin host
 
 `scripts/dev-host.sh` (macOS) builds the plugin and JUCE's AudioPluginHost (about 2 minutes the first
-time on Apple silicon) and opens the host with MIDI Input → Vintage Synth → Audio Output already wired.
+time on Apple silicon) and opens the host with MIDI Input → Exitium Vintage Synth → Audio Output already wired.
 
-- Open the editor: double-click the "Vintage Synth" node.
+- Open the editor: double-click the "Exitium Vintage Synth" node.
 - Play without a MIDI keyboard: the on-screen piano at the bottom of the host window (mouse, or the
   computer keys A W S E D F T G Y H U J K; Z and X shift the octave). A hardware keyboard also works.
 - Audio device and buffer size: Options > Audio Settings. macOS may ask for microphone permission
@@ -118,7 +122,7 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
 - **host_smoke** loads the built `.vst3` the way a DAW does and checks identity, parameters, rendering at
   44.1/48/96 kHz and state save/restore.
 - **pluginval** at strictness 10 runs in CI on macOS and Windows x64:
-  `pluginval --strictness-level 10 --validate-in-process --skip-gui-tests "<path>/Vintage Synth.vst3"`.
+  `pluginval --strictness-level 10 --validate-in-process --skip-gui-tests "<path>/Exitium Vintage Synth.vst3"`.
 
 ## CI and security
 
@@ -152,12 +156,15 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 | M0 | Project skeleton, CI, build for all targets | Done |
 | M1 | Single-part voice engine | Done |
 | M2 | Polyphony: 16 voices, Poly/Unison/Solo, portamento, voice stealing, velocity, bend range | Done |
-| M3 | Bi-timbral: Upper part, Whole/Dual/Split | Next |
-| M4 | Arpeggiator and 16-step sequencer | |
+| M3 | Bi-timbral: Upper part, Whole/Dual/Split | Done |
+| M4 | Arpeggiator and 16-step sequencer | Module done, not connected |
 | M5 | Chorus, delay and reverb | Blocks done, not connected |
 | M6 | Presets, patch banks, golden-render regression tests | |
 | M7 | Custom UI | |
 | M8 | Hardening, signing, installers, release | |
+
+A second instrument is planned in this repository: **B-Side**, a polyphonic synth modelled on a classic 3-voice
+sound chip from early-1980s home computers, as its own plugin sharing the common engine code.
 
 ## License
 

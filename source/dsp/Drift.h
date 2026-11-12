@@ -25,8 +25,8 @@ public:
         vco2Cents = rng.bipolar();
         cutoffOct = rng.bipolar();
         envScale = rng.bipolar();
-        const double a = static_cast<double> (onePoleCoef (1.2f, sampleRate));
-        logDecay = std::log (1.0 - a);
+        // One-pole with tau = 1.2 s: per-sample factor e^(-1 / (tau fs)), so ln of it exactly.
+        logDecay = -1.0 / (1.2 * static_cast<double> (sampleRate));
         retargetSamples = std::max (1, static_cast<int> (0.25f * sampleRate)); // >= 1: advance() always progresses
         counter = 0;
         target = 0.0f;
@@ -74,6 +74,9 @@ public:
         difference (-102 dB between 37- and 512-sample host blocks with one voice).
     */
     float current() const noexcept { return target + deviation(); }
+
+    /** Samples until the next retarget (>= 1 once a walk has started; 0 = due now). */
+    int samplesToRetarget() const noexcept { return counter; }
 
     // Full-scale ranges at Vintage = 1.
     static constexpr float kStaticCents = 6.0f;

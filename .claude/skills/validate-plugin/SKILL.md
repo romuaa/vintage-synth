@@ -20,7 +20,7 @@ Run these in order and stop at the first failure. Report each step as pass, fail
    session scratchpad (download it again if the scratchpad is new):
    ```bash
    <scratchpad>/pluginval/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
-     --skip-gui-tests "build/mac/VintageSynth_artefacts/Release/VST3/Vintage Synth.vst3"
+     --skip-gui-tests "build/mac/VintageSynth_artefacts/Release/VST3/Exitium Vintage Synth.vst3"
    ```
    Pass = the output ends with `SUCCESS` and the exit code is 0. Only if the tool harness still
    refuses the command, ask the user under "What I need from you" to run it with `! `.

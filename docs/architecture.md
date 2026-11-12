@@ -186,14 +186,74 @@ return NaN for NaN input, so the processor's non-finite output guard still fires
 4. pluginval strictness 10; `realtime-review` by a fresh reviewer; CI green on all three targets.
 5. Audition render (`[.render]`) updated with a polyphonic demo for the owner's ear.
 
-## 4. M3 — bi-timbral (outline; refined before Wave 2)
+## 4. M3 — bi-timbral (serial track of Wave 2)
 
-- `KeyRouter` (JUCE-free): Whole = all notes to Lower; Dual = all notes to both parts;
-  Split = notes below the split point to Lower, the rest to Upper. Non-note events go to both parts.
-- `PartMixer`: per-part level via balance, constant-power pan per part, mono → stereo.
-- Global parameters, added in the M3 parameter step: `key.mode`, `key.split_point`, `mix.balance`,
-  and per-part `mix.pan`.
-- Two `Part` instances with different seeds; latency is identical for both.
+### 4.1 Structure
+- Two `Part` instances, **Lower** and **Upper**, with different seeds, each fed by its own parameter
+  binding (`lower.*`, `upper.*`; the parameters already exist). One LFO per part. Vintage is global.
+- `engine/KeyRouter.h` (new, JUCE-free, no allocation): takes the parsed `NoteEvent`s of a render
+  chunk and writes one event list per part.
+- `engine/PartMixer.h` (new, JUCE-free): mono part outputs → stereo bus.
+- The processor output becomes true stereo. With a mono output bus the result is (L + R) / 2.
+
+### 4.2 Key modes (global choice parameter `key.mode`)
+| Mode | Routing |
+|---|---|
+| Whole (default) | All notes to Lower. Upper is silent and costs no CPU. |
+| Dual | All notes to both parts (up to 32 voices). |
+| Split | Notes below the split point to Lower, notes at or above it to Upper. |
+
+- Pitch bend, mod wheel, sustain pedal, All Notes Off, All Sound Off and Reset Controllers go to
+  both parts in every mode. MIDI channel is ignored (omni).
+- **A note-off always goes to the part(s) that received the note-on.** The router remembers the
+  owner of each of the 128 keys, so moving the split point while keys are held can never hang a note.
+- **Changing the key mode releases all voices of both parts** (as All Notes Off, without clearing
+  controllers) and forgets held keys; no click.
+- The split point (`key.split_point`, MIDI note 0–127, default 60, shown as a note name) only
+  affects notes pressed after the change.
+
+### 4.3 Mixer
+- `mix.balance` (global, −1…+1, default 0) between Lower and Upper, and `mix.pan` (per part,
+  −1…+1, default 0, appended to the per-part float list) use the same **no-boost law**: unity on
+  both sides at centre; toward either side the near side stays at exactly unity and the far side
+  falls (√2·cos θ, capped at 1) to exactly 0 at the extreme. Balance has no effect in Whole mode.
+- All gains are smoothed (no zipper noise).
+- **Latch after a key-mode change:** a part that is still sounding keeps its mixer gains until it
+  starts its first new note or has gone silent, so release tails fade at the level they were heard at.
+- Key mode and split point are read once per host block: a change takes effect at that block's
+  first sample (accepted; automation of these two is block-accurate, not sample-accurate).
+
+### 4.4 Oversampling by host rate (closes the open CPU item)
+| Host rate | Real time | Offline render |
+|---|---|---|
+| below 44.1 kHz | 4× | 4× |
+| 44.1 kHz to below 88.2 kHz | 2× | 4× |
+| 88.2 kHz and above | 1× | 2× |
+
+The internal rate is then at least 88.2 kHz at every host rate from 22.05 kHz up. Latency is the
+measured delay of the decimator alone plus the BLEP delay, rounded to the nearest sample (6 at 2×,
+5 at 4×, 8 at 1×). The alias gate's band is 0 to min(20 kHz, 20/48 × host rate). The alias gate (≤ −100 dB, 0–20 kHz) and all
+existing DSP tests must pass in every configuration; `voice_bench 192000` must show 32 voices
+inside the 15 % budget.
+
+### 4.5 New parameters
+Appended after all existing ones, in this order: per-part float `mix.pan` (at the end of
+`VS_PART_FLOAT_PARAMS`, so it exists as `lower.mix.pan` and `upper.mix.pan`); then global
+`key.mode` (Whole, Dual, Split), `key.split_point`, `mix.balance`. Host parameter count 96 → 101.
+`stateVersion` stays 1 (pre-release). Follow the `add-parameter` skill.
+
+### 4.6 Gates for M3
+1. All existing tests pass; changed expectations are listed and justified (parameter count, stereo).
+2. New tests: router (every row of 4.2, split-point moves with held keys, mode change, controllers
+   to both parts, random event streams never hang a note); Dual = sum of both parts within float
+   tolerance when rendered separately; Split boundaries; balance and pan laws (constant power
+   ±0.1 dB); Whole mode: Upper costs no CPU and is silent; stereo output and mono fold-down;
+   block-size independence with both parts sounding at full Vintage; oversampling table 4.4 incl.
+   latency and the alias gate at a 96 kHz host rate; state round-trip of the new parameters.
+3. `voice_bench`: Dual with 32 voices at 48 kHz and at 192 kHz inside the budget.
+4. Sanitizer run, pluginval strictness 10, independent review, CI green on all four targets.
+5. Audition render `m3_demo`: a Dual layer (two different patches), a Split (bass below, lead
+   above), a split-point move and a mode change while playing.
 
 ## 5. M5 — effects (parallel track, new files only)
 
@@ -248,19 +308,66 @@ public:
 - A hidden `[.render]` test writes an audition WAV (dry pad phrase, then each effect, then all three).
 - `realtime-review` by a fresh reviewer.
 
-## 6. M4 — arpeggiator and sequencer (outline; refined before Wave 2)
+## 6. M4 — arpeggiator and sequencer (parallel track of Wave 2: module and tests only)
 
-A JUCE-free event transformer in `source/seq/`, one instance per part, between the KeyRouter and the Part:
+Pure, JUCE-free event transformers in `source/seq/`, tested on event lists. Host parameters and
+wiring into the processor happen in Wave 3. One instance sits in front of a part.
 
 ```cpp
 struct Transport { double sampleRate; double bpm; double ppqPosition; bool playing; };
 
+// Returns the number of events written to `out` (ascending offsets). Never allocates.
 int process (std::span<const NoteEvent> in, const Transport&, int numSamples,
-             std::span<NoteEvent> out) noexcept;   // returns the number of events written, ascending offsets
+             std::span<NoteEvent> out) noexcept;
 ```
 
-It never allocates, emits a NoteOff for every NoteOn it emits (also on bypass, mode change and
-transport stop), and is tested purely on event lists.
+### 6.1 Common rules
+- **Clock:** when the host transport is playing, steps are locked to the host's musical position
+  (`ppqPosition`, `bpm`), sample-accurately, including tempo changes, loop jumps and playback
+  starting mid-bar. When the transport is stopped, an internal clock runs at the module's own tempo
+  setting and starts on the first key.
+- Rate as a note division: 1/4, 1/8, 1/8 triplet, 1/16, 1/16 triplet, 1/32. Swing 50–75 %
+  (delays every second step). Gate length 5–100 % of the step.
+- **Every note-on it emits gets a note-off**, also on bypass, mode or setting changes, All Notes
+  Off, transport stop/start and reset. A random stream of events and setting changes must never
+  leave a note sounding.
+- Pitch bend, mod wheel and panic events pass through unchanged, in order. **While the module is
+  on it consumes the sustain pedal** (it keeps released keys in the pattern) and does not pass it
+  to the part; switching on or off hands the pedal state over.
+- At 100 % gate, when the next note has a different pitch, its note-on comes before the previous
+  note-off (legato: a Solo part can glide); same pitch: off, then on.
+- A small deviation of the host position (up to about one step, e.g. during tempo ramps) is drift:
+  re-anchor without cutting or repeating notes. Only a larger discontinuity or a transport
+  start/stop releases and resynchronises. Swing and rate changes never repeat or skip a step.
+- Output velocity: the pressed key's velocity (arp) or the step's velocity (sequencer).
+- Deterministic: same input, transport and seed → same output, for any block size.
+- When off, events pass through bit-exactly.
+- Output capacity is fixed; on overflow it stops emitting new notes, and a note-off that does not
+  fit stays owed and is retried, so no note can hang. `ArpSeq::minimumCapacity` gives the size at
+  which nothing is ever dropped.
+
+### 6.2 Arpeggiator
+- Modes: Up, Down, Up & Down (end notes not repeated), Random (seeded), As Played.
+- Octave range 1–4. Hold (latch): notes stay in the pattern after the keys are released; the next
+  key pressed after all keys were up starts a new pattern.
+- Keys added or released change the pattern from the next step. With the sustain pedal down,
+  released keys stay in the pattern.
+
+### 6.3 Step sequencer
+- 1–16 steps. Each step: semitone offset (−24…+24), type (Note, Rest, Tie) and velocity.
+  A Tie extends the previous note without retriggering.
+- It plays while a key is held: the lowest held key sets the transposition (relative to C4) and
+  the sequence restarts from step 1 when the first key is pressed. With Hold on it keeps playing
+  after release, and a new key re-transposes without restarting.
+- Step data is plain data in the module's settings struct (host parameters are defined in Wave 3).
+
+### 6.4 Gates for M4
+- Tests in `tests/seq_unit/`: every rule above; timing exact to the sample against an independently
+  computed expectation at several tempi, rates, swing values, sample rates and block sizes
+  (including 1-sample blocks and tempo changes mid-block); loop jumps; long random streams with the
+  "no hanging note" and "note-offs match note-ons" invariants.
+- No allocation (the existing allocation counter test pattern), sanitizer-clean, independent review.
+- Does not touch `source/engine/`, `source/params/` or `PluginProcessor.*`.
 
 ## 7. Test and validation infrastructure (parallel track in Wave 1)
 
@@ -269,3 +376,104 @@ transport stop), and is tested purely on event lists.
   the processor and compares against a stored reference. The comparison must tolerate cross-platform
   float differences (arm64 / x64, clang / MSVC math libraries): compare perceptual features
   (band energies and envelope over time), not samples. Goldens themselves are created in M6.
+
+## 8. Second instrument: "B-Side" chip synth (outline; refined before its first milestone)
+
+A second plugin in this repository, named **B-Side** (shown as "Exitium B-Side"): a polyphonic synthesizer modelled on a classic 3-voice sound
+chip from early-1980s home computers. It has its own name, panel, plugin identity and parameter
+list. **No third-party brand names, part numbers or nicknames anywhere in the repository**; the two
+chip revisions are called **Model A** (early: warm, distorting filter) and **Model B** (later: clean
+filter).
+
+### 8.1 Structure
+- **Separate plugin target, shared code.** Not a second engine inside Exitium Vintage Synth: hosts identify a
+  plugin by its codes and parameter list, and the two instruments share neither parameters nor presets.
+- **Step S0 extracts a common library** (`source/common/`) from Exitium Vintage Synth, with no behaviour
+  change: note events and MIDI parsing, voice allocator, parameter plumbing and smoothing, fast math,
+  BLEP table, oversampler, effect blocks, test helpers, render-regression harness, benchmarks.
+  S0 runs only when no other agent is editing the engine (after M3 is merged).
+- Each plugin then has its own directory (`source/vintage/`, `source/chip/`), CMake target, identity,
+  parameter list and voice code. CI builds and validates both.
+
+### 8.2 Sound engine: own model, not an embedded emulator
+- **One note = one chip voice:** three oscillators with the chip's sync and ring-modulation routing,
+  three envelopes, one filter with per-oscillator routing, and the output stage. 16 voices per part.
+  An optional paraphonic mode (three notes share one filter, as on the hardware) is a later decision.
+- **Digital parts are reproduced bit-exactly** (phase accumulators, noise shift register, envelope
+  counters with their stepped exponential curve, sync, ring modulation), computed per output sample
+  in closed form rather than per chip clock cycle.
+- **Waveforms are band-limited** at our oversampled rate, with the chip's waveform shapes
+  (12-bit steps, combined waveforms from a parametric model, Model A converter kinks).
+- **Filter:** a non-linear two-pole state-variable model per voice, with Model A and Model B curves
+  and a "chip variation" control. Cutoff, pitch and pulse width are continuous; an optional
+  "register resolution" switch restores the original stepping.
+- **Quirks that hurt playing are options, not defaults** (for example the envelope retrigger delay:
+  "Authentic" or "Clean").
+- CPU target: 16 voices ≤ 5 % of one core at 48 kHz; 32 voices within the shared 15 % budget.
+
+### 8.3 Patch programs: how the classic sounds are made
+Most of the chip's signature sounds came from the player software rewriting its registers about
+fifty times a second: a noise burst then a pulse wave for a snare, notes cycled so fast they read
+as a chord, pulse width and cutoff moved in audible steps, and a deliberate envelope reset before
+each note. B-Side therefore has a **program sequencer in every patch**, at the core of the voice,
+not in the modulation section.
+
+- **Tick clock:** a "frame rate" in Hz (presets 50.12 and 59.83, or free), a multiplier 1–8, and
+  optional tempo sync. It starts on the note-on sample and is derived from the sample counter, so
+  output never depends on the host block size; blocks are split at ticks exactly as at MIDI events.
+- **Lanes,** each a short table (up to 32–64 steps) with delay counts, jump, end, loop and a
+  release entry point:
+  - *wave/note lane* per oscillator: waveform, gate, sync, ring and test bits, and a pitch that is
+    relative (arpeggio), absolute (drums), unchanged, or a held-key index;
+  - *pulse lane:* set, sweep, ping-pong between limits;
+  - *filter lane:* set cutoff, sweep, switch mode, resonance and oscillator routing.
+- **Program-driven values change in steps at the tick, unsmoothed,** and at register resolution in
+  Authentic mode. The stepped vibrato, the per-tick cutoff steps and the attack snap are part of
+  the sound. Host automation and ordinary modulation stay smooth. Band-limiting must keep the
+  discontinuities a program creates (a waveform switch or phase reset mid-cycle is real content,
+  placed at its exact sub-sample position).
+- **Hard restart is a patch feature:** mode (off, classic, phase-reset), its envelope values, lead
+  time in ticks, first-tick waveform, gate-off timer. Live playing gives no warning of the next
+  note, so there are policies: idle voices are pre-conditioned (default, no latency); a stolen
+  voice is reset directly in Clean mode; an optional look-ahead mode delays notes and reports the
+  latency; Authentic does nothing and lets the envelope quirk happen.
+- **Chip arpeggio is not the shared arpeggiator.** It cycles pitch inside one voice at tick rate
+  with the gate held. A "chord into one voice" assign mode feeds the held keys to the note lane.
+- **Filter topology per part:** per note (default), or shared (one filter for the whole part, as on
+  the hardware; needed for paraphonic patches and for the early revision's overdrive when several
+  notes are summed into it). The filter is a part-owned resource from the first milestone on.
+- **Tables are patch data, not host parameters.** They live in the plugin state and preset format
+  and are handed to the audio thread as immutable, preallocated objects. Host parameters are the
+  macros (tick rate, multiplier, lane offsets and depths, restart mode). Until the table editor UI
+  exists, patches are written in a **human-readable text format** kept in the repository.
+- Drums are ordinary patches with absolute-note programs first; a kit mode (key ranges mapped to
+  sub-patches) comes later.
+
+### 8.4 Proving authenticity
+- **Reference oracle, offline only:** an established cycle-accurate emulator (GPL v2-or-later) is
+  built and run in a separate CI workflow, never vendored, never shipped and never linked. Reference
+  data is committed under neutral names.
+- **Register-trace replay is the main test:** the program engine emits time-stamped register
+  writes; the same trace drives the oracle and our chip model (shared-filter, three-voice mode).
+  Digital state must match bit for bit, including the envelope-quirk cases, phase resets, the noise
+  generator's lock-up and recovery, sync and ring per step. Analog output is compared within
+  tolerances (filter cutoff ±5 %, resonance peak ±1 dB, spectral distance on scripted patches).
+- Golden traces for canonical tables (snare, kick, three-note arpeggio, ping-pong pulse sweep,
+  filter sweep, each restart mode) at several tick multipliers.
+- Block-size independence including tick positions; determinism; restart-policy tests.
+- **The alias gate is redefined for chip waveforms:** components folding at our internal rate stay
+  ≤ −100 dB; harmonics and steps that belong to the chip's waveform shape or to a program are
+  exempt. Noise and combined waveforms get their own, documented budget.
+- **By ear:** the owner compares audition renders with public recordings of the original hardware.
+  Recordings are never downloaded into the repository or used as test data.
+
+### 8.5 Milestones
+| Step | Scope |
+|---|---|
+| S0 | Extract the common library (no behaviour change; all existing gates stay green) |
+| S1 | Contract, plugin shell, oracle workflow, register-trace harness, text table format |
+| S2 | Chip voice digital parts (bit-exact), tick clock, program engine (wave/note, pulse, filter lanes), restart modes and policies, stepped register-resolution path |
+| S3 | Model B filter, then Model A filter with chip variation; output stage; filter as a part-owned resource |
+| S4 | Polyphony, macros, effects from the common library; 10–20 reference patches (drums, arpeggio chord, pulse lead, filter bass); audition by the owner |
+| S5 | Chord-into-one-voice mode, shared-filter mode, look-ahead restart, kit mode |
+| S6 | Table editor UI, presets and release together with Exitium Vintage Synth's M6–M8 |

@@ -1,0 +1,33 @@
+# Dual layer (M3): every note plays both parts. Lower a slow resonant saw pad, Upper a square lead
+# an octave up (Solo, vibrato). Off-centre pans and balance, so the mixer is in the reference
+# (both channels are analysed); a balance move at 1.5 s is smoothed.
+rate 48000
+channels 2
+length 3.5
+
+param key.mode 1
+param lower.mix.pan -0.4
+param upper.mix.pan 0.5
+param mix.balance -0.2
+param lower.vcf.cutoff 0.45
+param lower.vcf.resonance 0.5
+param lower.env2.attack 0.35
+param lower.env2.release 0.5
+param upper.vco1.waveform 3
+param upper.vco2.waveform 3
+param upper.vco1.range 3
+param upper.vco2.range 2
+param upper.vcf.cutoff 0.7
+param upper.assign.mode 2
+param upper.vcomod.lfo_mod 0.12
+param upper.env2.release 0.35
+
+0.00 on 48 90
+0.00 on 55 80
+0.50 on 60 100
+1.20 off 60
+1.30 on 64 100
+1.50 param mix.balance 0.4
+2.00 off 64
+2.20 off 48
+2.20 off 55

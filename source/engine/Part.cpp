@@ -22,11 +22,20 @@ void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor,
     osRate = static_cast<float> (sampleRate) * static_cast<float> (osFactor);
     stealFadeSamples = juce::jmax (1, juce::roundToInt (kStealFadeSeconds * osRate));
 
-    oversampler = makeVoiceOversampler (osFactor);
-    oversampler->initProcessing (static_cast<size_t> (maxBlock));
-    // Decimator delay + oscillator BLEP look-ahead (in oversampled samples).
-    latencySamples = juce::roundToInt (oversampler->getLatencyInSamples()
-                                       + static_cast<float> (dsp::Oscillator::kLatency) / static_cast<float> (osFactor));
+    // At 1x there is no decimator: the voices render straight into the output.
+    oversampler.reset();
+    double decimatorLatency = 0.0;
+    if (osFactor > 1)
+    {
+        oversampler = makeVoiceOversampler (osFactor);
+        oversampler->initProcessing (static_cast<size_t> (maxBlock));
+        decimatorLatency = measureDecimatorDelay (osFactor);
+    }
+    // Decimator delay (low-frequency phase delay of the down path only) + oscillator BLEP
+    // look-ahead (kLatency oversampled samples), rounded to the nearest host sample.
+    exactLatency = decimatorLatency + static_cast<double> (dsp::Oscillator::kLatency) / static_cast<double> (osFactor);
+    latencySamples = juce::roundToInt (exactLatency);
+    renderedSamples = 0;
 
     silence.setSize (1, maxBlock);
     silence.clear();
@@ -59,6 +68,23 @@ void Part::reset() noexcept
     bendRangeIndex = target.bendRange;
     bendRangeSemis = map::bendRangeSemis (bendRangeIndex);
     modWheel = 0.0f;
+}
+
+void Part::releaseAllNotes() noexcept
+{
+    allocator.releaseAllKeepPedal (sink());
+}
+
+void Part::resume() noexcept
+{
+    if (oversampler != nullptr)
+        oversampler->reset();
+    modulator.reset (target); // parameters jump to the targets, LFO restarts
+    bendRangeIndex = target.bendRange;
+    bendRangeSemis = map::bendRangeSemis (bendRangeIndex);
+    modulator.setControllersNow (bendValue * bendRangeSemis, modWheel);
+    allocator.initMode (assignModeOf (target), map::unisonVoices (target.unisonVoices));
+    allocator.setLegatoGlideOnly (target.portaMode == 1);
 }
 
 int Part::numSoundingVoices() const noexcept
@@ -101,12 +127,17 @@ void Part::render (float* out, int numSamples, std::span<const NoteEvent> events
     }
 
     applyBlockParams();
+    renderedSamples += numSamples;
 
     // The decimator needs a matching upsampling pass. Feed it silence and overwrite
-    // the oversampled block with the voice output.
-    auto silentBlock = juce::dsp::AudioBlock<float> (silence).getSubBlock (0, static_cast<size_t> (numSamples));
-    auto osBlock = oversampler->processSamplesUp (silentBlock);
-    float* os = osBlock.getChannelPointer (0);
+    // the oversampled block with the voice output. At 1x the voices render into `out`.
+    float* os = out;
+    if (oversampler != nullptr)
+    {
+        auto silentBlock = juce::dsp::AudioBlock<float> (silence).getSubBlock (0, static_cast<size_t> (numSamples));
+        auto osBlock = oversampler->processSamplesUp (silentBlock);
+        os = osBlock.getChannelPointer (0);
+    }
 
     int pos = 0;
     for (const auto& e : events)
@@ -123,9 +154,12 @@ void Part::render (float* out, int numSamples, std::span<const NoteEvent> events
     if (numSamples > pos)
         renderOversampled (os + pos * osFactor, (numSamples - pos) * osFactor);
 
-    float* channels[] { out };
-    juce::dsp::AudioBlock<float> outBlock (channels, 1, static_cast<size_t> (numSamples));
-    oversampler->processSamplesDown (outBlock);
+    if (oversampler != nullptr)
+    {
+        float* channels[] { out };
+        juce::dsp::AudioBlock<float> outBlock (channels, 1, static_cast<size_t> (numSamples));
+        oversampler->processSamplesDown (outBlock);
+    }
 }
 
 void Part::renderOversampled (float* os, int n) noexcept
@@ -141,6 +175,8 @@ void Part::renderOversampled (float* os, int n) noexcept
                 len = juce::jmin (len, juce::jmax (1, voices[v].getFadeRemaining()));
             if (releaseCountdown[v] > 0)
                 len = juce::jmin (len, releaseCountdown[v]);
+            // A drift retarget lands on a sub-block boundary (block-size independence).
+            len = juce::jmin (len, juce::jmax (1, voices[v].samplesToDriftRetarget()));
         }
 
         modulator.next (len, modBlock);

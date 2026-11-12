@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build Vintage Synth + JUCE's AudioPluginHost (from the JUCE submodule) for this Mac's native
-# architecture and launch the host with a graph: MIDI in -> Vintage Synth -> audio out.
+# Build Exitium Vintage Synth + JUCE's AudioPluginHost (from the JUCE submodule) for this Mac's native
+# architecture and launch the host with a graph: MIDI in -> Exitium Vintage Synth -> audio out.
 #
 #   scripts/dev-host.sh              build (incremental), launch the host detached and return
 #   scripts/dev-host.sh --wait       launch the host and stay attached until it is closed
@@ -49,7 +49,7 @@ if [[ $DO_BUILD -eq 1 ]]; then
 fi
 
 [[ -d "$BUILD" ]] || die "no build at build/$BDIR_NAME; run without --no-build first"
-PLUGIN="$(find "$BUILD" -maxdepth 4 -type d -name 'Vintage Synth.vst3' | head -n1)"
+PLUGIN="$(find "$BUILD" -maxdepth 4 -type d -name 'Exitium Vintage Synth.vst3' | head -n1)"
 HOST_APP="$(find "$BUILD" -maxdepth 4 -type d -name 'AudioPluginHost.app' | head -n1)"
 [[ -n "$PLUGIN" ]] || die "plugin bundle not found under build/$BDIR_NAME (build it first)"
 [[ -n "$HOST_APP" ]] || die "AudioPluginHost.app not found under build/$BDIR_NAME (build it first)"
@@ -59,9 +59,15 @@ HOST_BIN="$HOST_APP/Contents/MacOS/AudioPluginHost"
 if [[ $DO_INSTALL -eq 1 ]]; then
   DEST="$HOME/Library/Audio/Plug-Ins/VST3"
   mkdir -p "$DEST"
-  rm -rf "$DEST/Vintage Synth.vst3"
+  rm -rf "$DEST/Exitium Vintage Synth.vst3"
+  # The bundle was called "Vintage Synth.vst3" before the rename. It has the same class ID, so a
+  # host would see two copies of one plugin: remove the old one.
+  if [[ -d "$DEST/Vintage Synth.vst3" ]]; then
+    rm -rf "$DEST/Vintage Synth.vst3"
+    info "removed the old bundle $DEST/Vintage Synth.vst3 (renamed to Exitium Vintage Synth, same plugin ID)"
+  fi
   cp -R "$PLUGIN" "$DEST/"
-  info "installed to $DEST/Vintage Synth.vst3"
+  info "installed to $DEST/Exitium Vintage Synth.vst3"
 fi
 
 # ---- graph file ------------------------------------------------------------------------------

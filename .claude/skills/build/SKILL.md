@@ -24,7 +24,7 @@ cmake --build build/mac --parallel
 Verify both slices are present, for each format that was built:
 
 ```bash
-lipo -archs "build/mac/VintageSynth_artefacts/Release/VST3/Vintage Synth.vst3/Contents/MacOS/Vintage Synth"
+lipo -archs "build/mac/VintageSynth_artefacts/Release/VST3/Exitium Vintage Synth.vst3/Contents/MacOS/Exitium Vintage Synth"
 # expect: x86_64 arm64
 ```
 

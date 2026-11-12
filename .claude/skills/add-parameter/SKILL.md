@@ -19,7 +19,7 @@ Host sessions store parameters by ID. Breaking IDs silently breaks users' songs.
    of `VS_PART_FLOAT_PARAMS` or `VS_PART_CHOICE_PARAMS` in `source/params/PartParamList.h`. Global
    params go in `createParameterLayout()` (`source/params/ParameterLayout.cpp`).
    Put the value → unit mapping in `source/params/Mappings.h` so the display text and DSP agree.
-   Update the expected count in `tests/host_smoke/HostSmoke.cpp` (currently 78).
+   Update the expected count in `tests/host_smoke/HostSmoke.cpp` (currently 101).
 2. **Append only:** add the new parameter at the end of the layout. After v1.0, never rename,
    remove, reorder, or change the range or type of an existing ID. Instead, add a new ID and
    migrate to it.
