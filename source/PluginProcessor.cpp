@@ -25,6 +25,7 @@ VintageSynthProcessor::VintageSynthProcessor()
     keyMode = apvts.getRawParameterValue (ParamID::keyMode);
     splitPoint = apvts.getRawParameterValue (ParamID::keySplitPoint);
     balance = apvts.getRawParameterValue (ParamID::mixBalance);
+    fxBinding.bind (apvts);
     jassert (masterVolume != nullptr && vintage != nullptr && keyMode != nullptr && splitPoint != nullptr
              && balance != nullptr);
 }
@@ -81,9 +82,49 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterVolume->load()));
 
+    // Effects (allocate here only).
+    chorus.prepare (sampleRate, preparedBlockSize);
+    delay.prepare (sampleRate, preparedBlockSize);
+    reverb.prepare (sampleRate, preparedBlockSize);
+    chorus.reset();
+    delay.reset();
+    reverb.reset();
+
     // Both parts share the factor, so they have the same latency.
     jassert (lowerPart.getLatencySamples() == upperPart.getLatencySamples());
     setLatencySamples (lowerPart.getLatencySamples());
+}
+
+void VintageSynthProcessor::resetEngine() noexcept
+{
+    lowerPart.reset();
+    upperPart.reset();
+    router.reset(); // the parts forgot their keys
+    mixer.reset();
+    chorus.reset(); // O(1): stale delay-line content is hidden by the blocks (section 5.1)
+    delay.reset();
+    reverb.reset();
+}
+
+void VintageSynthProcessor::reset()
+{
+    if (preparedBlockSize > 0)
+        resetEngine();
+}
+
+double VintageSynthProcessor::getTailLengthSeconds() const
+{
+    // An effect that is off fades out in 20 ms and drops its tail, so only the ones on count.
+    FxSettings f;
+    fxBinding.read (f);
+    double tail = 0.0;
+    if (f.chorus.mode != fx::ChorusMode::Off && f.chorus.mix > 0.0f)
+        tail = std::max (tail, fx::Chorus::tailSeconds (f.chorus));
+    if (f.delay.level > 0.0f)
+        tail = std::max (tail, fx::Delay::tailSeconds (f.delay));
+    if (f.reverb.level > 0.0f)
+        tail = std::max (tail, fx::Reverb::tailSeconds (f.reverb));
+    return tail;
 }
 
 bool VintageSynthProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -113,6 +154,12 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     lowerPart.setVintage (vintageAmount);
     upperPart.setVintage (vintageAmount);
     masterGain.setTargetValue (juce::Decibels::decibelsToGain (masterVolume->load (std::memory_order_relaxed)));
+
+    // Effects: once per block; the blocks smooth their continuous parameters themselves.
+    fxBinding.read (fxSettings);
+    chorus.setParams (fxSettings.chorus);
+    delay.setParams (fxSettings.delay);
+    reverb.setParams (fxSettings.reverb);
 
     // Key mode (docs/architecture.md 4.2). A change releases every voice of both parts (keeping
     // the controllers) and forgets the held keys. The split point only affects new notes.
@@ -228,7 +275,20 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
         if (cut[p] >= 0)
             mixer.unlatch (p, false); // a note-on at the very end of the chunk
 
+    // Effects on the stereo bus: chorus -> delay -> reverb (an effect that is off is not touched).
+    // A non-finite sample from a part is caught here first: the effects replace bad input by 0,
+    // which would otherwise hide it from the guard below (and the part would never be reset).
     bool nonFinite = false;
+    for (int i = 0; i < len; ++i)
+        if (! std::isfinite (left[i]) || ! std::isfinite (right[i]))
+        {
+            nonFinite = true;
+            left[i] = right[i] = 0.0f;
+        }
+    chorus.process (left, right, len);
+    delay.process (left, right, len);
+    reverb.process (left, right, len);
+
     for (int i = 0; i < len; ++i)
     {
         const float g = masterGain.getNextValue();
@@ -260,10 +320,7 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
     if (nonFinite)
     {
         jassertfalse; // DSP produced NaN/Inf: find the cause, the guard only hides it in release builds
-        lowerPart.reset();
-        upperPart.reset();
-        router.reset(); // the parts forgot their keys
-        mixer.reset();
+        resetEngine(); // parts, router, mixer, all three effects
     }
 
     // A latched part that has gone silent takes its new gain at once (nothing audible to fade).
