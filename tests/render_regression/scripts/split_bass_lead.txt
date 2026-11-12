@@ -1,0 +1,33 @@
+# Split (M3): below the split point Lower (Solo bass), at or above it Upper (lead). The split
+# point moves from 60 to 66 while the lead's E4 (64) is held: E4 keeps sounding in Upper until
+# released, the next E4 plays the bass. Lower panned left of centre (left channel = reference).
+rate 48000
+length 3.5
+
+param key.mode 2
+param key.split_point 60
+param lower.mix.pan -0.3
+param upper.mix.pan 0.3
+param lower.assign.mode 2
+param lower.vco1.range 1
+param lower.vcf.cutoff 0.3
+param lower.vcf.resonance 0.45
+param lower.env2.sustain 0.6
+param lower.env2.release 0.3
+param upper.vco1.waveform 4
+param upper.vcf.cutoff 0.65
+param upper.env2.release 0.4
+
+0.00 on 36 100
+0.40 off 36
+0.10 on 64 90
+0.50 on 43 100
+0.90 off 43
+1.00 param key.split_point 66
+1.00 on 41 100
+1.40 off 41
+1.60 off 64
+1.80 on 64 100
+2.30 off 64
+2.40 on 72 90
+3.00 off 72

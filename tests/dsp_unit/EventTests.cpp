@@ -348,6 +348,27 @@ TEST_CASE ("Processor: processBlock does not allocate (malloc or new), even with
     }
     CHECK (allocations == 0);
     CHECK (buffer.getMagnitude (0, 0, buffer.getNumSamples()) > 0.01f);
+
+    // M3: both parts, key-mode changes (release, Upper resume), split moves, pan and balance.
+    // Parameters are set outside the counted region (the host does that on its own thread).
+    auto set = [&proc] (const char* id, float plain) {
+        auto* p = proc.getState().getParameter (id);
+        p->setValueNotifyingHost (p->convertTo0to1 (plain));
+    };
+    const std::pair<const char*, float> steps[] { { "key.mode", 1.0f },  { "mix.balance", 0.5f },     { "key.mode", 2.0f },
+                                                  { "key.split_point", 40.0f }, { "upper.mix.pan", -0.7f }, { "key.mode", 0.0f },
+                                                  { "key.mode", 1.0f } };
+    int m3Allocations = 0;
+    for (const auto& [id, v] : steps)
+    {
+        set (id, v);
+        AllocationCounter counter;
+        proc.processBlock (buffer, midi);
+        proc.processBlock (buffer, none);
+        m3Allocations += counter.count();
+    }
+    CHECK (m3Allocations == 0);
+    CHECK (proc.isUpperRendering());
 #endif
 }
 

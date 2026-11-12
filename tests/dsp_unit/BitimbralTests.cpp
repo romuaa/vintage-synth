@@ -248,7 +248,7 @@ void twoPatches (ProcRig& rig)
     rig.set ("upper.vcomod.lfo_mod", 0.15f);
 }
 
-constexpr int kWhole = 0, kDual = 1, kSplit = 2;
+constexpr float kWhole = 0.0f, kDual = 1.0f, kSplit = 2.0f; // key.mode choice index (plain value)
 } // namespace
 
 // =================================================================================================
@@ -539,9 +539,9 @@ TEST_CASE ("M3 pan law: constant power (+-0.1 dB), unity in both channels at the
 TEST_CASE ("M3 balance law: constant power (+-0.1 dB), both parts at unity at 0, no effect in Whole", "[m3][mixer]")
 {
     // Dual, Lower hard left, Upper hard right: L measures Lower's gain, R Upper's.
-    auto levels = [] (float balance, int mode) {
+    auto levels = [] (float balance, float mode) {
         ProcRig rig;
-        rig.set (vs::ParamID::keyMode, static_cast<float> (mode));
+        rig.set (vs::ParamID::keyMode, mode);
         rig.set (vs::ParamID::mixBalance, balance);
         rig.set ("lower.mix.pan", -1.0f);
         rig.set ("upper.mix.pan", 1.0f);
@@ -645,7 +645,7 @@ TEST_CASE ("M3 output: true stereo, and a mono bus gets (L + R) / 2", "[m3][mixe
 
 TEST_CASE ("M3 key-mode change releases every voice of both parts, keeps the controllers, no click", "[m3][mode][pedal]")
 {
-    for (const int to : { kSplit, kWhole })
+    for (const float to : { kSplit, kWhole })
     {
         ProcRig rig;
         twoPatches (rig);
@@ -659,7 +659,7 @@ TEST_CASE ("M3 key-mode change releases every voice of both parts, keeps the con
         // forgotten); a new low note at 2 s is released while the pedal is still down.
         const std::vector<Midi> midi { cc (0, 64, 127), noteOn (100, 48), noteOn (100, 64), noteOff (60000, 48), noteOff (60000, 64),
                                        noteOn (96000, 40), noteOff (100000, 40) };
-        const std::vector<ProcRig::Change> changes { { 48000, [to] (ProcRig& r) { r.set (vs::ParamID::keyMode, static_cast<float> (to)); } } };
+        const std::vector<ProcRig::Change> changes { { 48000, [to] (ProcRig& r) { r.set (vs::ParamID::keyMode, to); } } };
         const auto out = rig.render (48000 * 3, midi, 256, changes);
 
         INFO ("to mode " << to);

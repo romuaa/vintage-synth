@@ -194,13 +194,13 @@ int noteFromName (const juce::String& text)
         return juce::jlimit (0, 127, t.getIntValue()); // a plain MIDI note number
 
     static constexpr int semis[] { 9, 11, 0, 2, 4, 5, 7 }; // A B C D E F G
-    const auto letter = juce::CharacterFunctions::toUpperCase (t[0]);
+    const auto letter = static_cast<int> (juce::CharacterFunctions::toUpperCase (t[0]));
     if (letter < 'A' || letter > 'G')
         return -1;
     int pc = semis[static_cast<size_t> (letter - 'A')];
     int i = 1;
-    for (; i < t.length() && (t[i] == '#' || t[i] == 'b'); ++i)
-        pc += t[i] == '#' ? 1 : -1;
+    for (; i < t.length() && (static_cast<int> (t[i]) == '#' || static_cast<int> (t[i]) == 'b'); ++i)
+        pc += static_cast<int> (t[i]) == '#' ? 1 : -1;
     const auto octaveText = t.substring (i).trim();
     if (octaveText.isEmpty() || ! octaveText.containsOnly ("-0123456789"))
         return -1;
