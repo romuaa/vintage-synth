@@ -58,6 +58,7 @@ target_sources(VintageSynthTests PRIVATE
 target_sources(VintageSynthTests PRIVATE
     integration/FxIntegrationTests.cpp
     integration/ArpIntegrationTests.cpp
+    integration/RobustnessTests.cpp
     integration/RenderDemoM5.cpp)
 
 target_link_libraries(VintageSynthTests PRIVATE

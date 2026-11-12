@@ -317,7 +317,12 @@ TEST_CASE ("Wave 3 parameters: every parameter reaches its module with the docum
     CHECK (upper.rate == lower.rate);
     CHECK (upper.seqLength == lower.seqLength);
 
+    // The selector matters outside Whole mode (in Whole the arp/seq always sits in front of Lower).
     rig.set ("arp.target", 1);
+    rig.render (64, {}, 64);
+    CHECK (rig.proc.getArpSeq (0).settings().mode == vs::seq::Mode::Seq);
+    CHECK (rig.proc.getArpSeq (1).settings().mode == vs::seq::Mode::Off);
+    rig.set ("key.mode", 1);
     rig.render (64, {}, 64);
     CHECK (rig.proc.getArpSeq (0).settings().mode == vs::seq::Mode::Off);
     CHECK (rig.proc.getArpSeq (1).settings().mode == vs::seq::Mode::Seq);
@@ -504,7 +509,7 @@ TEST_CASE ("Effects and arp/seq off: output bit-identical to the M3 pipeline", "
     const auto want = ref.render (total, midi, block);
     CHECK (peakAbs (want.l, 0, want.l.size()) > 0.05);
     CHECK (bitIdentical (got, want));
-    CHECK (rig.proc.getTailLengthSeconds() <= 0.0);
+    CHECK (std::abs (rig.proc.getTailLengthSeconds() - rig.proc.getSynthTailSeconds()) < 1.0e-12); // no effect tail
 }
 
 TEST_CASE ("Effects off: the router's events reach the part unchanged, also one past the block end", "[wave3][fx][bitexact]")
@@ -674,7 +679,23 @@ TEST_CASE ("Mono output bus is (L + R) / 2 after the effects", "[wave3][fx]")
     CHECK (sideToMidDb (a, 4800, 48000) > -20.0); // the stereo render really is stereo
 }
 
-TEST_CASE ("Tail length: the longest static tail of the effects that are on, from the parameters", "[wave3][fx]")
+namespace
+{
+/** The synth's release tail by the contract's formula, written out here: ENV-2 ends at -100 dB,
+    2.5 mapped release times (1 ms x 10000^v), x 2^(60/24) with ENV-2 key follow (note 0), x (1 + 8 %
+    x Vintage); the longest of the parts that can sound (Upper not in Whole mode). */
+double expectedSynthTail (float lowerRelease, float upperRelease, bool lowerKeyFollow, bool upperKeyFollow, float vintageAmount, int keyMode)
+{
+    auto one = [&] (float v, bool kf) {
+        return 2.5 * 0.001 * std::pow (10000.0, static_cast<double> (v)) * (kf ? std::pow (2.0, 2.5) : 1.0)
+               * (1.0 + 0.08 * static_cast<double> (vintageAmount));
+    };
+    const double l = one (lowerRelease, lowerKeyFollow);
+    return keyMode == 0 ? l : std::max (l, one (upperRelease, upperKeyFollow));
+}
+} // namespace
+
+TEST_CASE ("Tail length: the synth's release plus the longest tail of the effects that are on", "[wave3][fx]")
 {
     juce::ScopedJuceInitialiser_GUI init;
     vs::VintageSynthProcessor proc; // not prepared: the tail is a function of the parameters
@@ -682,13 +703,15 @@ TEST_CASE ("Tail length: the longest static tail of the effects that are on, fro
         auto* p = dynamic_cast<juce::RangedAudioParameter*> (proc.getState().getParameter (id));
         p->setValueNotifyingHost (p->convertTo0to1 (plain));
     };
-    CHECK (proc.getTailLengthSeconds() <= 0.0); // all off (defaults)
+    // Defaults: effects off, ENV-2 release 0.45 (63 ms): only the synth.
+    const double synth0 = expectedSynthTail (0.45f, 0.45f, false, false, 0.0f, 0);
+    CHECK (std::abs (proc.getTailLengthSeconds() - synth0) < 1.0e-6);
+    CHECK (std::abs (synth0 - 2.5 * 0.0631) < 1.0e-3);
 
     set ("fx.chorus.mode", 1);
-    CHECK (std::abs (proc.getTailLengthSeconds() - vs::fx::Chorus::tailSeconds ({ vs::fx::ChorusMode::I, 0.5f })) < 1.0e-12);
-    CHECK (proc.getTailLengthSeconds() > 0.0);
+    CHECK (std::abs (proc.getTailLengthSeconds() - (synth0 + vs::fx::Chorus::tailSeconds ({ vs::fx::ChorusMode::I, 0.5f }))) < 1.0e-6);
     set ("fx.chorus.mix", 0.0f); // mix 0 = bypass
-    CHECK (proc.getTailLengthSeconds() <= 0.0);
+    CHECK (std::abs (proc.getTailLengthSeconds() - synth0) < 1.0e-6);
 
     set ("fx.delay.level", 0.3f);
     set ("fx.delay.time", vs::map::delayTimeFromSec (0.25f));
@@ -696,7 +719,7 @@ TEST_CASE ("Tail length: the longest static tail of the effects that are on, fro
     // Delay: time x (1 + (140 dB + build-up) / per-repeat loss) + 50 ms (Delay.h), here 0.25 s at 50 %.
     const double fb = 0.5, perRepeat = -20.0 * std::log10 (fb), buildUp = 20.0 * std::log10 (1.0 / (1.0 - fb));
     const double delayTail = static_cast<double> (vs::map::delayTimeSec (vs::map::delayTimeFromSec (0.25f))) * (1.0 + (140.0 + buildUp) / perRepeat) + 0.05;
-    CHECK (std::abs (proc.getTailLengthSeconds() - delayTail) < 1.0e-4);
+    CHECK (std::abs (proc.getTailLengthSeconds() - (synth0 + delayTail)) < 1.0e-4);
 
     set ("fx.reverb.level", 0.2f);
     set ("fx.reverb.decay", vs::map::reverbDecayFromSec (6.0f));
@@ -704,56 +727,76 @@ TEST_CASE ("Tail length: the longest static tail of the effects that are on, fro
     rp.preDelaySeconds = vs::map::reverbPreDelaySec (vs::map::reverbPreDelayFromSec (0.02f));
     const double reverbTail = vs::fx::Reverb::tailSeconds (rp);
     CHECK (reverbTail > delayTail);
-    CHECK (std::abs (proc.getTailLengthSeconds() - reverbTail) < 1.0e-9);
+    CHECK (std::abs (proc.getTailLengthSeconds() - (synth0 + reverbTail)) < 1.0e-6);
 
-    set ("fx.delay.feedback", 1.0f); // 95 %, 0.25 s: hundreds of seconds, capped at 30
+    // A long release feeding the reverb adds to it; Upper only counts outside Whole mode; key
+    // follow and Vintage lengthen it.
+    set ("lower.env2.release", 0.8f);
+    set ("upper.env2.release", 0.9f);
+    CHECK (std::abs (proc.getTailLengthSeconds() - (expectedSynthTail (0.8f, 0.9f, false, false, 0.0f, 0) + reverbTail)) < 1.0e-5);
+    set ("key.mode", 2);
+    CHECK (std::abs (proc.getTailLengthSeconds() - (expectedSynthTail (0.8f, 0.9f, false, false, 0.0f, 2) + reverbTail)) < 1.0e-5);
+    set ("upper.env2.key_follow", 1);
+    set ("global.vintage", 1.0f);
+    CHECK (std::abs (proc.getTailLengthSeconds() - std::min (30.0, expectedSynthTail (0.8f, 0.9f, false, true, 1.0f, 2) + reverbTail)) < 1.0e-5);
+
+    set ("fx.delay.feedback", 1.0f); // 95 %, 0.25 s: hundreds of seconds, capped at 30 in total
     CHECK (std::abs (proc.getTailLengthSeconds() - 30.0) < 1.0e-12);
     set ("fx.delay.level", 0.0f);
     set ("fx.reverb.level", 0.0f);
     set ("fx.chorus.mode", 0);
-    CHECK (proc.getTailLengthSeconds() <= 0.0);
+    set ("upper.env2.key_follow", 0);
+    set ("lower.env2.release", 1.0f); // 10 s x 2.5 x 1.08 = 27 s
+    CHECK (std::abs (proc.getTailLengthSeconds() - expectedSynthTail (1.0f, 0.9f, false, false, 1.0f, 2)) < 1.0e-5);
+    set ("lower.env2.key_follow", 1); // x 5.66: capped
+    CHECK (std::abs (proc.getTailLengthSeconds() - 30.0) < 1.0e-12);
 }
 
 TEST_CASE ("Tail length: the output really is silent after the reported tail", "[wave3][fx]")
 {
     const double fs = 48000.0;
-    for (const int which : { 0, 1 })
+    struct Case
     {
-        INFO ((which == 0 ? "delay" : "reverb"));
+        const char* name;
+        std::vector<std::pair<juce::String, float>> params;
+        int note;
+    };
+    const std::vector<Case> cases {
+        { "release 1.6 s, effects off", { { "lower.env2.release", 0.8f } }, 45 },
+        { "release 0.4 s + delay 0.1 s at 60 %", { { "lower.env2.release", 0.65f }, { "fx.delay.level", 1.0f },
+                                                   { "fx.delay.time", vs::map::delayTimeFromSec (0.1f) }, { "fx.delay.feedback", 0.6f / 0.95f } }, 45 },
+        { "release 1 s into reverb 0.6 s", { { "lower.env2.release", 0.75f }, { "fx.reverb.level", 1.0f },
+                                             { "fx.reverb.decay", vs::map::reverbDecayFromSec (0.6f) } }, 45 },
+        { "key follow at a low note, Vintage 1", { { "lower.env2.release", 0.55f }, { "lower.env2.key_follow", 1.0f },
+                                                   { "global.vintage", 1.0f } }, 24 },
+        { "Dual, Upper rings longer, chorus", { { "key.mode", 1.0f }, { "upper.env2.release", 0.75f }, { "fx.chorus.mode", 2.0f } }, 57 },
+    };
+    for (const auto& c : cases)
+    {
+        INFO (c.name);
         Rig rig (fs, 512);
-        if (which == 0)
-        {
-            rig.set ("fx.delay.level", 1.0f);
-            rig.set ("fx.delay.time", vs::map::delayTimeFromSec (0.1f));
-            rig.set ("fx.delay.feedback", 0.6f / 0.95f);
-        }
-        else
-        {
-            rig.set ("fx.reverb.level", 1.0f);
-            rig.set ("fx.reverb.decay", vs::map::reverbDecayFromSec (0.6f));
-        }
+        for (const auto& [id, v] : c.params)
+            rig.set (id, v);
         rig.prepare();
         const double tail = rig.proc.getTailLengthSeconds();
         REQUIRE (tail > 0.3);
-        REQUIRE (tail < 10.0);
-        // A short loud note; the synth's own release is about 60 ms.
-        const int off = rig.samples (0.2);
-        const int synthEnd = off + rig.samples (0.3);
-        const auto out = rig.render (synthEnd + rig.samples (tail) + rig.samples (0.5), { noteOn (0, 45, 127), noteOff (off, 45) }, 512);
-        const auto after = static_cast<size_t> (synthEnd + rig.samples (tail));
-        CHECK (toDb (peakAbs (out.l, after, out.l.size())) < -100.0);
-        CHECK (toDb (peakAbs (out.r, after, out.r.size())) < -100.0);
-        // ...and it was not silent half-way through the tail.
-        const auto mid = static_cast<size_t> (synthEnd + rig.samples (0.25 * tail));
-        CHECK (toDb (peakAbs (out.l, mid, mid + 4800)) > -100.0);
+        REQUIRE (tail < 12.0);
+        // A loud note held until its envelope has settled; the tail counts from the note-off.
+        const int off = rig.samples (0.3);
+        const auto out = rig.render (off + rig.samples (tail) + rig.samples (0.3), { noteOn (0, c.note, 127), noteOff (off, c.note) }, 512);
+        const auto after = static_cast<size_t> (off + rig.samples (tail));
+        const double peakAfter = toDb (std::max (peakAbs (out.l, after, out.l.size()), peakAbs (out.r, after, out.r.size())));
+        // ...and it was not silent early in the tail (the reported tail is not trivially long).
+        const auto early = static_cast<size_t> (off + rig.samples (0.2 * tail));
+        const double peakEarly = toDb (peakAbs (out.l, early, early + 4800));
+        std::printf ("tail %-40s reported %6.2f s: peak after %7.1f dBFS, at 20 %% of it %6.1f dBFS\n", c.name, tail, peakAfter, peakEarly);
+        CHECK (peakAfter < -100.0);
+        CHECK (peakEarly > -100.0);
     }
 }
 
 TEST_CASE ("Non-finite guard: resets the effects and both arp/seq instances with the parts", "[wave3][fx][arp]")
 {
-#if JUCE_DEBUG
-    SKIP ("the guard asserts in debug builds");
-#endif
     Rig rig (48000.0, 512);
     rig.set ("key.mode", 1); // Dual: both parts, both arp instances
     rig.set ("arp.mode", 1);
@@ -766,13 +809,10 @@ TEST_CASE ("Non-finite guard: resets the effects and both arp/seq instances with
     // Keys held through the whole render: without the reset the arpeggio would go on.
     std::vector<Midi> midi { noteOn (0, 60), noteOn (0, 64) };
     const int bad = rig.samples (0.5);
-    auto* cutoff = rig.proc.getState().getRawParameterValue ("lower.vcf.cutoff");
-    const float good = cutoff->load();
-    std::vector<Rig::Change> changes {
-        { bad, [] (Rig& r) { r.proc.getState().getRawParameterValue ("lower.vcf.cutoff")->store (std::numeric_limits<float>::quiet_NaN()); } },
-        { bad + 512, [good] (Rig& r) { r.proc.getState().getRawParameterValue ("lower.vcf.cutoff")->store (good); } },
-    };
-    const auto out = rig.render (rig.samples (1.5), midi, 512, changes);
+    // Host parameter values are sanitised, so a NaN cannot come from a parameter any more: the
+    // test hook puts one into the mix of the next chunk.
+    const auto out = rig.render (rig.samples (1.5), midi, 512, { { bad, [] (Rig& r) { r.proc.forceNonFiniteForTesting(); } } });
+    CHECK (rig.proc.getGuardTrips() == 1);
     for (const auto& ch : { out.l, out.r })
         for (const float x : ch)
             REQUIRE (std::isfinite (x));

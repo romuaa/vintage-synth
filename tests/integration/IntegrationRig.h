@@ -102,6 +102,8 @@ struct Rig
     long long now = 0; // host samples rendered so far
     std::vector<AbsEvent> partEvents[2];
     bool eventsRecorded = true; // false once a block was longer than the prepared size
+    bool bypass = false;        // the host bypasses: blocks go to processBlockBypassed
+    bool wasBypassed = false;
     KeyMode lastKeyMode = KeyMode::Whole;
 
     explicit Rig (double rate = 48000.0, int maxBlockSize = 512, int numChannels = 2)
@@ -129,6 +131,20 @@ struct Rig
         proc.setPlayConfigDetails (0, channels, fs, maxBlock);
         proc.prepareToPlay (fs, maxBlock);
         lastKeyMode = proc.getKeyRouter().getMode();
+    }
+
+    /** A host reset() between blocks (marked in the event record: the parts forget their notes). */
+    void hostReset()
+    {
+        proc.reset();
+        markReset();
+    }
+
+    /** Records that the processor released everything without events at `at` (default: now). */
+    void markReset (long long at = -1)
+    {
+        for (auto& pe : partEvents)
+            pe.push_back ({ at < 0 ? now : at, NoteEvent { 0, EventType::AllNotesOff, 0, 0.0f } });
     }
 
     // ---- Transport (call from a Change, i.e. at a block boundary) ----
@@ -211,7 +227,15 @@ struct Rig
             updatePlayHead();
             buffer.setSize (channels, len, false, false, true);
             buffer.clear();
-            proc.processBlock (buffer, mb);
+            const int tripsBefore = proc.getGuardTrips();
+            if (bypass)
+                proc.processBlockBypassed (buffer, mb);
+            else
+            {
+                if (wasBypassed)
+                    markReset(); // back from bypass: the processor starts clean
+                proc.processBlock (buffer, mb);
+            }
 
             const auto at = static_cast<size_t> (now - begin);
             std::copy (buffer.getReadPointer (0), buffer.getReadPointer (0) + len, out.l.begin() + static_cast<std::ptrdiff_t> (at));
@@ -234,6 +258,10 @@ struct Rig
             }
             else
                 eventsRecorded = false;
+            // Bypass and the output guard release everything without events: mark it.
+            if (bypass || proc.getGuardTrips() != tripsBefore)
+                markReset (blockEnd);
+            wasBypassed = bypass;
 
             now = blockEnd;
             if (afterBlock)
@@ -262,8 +290,11 @@ struct Rig
         return n;
     }
 
-    /** Note-ons minus note-offs per pitch, ignoring note-offs of pitches not sounding (a part
-        ignores those) and clearing on panics. True if every note-on the part got was released. */
+    /** Note-ons minus note-offs, counted per pitch (a doubled note-on with one note-off stays
+        open), ignoring note-offs of pitches not sounding (a part ignores those) and clearing on
+        panics and on the processor's own releases (key-mode change, reset, guard, bypass). True if
+        every note-on the part got was released. Only meaningful when the input itself never
+        presses a key that is already down. */
     bool allReleased (int p) const
     {
         int open[128] {};
@@ -272,7 +303,7 @@ struct Rig
             if (a.e.type == EventType::NoteOn)
                 ++open[a.e.note];
             else if (a.e.type == EventType::NoteOff)
-                open[a.e.note] = 0;
+                open[a.e.note] = std::max (0, open[a.e.note] - 1);
             else if (a.e.type == EventType::AllNotesOff || a.e.type == EventType::AllSoundOff)
                 std::fill (std::begin (open), std::end (open), 0);
         }

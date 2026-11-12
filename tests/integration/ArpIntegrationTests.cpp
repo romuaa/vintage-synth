@@ -609,7 +609,7 @@ TEST_CASE ("arp.target routing in Whole, Dual and Split through the real parts",
     };
     const Case cases[] {
         { 0, 2, true, false, false, false }, // Whole, Both: Upper not rendered, gets no notes
-        { 0, 1, false, false, false, true }, // Whole, Upper: Lower plays plainly, Upper nothing
+        { 0, 1, true, false, false, false }, // Whole, Upper: in Whole the arp/seq always plays Lower
         { 0, 0, true, false, false, false },
         { 1, 0, true, false, true, false },  // Dual, Lower: Upper plays the chord plainly
         { 1, 1, false, true, false, true },
@@ -792,97 +792,6 @@ TEST_CASE ("Fast arpeggio at 16 voices: steals use the 3 ms fade, no clicks", "[
 // =================================================================================================
 // Random streams, block-size independence, allocation
 // =================================================================================================
-
-TEST_CASE ("Random streams through the processor with the arp never hang a note", "[wave3][arp][fuzz]")
-{
-    const double fs = GENERATE (48000.0, 96000.0, 192000.0);
-    const int seeds = fs < 50000.0 ? 12 : 3;
-    for (int seed = 1; seed <= seeds; ++seed)
-    {
-        INFO ("rate " << fs << ", seed " << seed);
-        std::mt19937 rng (static_cast<unsigned> (seed * 7919));
-        auto pick = [&] (int n) { return std::uniform_int_distribution<int> (0, n - 1) (rng); };
-        Rig rig (fs, 256);
-        rig.set ("arp.mode", 1);
-        rig.set ("lower.env2.release", 0.3f);
-        rig.set ("upper.env2.release", 0.3f);
-        rig.prepare();
-
-        const int total = rig.samples (6.0);
-        std::vector<Midi> midi;
-        std::vector<Rig::Change> changes;
-        for (int i = 0; i < 400; ++i)
-        {
-            const int at = pick (total - rig.samples (1.0));
-            const int r = pick (20);
-            if (r < 9)
-                midi.push_back (noteOn (at, 36 + pick (48), 1 + pick (127)));
-            else if (r < 16)
-                midi.push_back (noteOff (at, 36 + pick (48)));
-            else if (r < 18)
-                midi.push_back (pedal (at, pick (2) == 1));
-            else if (r == 18)
-                midi.push_back (cc (at, 123, 0));
-            else
-                midi.push_back (cc (at, 121, 0));
-        }
-        for (int i = 0; i < 60; ++i)
-        {
-            const int at = pick (total - rig.samples (1.0));
-            const int what = pick (9);
-            const float v = static_cast<float> (pick (6));
-            changes.push_back ({ at, [what, v] (Rig& r) {
-                                    switch (what)
-                                    {
-                                        case 0: r.set ("arp.mode", std::fmod (v, 3.0f)); break;
-                                        case 1: r.set ("arp.target", std::fmod (v, 3.0f)); break;
-                                        case 2: r.set ("arp.hold", std::fmod (v, 2.0f)); break;
-                                        case 3: r.set ("arp.rate", v); break;
-                                        case 4: r.set ("key.mode", std::fmod (v, 3.0f)); break;
-                                        case 5: r.set ("key.split_point", 40.0f + 8.0f * v); break;
-                                        case 6:
-                                            if (r.transport.playing)
-                                                r.stop();
-                                            else
-                                                r.play (90.0 + 10.0 * static_cast<double> (v), static_cast<double> (v) * 1.3);
-                                            break;
-                                        case 7: r.locate (static_cast<double> (v) * 0.7); break;
-                                        default: r.set ("arp.gate", 5.0f + 19.0f * v); break;
-                                    }
-                                } });
-        }
-        // Every key goes up and the pedal comes up, hold off: after that, everything must end.
-        const int end = total - rig.samples (1.0);
-        for (int n = 0; n < 128; ++n)
-            midi.push_back (noteOff (end, n));
-        midi.push_back (pedal (end, false));
-        changes.push_back ({ end, [] (Rig& r) { r.set ("arp.hold", 0); } });
-        std::uniform_int_distribution<int> blockDist (1, 256);
-        // Random block sizes: render in pieces.
-        std::stable_sort (midi.begin(), midi.end(), [] (const Midi& a, const Midi& b) { return a.pos < b.pos; });
-        while (rig.now < total)
-        {
-            const int len = std::min (blockDist (rng), static_cast<int> (total - rig.now));
-            std::vector<Midi> part;
-            for (const auto& m : midi)
-                if (m.pos >= rig.now && m.pos < rig.now + len)
-                    part.push_back (m);
-            std::vector<Rig::Change> ch;
-            for (const auto& c : changes)
-                if (c.at >= rig.now && c.at < rig.now + len)
-                    ch.push_back (c);
-            rig.render (len, part, len, ch);
-        }
-        for (int p = 0; p < 2; ++p)
-        {
-            INFO ("part " << p);
-            CHECK_FALSE (rig.proc.getArpSeq (p).isSounding());
-            CHECK (rig.allReleased (p));
-        }
-        CHECK_FALSE (rig.proc.getLowerPart().isSounding());
-        CHECK_FALSE (rig.proc.getUpperPart().isSounding());
-    }
-}
 
 TEST_CASE ("Block-size independence with arp and effects on, both parts, full Vintage", "[wave3][arp][fx][blocksize]")
 {
