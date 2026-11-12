@@ -39,6 +39,21 @@ target_sources(VintageSynthTests PRIVATE
     fx_unit/ReverbTests.cpp
     fx_unit/FxRenderDemo.cpp)
 
+# M4 arpeggiator and step sequencer (header-only, source/seq/).
+target_sources(VintageSynthTests PRIVATE
+    seq_unit/ClockTests.cpp
+    seq_unit/TimingTests.cpp
+    seq_unit/ArpTests.cpp
+    seq_unit/SeqTests.cpp
+    seq_unit/ModeTests.cpp
+    seq_unit/InvariantTests.cpp
+    seq_unit/PedalTests.cpp
+    seq_unit/OverflowTests.cpp
+    seq_unit/DriftTests.cpp
+    seq_unit/ArpPatternTests.cpp
+    seq_unit/MusicalTimeTests.cpp
+    seq_unit/FuzzTests.cpp)
+
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
     Catch2::Catch2WithMain)
