@@ -16,7 +16,7 @@ RUN apt-get update \
 
 # Clang WITH recommends: that pulls in the sanitizer runtime (libclang-rt-*-dev), which the
 # sanitizer mode needs.
-RUN apt-get update && apt-get install -y clang && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y clang clang-tools && rm -rf /var/lib/apt/lists/*
 
 # CMake >= 3.28 is required by the project; Ubuntu 22.04 ships 3.22. Kitware's tarball, SHA-256 checked.
 ARG CMAKE_VERSION=3.31.9
