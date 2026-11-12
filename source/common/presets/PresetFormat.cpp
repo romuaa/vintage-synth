@@ -1,10 +1,11 @@
 #include "common/presets/PresetFormat.h"
 
+#include "common/presets/StrictJson.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -13,25 +14,96 @@ namespace vs::presets
 // ---------------------------------------------------------------------------------------------
 // Writing
 // ---------------------------------------------------------------------------------------------
+namespace
+{
+/** |v| as text with the significant digits of n written at decimal exponent x (the exponent of n's
+    first digit), in printf's %g layout for `precision` digits: fixed notation unless x < -4 or
+    x >= precision, then d.ddde+XX; trailing zeros dropped. No locale is involved. */
+std::string layoutDigits (bool negative, std::uint64_t n, int x, int precision)
+{
+    std::string digits = std::to_string (n); // integer formatting: locale-independent
+    while (digits.size() > 1 && digits.back() == '0')
+        digits.pop_back();
+    std::string out = negative ? "-" : "";
+    if (x < -4 || x >= precision)
+    {
+        out += digits[0];
+        if (digits.size() > 1)
+            out += "." + digits.substr (1);
+        out += x < 0 ? "e-" : "e+";
+        const auto e = std::to_string (x < 0 ? -x : x);
+        out += (e.size() < 2 ? "0" : "") + e;
+        return out;
+    }
+    if (x < 0)
+        return out + "0." + std::string (static_cast<size_t> (-x - 1), '0') + digits;
+    const auto intDigits = static_cast<size_t> (x) + 1u;
+    if (digits.size() <= intDigits)
+        return out + digits + std::string (intDigits - digits.size(), '0');
+    return out + digits.substr (0, intDigits) + "." + digits.substr (intDigits);
+}
+
+double timesPow10 (double v, int k)
+{
+    // Exact powers of ten up to 1e22, applied in steps (k stays within about +-60 here).
+    static constexpr double p10[] = { 1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
+                                      1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22 };
+    while (k > 22)
+    {
+        v *= p10[22];
+        k -= 22;
+    }
+    while (k < -22)
+    {
+        v /= p10[22];
+        k += 22;
+    }
+    return k >= 0 ? v * p10[k] : v / p10[-k];
+}
+
+bool readsBackAs (const std::string& text, float v)
+{
+    double d = 0.0;
+    return json::parseNumber (text.data(), text.size(), d) && std::bit_cast<std::uint32_t> (static_cast<float> (d)) == std::bit_cast<std::uint32_t> (v);
+}
+} // namespace
+
 std::string formatNumber (float v)
 {
     if (! std::isfinite (v))
         v = 0.0f; // never written: callers sanitise first
     if (std::fpclassify (v) == FP_ZERO)
         return "0"; // also turns -0 into 0
-    // A value of 10 or more needs at least its integer digits: "%.1g" would write 60 as "6e+01".
+    const bool negative = std::signbit (v);
     const double magnitude = std::fabs (static_cast<double> (v));
-    const int first = magnitude >= 1.0 ? std::min (9, static_cast<int> (std::floor (std::log10 (magnitude))) + 1) : 1;
-    char buf[48] = "0";
-    for (int digits = first; digits <= 9; ++digits)
+    // Decimal exponent of the first significant digit (corrected below if log10 is off by one).
+    int x = static_cast<int> (std::floor (std::log10 (magnitude)));
+    // A value of 10 or more needs at least its integer digits: 1 digit would write 60 as "6e+01".
+    const int first = magnitude >= 1.0 ? std::min (9, x + 1) : 1;
+    std::string text;
+    for (int precision = first; precision <= 9; ++precision)
     {
-        std::snprintf (buf, sizeof buf, "%.*g", digits, static_cast<double> (v));
-        if (std::bit_cast<std::uint32_t> (std::strtof (buf, nullptr)) == std::bit_cast<std::uint32_t> (v) || digits == 9)
+        // The nearest `precision`-digit decimal: n * 10^(x - precision + 1), n in [10^(p-1), 10^p).
+        int ex = x;
+        double scaled = timesPow10 (magnitude, precision - 1 - ex);
+        auto n = static_cast<std::uint64_t> (std::llround (scaled));
+        const auto lo = static_cast<std::uint64_t> (std::llround (timesPow10 (1.0, precision - 1)));
+        if (n < lo) // log10 rounded up across a power of ten
+        {
+            --ex;
+            scaled = timesPow10 (magnitude, precision - 1 - ex);
+            n = static_cast<std::uint64_t> (std::llround (scaled));
+        }
+        if (n >= lo * 10u) // rounding carried into a new digit (9.99 -> 10.0)
+        {
+            ++ex;
+            n = (n + 5u) / 10u;
+        }
+        text = layoutDigits (negative, n, ex, precision);
+        if (readsBackAs (text, v))
             break;
     }
-    std::string s (buf);
-    std::replace (s.begin(), s.end(), ',', '.'); // a host may have set a decimal-comma locale
-    return s;
+    return text;
 }
 
 namespace
@@ -48,9 +120,10 @@ std::string quote (const juce::String& text)
             out += "\\\\";
         else if (c < 0x20)
         {
-            char buf[8];
-            std::snprintf (buf, sizeof buf, "\\u%04x", static_cast<unsigned> (c));
-            out += buf;
+            static constexpr char hex[] = "0123456789abcdef";
+            out += "\\u00";
+            out += hex[c >> 4];
+            out += hex[c & 0xFu];
         }
         else
             out += static_cast<char> (c);
@@ -103,15 +176,15 @@ std::vector<std::pair<std::string, std::string>> programMembers (const Schema& s
     return members;
 }
 
-std::vector<std::pair<std::string, std::string>> header (const char* kind)
+std::vector<std::pair<std::string, std::string>> header (const Schema& schema, const char* kind)
 {
-    return { { "format", std::to_string (kFormat) }, { "kind", std::string ("\"") + kind + "\"" } };
+    return { { "format", std::to_string (kFormat) }, { "instrument", quote (schema.instrument().id) }, { "kind", std::string ("\"") + kind + "\"" } };
 }
 } // namespace
 
 std::string toJson (const Schema& schema, const Program& program)
 {
-    auto members = header ("program");
+    auto members = header (schema, "program");
     for (auto& m : programMembers (schema, program, 1))
         members.push_back (std::move (m));
     return object (members, 0) + "\n";
@@ -119,7 +192,7 @@ std::string toJson (const Schema& schema, const Program& program)
 
 std::string toJson (const Schema& schema, const Tone& tone)
 {
-    auto members = header ("tone");
+    auto members = header (schema, "tone");
     for (auto& m : metaMembers (tone.meta))
         members.push_back (std::move (m));
     std::vector<std::pair<std::string, std::string>> params;
@@ -134,7 +207,7 @@ std::string toJson (const Schema& schema, const Tone& tone)
 
 std::string toJson (const Schema& schema, const Bank& bank)
 {
-    auto members = header ("bank");
+    auto members = header (schema, "bank");
     members.emplace_back ("name", quoted (sanitiseName (bank.name)));
     members.emplace_back ("author", quoted (sanitiseText (bank.author, kMaxAuthorChars)));
 
@@ -149,107 +222,17 @@ std::string toJson (const Schema& schema, const Bank& bank)
 }
 
 // ---------------------------------------------------------------------------------------------
-// Reading
+// Reading (StrictJson.h does the parsing; this maps the tree onto the model)
 // ---------------------------------------------------------------------------------------------
 namespace
 {
-/** Strict number grammar, checked before JUCE's reader sees the text (its integer parser overflows
-    a signed int on a long digit string: undefined behaviour on untrusted input):
-    -?(0|[1-9][0-9]{0,8})(.[0-9]{1,20})?([eE][+-]?[0-9]{1,3})?  Returns the token's length or 0. */
-size_t numberTokenLength (const char* p, size_t n)
-{
-    size_t i = 0;
-    const auto digits = [&] (size_t maxCount) {
-        size_t count = 0;
-        while (i < n && p[i] >= '0' && p[i] <= '9' && count <= maxCount)
-        {
-            ++i;
-            ++count;
-        }
-        return count;
-    };
-    if (i < n && p[i] == '-')
-        ++i;
-    if (i < n && p[i] == '0')
-        ++i;
-    else if (const auto d = digits (9); d < 1 || d > 9)
-        return 0;
-    if (i < n && p[i] == '.')
-    {
-        ++i;
-        if (const auto d = digits (20); d < 1 || d > 20)
-            return 0;
-    }
-    if (i < n && (p[i] == 'e' || p[i] == 'E'))
-    {
-        ++i;
-        if (i < n && (p[i] == '+' || p[i] == '-'))
-            ++i;
-        if (const auto d = digits (3); d < 1 || d > 3)
-            return 0;
-    }
-    // the token must end here: no more number characters stuck to it (leading zeros, "1.2.3", "1e5e5")
-    if (i < n && ((p[i] >= '0' && p[i] <= '9') || p[i] == '.' || p[i] == 'e' || p[i] == 'E' || p[i] == '+' || p[i] == '-'))
-        return 0;
-    return i;
-}
+using json::Document;
+using Index = Document::Index;
 
-/** Brackets nest at most kMaxJsonDepth deep (the JSON reader recurses: a hostile file must not
-    be able to exhaust the stack), and nothing but white space follows the top-level value (the
-    reader itself stops after the first value and would not notice). Strings are skipped. */
-bool structureOk (const char* p, size_t n, juce::String& error)
-{
-    int depth = 0;
-    bool inString = false, rootClosed = false;
-    for (size_t i = 0; i < n; ++i)
-    {
-        const char c = p[i];
-        if (rootClosed)
-        {
-            if (c != ' ' && c != '\t' && c != '\n' && c != '\r')
-            {
-                error = "Unexpected text after the end of the preset.";
-                return false;
-            }
-            continue;
-        }
-        if (inString)
-        {
-            if (c == '\\')
-                ++i;
-            else if (c == '"')
-                inString = false;
-        }
-        else if (c == '"')
-            inString = true;
-        else if (c == '-' || (c >= '0' && c <= '9') || c == '.' || c == '+')
-        {
-            const auto len = numberTokenLength (p + i, n - i);
-            if (len == 0)
-            {
-                error = "A number in the file is not valid (or has too many digits).";
-                return false;
-            }
-            i += len - 1;
-        }
-        else if (c == '{' || c == '[')
-        {
-            if (++depth > kMaxJsonDepth)
-            {
-                error = "The file is nested too deeply to be a preset.";
-                return false;
-            }
-        }
-        else if ((c == '}' || c == ']') && depth > 0 && --depth == 0)
-            rootClosed = true;
-    }
-    return true;
-}
+juce::String fromUtf8 (std::string_view s) { return juce::String::fromUTF8 (s.data(), static_cast<int> (s.size())); }
 
-bool isNumber (const juce::var& v) { return v.isInt() || v.isInt64() || v.isDouble(); }
-
-/** Checks the text and returns the root object after format and kind are verified. */
-bool openRoot (const char* utf8, size_t n, const char* kind, juce::var& root, juce::String& error)
+/** Checks the text and returns the root object after format, instrument and kind are verified. */
+bool openRoot (const Schema& schema, const char* utf8, size_t n, const char* kind, Document& doc, juce::String& error)
 {
     if (utf8 == nullptr || n == 0)
     {
@@ -267,40 +250,43 @@ bool openRoot (const char* utf8, size_t n, const char* kind, juce::var& root, ju
         utf8 += 3;
         n -= 3;
     }
-    if (std::memchr (utf8, 0, n) != nullptr || ! juce::CharPointer_UTF8::isValidString (utf8, static_cast<int> (n)))
+    json::Limits limits;
+    limits.maxInputBytes = kMaxFileBytes;
+    limits.maxDepth = kMaxJsonDepth;
+    std::string why;
+    if (! doc.parse (utf8, n, limits, why))
     {
-        error = "The file is not valid UTF-8 text.";
+        error = "Not a valid preset file (or truncated): " + juce::String (why);
         return false;
     }
-    if (! structureOk (utf8, n, error))
-        return false;
-    const auto text = juce::String::fromUTF8 (utf8, static_cast<int> (n));
-    const auto r = juce::JSON::parse (text, root);
-    if (r.failed())
-    {
-        error = "Not valid JSON (or truncated): " + r.getErrorMessage();
-        return false;
-    }
-    auto* obj = root.getDynamicObject();
-    if (obj == nullptr)
+    const Index root = doc.root();
+    if (doc.type (root) != json::Type::Object)
     {
         error = "The file does not contain a preset object.";
         return false;
     }
-    const auto format = obj->getProperty ("format");
-    if (! isNumber (format))
+    const Index format = doc.member (root, "format");
+    if (! doc.isNumber (format))
     {
         error = "The file has no format number.";
         return false;
     }
-    if (! (std::fabs (static_cast<double> (format) - static_cast<double> (kFormat)) < 1.0e-9))
+    if (! (std::fabs (doc.number (format) - static_cast<double> (kFormat)) < 1.0e-9))
     {
-        error = "Unsupported preset format " + juce::String (static_cast<double> (format)) + " (this version reads format "
-                + juce::String (kFormat) + ").";
+        const double f = doc.number (format);
+        const bool whole = std::isfinite (f) && std::fabs (f) < 1.0e6 && std::fabs (f - std::round (f)) < 1.0e-9;
+        error = "Unsupported preset format" + (whole ? " " + juce::String (std::to_string (static_cast<long long> (std::llround (f)))) : juce::String())
+                + " (this version reads format " + juce::String (std::to_string (kFormat)) + ").";
         return false;
     }
-    const auto k = obj->getProperty ("kind");
-    if (! k.isString() || k.toString() != kind)
+    const Index instrument = doc.member (root, "instrument");
+    if (doc.type (instrument) != json::Type::String || fromUtf8 (doc.string (instrument)) != schema.instrument().id)
+    {
+        error = "This file is not for this instrument.";
+        return false;
+    }
+    const Index k = doc.member (root, "kind");
+    if (doc.type (k) != json::Type::String || doc.string (k) != std::string_view (kind))
     {
         error = juce::String ("This is not a ") + kind + " file.";
         return false;
@@ -308,79 +294,77 @@ bool openRoot (const char* utf8, size_t n, const char* kind, juce::var& root, ju
     return true;
 }
 
-bool readText (const juce::DynamicObject& obj, const char* key, int maxChars, juce::String& out, juce::String& error, bool isName)
+bool readText (const Document& doc, Index obj, const char* key, int maxChars, juce::String& out, juce::String& error, bool isName)
 {
-    if (! obj.hasProperty (key))
+    const Index v = doc.member (obj, key);
+    if (v == Document::npos)
     {
         if (isName)
             out = "Untitled";
         return true;
     }
-    const auto v = obj.getProperty (key);
-    if (! v.isString())
+    if (doc.type (v) != json::Type::String)
     {
         error = juce::String ("\"") + key + "\" must be text.";
         return false;
     }
-    out = isName ? sanitiseName (v.toString()) : sanitiseText (v.toString(), maxChars);
+    out = isName ? sanitiseName (fromUtf8 (doc.string (v))) : sanitiseText (fromUtf8 (doc.string (v)), maxChars);
     return true;
 }
 
-bool readMeta (const juce::DynamicObject& obj, Meta& meta, juce::String& error)
+bool readMeta (const Document& doc, Index obj, Meta& meta, juce::String& error)
 {
-    return readText (obj, "name", kMaxNameChars, meta.name, error, true)
-           && readText (obj, "category", kMaxCategoryChars, meta.category, error, false)
-           && readText (obj, "author", kMaxAuthorChars, meta.author, error, false);
+    return readText (doc, obj, "name", kMaxNameChars, meta.name, error, true)
+           && readText (doc, obj, "category", kMaxCategoryChars, meta.category, error, false)
+           && readText (doc, obj, "author", kMaxAuthorChars, meta.author, error, false);
 }
 
 /** Reads the members of `section` into values[index(k)]; missing or unusable values keep what is
     in `values` (the default, set by the caller). */
 template <typename KeyFn>
-bool readSection (const Schema& schema, const juce::var& section, const char* sectionName, const std::vector<int>& indices,
-                  KeyFn keyOf, std::vector<float>& values, juce::String& error)
+bool readSection (const Schema& schema, const Document& doc, Index section, const juce::String& sectionName,
+                  const std::vector<int>& indices, KeyFn keyOf, std::vector<float>& values, juce::String& error)
 {
-    if (section.isVoid())
+    if (section == Document::npos)
         return true; // missing section: all defaults
-    auto* obj = section.getDynamicObject();
-    if (obj == nullptr)
+    if (doc.type (section) != json::Type::Object)
     {
-        error = juce::String ("\"") + sectionName + "\" must be an object.";
+        error = "\"" + sectionName + "\" must be an object.";
         return false;
     }
     for (size_t k = 0; k < indices.size(); ++k)
     {
         const int i = indices[k];
-        const auto v = obj->getProperty (juce::Identifier (keyOf (k, i)));
-        if (isNumber (v))
-            values[static_cast<size_t> (i)] = schema.sanitise (i, static_cast<double> (v)); // non-finite -> default there
+        const Index v = doc.member (section, keyOf (k, i));
+        if (doc.isNumber (v))
+            values[static_cast<size_t> (i)] = schema.sanitise (i, doc.number (v)); // non-finite -> default there
         // any other kind of value (text, null, boolean, nested): the default stays
     }
     return true;
 }
 
-bool readProgramObject (const Schema& schema, const juce::var& v, Program& out, juce::String& error)
+bool readProgramObject (const Schema& schema, const Document& doc, Index obj, Program& out, juce::String& error)
 {
-    auto* obj = v.getDynamicObject();
-    if (obj == nullptr)
+    if (doc.type (obj) != json::Type::Object)
     {
         error = "A program must be an object.";
         return false;
     }
     Program p;
     p.values = schema.defaults();
-    if (! readMeta (*obj, p.meta, error))
+    if (! readMeta (doc, obj, p.meta, error))
         return false;
-    auto globalKey = [&] (size_t, int i) { return schema.spec (i).id; };
-    if (! readSection (schema, obj->getProperty ("global"), "global", schema.globalParams(), globalKey, p.values, error))
+    const auto globalKey = [&] (size_t, int i) { return schema.spec (i).id.toStdString(); };
+    if (! readSection (schema, doc, doc.member (obj, "global"), "global", schema.globalParams(), globalKey, p.values, error))
         return false;
     for (int t = 0; t < schema.numTones(); ++t)
     {
         std::vector<int> indices;
         for (int k = 0; k < schema.toneSize(); ++k)
             indices.push_back (schema.toneParam (t, k));
-        auto toneKey = [&] (size_t k, int) { return schema.toneSuffix (static_cast<int> (k)); };
-        if (! readSection (schema, obj->getProperty (juce::Identifier (schema.toneKey (t))), schema.toneKey (t).toRawUTF8(), indices,
-                           toneKey, p.values, error))
+        const auto toneKey = [&] (size_t k, int) { return schema.toneSuffix (static_cast<int> (k)).toStdString(); };
+        if (! readSection (schema, doc, doc.member (obj, schema.toneKey (t).toStdString()), schema.toneKey (t), indices, toneKey, p.values,
+                           error))
             return false;
     }
     out = std::move (p);
@@ -391,8 +375,8 @@ bool readProgramObject (const Schema& schema, const juce::var& v, Program& out, 
 Parsed<Program> parseProgram (const Schema& schema, const char* utf8, size_t numBytes)
 {
     Parsed<Program> result;
-    juce::var root;
-    if (openRoot (utf8, numBytes, "program", root, result.error) && readProgramObject (schema, root, result.value, result.error))
+    Document doc;
+    if (openRoot (schema, utf8, numBytes, "program", doc, result.error) && readProgramObject (schema, doc, doc.root(), result.value, result.error))
         result.ok = true;
     else
         result.value = {};
@@ -402,20 +386,22 @@ Parsed<Program> parseProgram (const Schema& schema, const char* utf8, size_t num
 Parsed<Tone> parseTone (const Schema& schema, const char* utf8, size_t numBytes)
 {
     Parsed<Tone> result;
-    juce::var root;
-    if (! openRoot (utf8, numBytes, "tone", root, result.error))
+    Document doc;
+    if (! openRoot (schema, utf8, numBytes, "tone", doc, result.error))
         return result;
-    auto* obj = root.getDynamicObject();
+    const Index root = doc.root();
     Tone t;
-    if (! readMeta (*obj, t.meta, result.error))
+    if (! readMeta (doc, root, t.meta, result.error))
         return result;
-    // Values go through a scratch program so the section reader and its rules are shared.
+    // A tone has no part: it is read against part 0's parameters (ranges, defaults, discreteness).
+    // Every part has the same specs for the same suffix (Schema::isValid checks it), so the result
+    // fits any part.
     std::vector<float> values = schema.defaults();
     std::vector<int> indices;
     for (int k = 0; k < schema.toneSize(); ++k)
         indices.push_back (schema.toneParam (0, k));
-    auto key = [&] (size_t k, int) { return schema.toneSuffix (static_cast<int> (k)); };
-    if (! readSection (schema, obj->getProperty ("params"), "params", indices, key, values, result.error))
+    const auto key = [&] (size_t k, int) { return schema.toneSuffix (static_cast<int> (k)).toStdString(); };
+    if (! readSection (schema, doc, doc.member (root, "params"), "params", indices, key, values, result.error))
         return result;
     for (int i : indices)
         t.values.push_back (values[static_cast<size_t> (i)]);
@@ -427,33 +413,32 @@ Parsed<Tone> parseTone (const Schema& schema, const char* utf8, size_t numBytes)
 Parsed<Bank> parseBank (const Schema& schema, const char* utf8, size_t numBytes)
 {
     Parsed<Bank> result;
-    juce::var root;
-    if (! openRoot (utf8, numBytes, "bank", root, result.error))
+    Document doc;
+    if (! openRoot (schema, utf8, numBytes, "bank", doc, result.error))
         return result;
-    auto* obj = root.getDynamicObject();
+    const Index root = doc.root();
     Bank b = makeInitBank (schema);
     b.name = "Untitled";
-    if (! readText (*obj, "name", kMaxNameChars, b.name, result.error, true)
-        || ! readText (*obj, "author", kMaxAuthorChars, b.author, result.error, false))
+    if (! readText (doc, root, "name", kMaxNameChars, b.name, result.error, true)
+        || ! readText (doc, root, "author", kMaxAuthorChars, b.author, result.error, false))
         return result;
-    const auto programs = obj->getProperty ("programs");
-    if (! programs.isVoid())
+    const Index programs = doc.member (root, "programs");
+    if (programs != Document::npos)
     {
-        auto* list = programs.getArray();
-        if (list == nullptr)
+        if (doc.type (programs) != json::Type::Array)
         {
             result.error = "\"programs\" must be a list.";
             return result;
         }
-        if (list->size() > kBankSize)
+        if (doc.size (programs) > static_cast<size_t> (schema.bankSize()))
         {
-            result.error = "A bank holds at most " + juce::String (kBankSize) + " programs.";
+            result.error = "A bank holds at most " + juce::String (schema.bankSize()) + " programs.";
             return result;
         }
-        for (int i = 0; i < list->size(); ++i)
-            if (! readProgramObject (schema, list->getReference (i), b.programs[static_cast<size_t> (i)], result.error))
+        for (size_t i = 0; i < doc.size (programs); ++i)
+            if (! readProgramObject (schema, doc, doc.element (programs, i), b.programs[i], result.error))
             {
-                result.error = "Program " + juce::String (i + 1) + ": " + result.error;
+                result.error = "Program " + juce::String (static_cast<int> (i) + 1) + ": " + result.error;
                 return result;
             }
     }

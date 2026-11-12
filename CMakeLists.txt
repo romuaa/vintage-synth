@@ -49,7 +49,9 @@ set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/params/ParamFactory.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/params/FxArpParams.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/StrictJson.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetFormat.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetFiles.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/FactoryBank.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetBar.cpp)
