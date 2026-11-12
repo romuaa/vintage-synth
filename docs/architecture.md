@@ -270,9 +270,9 @@ transport stop), and is tested purely on event lists.
   float differences (arm64 / x64, clang / MSVC math libraries): compare perceptual features
   (band energies and envelope over time), not samples. Goldens themselves are created in M6.
 
-## 8. Second instrument: chip synth (outline; refined before its first milestone)
+## 8. Second instrument: "B-Side" chip synth (outline; refined before its first milestone)
 
-A second plugin in this repository: a polyphonic synthesizer modelled on a classic 3-voice sound
+A second plugin in this repository, named **B-Side** (shown as "Exitium B-Side"): a polyphonic synthesizer modelled on a classic 3-voice sound
 chip from early-1980s home computers. It has its own name, panel, plugin identity and parameter
 list. **No third-party brand names, part numbers or nicknames anywhere in the repository**; the two
 chip revisions are called **Model A** (early: warm, distorting filter) and **Model B** (later: clean
