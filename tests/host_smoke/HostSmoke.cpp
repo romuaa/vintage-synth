@@ -1,6 +1,6 @@
 // Loads the built .vst3 through JUCE's VST3 host, like a DAW would, and checks the basics:
 // identity, parameter count, rendering at several rates/block sizes, silence after release,
-// and state round-trip between two instances. Usage: host_smoke "<path>/Vintage Synth.vst3"
+// and state round-trip between two instances. Usage: host_smoke "<path>/Exitium Vintage Synth.vst3"
 #include <juce_audio_processors_headless/juce_audio_processors_headless.h>
 #include <juce_events/juce_events.h>
 
@@ -87,7 +87,7 @@ int main (int argc, char** argv)
         return 1;
 
     const auto& desc = *types[0];
-    check (desc.name == "Vintage Synth", "name: " + desc.name);
+    check (desc.name == "Exitium Vintage Synth", "name: " + desc.name);
     check (desc.manufacturerName == "Exitium", "vendor: " + desc.manufacturerName);
     check (desc.isInstrument, "is instrument");
 

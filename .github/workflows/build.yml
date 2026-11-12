@@ -38,7 +38,7 @@ env:
   PLUGINVAL_SHA256_MACOS: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
   PLUGINVAL_SHA256_WINDOWS: c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab
   PLUGINVAL_SHA256_LINUX: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
-  BUNDLE: Vintage Synth.vst3
+  BUNDLE: Exitium Vintage Synth.vst3
   # Steinberg VST3 SDK, built only for its `validator` tool (MIT; not linked into the plugin).
   # Pinned by commit SHA; the tag is for humans. Bump both together, deliberately.
   VST3_SDK_TAG: v3.8.1_build_84
@@ -195,7 +195,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          archs=$(lipo -archs "build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/MacOS/Vintage Synth")
+          archs=$(lipo -archs "build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/MacOS/Exitium Vintage Synth")
           echo "$archs"
           [[ "$archs" == *x86_64* && "$archs" == *arm64* ]]
 
@@ -226,7 +226,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          so="build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/x86_64-linux/Vintage Synth.so"
+          so="build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/x86_64-linux/Exitium Vintage Synth.so"
           test -f "$so"
           ldd "$so"
           objdump -p "$so" | grep -E "NEEDED|SONAME"
