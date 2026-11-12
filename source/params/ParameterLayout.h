@@ -5,6 +5,7 @@
 #include "fx/Chorus.h"
 #include "fx/Delay.h"
 #include "fx/Reverb.h"
+#include "params/Mappings.h"
 #include "params/PartParamList.h"
 #include "seq/Settings.h"
 
@@ -126,6 +127,27 @@ private:
 #undef VS_DECLARE_PTR
 };
 
+/**
+    One parameter's raw-value atomic plus its range and default, captured at bind time. Every read
+    is sanitised (Mappings.h): a non-finite value a host may have written becomes the default and
+    anything else is clamped to the range, so a bad host value never reaches the engine.
+*/
+struct BoundParam
+{
+    std::atomic<float>* value = nullptr;
+    float lo = 0.0f, hi = 1.0f, def = 0.0f;
+
+    void bind (juce::AudioProcessorValueTreeState& state, const juce::String& id);
+    /** Plain value in the parameter's range (lock-free, any thread). */
+    float get() const noexcept { return map::sanitiseParam (value->load (std::memory_order_relaxed), lo, hi, def); }
+    /** Choice index or integer value. */
+    int index() const noexcept
+    {
+        return map::sanitiseIndex (value->load (std::memory_order_relaxed), static_cast<int> (lo), static_cast<int> (hi),
+                                   static_cast<int> (def));
+    }
+};
+
 /** Cached raw-value pointers of the 11 effect parameters. Read from any thread (atomics only). */
 class FxParamBinding
 {
@@ -135,17 +157,17 @@ public:
     void read (FxSettings& out) const noexcept;
 
 private:
-    std::atomic<float>* chorusMode = nullptr;
-    std::atomic<float>* chorusMix = nullptr;
-    std::atomic<float>* delayTime = nullptr;
-    std::atomic<float>* delayFeedback = nullptr;
-    std::atomic<float>* delayDamping = nullptr;
-    std::atomic<float>* delayPingPong = nullptr;
-    std::atomic<float>* delayLevel = nullptr;
-    std::atomic<float>* reverbDecay = nullptr;
-    std::atomic<float>* reverbDamping = nullptr;
-    std::atomic<float>* reverbPreDelay = nullptr;
-    std::atomic<float>* reverbLevel = nullptr;
+    BoundParam chorusMode;
+    BoundParam chorusMix;
+    BoundParam delayTime;
+    BoundParam delayFeedback;
+    BoundParam delayDamping;
+    BoundParam delayPingPong;
+    BoundParam delayLevel;
+    BoundParam reverbDecay;
+    BoundParam reverbDamping;
+    BoundParam reverbPreDelay;
+    BoundParam reverbLevel;
 };
 
 /** Cached raw-value pointers of the 58 arpeggiator/sequencer parameters. */
@@ -157,16 +179,16 @@ public:
     void read (ArpSettings& out) const noexcept;
 
 private:
-    std::atomic<float>* mode = nullptr;
-    std::atomic<float>* target = nullptr;
-    std::atomic<float>* rate = nullptr;
-    std::atomic<float>* swing = nullptr;
-    std::atomic<float>* gate = nullptr;
-    std::atomic<float>* hold = nullptr;
-    std::atomic<float>* tempo = nullptr;
-    std::atomic<float>* pattern = nullptr;
-    std::atomic<float>* octaves = nullptr;
-    std::atomic<float>* length = nullptr;
-    std::array<std::array<std::atomic<float>*, kNumSeqStepFields>, seq::kMaxSeqSteps> steps {};
+    BoundParam mode;
+    BoundParam target;
+    BoundParam rate;
+    BoundParam swing;
+    BoundParam gate;
+    BoundParam hold;
+    BoundParam tempo;
+    BoundParam pattern;
+    BoundParam octaves;
+    BoundParam length;
+    std::array<std::array<BoundParam, kNumSeqStepFields>, seq::kMaxSeqSteps> steps {};
 };
 } // namespace vs

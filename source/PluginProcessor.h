@@ -28,6 +28,16 @@ public:
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     using juce::AudioProcessor::processBlock;
+    /**
+        Host bypass is a clean stop: the first bypassed block fades the output out over kBypassFade
+        (MIDI ignored), then everything is released as a panic (parts, router, both arp/seq
+        instances incl. Hold and pedal, effects). While bypassed the output is silent and MIDI is
+        ignored; the first normal block after it starts clean (held keys sound again when pressed
+        again). Same latency and bus handling as processBlock.
+    */
+    void processBlockBypassed (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using juce::AudioProcessor::processBlockBypassed;
+    static constexpr double kBypassFadeSeconds = 0.005;
 
     // Editor
     juce::AudioProcessorEditor* createEditor() override;
@@ -41,6 +51,8 @@ public:
     /** Longest tail of the effects that are on (each block's static tailSeconds, capped at 30 s),
         from the parameter values: callable from any thread. 0 with every effect off. */
     double getTailLengthSeconds() const override;
+    /** The synth's own part of the tail: the longest time a released voice can ring (ENV-2). */
+    double getSynthTailSeconds() const noexcept;
 
     // Programs (patch memory replaces these in M6)
     int getNumPrograms() override { return 1; }
@@ -72,6 +84,12 @@ public:
     const seq::Transport& getLastTransport() const noexcept { return blockTransport; }
     /** Event capacity behind each arp/seq instance (ArpSeq::minimumCapacity for the prepared block). */
     int getArpEventCapacity() const noexcept { return static_cast<int> (lowerArpOut.size()); }
+    /** How often the non-finite output guard has fired since construction. */
+    int getGuardTrips() const noexcept { return guardTrips; }
+    /** Test hook: the next rendered chunk's mix is replaced by NaN, so the guard path can be tested
+        now that host parameter values are sanitised. Call between blocks. */
+    void forceNonFiniteForTesting() noexcept { forceNonFinite = true; }
+    bool isBypassed() const noexcept { return bypassed; }
 
     static constexpr std::uint32_t kLowerSeed = 0x1001u, kUpperSeed = 0x2001u;
 
@@ -86,6 +104,7 @@ private:
         in step with the part's pedal (see the definition). */
     void resyncArpAfterKeyModeChange (seq::ArpSeq& arp, const Part& part, const seq::Transport& tr) noexcept;
     void resetEngine() noexcept;
+    void processInternal (juce::AudioBuffer<float>&, juce::MidiBuffer&) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -93,11 +112,7 @@ private:
     PartParams lowerParams, upperParams;
     Part lowerPart, upperPart;
 
-    std::atomic<float>* masterVolume = nullptr;
-    std::atomic<float>* vintage = nullptr;
-    std::atomic<float>* keyMode = nullptr;
-    std::atomic<float>* splitPoint = nullptr;
-    std::atomic<float>* balance = nullptr;
+    BoundParam masterVolume, vintage, keyMode, splitPoint, balance; // sanitised reads (ParameterLayout.h)
     FxParamBinding fxBinding;
     ArpParamBinding arpBinding;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
@@ -124,6 +139,15 @@ private:
     std::vector<NoteEvent> lowerArpOut, upperArpOut; // ArpSeq::minimumCapacity for the prepared block
     std::vector<NoteEvent> resyncScratch;            // output of the key-mode resync calls (discarded)
     bool playerPedal = false;                        // the sustain pedal as the player holds it (parsed MIDI)
+
+    // Host bypass (processBlockBypassed).
+    bool bypassed = false;     // the last block was a bypassed one
+    int bypassFadeLeft = 0;    // samples of the fade-out still to render
+    int bypassFadeLength = 1;
+    juce::MidiBuffer noMidi;   // empty: the bypassed path ignores the host's MIDI
+
+    int guardTrips = 0;            // non-finite guard firings (tests and diagnostics)
+    bool forceNonFinite = false;   // test hook, see forceNonFiniteForTesting()
 
     // Host transport, read once per block (docs/architecture.md 6a.1). Missing fields = stopped.
     bool hostPlaying = false;

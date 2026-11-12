@@ -206,7 +206,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     // The text parser needs the parameter's own value (unreadable text leaves it unchanged); the
     // parameter does not exist yet when the lambda is made, so it reads it through a shared slot.
     auto splitPointHolder = std::make_shared<juce::AudioParameterInt*> (nullptr);
-    auto split = std::make_unique<juce::AudioParameterInt> (
+    auto split = std::make_unique<SteppedIntParameter> ( // stepped for hosts (same ID and range as M3)
         juce::ParameterID { ParamID::keySplitPoint, kParamVersionHint }, "Split Point", 0, 127, kDefaultSplitPoint,
         juce::AudioParameterIntAttributes()
             .withStringFromValueFunction ([] (int v, int) { return noteName (v); })
@@ -296,90 +296,86 @@ static_assert (static_cast<int> (seq::ArpPattern::AsPlayed) == 4 && kArpPatternL
 static_assert (static_cast<int> (seq::StepType::Tie) == 2 && kSeqStepTypeLabels.size() == 3);
 static_assert (static_cast<int> (ArpTarget::Both) == 2 && kArpTargetLabels.size() == 3);
 
-namespace
+void BoundParam::bind (juce::AudioProcessorValueTreeState& state, const juce::String& id)
 {
-int choiceIndex (const std::atomic<float>* p, int numChoices) noexcept
-{
-    return juce::jlimit (0, numChoices - 1, juce::roundToInt (p->load (std::memory_order_relaxed)));
+    auto* p = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter (id));
+    value = state.getRawParameterValue (id);
+    jassert (p != nullptr && value != nullptr);
+    if (p != nullptr)
+    {
+        lo = p->getNormalisableRange().start;
+        hi = p->getNormalisableRange().end;
+        def = p->convertFrom0to1 (p->getDefaultValue());
+    }
 }
-
-float load (const std::atomic<float>* p) noexcept { return p->load (std::memory_order_relaxed); }
-
-std::atomic<float>* bindOne (juce::AudioProcessorValueTreeState& state, const juce::String& id)
-{
-    auto* p = state.getRawParameterValue (id);
-    jassert (p != nullptr);
-    return p;
-}
-} // namespace
 
 void FxParamBinding::bind (juce::AudioProcessorValueTreeState& state)
 {
-    chorusMode = bindOne (state, ParamID::fxChorusMode);
-    chorusMix = bindOne (state, ParamID::fxChorusMix);
-    delayTime = bindOne (state, ParamID::fxDelayTime);
-    delayFeedback = bindOne (state, ParamID::fxDelayFeedback);
-    delayDamping = bindOne (state, ParamID::fxDelayDamping);
-    delayPingPong = bindOne (state, ParamID::fxDelayPingPong);
-    delayLevel = bindOne (state, ParamID::fxDelayLevel);
-    reverbDecay = bindOne (state, ParamID::fxReverbDecay);
-    reverbDamping = bindOne (state, ParamID::fxReverbDamping);
-    reverbPreDelay = bindOne (state, ParamID::fxReverbPreDelay);
-    reverbLevel = bindOne (state, ParamID::fxReverbLevel);
+    chorusMode.bind (state, ParamID::fxChorusMode);
+    chorusMix.bind (state, ParamID::fxChorusMix);
+    delayTime.bind (state, ParamID::fxDelayTime);
+    delayFeedback.bind (state, ParamID::fxDelayFeedback);
+    delayDamping.bind (state, ParamID::fxDelayDamping);
+    delayPingPong.bind (state, ParamID::fxDelayPingPong);
+    delayLevel.bind (state, ParamID::fxDelayLevel);
+    reverbDecay.bind (state, ParamID::fxReverbDecay);
+    reverbDamping.bind (state, ParamID::fxReverbDamping);
+    reverbPreDelay.bind (state, ParamID::fxReverbPreDelay);
+    reverbLevel.bind (state, ParamID::fxReverbLevel);
 }
 
 void FxParamBinding::read (FxSettings& out) const noexcept
 {
-    out.chorus.mode = static_cast<fx::ChorusMode> (choiceIndex (chorusMode, 3));
-    out.chorus.mix = load (chorusMix);
-    out.delay.timeSeconds = map::delayTimeSec (load (delayTime));
-    out.delay.feedback = map::delayFeedback (load (delayFeedback));
-    out.delay.damping = load (delayDamping);
-    out.delay.pingPong = choiceIndex (delayPingPong, 2) == 1;
-    out.delay.level = load (delayLevel);
-    out.reverb.decaySeconds = map::reverbDecaySec (load (reverbDecay));
-    out.reverb.damping = load (reverbDamping);
-    out.reverb.preDelaySeconds = map::reverbPreDelaySec (load (reverbPreDelay));
-    out.reverb.level = load (reverbLevel);
+    out.chorus.mode = static_cast<fx::ChorusMode> (chorusMode.index());
+    out.chorus.mix = chorusMix.get();
+    out.delay.timeSeconds = map::delayTimeSec (delayTime.get());
+    out.delay.feedback = map::delayFeedback (delayFeedback.get());
+    out.delay.damping = delayDamping.get();
+    out.delay.pingPong = delayPingPong.index() == 1;
+    out.delay.level = delayLevel.get();
+    out.reverb.decaySeconds = map::reverbDecaySec (reverbDecay.get());
+    out.reverb.damping = reverbDamping.get();
+    out.reverb.preDelaySeconds = map::reverbPreDelaySec (reverbPreDelay.get());
+    out.reverb.level = reverbLevel.get();
 }
 
 void ArpParamBinding::bind (juce::AudioProcessorValueTreeState& state)
 {
-    mode = bindOne (state, ParamID::arpMode);
-    target = bindOne (state, ParamID::arpTarget);
-    rate = bindOne (state, ParamID::arpRate);
-    swing = bindOne (state, ParamID::arpSwing);
-    gate = bindOne (state, ParamID::arpGate);
-    hold = bindOne (state, ParamID::arpHold);
-    tempo = bindOne (state, ParamID::arpTempo);
-    pattern = bindOne (state, ParamID::arpPattern);
-    octaves = bindOne (state, ParamID::arpOctaves);
-    length = bindOne (state, ParamID::seqLength);
+    mode.bind (state, ParamID::arpMode);
+    target.bind (state, ParamID::arpTarget);
+    rate.bind (state, ParamID::arpRate);
+    swing.bind (state, ParamID::arpSwing);
+    gate.bind (state, ParamID::arpGate);
+    hold.bind (state, ParamID::arpHold);
+    tempo.bind (state, ParamID::arpTempo);
+    pattern.bind (state, ParamID::arpPattern);
+    octaves.bind (state, ParamID::arpOctaves);
+    length.bind (state, ParamID::seqLength);
     for (int s = 0; s < seq::kMaxSeqSteps; ++s)
         for (int f = 0; f < kNumSeqStepFields; ++f)
-            steps[static_cast<size_t> (s)][static_cast<size_t> (f)] = bindOne (state, seqStepParamID (s + 1, static_cast<SeqStepField> (f)));
+            steps[static_cast<size_t> (s)][static_cast<size_t> (f)].bind (state, seqStepParamID (s + 1, static_cast<SeqStepField> (f)));
 }
 
 void ArpParamBinding::read (ArpSettings& out) const noexcept
 {
     auto& s = out.settings;
-    s.mode = static_cast<seq::Mode> (choiceIndex (mode, 3));
-    out.target = static_cast<ArpTarget> (choiceIndex (target, 3));
-    s.rate = static_cast<seq::Rate> (choiceIndex (rate, 6));
-    s.swing = map::percentToFraction (load (swing));
-    s.gate = map::percentToFraction (load (gate));
-    s.hold = choiceIndex (hold, 2) == 1;
-    s.internalBpm = static_cast<double> (load (tempo));
-    s.arpPattern = static_cast<seq::ArpPattern> (choiceIndex (pattern, 5));
-    s.arpOctaves = juce::roundToInt (load (octaves));
+    s.mode = static_cast<seq::Mode> (mode.index());
+    out.target = static_cast<ArpTarget> (target.index());
+    s.rate = static_cast<seq::Rate> (rate.index());
+    s.swing = map::percentToFraction (swing.get());
+    s.gate = map::percentToFraction (gate.get());
+    s.hold = hold.index() == 1;
+    s.internalBpm = static_cast<double> (tempo.get());
+    s.arpPattern = static_cast<seq::ArpPattern> (pattern.index());
+    s.arpOctaves = octaves.index();
     s.seed = kArpSeed;
-    s.seqLength = juce::roundToInt (load (length));
+    s.seqLength = length.index();
     for (size_t i = 0; i < steps.size(); ++i)
     {
         auto& st = s.seqSteps[i];
-        st.semitones = map::clampStepSemitones (juce::roundToInt (load (steps[i][0])));
-        st.type = static_cast<seq::StepType> (choiceIndex (steps[i][1], 3));
-        st.velocity = load (steps[i][2]);
+        st.semitones = map::clampStepSemitones (steps[i][0].index());
+        st.type = static_cast<seq::StepType> (steps[i][1].index());
+        st.velocity = steps[i][2].get();
     }
 }
 
@@ -435,8 +431,12 @@ void PartParamBinding::bind (juce::AudioProcessorValueTreeState& state, const ju
 
 void PartParamBinding::read (PartParams& out) const noexcept
 {
-#define VS_READ_FLOAT(member, ...) out.member = member->load (std::memory_order_relaxed);
-#define VS_READ_CHOICE(member, ...) out.member = static_cast<int> (member->load (std::memory_order_relaxed));
+    // Sanitised (Mappings.h): a non-finite host value becomes the default, anything else is clamped
+    // to the range; in-range values pass bit-exactly.
+#define VS_READ_FLOAT(member, id, name, mn, mx, def, kind) \
+    out.member = map::sanitiseParam (member->load (std::memory_order_relaxed), mn, mx, def);
+#define VS_READ_CHOICE(member, id, name, labels, def) \
+    out.member = map::sanitiseIndex (member->load (std::memory_order_relaxed), 0, static_cast<int> (labels.size()) - 1, def);
     VS_PART_FLOAT_PARAMS (VS_READ_FLOAT)
     VS_PART_CHOICE_PARAMS (VS_READ_CHOICE)
 #undef VS_READ_FLOAT

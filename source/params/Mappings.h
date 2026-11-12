@@ -7,6 +7,25 @@
 
 namespace vs::map
 {
+/** A parameter value as the host left it, made safe for the engine: a non-finite value (NaN,
+    +-Inf) becomes the parameter's default, anything else is clamped to its range. In-range values
+    pass unchanged (bit-exact). */
+inline float sanitiseParam (float v, float lo, float hi, float def) noexcept
+{
+    if (! std::isfinite (v))
+        return def;
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+/** The same for a choice index or integer parameter (float -> int of NaN is undefined behaviour). */
+inline int sanitiseIndex (float v, int lo, int hi, int def) noexcept
+{
+    if (! std::isfinite (v))
+        return def;
+    const float c = sanitiseParam (v, static_cast<float> (lo), static_cast<float> (hi), static_cast<float> (def));
+    return static_cast<int> (std::lround (c));
+}
+
 inline constexpr float kLog2CutoffMinHz = 4.321928f; // log2(20)
 inline constexpr float kCutoffOctaves = 10.0f;      // 20 Hz .. 20.48 kHz
 
