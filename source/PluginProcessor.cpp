@@ -171,9 +171,9 @@ void VintageSynthProcessor::readTransport() noexcept
     // Every field is optional; without a playing position and tempo the transport counts as
     // stopped and the arp/seq runs on its own tempo (docs/architecture.md 6a.1).
     hostPlaying = false;
-    if (auto* playHead = getPlayHead())
+    if (auto* ph = getPlayHead())
     {
-        if (const auto pos = playHead->getPosition())
+        if (const auto pos = ph->getPosition())
         {
             const auto bpm = pos->getBpm();
             const auto ppq = pos->getPpqPosition();
