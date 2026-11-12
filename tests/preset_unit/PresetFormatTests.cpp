@@ -316,7 +316,7 @@ TEST_CASE ("Malformed files are rejected whole, with a message", "[presets][form
         { "global section is text", "{\"format\":1,\"kind\":\"program\",\"global\":\"x\"}" },
         { "name is a number", "{\"format\":1,\"kind\":\"program\",\"name\":5}" },
         { "category is a list", "{\"format\":1,\"kind\":\"program\",\"category\":[]}" },
-        { "NUL byte", std::string ("{\"format\":1,\"kind\":\"program\",\"name\":\"a\0b\"}", 48) },
+        { "NUL byte", [] { std::string t = "{\"format\":1,\"kind\":\"program\",\"name\":\"a"; t += '\0'; return t + "b\"}"; }() },
         { "invalid UTF-8", "{\"format\":1,\"kind\":\"program\",\"name\":\"\xff\xfe\"}" },
         { "overlong UTF-8", "{\"format\":1,\"kind\":\"program\",\"name\":\"\xc0\xaf\"}" },
         { "nested far too deep", std::string (5000, '[') + std::string (5000, ']') },
@@ -347,6 +347,38 @@ TEST_CASE ("Malformed files are rejected whole, with a message", "[presets][form
     // 64 are fine.
     tooMany.erase (tooMany.size() - 3); // drops ",{}"
     CHECK (parseBank (schema, tooMany + "]}").ok);
+}
+
+TEST_CASE ("Adversarial numbers are rejected or handled, never undefined behaviour", "[presets][format]")
+{
+    const auto cut = static_cast<size_t> (smallSchema().indexOf ("a.cut"));
+    const std::string manyDigits (5000, '7');
+    const std::vector<std::string> rejected {
+        manyDigits, "-" + manyDigits, "0." + manyDigits, "1e" + manyDigits, "1e999999999", "1e1000", "1E-1000",
+        "9999999999", "1000000000", "-1000000000", "999106909999999999", "01", "00", "-01", "-", "+1", ".5", "5.", "-.5",
+        "1.", "1e", "1e+", "1.2.3", "1e5e5", "1ee5", "--1", "0x10", "Infinity", "-Infinity", "NaN", "nan", "inf",
+    };
+    for (const auto& n : rejected)
+    {
+        INFO (n.substr (0, 40));
+        const auto r = parse (programWith (n));
+        CHECK_FALSE (r.ok);
+        CHECK (r.error.isNotEmpty());
+    }
+    // Inside text, the same characters are just text.
+    CHECK (parse (programWith ("\"" + manyDigits + "\"")).ok);
+    CHECK (parse ("{\"format\":1,\"kind\":\"program\",\"name\":\"1e999999999 - .5\"}").ok);
+
+    struct Good { const char* text; float expected; };
+    const Good good[] = { { "-0", 0.0f }, { "0", 0.0f }, { "0.5", 0.5f }, { "5e-1", 0.5f }, { "5E-1", 0.5f }, { "0.25e+0", 0.25f },
+                          { "999999999", 1.0f }, { "1e999", 0.6f }, { "-1e999", 0.6f }, { "0.00000000000000000001", 0.0f } };
+    for (const auto& g : good)
+    {
+        INFO (g.text);
+        const auto r = parse (programWith (g.text));
+        REQUIRE (r.ok);
+        CHECK (feq (r.value.values[cut], g.expected));
+    }
 }
 
 TEST_CASE ("Truncated files are rejected at every cut point", "[presets][format]")

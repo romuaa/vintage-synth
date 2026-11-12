@@ -153,6 +153,47 @@ std::string toJson (const Schema& schema, const Bank& bank)
 // ---------------------------------------------------------------------------------------------
 namespace
 {
+/** Strict number grammar, checked before JUCE's reader sees the text (its integer parser overflows
+    a signed int on a long digit string: undefined behaviour on untrusted input):
+    -?(0|[1-9][0-9]{0,8})(.[0-9]{1,20})?([eE][+-]?[0-9]{1,3})?  Returns the token's length or 0. */
+size_t numberTokenLength (const char* p, size_t n)
+{
+    size_t i = 0;
+    const auto digits = [&] (size_t maxCount) {
+        size_t count = 0;
+        while (i < n && p[i] >= '0' && p[i] <= '9' && count <= maxCount)
+        {
+            ++i;
+            ++count;
+        }
+        return count;
+    };
+    if (i < n && p[i] == '-')
+        ++i;
+    if (i < n && p[i] == '0')
+        ++i;
+    else if (const auto d = digits (9); d < 1 || d > 9)
+        return 0;
+    if (i < n && p[i] == '.')
+    {
+        ++i;
+        if (const auto d = digits (20); d < 1 || d > 20)
+            return 0;
+    }
+    if (i < n && (p[i] == 'e' || p[i] == 'E'))
+    {
+        ++i;
+        if (i < n && (p[i] == '+' || p[i] == '-'))
+            ++i;
+        if (const auto d = digits (3); d < 1 || d > 3)
+            return 0;
+    }
+    // the token must end here: no more number characters stuck to it (leading zeros, "1.2.3", "1e5e5")
+    if (i < n && ((p[i] >= '0' && p[i] <= '9') || p[i] == '.' || p[i] == 'e' || p[i] == 'E' || p[i] == '+' || p[i] == '-'))
+        return 0;
+    return i;
+}
+
 /** Brackets nest at most kMaxJsonDepth deep (the JSON reader recurses: a hostile file must not
     be able to exhaust the stack), and nothing but white space follows the top-level value (the
     reader itself stops after the first value and would not notice). Strings are skipped. */
@@ -181,6 +222,16 @@ bool structureOk (const char* p, size_t n, juce::String& error)
         }
         else if (c == '"')
             inString = true;
+        else if (c == '-' || (c >= '0' && c <= '9') || c == '.' || c == '+')
+        {
+            const auto len = numberTokenLength (p + i, n - i);
+            if (len == 0)
+            {
+                error = "A number in the file is not valid (or has too many digits).";
+                return false;
+            }
+            i += len - 1;
+        }
         else if (c == '{' || c == '[')
         {
             if (++depth > kMaxJsonDepth)
