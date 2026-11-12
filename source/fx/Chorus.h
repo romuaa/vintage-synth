@@ -5,15 +5,26 @@
 //   mono = (L + R) / 2 ─► HPF 1-pole 120 Hz ─► LPF 2-pole 9 kHz ─► delay line
 //                                                        ├─ tap A: 4 ms + depth * lfo(t)
 //                                                        └─ tap B: 4 ms - depth * lfo(t)   (anti-phase)
-//   L = dryL + g * tapA
-//   R = dryR - g * tapB          g = 0.45 * mix
+//   L = k * (dryL + g * tapA)
+//   R = k * (dryR - (gd * tapB + (g - gd) * tapA))
+//
+//   g  = mix^1.152               wet gain: 0 at mix 0, 0.45 at mix 0.5 (default), 1.0 at mix 1
+//   gd = min (g, 0.7)            part of the wet that differs between the sides (anti-null cap)
+//   k  = 1 for g <= 0.45, else sqrt ((1 + 0.45^2) / (1 + g^2))   (loudness hold above default)
 //
 // - The wet path is band-limited like a BBD's anti-alias/reconstruction filters, but clean:
 //   no clock noise, no companding, no saturation.
 // - The wet signal is subtracted on the right. With anti-phase taps the mono sum becomes
-//   L + R = 2 * dry + g * (tapA - tapB): the two taps nearly cancel there, so the mono sum
-//   never shows the deep comb notches of a "dry + wet on both sides" design. The worst-case
-//   mono dip is 20 log10 (1 - g) = -5.2 dB at mix 1; the side signal (L - R) is all wet.
+//   L + R = k * (2 * dry + gd * (tapA - tapB)): the two taps nearly cancel there, so the mono
+//   sum never shows the deep comb notches of a "dry + wet on both sides" design. |tapA - tapB|
+//   can reach 2, so with gd = 1 the mono sum could null completely; capping gd at 0.7 bounds
+//   the worst mono dip at 20 log10 (k (1 - 0.7)) = about -12.5 dB at mix 1 (-5.1 dB at the default
+//   mix). Above g = 0.7 the extra wet on the right is tapA (in phase with the left wet), so the
+//   wet level still reaches the dry level; the side signal (L - R) is all wet.
+// - The mix curve g = mix^p (p = ln 0.45 / ln 0.5) puts the pre-2026-11 maximum (0.45) at mix 0.5
+//   and wet = dry at mix 1, smoothly and monotonically. Above the default, k keeps the RMS level
+//   roughly constant (wet and dry add in power), so a full mix peaks at about +3.8 dB for an
+//   in-phase sine instead of +6 dB.
 // - The high-pass keeps the bass dry and centred (no low-frequency phase cancellation).
 // - LFO: triangle rounded by a cubic (y = 1.5 t - 0.5 t^3): nearly constant pitch shift with
 //   smooth turnarounds instead of the triangle's audible "kinks".
@@ -34,14 +45,16 @@ enum class ChorusMode
 struct ChorusParams
 {
     ChorusMode mode = ChorusMode::Off;
-    float mix = 1.0f; ///< 0..1. Wet gain = 0.45 * mix next to the unchanged dry signal; 0 = bypass.
+    float mix = 0.5f; ///< 0..1, default 0.5. Wet gain mix^1.152: 0.45 at 0.5, 1.0 (wet = dry) at 1; 0 = bypass.
 };
 
 class Chorus
 {
 public:
     static constexpr float kCentreMs = 4.0f;
-    static constexpr float kWetGain = 0.45f; ///< wet level at mix 1 (about -7 dB below dry)
+    static constexpr float kMixExponent = 1.1520031f; ///< ln 0.45 / ln 0.5: wet gain 0.45 at mix 0.5
+    static constexpr float kDefaultWet = 0.45f;        ///< wet gain at the default mix; k = 1 up to here
+    static constexpr float kMaxSideDiff = 0.7f;        ///< cap on the L/R-differing wet (mono anti-null)
     static constexpr float kRateHz[3] { 0.0f, 0.5f, 0.83f };
     static constexpr float kDepthMs[3] { 0.0f, 1.85f, 1.35f };
     static constexpr float kMaxDelayMs = 6.0f; ///< >= centre + max depth
@@ -100,7 +113,7 @@ public:
             snapNext = false;
         }
         fade.setTarget (active ? 1.0f : 0.0f);
-        wet.setTarget (kWetGain * mix);
+        wet.setTarget (mix > 0.0f ? std::pow (mix, kMixExponent) : 0.0f);
     }
 
     void process (float* left, float* right, int numSamples) noexcept
@@ -140,8 +153,19 @@ public:
 
             const float dA = centre + depth * lfo;
             const float dB = centre - depth * lfo;
-            left[i] = dl + g * line.read (dA);
-            right[i] = dr - g * line.read (dB);
+            const float a = line.read (dA), b = line.read (dB);
+            if (g > kDefaultWet)
+            {
+                const float gd = std::min (g, kMaxSideDiff);
+                const float k = std::sqrt ((1.0f + kDefaultWet * kDefaultWet) / (1.0f + g * g));
+                left[i] = k * (dl + g * a);
+                right[i] = k * (dr - (gd * b + (g - gd) * a));
+            }
+            else
+            {
+                left[i] = dl + g * a; // default range: exactly the original structure
+                right[i] = dr - g * b;
+            }
 
             if (f <= 0.0f && fade.isSettled())
             {

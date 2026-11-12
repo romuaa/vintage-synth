@@ -2,7 +2,8 @@
 //   build/mac-arm64/tests/VintageSynthTests "[.render]"
 // Output: $VS_RENDER_DIR (if set) or <working dir>/renders: m5_fx_demo.wav (stereo, 48 kHz, 24 bit)
 //
-// The same dry pad phrase six times: dry, chorus I, chorus II, delay, reverb, all three.
+// The same dry pad phrase eight times: dry, chorus I (default mix, mix 1), chorus II (default mix,
+// mix 1), delay, reverb, all three. Scene start times are printed.
 // The pad is synthesised here (detuned PolyBLEP saws, 2-pole low-pass, slow envelope) so the
 // demo does not depend on the synth engine.
 #include <catch2/catch_test_macros.hpp>
@@ -92,7 +93,7 @@ std::vector<float> padPhrase (double& lengthOut)
 
 enum Fx { kChorus = 1, kDelay = 2, kReverb = 4 };
 
-void renderScene (const std::vector<float>& phrase, int which, vs::fx::ChorusMode mode, std::vector<float>& outL, std::vector<float>& outR)
+void renderScene (const std::vector<float>& phrase, int which, vs::fx::ChorusMode mode, float chorusMix, std::vector<float>& outL, std::vector<float>& outR)
 {
     vs::fx::Chorus chorus;
     vs::fx::Delay delay;
@@ -101,13 +102,13 @@ void renderScene (const std::vector<float>& phrase, int which, vs::fx::ChorusMod
     delay.prepare (kFs, kBlock);
     reverb.prepare (kFs, kBlock);
 
-    const vs::fx::ChorusParams cp { (which & kChorus) != 0 ? mode : vs::fx::ChorusMode::Off, 1.0f };
+    const vs::fx::ChorusParams cp { (which & kChorus) != 0 ? mode : vs::fx::ChorusMode::Off, chorusMix };
     vs::fx::DelayParams dp;
     dp.timeSeconds = 0.375f;
-    dp.feedback = 0.45f;
+    dp.feedback = 0.5f;
     dp.damping = 0.35f;
     dp.pingPong = true;
-    dp.level = (which & kDelay) != 0 ? 0.45f : 0.0f;
+    dp.level = (which & kDelay) != 0 ? 0.7f : 0.0f;
     vs::fx::ReverbParams rp;
     rp.decaySeconds = 3.5f;
     rp.damping = 0.5f;
@@ -142,12 +143,23 @@ TEST_CASE ("Render M5 effects demo WAV", "[.render]")
 
     std::vector<float> l, r;
     using M = vs::fx::ChorusMode;
-    renderScene (phrase, 0, M::Off, l, r);                            // 1 dry
-    renderScene (phrase, kChorus, M::I, l, r);                        // 2 chorus I
-    renderScene (phrase, kChorus, M::II, l, r);                       // 3 chorus II
-    renderScene (phrase, kDelay, M::Off, l, r);                       // 4 delay (ping-pong 375 ms)
-    renderScene (phrase, kReverb, M::Off, l, r);                      // 5 reverb (3.5 s hall)
-    renderScene (phrase, kChorus | kDelay | kReverb, M::I, l, r);     // 6 all three
+    const float def = vs::fx::ChorusParams {}.mix;
+    struct S { const char* name; int which; M mode; float mix; };
+    const S scenes[] {
+        { "dry", 0, M::Off, def },
+        { "chorus I, default mix", kChorus, M::I, def },
+        { "chorus I, mix 1.0", kChorus, M::I, 1.0f },
+        { "chorus II, default mix", kChorus, M::II, def },
+        { "chorus II, mix 1.0", kChorus, M::II, 1.0f },
+        { "delay (ping-pong 375 ms, fb 0.5, level 0.7)", kDelay, M::Off, def },
+        { "reverb (3.5 s hall, level 0.5)", kReverb, M::Off, def },
+        { "all three (chorus I default, delay 0.7, reverb)", kChorus | kDelay | kReverb, M::I, def },
+    };
+    for (size_t i = 0; i < std::size (scenes); ++i)
+    {
+        WARN ("scene " << i + 1 << " at " << static_cast<double> (l.size()) / kFs << " s: " << scenes[i].name);
+        renderScene (phrase, scenes[i].which, scenes[i].mode, scenes[i].mix, l, r);
+    }
 
     float peak = 0.0f;
     for (size_t i = 0; i < l.size(); ++i)
