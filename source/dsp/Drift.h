@@ -26,11 +26,12 @@ public:
         cutoffOct = rng.bipolar();
         envScale = rng.bipolar();
         const double a = static_cast<double> (onePoleCoef (1.2f, sampleRate));
-        for (int n = 0; n <= kMaxAdvance; ++n)
-            decayN[static_cast<size_t> (n)] = static_cast<float> (std::pow (1.0 - a, n));
+        logDecay = std::log (1.0 - a);
         retargetSamples = std::max (1, static_cast<int> (0.25f * sampleRate)); // >= 1: advance() always progresses
         counter = 0;
         target = dev = 0.0f;
+        dev0 = 0.0;
+        sinceRetarget = 0;
     }
 
     static constexpr int kMaxAdvance = 64;
@@ -42,7 +43,8 @@ public:
         blocks: n per-sample steps and one n-sample step differ only by float rounding.
         The walk is kept as target + deviation (only the deviation decays): a value-form one-pole
         with this tiny coefficient would stall up to ~0.3 % of full scale short of its target
-        when stepped per sample, but not when stepped per 32 samples.
+        when stepped per sample, but not when stepped per 32 samples. The deviation is computed
+        from the time since the retarget, so it does not depend on how calls are split.
     */
     float advance (int n) noexcept
     {
@@ -53,14 +55,21 @@ public:
             {
                 counter = retargetSamples;
                 const float newTarget = rng.bipolar();
+                dev = static_cast<float> (dev0 * std::exp (logDecay * static_cast<double> (sinceRetarget))); // at this sample
                 dev = (target + dev) - newTarget;
                 target = newTarget;
+                dev0 = static_cast<double> (dev);
+                sinceRetarget = 0;
             }
             const int k = n < counter ? n : counter;
-            dev *= decayN[static_cast<size_t> (k)];
+            sinceRetarget += k;
             counter -= k;
             n -= k;
         }
+        // From the absolute time since the retarget, not stepped per call: stepping rounded
+        // differently for different splits, and a pitch difference integrates into a phase
+        // difference (-102 dB between 37- and 512-sample host blocks with one voice).
+        dev = static_cast<float> (dev0 * std::exp (logDecay * static_cast<double> (sinceRetarget)));
         return current();
     }
 
@@ -78,7 +87,9 @@ private:
     Random rng;
     float target = 0.0f, dev = 0.0f; // walk = target + dev
     int retargetSamples = 1, counter = 0;
-    std::array<float, kMaxAdvance + 1> decayN {}; // (1 - a)^n of the walk's one-pole
+    double dev0 = 0.0;           // deviation right after the last retarget
+    double logDecay = 0.0;       // ln (1 - a) of the walk's one-pole
+    int sinceRetarget = 0;       // samples since the last retarget (< retargetSamples)
 
 };
 } // namespace vs::dsp

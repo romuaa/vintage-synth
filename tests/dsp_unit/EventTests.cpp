@@ -255,6 +255,53 @@ TEST_CASE ("Processor: event-buffer overflow never hangs a note", "[events][proc
     CHECK (tailPeak < 1.0e-5f);
 }
 
+TEST_CASE ("Processor: event-buffer overflow with the sustain pedal down never hangs a note", "[events][processor][pedal]")
+{
+    // M2b defers key releases while the pedal is down. Here the pedal-up and the note-offs are
+    // dropped with the overflow; the appended All Notes Off must clear the pedal and release.
+    for (const int mode : { 0, 1, 2 }) // Poly, Unison, Solo
+    {
+        JuceEnv env;
+        vs::VintageSynthProcessor proc;
+        constexpr double sr = 48000.0;
+        constexpr int block = 512;
+        proc.getState().getParameter ("lower.assign.mode")->setValueNotifyingHost (static_cast<float> (mode) / 2.0f);
+        proc.setPlayConfigDetails (0, 2, sr, block);
+        proc.prepareToPlay (sr, block);
+
+        juce::MidiBuffer flood;
+        flood.addEvent (juce::MidiMessage::noteOn (1, 60, static_cast<juce::uint8> (100)), 0);
+        flood.addEvent (juce::MidiMessage::noteOn (1, 64, static_cast<juce::uint8> (100)), 0);
+        flood.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 1); // pedal down
+        flood.addEvent (juce::MidiMessage::noteOff (1, 60), 2);              // held by the pedal
+        for (int i = 0; i < 3000; ++i)
+            flood.addEvent (juce::MidiMessage::pitchWheel (1, 8192), 3 + i % 400);
+        flood.addEvent (juce::MidiMessage::noteOff (1, 64), 500);            // dropped
+        flood.addEvent (juce::MidiMessage::controllerEvent (1, 64, 0), 501); // dropped
+
+        juce::AudioBuffer<float> buffer (2, block);
+        proc.processBlock (buffer, flood);
+        CHECK (buffer.getMagnitude (0, 0, block) > 0.01f);
+
+        // The pedal must be up now: a later note is released by its own note-off.
+        juce::MidiBuffer later;
+        later.addEvent (juce::MidiMessage::noteOn (1, 67, static_cast<juce::uint8> (100)), 10);
+        later.addEvent (juce::MidiMessage::noteOff (1, 67), 200);
+        proc.processBlock (buffer, later);
+
+        juce::MidiBuffer none;
+        float tailPeak = 0.0f;
+        for (int b = 0; b < static_cast<int> (sr) / block; ++b)
+        {
+            proc.processBlock (buffer, none);
+            if (b > 40)
+                tailPeak = std::max (tailPeak, buffer.getMagnitude (0, 0, block));
+        }
+        INFO ("assign mode " << mode);
+        CHECK (tailPeak < 1.0e-5f);
+    }
+}
+
 TEST_CASE ("Processor: processBlock does not allocate (malloc or new), even with SysEx in the MIDI buffer", "[events][processor][realtime]")
 {
 #if ! VS_TEST_COUNT_ALLOCATIONS

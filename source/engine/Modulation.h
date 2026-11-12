@@ -24,7 +24,7 @@ struct ModBlock
     enum Ctl
     {
         BendOct,      // pitch bend, octaves
-        VcoLfoOct,    // VCO LFO-mod depth, octaves at full LFO swing
+        VcoLfoOct,    // VCO LFO-mod depth incl. the mod wheel's share, octaves at full LFO swing
         VcoEnvOct,    // VCO ENV-mod depth, octaves at full ENV-1
         PwmDepth,     // 0..1
         CrossModOct,  // VCO-2 -> VCO-1 FM depth, octaves at full VCO-2 swing
@@ -38,6 +38,9 @@ struct ModBlock
         Env1Sustain,
         Env2Sustain,
         HpfG,         // one-pole TPT gain of the HPF (shared by all voices)
+        UnisonSpreadOct, // total unison detune spread, octaves (a voice adds position x spread)
+        VelToVca,     // velocity -> VCA amount 0..1
+        VelToVcf,     // velocity -> VCF ENV depth amount 0..1
         NumCtl
     };
 
@@ -48,6 +51,12 @@ struct ModBlock
     float ctl[NumCtl][kMaxSubBlock] {};
     float lfo[kMaxSubBlock] {};     // bipolar, delay/fade-in applied
     float vcaGain[kMaxSubBlock] {}; // level x tremolo
+
+    // Closed-form one-pole tables, index k = what is left of a deviation after k samples
+    // (k = 0 .. kMaxSubBlock). Owned by the PartModulator; valid while it lives.
+    const float* smoothDecay = nullptr; // parameter smoothing (5 ms): per-voice velocity and level
+    const float* glideDecay = nullptr;  // portamento (RC, 99 % in the portamento time)
+    double glideLog = 0.0;              // ln of the portamento's per-sample factor (glideDecay[1])
 };
 
 /**
@@ -65,6 +74,8 @@ public:
     /** Per block: new targets, plus the block-rate LFO settings and tremolo depth. */
     void setTarget (const PartParams& p) noexcept;
     void setBendTarget (float semitones) noexcept;
+    /** Mod wheel 0..1 (smoothed; its depth is the "Mod Wheel Vibrato" parameter). */
+    void setModWheel (float wheel) noexcept;
     void setVintage (float v) noexcept { vintage = v; }
     void triggerLfo() noexcept { lfo.trigger(); }
 
@@ -79,11 +90,17 @@ private:
     // (t - s) * a drops below half an ulp of s; it converges exactly.
     PartParams target, dev;
     float bendTarget = 0.0f, bendDev = 0.0f;
+    float wheelTarget = 0.0f, wheelDev = 0.0f;
+    float glideSeconds = -1.0f; // portamento time the glide table was built for
+    double glideLog = 0.0;
     float vintage = 0.0f;
     float tremoloDepth = 0.0f;
 
     // decay[k] = (1 - a)^k: what is left of a one-pole smoother's distance to target after k samples.
     std::array<float, kMaxSubBlock + 1> decay {};
+    std::array<float, kMaxSubBlock + 1> glide {};
+
+    void updateGlideTable (float seconds) noexcept;
 
     dsp::Lfo lfo;
 };

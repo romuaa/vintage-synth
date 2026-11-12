@@ -35,13 +35,54 @@ public:
     /** Per block: envelope times, waveforms and switches (not smoothed). */
     void setBlockParams (const PartParams& p, float vintage) noexcept;
 
-    void noteOn (int note, float velocity) noexcept;
-    /** Legato pitch change: no envelope retrigger. */
-    void setNote (int note) noexcept { currentNote = note; }
+    /** Starts (or retriggers) a note at full level, centred: start (note, velocity, 1, 0). */
+    void noteOn (int note, float velocity) noexcept { start (note, velocity, 1.0f, 0.0f); }
+
+    /**
+        Starts or retriggers a note. A sounding voice keeps its envelope levels (no click), and
+        its velocity and level move to the new values over the 5 ms parameter smoothing; an idle
+        voice takes them at once. Any glide is cancelled (see glideFrom).
+        @param levelScale  output scale (unison: 1/sqrt(n))
+        @param unisonPos   -0.5 .. 0.5: this voice's share of the unison detune spread
+    */
+    void start (int note, float velocity, float levelScale, float unisonPos) noexcept;
+
+    /** Portamento: the pitch starts at fromSemis (MIDI note units) and glides to the note. */
+    void glideFrom (float fromSemis) noexcept
+    {
+        glideDev = fromSemis - static_cast<float> (currentNote);
+        glideAnchored = false; // anchored to the part's glide rate in the next beginBlock()
+    }
+
+    /** Legato pitch change, no envelope retrigger. With glide, the pitch glides from where it is now. */
+    void setNote (int note, bool glide) noexcept
+    {
+        const float from = getPitch();
+        currentNote = note;
+        if (glide)
+            glideFrom (from);
+        else
+            glideDev = 0.0f;
+    }
+
     void noteOff() noexcept;
+
+    /**
+        Steal fade: the output falls linearly to 0 over the next `samples` samples (the last one
+        is 0). The caller must not render past the end of the fade (sub-block boundary), then
+        reset() the voice and start the next note.
+    */
+    void startFade (int samples) noexcept
+    {
+        fadeLength = samples < 1 ? 1 : samples;
+        fadeRemaining = fadeLength;
+    }
+    int getFadeRemaining() const noexcept { return fadeRemaining; }
 
     bool isActive() const noexcept { return env2.isActive(); }
     int getNote() const noexcept { return currentNote; }
+    /** Current keyboard pitch in MIDI note units, including any glide in progress. */
+    float getPitch() const noexcept { return static_cast<float> (currentNote) + glideDev; }
 
     /** Phase 1 for the sub-block in m. Returns false (and does nothing) if the voice is idle. */
     bool beginBlock (const ModBlock& m) noexcept;
@@ -75,6 +116,7 @@ public:
 
 private:
     void applyEnvTimes() noexcept;
+    void restartFromIdle() noexcept;
 
     static constexpr float kMinDt = 1.0e-7f, kMaxDt = 0.45f; // phase increment limits (cycles/sample)
 
@@ -89,8 +131,29 @@ private:
     dsp::Drift drift;
     float driftWalk = 0.0f; // dynamic drift at the last control point
 
+    // A voice that starts from idle draws new oscillator start phases and noise seeds here. Its
+    // oscillators stopped at the end of the sub-block in which ENV-2 finished, which depends on
+    // the host block size; without a fresh start the next note would too. The first note after
+    // prepare() keeps the prepare-time phases.
+    dsp::Random restartRng;
+    bool freshPhases = true;
+
     int currentNote = 60;
-    float velocity = 1.0f;
+
+    // Per-note state. Velocity and level are target + deviation smoothers (5 ms).
+    // Portamento: pitch - currentNote (semitones) = glideStart * g^k, k = samples since the anchor.
+    // Evaluated from the absolute k (double), not stepped per sub-block, so the glide does not
+    // depend on how the render is split: a stepped deviation's rounding differences integrate
+    // into a phase difference over a long glide (measured -74 dB between host block sizes).
+    float glideDev = 0.0f;       // at the start of the next sub-block (0 = not gliding)
+    double glideStart = 0.0;     // deviation at the anchor
+    double glideLog = 0.0;       // ln g per sample the anchor was made with
+    std::int64_t glideK = 0;     // samples since the anchor
+    bool glideAnchored = false;
+    float velTgt = 1.0f, velDev = 0.0f;
+    float scaleTgt = 1.0f, scaleDev = 0.0f;
+    float unisonPos = 0.0f;
+    int fadeRemaining = 0, fadeLength = 1;
 
     // Block-rate state
     float env1Times[3] {}, env2Times[3] {};

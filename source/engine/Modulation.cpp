@@ -44,6 +44,7 @@ void PartModulator::prepare (float oversampledRate, std::uint32_t lfoSeed) noexc
     for (int k = 0; k <= kMaxSubBlock; ++k)
         decay[static_cast<size_t> (k)] = static_cast<float> (std::pow (1.0 - a, k));
     lfo.prepare (fs, lfoSeed);
+    glideSeconds = -1.0f; // rebuild the glide table for the new rate
     reset (target);
 }
 
@@ -56,12 +57,38 @@ void PartModulator::reset (const PartParams& p) noexcept
     VS_PART_FLOAT_PARAMS (VS_ZERO_DEV)
 #undef VS_ZERO_DEV
     bendTarget = bendDev = 0.0f;
+    wheelTarget = wheelDev = 0.0f;
     lfo.reset();
 }
 
 void PartModulator::setBendTarget (float semitones) noexcept
 {
     retarget (bendTarget, bendDev, semitones);
+}
+
+void PartModulator::setModWheel (float wheel) noexcept
+{
+    retarget (wheelTarget, wheelDev, dsp::clamp (wheel, 0.0f, 1.0f));
+}
+
+void PartModulator::updateGlideTable (float seconds) noexcept
+{
+    if (std::bit_cast<std::uint32_t> (seconds) == std::bit_cast<std::uint32_t> (glideSeconds))
+        return;
+    glideSeconds = seconds;
+    // RC glide: 99 % of the interval in `seconds` -> per-sample factor exp(-ln(100) / (T fs)).
+    // Off (T = 0): nothing is left after the first sample.
+    const double perSample = seconds > 0.0f
+                                 ? std::exp (-4.605170185988091 / (static_cast<double> (seconds) * static_cast<double> (fs)))
+                                 : 0.0;
+    // Off: a finite stand-in for ln 0, so exp(glideLog * 0) is still 1.
+    glideLog = seconds > 0.0f ? std::log (perSample) : -1.0e4;
+    double g = 1.0;
+    for (size_t k = 0; k < glide.size(); ++k)
+    {
+        glide[k] = static_cast<float> (g);
+        g *= perSample;
+    }
 }
 
 void PartModulator::setTarget (const PartParams& p) noexcept
@@ -76,6 +103,7 @@ void PartModulator::setTarget (const PartParams& p) noexcept
     lfo.setRate (map::lfoRateHz (p.lfoRate));
     lfo.setDelay (map::lfoDelaySec (p.lfoDelay));
     tremoloDepth = map::vcaLfoDepth (p.vcaLfoMod);
+    updateGlideTable (map::portaTimeSec (p.portaTime));
 }
 
 void PartModulator::next (int n, ModBlock& block) noexcept
@@ -83,6 +111,9 @@ void PartModulator::next (int n, ModBlock& block) noexcept
     n = dsp::clamp (n, 1, kMaxSubBlock);
     block.numSamples = n;
     block.vintage = vintage;
+    block.smoothDecay = decay.data();
+    block.glideDecay = glide.data();
+    block.glideLog = glideLog;
 
     const float* d = decay.data();
     auto& s = dev;
@@ -106,8 +137,13 @@ void PartModulator::next (int n, ModBlock& block) noexcept
     smooth (s.vco1CrossMod, t.vco1CrossMod, d, ctl (ModBlock::CrossModOct), n);
     smooth (s.vcfLfoMod, t.vcfLfoMod, d, ctl (ModBlock::VcfLfoOct), n);
     smooth (s.hpfCutoff, t.hpfCutoff, d, ctl (ModBlock::HpfG), n);
-    float level[kMaxSubBlock];
+    smooth (s.unisonDetune, t.unisonDetune, d, ctl (ModBlock::UnisonSpreadOct), n);
+    smooth (s.velToVca, t.velToVca, d, ctl (ModBlock::VelToVca), n);
+    smooth (s.velToVcf, t.velToVcf, d, ctl (ModBlock::VelToVcf), n);
+    float level[kMaxSubBlock], wheel[kMaxSubBlock], wheelDepth[kMaxSubBlock];
     smooth (s.vcaLevel, t.vcaLevel, d, level, n);
+    smooth (wheelDev, wheelTarget, d, wheel, n);
+    smooth (s.modWheelDepth, t.modWheelDepth, d, wheelDepth, n);
 
     {
         float* bendOct = ctl (ModBlock::BendOct);
@@ -121,6 +157,7 @@ void PartModulator::next (int n, ModBlock& block) noexcept
         float* cross = ctl (ModBlock::CrossModOct);
         float* vcfLfo = ctl (ModBlock::VcfLfoOct);
         float* hpf = ctl (ModBlock::HpfG);
+        float* spread = ctl (ModBlock::UnisonSpreadOct);
         const float piOverFs = dsp::kPi / fs;
         for (int i = 0; i < n; ++i)
         {
@@ -130,7 +167,8 @@ void PartModulator::next (int n, ModBlock& block) noexcept
             envOct[i] = map::vcfEnvModOct (envOct[i]);
             keyOct[i] *= 1.0f / 12.0f;
             resK[i] = map::resonanceK (resK[i]);
-            vcoLfo[i] = map::vcoLfoModOct (vcoLfo[i]);
+            vcoLfo[i] = map::vcoLfoModOct (map::vcoLfoModWithWheel (vcoLfo[i], wheel[i], wheelDepth[i]));
+            spread[i] = map::unisonDetuneCents (spread[i]) * (1.0f / 1200.0f);
             vcoEnv[i] = map::vcoEnvModOct (vcoEnv[i]);
             cross[i] = map::crossModOct (cross[i]);
             vcfLfo[i] = map::vcfLfoModOct (vcfLfo[i]);

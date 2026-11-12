@@ -4,6 +4,9 @@
 #include "params/Mappings.h"
 
 #include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstdint>
 
 namespace vs
 {
@@ -45,6 +48,8 @@ void Voice::prepare (float oversampledRate, std::uint32_t seed) noexcept
     dsp::Random r (seed ^ 0xA5A5A5A5u);
     vco1.reset (r.unipolar());
     vco2.reset (r.unipolar());
+    restartRng.setSeed (seed * 747796405u + 2891336453u);
+    freshPhases = true;
     reset();
 }
 
@@ -54,6 +59,10 @@ void Voice::reset() noexcept
     env2.reset();
     hpf.reset();
     vcf.reset();
+    glideDev = 0.0f;
+    glideAnchored = false;
+    velDev = scaleDev = 0.0f;
+    fadeRemaining = 0;
 }
 
 void Voice::setBlockParams (const PartParams& p, float vintage) noexcept
@@ -95,10 +104,43 @@ void Voice::applyEnvTimes() noexcept
     env2.setTimes (env2Times[0] * s2, env2Times[1] * s2, env2Times[2] * s2);
 }
 
-void Voice::noteOn (int note, float vel) noexcept
+void Voice::restartFromIdle() noexcept
 {
+    if (freshPhases)
+    {
+        freshPhases = false;
+        return;
+    }
+    // The voice is silent here (ENV-2 idle), so none of this is audible.
+    const std::uint32_t s = restartRng.nextUInt();
+    vco1.setSeed (s * 2654435761u + 1u);
+    vco2.setSeed (s * 2246822519u + 7u);
+    vco1.reset (restartRng.unipolar());
+    vco2.reset (restartRng.unipolar());
+    hpf.reset();
+    vcf.reset();
+}
+
+void Voice::start (int note, float vel, float levelScale, float pos) noexcept
+{
+    if (! env2.isActive())
+        restartFromIdle();
+
+    if (env2.isActive())
+    {
+        // Retrigger: move velocity and level smoothly (a step in gain would click).
+        velDev = (velTgt + velDev) - vel;
+        scaleDev = (scaleTgt + scaleDev) - levelScale;
+    }
+    else
+    {
+        velDev = scaleDev = 0.0f;
+    }
+    velTgt = vel;
+    scaleTgt = levelScale;
+    unisonPos = pos;
+    glideDev = 0.0f;
     currentNote = note;
-    velocity = vel;
     applyEnvTimes();
     env1.noteOn();
     env2.noteOn();
@@ -112,10 +154,14 @@ void Voice::noteOff() noexcept
 
 bool Voice::beginBlock (const ModBlock& m) noexcept
 {
-    if (! env2.isActive())
-        return false;
-
     const int n = m.numSamples;
+    if (! env2.isActive())
+    {
+        // A steal fade keeps counting even if the old note has finished meanwhile.
+        fadeRemaining = fadeRemaining > n ? fadeRemaining - n : 0;
+        return false;
+    }
+
     const float invN = 1.0f / static_cast<float> (n);
     const float* lfo = m.lfo;
 
@@ -146,8 +192,21 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
     const float mod2 = vcoModTarget != kTargetVco1 ? 1.0f : 0.0f;
 
     // Dynamic drift (1.2 s time constant) is advanced once per sub-block and ramped linearly.
+    // It advances only while the voice sounds: if ENV-2 finished inside this sub-block, only up
+    // to that sample (where it finished must not depend on how the render is split).
+    int activeN = n;
+    if (! env2.isActive())
+    {
+        activeN = 0;
+        for (int i = n - 1; i >= 0; --i)
+            if (e2[i] > 0.0f)
+            {
+                activeN = i + 1;
+                break;
+            }
+    }
     const float walk0 = driftWalk;
-    driftWalk = drift.advance (n);
+    driftWalk = drift.advance (activeN);
     const float dynScale = dsp::Drift::kDynamicCents * vintage / 1200.0f;
     const float dyn0 = walk0 * dynScale;
     const float dynStep = (driftWalk - walk0) * dynScale * invN;
@@ -165,18 +224,61 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
         pwEnv = env1Inverted ? -1.0f : 1.0f;
     }
 
+    // Portamento (semitones above the note, closed-form RC) and velocity (smoothed per voice).
+    float glideSemis[kN], vel[kN], levelScale[kN];
+    {
+        if (glideDev != 0.0f)
+        {
+            if (! glideAnchored || std::bit_cast<std::uint64_t> (m.glideLog) != std::bit_cast<std::uint64_t> (glideLog))
+            {
+                // New glide, or the portamento time changed: continue from the current deviation.
+                glideStart = static_cast<double> (glideDev);
+                glideLog = m.glideLog;
+                glideK = 0;
+                glideAnchored = true;
+            }
+            const float g0 = glideDev; // = glideStart * g^glideK
+            const float* gd = m.glideDecay;
+            for (int i = 0; i < n; ++i)
+                glideSemis[i] = g0 * gd[i + 1];
+            glideK += n;
+            const double next = glideStart * std::exp (glideLog * static_cast<double> (glideK));
+            // 1e-9 semitone: what is left can no longer shift the phase measurably.
+            glideDev = std::abs (next) < 1.0e-9 ? 0.0f : static_cast<float> (next);
+        }
+        else
+        {
+            for (int i = 0; i < n; ++i)
+                glideSemis[i] = 0.0f;
+        }
+
+        const float* sd = m.smoothDecay;
+        const float v0 = velTgt, vd = velDev, s0 = scaleTgt, sdv = scaleDev;
+        for (int i = 0; i < n; ++i)
+        {
+            vel[i] = v0 + vd * sd[i + 1];
+            levelScale[i] = s0 + sdv * sd[i + 1];
+        }
+        velDev = std::abs (vd) < 1.0e-20f ? 0.0f : vd * sd[n];
+        scaleDev = std::abs (sdv) < 1.0e-20f ? 0.0f : sdv * sd[n];
+    }
+
     {
         const float* bendOct = m.ctl[ModBlock::BendOct];
         const float* lfoOct = m.ctl[ModBlock::VcoLfoOct];
         const float* envOct = m.ctl[ModBlock::VcoEnvOct];
         const float* fineOct = m.ctl[ModBlock::Vco2FineOct];
         const float* pwmDepth = m.ctl[ModBlock::PwmDepth];
+        const float* spread = m.ctl[ModBlock::UnisonSpreadOct];
+        const float pos = unisonPos;
         for (int i = 0; i < n; ++i)
         {
             const float dyn = dyn0 + dynStep * static_cast<float> (i + 1);
             const float pitchMod = lfo[i] * lfoOct[i] + e1Mod[i] * envOct[i];
-            const float log2F2 = base2 + dyn + fineOct[i] + bend2 * bendOct[i] + mod2 * pitchMod;
-            const float log2F1 = base1 + dyn + bendOct[i] + mod1 * pitchMod;
+            // Keyboard-related offsets (glide, unison detune); Lo Freq VCO-2 ignores them like the bender.
+            const float keyOct = glideSemis[i] * (1.0f / 12.0f) + pos * spread[i];
+            const float log2F2 = base2 + dyn + fineOct[i] + bend2 * (bendOct[i] + keyOct) + mod2 * pitchMod;
+            const float log2F1 = base1 + dyn + bendOct[i] + keyOct + mod1 * pitchMod;
             dt2[i] = dsp::clamp (dsp::fast::exp2 (log2F2) * invFs, kMinDt, kMaxDt);
             dt1Raw[i] = dsp::fast::exp2 (log2F1) * invFs; // clamped after cross-mod
 
@@ -195,13 +297,16 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
         const float* lfoOct = m.ctl[ModBlock::VcfLfoOct];
         const float* keyOct = m.ctl[ModBlock::VcfKeyOct];
         const float* resK = m.ctl[ModBlock::ResonanceK];
+        const float* velVca = m.ctl[ModBlock::VelToVca];
+        const float* velVcf = m.ctl[ModBlock::VelToVcf];
         const float keyDist = note - 60.0f;
         const float driftOct = drift.cutoffOct * dsp::Drift::kCutoffOct * vintage;
         const float piOverFs = dsp::kPi * invFs;
         const float maxLog2 = maxLog2Cutoff;
         for (int i = 0; i < n; ++i)
         {
-            const float log2Fc = cutoff[i] + env[i] * envOct[i] + lfo[i] * lfoOct[i] + keyOct[i] * keyDist + driftOct;
+            const float envDepth = envOct[i] * map::velocityScale (velVcf[i], vel[i]);
+            const float log2Fc = cutoff[i] + env[i] * envDepth + lfo[i] * lfoOct[i] + keyOct[i] * (keyDist + glideSemis[i]) + driftOct;
             const float fc = dsp::fast::exp2 (dsp::clamp (log2Fc, 3.0f, maxLog2));
             const auto c = dsp::OtaLadder::makeCoefs (dsp::fast::tanPrewarp (fc * piOverFs), resK[i]);
             cG[i] = c.G;
@@ -211,8 +316,18 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
             c4[i] = c.c4;
             cK[i] = c.k;
             cInv[i] = c.inv;
-            gain[i] = e2[i] * m.vcaGain[i] * c.comp;
+            gain[i] = e2[i] * m.vcaGain[i] * c.comp * map::velocityScale (velVca[i], vel[i]) * levelScale[i];
         }
+    }
+
+    // Steal fade: linear to 0 at the fade's last sample. The Part never renders past it.
+    if (fadeRemaining > 0)
+    {
+        const float invLen = 1.0f / static_cast<float> (fadeLength);
+        const float rem = static_cast<float> (fadeRemaining);
+        for (int i = 0; i < n; ++i)
+            gain[i] *= std::max (0.0f, (rem - static_cast<float> (i + 1)) * invLen);
+        fadeRemaining = fadeRemaining > n ? fadeRemaining - n : 0;
     }
     return true;
 }
