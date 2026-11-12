@@ -39,7 +39,14 @@ public:
     /**
         Renders numSamples (<= maxBlockSize) into out (overwrites it). Each event is applied
         at its offset (relative to out[0], ascending). Offsets past the end are applied after
-        the last sample, so a note-off is never lost.
+        the last sample, so a note-off is never lost. With numSamples == 0 the events are
+        applied (state change only) and nothing is rendered.
+
+        Controller semantics (docs/architecture.md section 2):
+        - AllNotesOff (CC 123, and the event-buffer overflow marker) releases every key and
+          clears the sustain pedal, so a dropped pedal-up can never hold notes.
+        - AllSoundOff (CC 120) does the same and silences the voices immediately.
+        - ResetControllers (CC 121) resets pitch bend, mod wheel and the sustain pedal.
     */
     void render (float* out, int numSamples, std::span<const NoteEvent> events) noexcept;
 
@@ -50,6 +57,10 @@ public:
     int getOversamplingFactor() const noexcept { return osFactor; }
     bool isSounding() const noexcept { return voice.isActive(); }
 
+    /** Controller state (M2a stores it; M2b uses it for vibrato and deferred releases). */
+    float getModWheel() const noexcept { return modWheel; }
+    bool isSustainDown() const noexcept { return sustainDown; }
+
 private:
     void renderOversampled (float* os, int numOsSamples) noexcept;
     void applyBlockParams() noexcept;
@@ -57,6 +68,7 @@ private:
     void noteOn (int note, float velocity) noexcept;
     void noteOff (int note) noexcept;
     void allNotesOff() noexcept;
+    void resetControllers() noexcept;
 
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     juce::AudioBuffer<float> silence;
@@ -68,6 +80,8 @@ private:
     PartParams target;
     float vintage = 0.0f;
     float bendRangeSemis = 2.0f;
+    float modWheel = 0.0f;
+    bool sustainDown = false;
 
     int maxSubBlock = kMaxSubBlock;
     PartModulator modulator;

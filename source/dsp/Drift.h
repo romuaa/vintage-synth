@@ -2,6 +2,7 @@
 
 #include "dsp/DspUtil.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 
@@ -24,36 +25,46 @@ public:
         vco2Cents = rng.bipolar();
         cutoffOct = rng.bipolar();
         envScale = rng.bipolar();
-        walkCoef = onePoleCoef (1.2f, sampleRate);
+        const double a = static_cast<double> (onePoleCoef (1.2f, sampleRate));
         for (int n = 0; n <= kMaxAdvance; ++n)
-            walkCoefN[static_cast<size_t> (n)] = static_cast<float> (1.0 - std::pow (1.0 - static_cast<double> (walkCoef), n));
-        retargetSamples = static_cast<int> (0.25f * sampleRate);
+            decayN[static_cast<size_t> (n)] = static_cast<float> (std::pow (1.0 - a, n));
+        retargetSamples = std::max (1, static_cast<int> (0.25f * sampleRate)); // >= 1: advance() always progresses
         counter = 0;
-        walk = target = 0.0f;
+        target = dev = 0.0f;
     }
 
     static constexpr int kMaxAdvance = 64;
 
     /**
-        Advance the slow drift by n (<= kMaxAdvance) samples at once (control rate); returns the
-        dynamic drift at the end, in units of kDynamicCents at full amount. Equivalent to n per-sample
-        one-pole steps, except that a retarget due inside the n samples takes effect at their start
-        (at most n samples early, against a 0.25 s retarget period).
+        Advance the slow drift by n (<= kMaxAdvance) samples at once; returns the dynamic drift at
+        the end, in units of kDynamicCents at full amount. A retarget is applied at its exact sample
+        (the n samples are split there), so the walk is the same however a render is cut into
+        blocks: n per-sample steps and one n-sample step differ only by float rounding.
+        The walk is kept as target + deviation (only the deviation decays): a value-form one-pole
+        with this tiny coefficient would stall up to ~0.3 % of full scale short of its target
+        when stepped per sample, but not when stepped per 32 samples.
     */
     float advance (int n) noexcept
     {
         n = clamp (n, 0, kMaxAdvance);
-        counter -= n;
-        if (counter <= 0)
+        while (n > 0)
         {
-            counter += retargetSamples;
-            target = rng.bipolar();
+            if (counter <= 0) // a retarget is due at this sample
+            {
+                counter = retargetSamples;
+                const float newTarget = rng.bipolar();
+                dev = (target + dev) - newTarget;
+                target = newTarget;
+            }
+            const int k = n < counter ? n : counter;
+            dev *= decayN[static_cast<size_t> (k)];
+            counter -= k;
+            n -= k;
         }
-        walk += (target - walk) * walkCoefN[static_cast<size_t> (n)];
-        return walk;
+        return current();
     }
 
-    float current() const noexcept { return walk; }
+    float current() const noexcept { return target + dev; }
 
     // Full-scale ranges at Vintage = 1.
     static constexpr float kStaticCents = 6.0f;
@@ -65,8 +76,9 @@ public:
 
 private:
     Random rng;
-    float walk = 0.0f, target = 0.0f, walkCoef = 0.0f;
+    float target = 0.0f, dev = 0.0f; // walk = target + dev
     int retargetSamples = 1, counter = 0;
-    std::array<float, kMaxAdvance + 1> walkCoefN {};
+    std::array<float, kMaxAdvance + 1> decayN {}; // (1 - a)^n of the walk's one-pole
+
 };
 } // namespace vs::dsp

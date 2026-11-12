@@ -11,17 +11,22 @@ namespace vs
 /**
     Parses one raw MIDI message (as delivered by the host, running status already resolved).
     Channel is ignored (omni). Returns false for anything a Part does not use: system
-    messages (SysEx, clock, ...), other controllers, program change, pressure, malformed data.
-    Never allocates.
+    messages (SysEx, clock, ...), other controllers, program change, pressure, and malformed
+    data (too short, or a data byte with the high bit set), which is rejected rather than
+    reinterpreted. Never allocates.
 */
 inline bool parseMidiMessage (const std::uint8_t* data, int numBytes, int offset, NoteEvent& out) noexcept
 {
-    if (data == nullptr || numBytes < 2 || data[0] < 0x80 || data[0] >= 0xF0)
+    // Only 3-byte channel messages are used (note off/on, controller, pitch bend); program
+    // change and channel pressure (2 bytes) and all system messages are dropped.
+    if (data == nullptr || numBytes < 3 || data[0] < 0x80 || data[0] >= 0xF0)
         return false;
+    if ((data[1] & 0x80) != 0 || (data[2] & 0x80) != 0)
+        return false; // a status byte where data is expected: malformed
 
     const int status = data[0] & 0xF0;
-    const auto d1 = static_cast<std::uint8_t> (data[1] & 0x7F);
-    const auto d2 = static_cast<std::uint8_t> (numBytes > 2 ? (data[2] & 0x7F) : 0);
+    const auto d1 = data[1];
+    const auto d2 = data[2];
 
     out = NoteEvent { offset, EventType::NoteOff, d1, 0.0f };
     switch (status)

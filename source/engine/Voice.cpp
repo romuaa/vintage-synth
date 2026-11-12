@@ -3,9 +3,12 @@
 #include "dsp/FastMath.h"
 #include "params/Mappings.h"
 
+#include <algorithm>
+
 namespace vs
 {
 static_assert (kVcoWaveLabels.size() == dsp::kNumWaves, "VCO wave labels must match dsp::Wave");
+static_assert (kMaxSubBlock <= dsp::Drift::kMaxAdvance, "a sub-block must fit in one Drift::advance()");
 
 namespace
 {
@@ -216,29 +219,32 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
 
 void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m, float* out) noexcept
 {
-    Voice* active[kMaxVoicesPerBlock];
-    int numActive = 0;
-    for (int v = 0; v < numVoices && numActive < kMaxVoicesPerBlock; ++v)
-        if (voices[v]->beginBlock (m))
-            active[numActive++] = voices[v];
-
     const int n = m.numSamples;
-    if (numActive == 0)
-    {
-        for (int i = 0; i < n; ++i)
-            out[i] = 0.0f;
-        return;
-    }
+    for (int i = 0; i < n; ++i)
+        out[i] = 0.0f;
 
     const float* hpfG = m.ctl[ModBlock::HpfG];
     const float* crossOct = m.ctl[ModBlock::CrossModOct];
     const float* mix = m.ctl[ModBlock::SourceMix];
-    for (int i = 0; i < n; ++i)
+
+    // Voices are interleaved in groups of kVoiceGroup (fixed-size list on the stack); any number
+    // of voices is rendered, a part's 16 in one group.
+    for (int first = 0; first < numVoices; first += kVoiceGroup)
     {
-        float sum = 0.0f;
-        for (int a = 0; a < numActive; ++a)
-            sum += active[a]->renderSample (i, hpfG[i], crossOct[i], mix[i]);
-        out[i] = sum;
+        Voice* active[kVoiceGroup];
+        int numActive = 0;
+        const int last = std::min (numVoices, first + kVoiceGroup);
+        for (int v = first; v < last; ++v)
+            if (voices[v]->beginBlock (m))
+                active[numActive++] = voices[v];
+
+        for (int i = 0; i < n; ++i)
+        {
+            float sum = 0.0f;
+            for (int a = 0; a < numActive; ++a)
+                sum += active[a]->renderSample (i, hpfG[i], crossOct[i], mix[i]);
+            out[i] += sum;
+        }
     }
 }
 } // namespace vs

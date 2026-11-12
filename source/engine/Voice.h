@@ -67,10 +67,11 @@ public:
         return y * gain[k];
     }
 
-    /** Renders one sub-block of all given voices into out (overwrites m.numSamples samples). */
+    /** Renders one sub-block of any number of voices into out (overwrites m.numSamples samples). */
     static void renderBlock (Voice* const* voices, int numVoices, const ModBlock& m, float* out) noexcept;
 
-    static constexpr int kMaxVoicesPerBlock = 32;
+    /** Voices interleaved together in renderBlock (more are rendered in further groups). */
+    static constexpr int kVoiceGroup = 32;
 
 private:
     void applyEnvTimes() noexcept;

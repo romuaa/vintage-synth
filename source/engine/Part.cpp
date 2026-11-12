@@ -31,6 +31,8 @@ void Part::reset() noexcept
     modulator.reset (target);
     voice.reset();
     numHeld = 0;
+    modWheel = 0.0f;
+    sustainDown = false;
 }
 
 void Part::applyBlockParams() noexcept
@@ -46,7 +48,11 @@ void Part::render (float* out, int numSamples, std::span<const NoteEvent> events
     jassert (numSamples <= maxBlock);
     numSamples = juce::jmin (numSamples, maxBlock);
     if (numSamples <= 0)
+    {
+        for (const auto& e : events)
+            handleEvent (e); // zero-length host block: state changes still count
         return;
+    }
 
     applyBlockParams();
 
@@ -97,10 +103,9 @@ void Part::handleEvent (const NoteEvent& e) noexcept
         case EventType::PitchBend:        modulator.setBendTarget (e.value * bendRangeSemis); break;
         case EventType::AllNotesOff:      allNotesOff(); break;
         case EventType::AllSoundOff:      allNotesOff(); voice.reset(); break;
-        case EventType::ResetControllers: modulator.setBendTarget (0.0f); break;
-        case EventType::ModWheel:         // M2b: vibrato
-        case EventType::SustainPedal:     // M2b: deferred releases
-            break;
+        case EventType::ResetControllers: resetControllers(); break;
+        case EventType::ModWheel:         modWheel = e.value; break;               // vibrato: M2b
+        case EventType::SustainPedal:     sustainDown = e.value >= 0.5f; break;    // deferred releases: M2b
     }
 }
 
@@ -140,7 +145,17 @@ void Part::noteOff (int note) noexcept
 
 void Part::allNotesOff() noexcept
 {
+    // Also clears the pedal: once M2b defers releases while it is down, an All Notes Off (or
+    // the overflow marker, whose pedal-up may have been dropped) must still release everything.
+    sustainDown = false;
     numHeld = 0;
     voice.noteOff();
+}
+
+void Part::resetControllers() noexcept
+{
+    modulator.setBendTarget (0.0f);
+    modWheel = 0.0f;
+    sustainDown = false; // M2b: releasing the pedal releases the notes it was holding
 }
 } // namespace vs
