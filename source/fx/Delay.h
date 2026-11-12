@@ -30,7 +30,7 @@ namespace vs::fx
 {
 struct DelayParams
 {
-    float timeSeconds = 0.375f; ///< 0.001..2 s
+    float timeSeconds = 0.7f; ///< 0.001..2 s (default 700 ms: owner choice)
     float feedback = 0.35f;     ///< 0..0.95 (gain per repeat)
     float damping = 0.3f;       ///< 0..1: feedback low-pass 20 kHz (0, flat) .. 1.5 kHz (1)
     bool pingPong = false;

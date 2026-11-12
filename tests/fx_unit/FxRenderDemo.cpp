@@ -104,11 +104,11 @@ void renderScene (const std::vector<float>& phrase, int which, vs::fx::ChorusMod
 
     const vs::fx::ChorusParams cp { (which & kChorus) != 0 ? mode : vs::fx::ChorusMode::Off, chorusMix };
     vs::fx::DelayParams dp;
-    dp.timeSeconds = 0.375f;
-    dp.feedback = 0.5f;
+    dp.timeSeconds = 0.7f;
+    dp.feedback = 0.4f;
     dp.damping = 0.35f;
     dp.pingPong = true;
-    dp.level = (which & kDelay) != 0 ? 0.7f : 0.0f;
+    dp.level = (which & kDelay) != 0 ? 0.4f : 0.0f;
     vs::fx::ReverbParams rp;
     rp.decaySeconds = 3.5f;
     rp.damping = 0.5f;
@@ -151,7 +151,7 @@ TEST_CASE ("Render M5 effects demo WAV", "[.render]")
         { "chorus I, mix 1.0", kChorus, M::I, 1.0f },
         { "chorus II, default mix", kChorus, M::II, def },
         { "chorus II, mix 1.0", kChorus, M::II, 1.0f },
-        { "delay (ping-pong 375 ms, fb 0.5, level 0.7)", kDelay, M::Off, def },
+        { "delay (ping-pong 700 ms, fb 0.4, level 0.4)", kDelay, M::Off, def },
         { "reverb (3.5 s hall, level 0.5)", kReverb, M::Off, def },
         { "all three (chorus I default, delay 0.7, reverb)", kChorus | kDelay | kReverb, M::I, def },
     };
