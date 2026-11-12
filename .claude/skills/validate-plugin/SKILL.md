@@ -28,7 +28,9 @@ Run these in order and stop at the first failure. Report each step as pass, fail
 4. **VST3 validator** (not wired up yet; it gets built from the VST3 SDK once added):
    `validator "<path>.vst3"`
 5. **CPU benchmark:** `build/mac/tests/voice_bench`. M1 baseline on an Apple M5 Pro: 0.35–0.43 % of one core
-   per voice at 2×, and 0.71–0.75 % at 4× (run-to-run spread).
+   per voice at 2×, and 0.71–0.75 % at 4× (run-to-run spread). Since the CI speed-up, `voice_bench`
+   links the non-LTO `vs_test_core`, which measured 0.47 % / 0.75 %. That is a slightly pessimistic
+   figure for the shipped (LTO) plugin; compare new runs against this one.
    Budget: 16 voices per part with 2× oversampling, and 32 voices in Dual mode must stay under 15% of one
    core at 48 kHz. Flag any regression above 5%.
 

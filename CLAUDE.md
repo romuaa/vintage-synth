@@ -34,8 +34,10 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - **CI:** `.github/workflows/build.yml` builds, tests, and runs pluginval on macOS and Win x64.
   Win ARM64 runs build, unit tests and host_smoke (there's no ARM64 pluginval). Check results with
   `gh run list` / `gh run view <id> --log-failed` (gh is installed and authenticated). Never claim
-  Windows is green without a passing run. CI uses CMake's default Windows generator (newest Visual
-  Studio on the runner); don't hardcode a VS version. Runner images are pinned (`macos-26`,
+  Windows is green without a passing run. CI builds every target with Ninja and a compiler cache
+  (ccache on macOS, sccache on Windows) inside the newest Visual Studio found by `vswhere`; never
+  hardcode a VS version. LTO applies to the shipped plugin only; tests and `voice_bench` link
+  `vs_test_core` (same sources, no LTO), so add new source files to `VS_PLUGIN_SOURCES`. Runner images are pinned (`macos-26`,
   `windows-2025`, `windows-11-arm`, `ubuntu-26.04`); Dependabot doesn't bump them, so check
   github.com/actions/runner-images when touching CI.
 - **Supply chain:** every third-party action is pinned by full commit SHA with a `# vX.Y.Z` comment.

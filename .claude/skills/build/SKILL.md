@@ -60,5 +60,12 @@ This Mac has no Rosetta, so the x86_64 slice can only be checked with `lipo`, no
 - Windows can't be built locally on this Mac. Say that it was verified "via CI only".
 - CI runs on push to `main` at GitHub `romuaa/vintage-synth` (private). Check it with `gh run list` and
   `gh run view <id> --log-failed`; report Windows as "pending CI" until a run passes.
-- Don't pass `-G "Visual Studio NN YYYY"`: runner images change VS versions. Use only `-A x64|ARM64`
-  so CMake picks the newest installed Visual Studio.
+- Don't pass `-G "Visual Studio NN YYYY"`: runner images change VS versions. Locally use only
+  `-A x64|ARM64`. CI uses Ninja inside the VS developer environment (`vswhere -latest` + `vcvarsall`).
+- New `.cpp` files go into `VS_PLUGIN_SOURCES` (top-level `CMakeLists.txt`); both the plugin and the
+  non-LTO `vs_test_core` (tests, `voice_bench`) compile from it.
+- LTO (`juce_recommended_lto_flags`) is linked PRIVATE to the plugin targets only. Never make it
+  PUBLIC: anything linking the LTO shared code pays a full link-time code generation
+  (about 5 min per Windows job).
+- CI compiler cache: ccache (macOS, supports the universal `-arch` pair) and sccache (Windows; it
+  ignores `/MP` and passes `/GL` through). `--show-stats` is printed after each build.

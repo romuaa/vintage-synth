@@ -47,6 +47,7 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | First CI run: both Windows jobs failed at configure: "Visual Studio 17 2022 could not find any instance of Visual Studio". macOS passed. | The runner images no longer ship VS 2022. Don't hardcode `-G "Visual Studio …"`; pass only `-A x64` / `-A ARM64` and let CMake pick the newest VS. |
 
 | Actions were three majors behind (`checkout@v4`, `upload-artifact@v4`, `download-artifact@v4`) and referenced by mutable tags. | Updated to checkout v7.0.1, upload-artifact v7.0.2, download-artifact v8.0.2, pinned by commit SHA. Dependabot keeps them current. Mutable tags are a supply-chain risk: `aquasecurity/trivy-action` tags were hijacked in early 2026. Resolve SHAs with `gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`. |
+| Windows x64 CI took ~18 min (build 15 min). | LTO flags were PUBLIC on the plugin's shared code, so the plugin, `voice_bench` and the unit tests each ran a full MSVC link-time code generation (4.5 + 1 + 4 min). Fix: LTO PRIVATE on the plugin targets only; tests link `vs_test_core` (same sources, no LTO). Plus Ninja and a compiler cache (ccache/sccache) on every CI job. |
 | Code scanning upload returns 403 on this private repo. | No GitHub Advanced Security. Trivy results go to the log and a SARIF artifact; upload is behind `vars.CODE_SCANNING`. |
 
 ### Environment and tooling (this Mac)

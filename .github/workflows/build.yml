@@ -27,21 +27,17 @@ jobs:
         include:
           - name: macos-universal
             os: macos-26 # Apple silicon; pinned (not -latest) for reproducible builds
-            generator: -G Ninja -DCMAKE_BUILD_TYPE=Release
-            build_args: ""
-            artefacts: build/VintageSynth_artefacts/Release/VST3
+            cache: ccache # handles the multi-arch (-arch arm64 -arch x86_64) universal compile
             pluginval: true
           - name: windows-x64
             os: windows-2025 # VS 2026 image; pinned (not -latest)
-            generator: -A x64 # default generator = newest installed Visual Studio
-            build_args: --config Release
-            artefacts: build/VintageSynth_artefacts/Release/VST3
+            msvc_arch: x64
+            cache: sccache
             pluginval: true
           - name: windows-arm64
             os: windows-11-arm # VS 2026 image
-            generator: -A ARM64
-            build_args: --config Release
-            artefacts: build/VintageSynth_artefacts/Release/VST3
+            msvc_arch: arm64
+            cache: sccache
             pluginval: false # no native ARM64 pluginval release yet
 
     steps:
@@ -53,23 +49,53 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
+      # Ninja + cl.exe needs the VS developer environment. Use the newest installed Visual Studio
+      # (never a hardcoded version); its bundled Ninja comes onto PATH with it.
+      - name: MSVC developer environment (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          Write-Host "Visual Studio: $vs"
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" ${{ matrix.msvc_arch }} >nul && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File $env:GITHUB_ENV -Append -Encoding utf8 }
+          }
+
+      # Compiler cache (ccache on macOS, sccache on Windows), stored in the GitHub Actions cache.
+      # Unchanged JUCE and project sources are not recompiled on the next run.
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@dbeefd73e8e2ffc1bbc412570072735eb4db3607 # v1.2.25
+        with:
+          key: ${{ matrix.name }}
+          variant: ${{ matrix.cache }}
+          max-size: 2G
+
       - name: Configure
         shell: bash
-        run: cmake -S . -B build ${{ matrix.generator }}
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ matrix.cache }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ matrix.cache }}
+          ${{ runner.os == 'Windows' && '-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl' || '' }}
 
       - name: Build
         shell: bash
-        run: cmake --build build ${{ matrix.build_args }} --parallel
+        run: cmake --build build --parallel
+
+      - name: Compiler cache statistics
+        if: always()
+        shell: bash
+        run: ${{ matrix.cache }} --show-stats || true
 
       - name: Unit tests
         shell: bash
-        run: ctest --test-dir build ${{ matrix.build_args != '' && '-C Release' || '' }} --output-on-failure
+        run: ctest --test-dir build --output-on-failure
 
       - name: Check architectures (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          archs=$(lipo -archs "${{ matrix.artefacts }}/$BUNDLE/Contents/MacOS/Vintage Synth")
+          archs=$(lipo -archs "build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/MacOS/Vintage Synth")
           echo "$archs"
           [[ "$archs" == *x86_64* && "$archs" == *arm64* ]]
 
@@ -80,7 +106,7 @@ jobs:
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
           unzip -q pv.zip
           pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
-            --skip-gui-tests "${{ matrix.artefacts }}/$BUNDLE"
+            --skip-gui-tests "build/VintageSynth_artefacts/Release/VST3/$BUNDLE"
 
       - name: pluginval (Windows)
         if: matrix.pluginval && runner.os == 'Windows'
@@ -89,12 +115,12 @@ jobs:
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
           unzip -q pv.zip
           ./pluginval.exe --strictness-level 10 --validate-in-process \
-            --skip-gui-tests "${{ matrix.artefacts }}/$BUNDLE"
+            --skip-gui-tests "build/VintageSynth_artefacts/Release/VST3/$BUNDLE"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vst3-${{ matrix.name }}
-          path: ${{ matrix.artefacts }}/${{ env.BUNDLE }}
+          path: build/VintageSynth_artefacts/Release/VST3/${{ env.BUNDLE }}
 
   # Merge Windows x64 + ARM64 into one .vst3 bundle (Contents/x86_64-win + Contents/arm64-win).
   windows-bundle:

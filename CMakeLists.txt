@@ -33,11 +33,14 @@ juce_add_plugin(VintageSynth
     HARDENED_RUNTIME_ENABLED    TRUE
     COPY_PLUGIN_AFTER_BUILD     FALSE)
 
-target_sources(VintageSynth PRIVATE
-    source/PluginProcessor.cpp
-    source/params/ParameterLayout.cpp
-    source/engine/Voice.cpp
-    source/engine/Part.cpp)
+# Our sources. Also compiled (without LTO) into vs_test_core for the tests; see tests/CMakeLists.txt.
+set(VS_PLUGIN_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/PluginProcessor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/params/ParameterLayout.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Voice.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Part.cpp)
+
+target_sources(VintageSynth PRIVATE ${VS_PLUGIN_SOURCES})
 
 target_include_directories(VintageSynth PRIVATE source)
 
@@ -52,8 +55,14 @@ target_link_libraries(VintageSynth
         juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# Link-time optimisation for the shipped plugin only. PRIVATE, so it doesn't leak into anything
+# that links VintageSynth; tests use vs_test_core instead and skip the slow LTCG/LTO link.
+target_link_libraries(VintageSynth PRIVATE juce::juce_recommended_lto_flags)
+if(TARGET VintageSynth_VST3)
+    target_link_libraries(VintageSynth_VST3 PRIVATE juce::juce_recommended_lto_flags)
+endif()
 
 set_target_properties(VintageSynth PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
