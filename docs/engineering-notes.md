@@ -3,6 +3,18 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Linux containers and ARM64 (2026-11-12)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The new local container check reported a failing `host_smoke` that CI did not have. | The script copied sources with their original timestamps into a persistent build volume; after a branch switch a changed file could be older than the last build, so the build system kept a stale binary. | Copy by content and give changed files a fresh timestamp. **A cached build is only trustworthy if staleness is decided by content, not by time, when sources come from different checkouts.** |
+| GCC 11 on 64-bit ARM failed in an audio codec bundled with JUCE. | A loop-optimisation warning in third-party C code, promoted to an error. | For GCC, that one C warning is not an error (`CMakeLists.txt`); our own code is unaffected. |
+| The first container build was killed for lack of memory. | 18 parallel compile jobs in an 8 GB container VM. | Cap parallel jobs by the VM's memory. |
+| The container check's sanitizer mode could not write the build volume. | The two base images gave the unprivileged build user different numeric ids. | Create the user with the same fixed id in every image. |
+| The security scan failed on the new Dockerfile. | It ran as root and installed recommended packages. | Unprivileged user; `--no-install-recommends`; name the sanitizer runtime package explicitly (its name differs between distribution versions). |
+| pluginval has no Linux ARM64 release. | Upstream. | The ARM64 row runs tests, `host_smoke` and the VST3 validator only, like Windows ARM64. |
+| A plugin built for glibc 2.35 really needs it. | Verified by a negative test: on a glibc 2.31 distribution loading fails with "version GLIBC_2.35 not found". | The floor is tested in CI, not assumed. |
+
 ## Wave 2: M3 bi-timbral and M4 arpeggiator/sequencer (2026-11-12)
 
 | Problem | Cause | Fix / rule |

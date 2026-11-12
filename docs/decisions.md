@@ -13,6 +13,51 @@ All (review).
 | One arpeggiator/sequencer settings set with a part selector (Lower, Upper, Both); the sequencer's 16 steps are host parameters (48 of them). | One set is easy to understand and automate; step parameters make the sequencer usable and testable before the custom UI exists and are saved with the state. Parameter count becomes 170. |
 | With no usable host transport the arp/seq runs on its internal tempo parameter. | Works in simple hosts and when just playing. |
 
+## Local-first verification; CI offline (owner decision, 2026-11-12)
+
+- **Everything that can be verified on the development Mac is verified there; GitHub Actions is a
+  rare, deliberate confirmation step, permanently** (also after the repository is public). Reason:
+  the account's included Actions minutes ran out after 31 build runs in one day.
+- **CI is offline until the owner makes the repository public for a release** (up to a month).
+  Until then: no workflow runs; branches are pushed for backup only.
+- **Verified locally:** macOS universal (build, all tests, pluginval, and the VST3 validator built
+  from the pinned SDK commit — the owner now allows building it locally), Linux ARM64 with GCC in a
+  container, sanitizers on both, the security scan.
+- **Not verified until CI returns: Windows x64, Windows ARM64, Linux x86_64.** No Windows virtual
+  machine and no emulated x86_64 Linux builds (owner decision). Every merge made in this period is
+  listed in `CLAUDE.md` under "Merged without Windows / Linux x86_64 verification", so the first
+  CI run can be read against it.
+- **Merges while CI is offline:** infrastructure-only changes (build, test, CI, scripts, docs) may
+  be merged to `main` after the local gate passes (owner pre-approval); product milestones still
+  wait for the owner's audition and approval.
+- **pluginval exit crash on Linux x86_64** (SUCCESS, then a segmentation fault at exit): the
+  investigation points to a known use-after-free in the JUCE host code inside pluginval 1.0.4's
+  own build, fixed in later JUCE versions; not in our plugin. Not proven for our runs (no backtrace
+  could be taken under emulation). To do when CI is back: confirm on real x86_64 hardware, then
+  treat exactly that signature as a tracked warning until a fixed pluginval release is used.
+
+## Cross Mod aliasing (owner decision after the study, 2026-11-12)
+
+- **The current Cross Mod sound stays as the instrument's sound ("Classic").** The owner compared
+  it by ear with a corrected version at musically typical settings: the difference was almost
+  inaudible, and where audible the corrected version "takes the edge off"; it also costs about
+  40 % more CPU for voices using cross-mod.
+- **Quality rule, refined:** the −100 dB alias gate applies to all waveforms and to hard sync.
+  **Cross Mod in Classic mode is exempt** and documented: about −36 to −80 dB at one octave with a
+  saw, square or pulse modulator, worse at higher depths and modulator pitches; sine and triangle
+  modulators measure about −87 dB at one octave.
+- **A "Clean" option will be added later** (low priority, after Wave 3): a switch, default Classic,
+  that corrects VCO-1 at the modulator's edges and tracks the pitch change inside each sample
+  (study: −104 dB or better for VCO-2 up to 1 kHz and up to one octave; no cost when off).
+- **Two defects found by the study are fixed now, independent of that choice:** hard sync with a
+  sine VCO-1 aliases at −77 dB without any cross-mod (a missing slope correction; the sync gate only
+  tested a saw); and the sync + cross-mod sound differs between real-time and offline rendering by
+  up to 29 dB on single partials, so a bounce does not sound like playback.
+- Study findings worth keeping: pure FM bandwidth is negligible at musical settings (sine into sine
+  at one octave: about −225 dB); the aliasing comes from the modulator's edges passing through the
+  exponential pitch mapping and from assuming a constant pitch within a sample; extra oversampling
+  is a poor fix (twice the CPU for −53 to −68 dB); low-passing the modulator dulls the sound.
+
 ## Linux ARM64 and container checks (owner decision, 2026-11-12)
 
 - **Linux ARM64 (aarch64) is a supported target,** built and validated in CI only; the owner has no
@@ -23,8 +68,14 @@ All (review).
   builds and tests the real binary on real hardware.
 - **CI runs the Linux bundle in containers of several distributions** to prove it loads above the
   glibc floor, not only on the image it was built on.
-- A headless render through a real DAW in CI is being studied; no proprietary software is
-  downloaded or run for that without the owner's approval.
+- **Headless DAW render: studied, not built.** An open-source Python host library loaded the
+  plugin headless in a container and rendered a MIDI note deterministically, but it uses the same
+  JUCE hosting layer as `host_smoke`, so it adds little host diversity and no project save/reload.
+  A real open-source DAW would need a spike to prove headless VST3 rendering. The proprietary DAW
+  the owner uses has an evaluation licence that does not mention automated use; nothing proprietary
+  was downloaded or run. **Open for the owner:** add the Python host render to CI, spike the
+  open-source DAW, or leave it.
+- The draft-PR tier builds Windows x64 and Linux x86_64; Linux ARM64 is in the full tier only.
 
 ## Wave 2 results: M3 and M4 (2026-11-12)
 

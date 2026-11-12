@@ -88,7 +88,7 @@ Constraints behind this plan:
 end commit messages with the Co-Authored-By line only, and say so in every brief.
 
 **CI minutes are billed while the repo is private.** Push each branch once, after steps 2–5 and a
-local sanitizer run; batch docs with code; never push docs-only commits to a code PR. Open PRs as
+local sanitizer run and `scripts/linux-check.sh` (GCC in a container); batch docs with code; never push docs-only commits to a code PR. Open PRs as
 drafts (Windows x64 only) and mark them ready for the full matrix once, at the end.
 
 ## Model routing

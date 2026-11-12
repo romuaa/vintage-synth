@@ -17,6 +17,12 @@ option(VS_BUILD_TESTS "Build unit tests" ON)
 
 add_subdirectory(external/JUCE)
 
+# GCC on 64-bit ARM flags a loop in the audio codec sources bundled with JUCE (compiled into the
+# test targets through juce_audio_formats). It is third-party C code: keep the warning, don't fail on it.
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    add_compile_options($<$<COMPILE_LANGUAGE:C>:-Wno-error=aggressive-loop-optimizations>)
+endif()
+
 juce_add_plugin(VintageSynth
     PRODUCT_NAME                "Exitium Vintage Synth"
     COMPANY_NAME                "Exitium"

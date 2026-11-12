@@ -5,6 +5,12 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### Linux ARM64, distro load tests, local Linux check (2026-11-12)
+- Linux ARM64 is a supported, CI-validated target; x86_64 and ARM64 ship in one Linux bundle.
+- CI load-tests the Linux x86_64 build with pluginval in containers of Ubuntu 22.04 and 26.04,
+  Debian 12 and 13, Fedora and Arch, plus a negative test below the glibc floor.
+- `scripts/linux-check.sh`: GCC build and tests (or sanitizers) in a Linux container on a Mac.
+
 ### M3 — bi-timbral (2026-11-12)
 - The product is now called **Exitium Vintage Synth** (name in hosts and bundle file name;
   plugin codes and identifiers unchanged).
