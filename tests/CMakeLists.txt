@@ -40,7 +40,8 @@ target_sources(VintageSynthTests PRIVATE
     seq_unit/ClockTests.cpp
     seq_unit/TimingTests.cpp
     seq_unit/ArpTests.cpp
-    seq_unit/SeqTests.cpp)
+    seq_unit/SeqTests.cpp
+    seq_unit/ModeTests.cpp)
 
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core

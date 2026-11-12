@@ -526,6 +526,73 @@ TEST_CASE ("Timing: a rate or swing change acts at the next block on the new gri
     }
 }
 
+TEST_CASE ("Timing: a host position that jitters slightly (tempo ramps inside blocks) neither doubles nor drops steps", "[seq][timing]")
+{
+    // 120 bpm, 48 kHz, 1/16 (6000 samples), 480-sample blocks. Every block reports its position off by up to
+    // +-0.004 quarter notes (about 96 samples), well under the jump tolerance of 1/64.
+    for (const std::uint32_t seed : { 1u, 2u, 3u, 4u, 5u })
+    {
+        std::uint32_t r = seed * 7919u;
+        const auto jitter = [&r] {
+            r = r * 1664525u + 1013904223u;
+            return (static_cast<double> ((r >> 8) % 2001u) - 1000.0) / 1000.0 * 0.004;
+        };
+        ArpSeq m;
+        m.setSettings (arpSettings (4, 8, 8));
+        std::vector<NoteEvent> out (256);
+        std::vector<std::int64_t> ons;
+        SoundLedger led;
+        for (int block = 0; block < 1000; ++block)
+        {
+            const std::vector<NoteEvent> in = block == 0 ? std::vector<NoteEvent> { noteOn (0, 60) } : std::vector<NoteEvent> {};
+            const double ppq = 2.0 + static_cast<double> (block) * 480.0 / 24000.0 + (block == 0 ? 0.0 : jitter());
+            const int count = m.process (in, Transport { 48000.0, 120.0, ppq, true }, 480, out);
+            for (int i = 0; i < count; ++i)
+            {
+                const NoteEvent& e = out[static_cast<std::size_t> (i)];
+                led.feed (e);
+                if (e.type == vs::EventType::NoteOn)
+                    ons.push_back (static_cast<std::int64_t> (block) * 480 + e.offset);
+            }
+        }
+        // 1000 blocks = 480000 samples = 80 steps of 6000 (positions 2.0 + 0.25 n).
+        INFO ("seed " << seed);
+        CHECK (ons.size() >= 79);
+        CHECK (ons.size() <= 81);
+        CHECK (led.doubleOns == 0);
+        CHECK (led.orphanOffs == 0);
+        for (std::size_t i = 1; i < ons.size(); ++i)
+        {
+            CHECK (ons[i] - ons[i - 1] > 5000);
+            CHECK (ons[i] - ons[i - 1] < 7000);
+        }
+    }
+}
+
+TEST_CASE ("Timing: a block far longer than any host sends is handled in bounded work", "[seq][timing]")
+{
+    ArpSeq m;
+    Settings s = arpSettings (8, 8, 8);
+    s.internalBpm = 300.0;
+    m.setSettings (s);
+    constexpr int n = 20'000'000; // 7 minutes at 48 kHz: 20000 steps of 1/32 at 300 bpm
+    std::vector<NoteEvent> out (100000);
+    const std::vector<NoteEvent> in { noteOn (0, 60) };
+    const int count = m.process (in, Transport { 48000.0, 120.0, 0.0, false }, n, out);
+    CHECK (count > 1000);
+    CHECK (count <= 2 * ArpSeq::kMaxStepsPerCall + 4); // capped
+    SoundLedger led;
+    for (int i = 0; i < count; ++i)
+        led.feed (out[static_cast<std::size_t> (i)]);
+    CHECK (led.doubleOns == 0);
+    CHECK (led.sounding.empty()); // the last gate ended inside the block
+    // And the module is usable afterwards.
+    const int next = m.process ({}, Transport { 48000.0, 120.0, 0.0, false }, 4800, out);
+    for (int i = 0; i < next; ++i)
+        led.feed (out[static_cast<std::size_t> (i)]);
+    CHECK (led.doubleOns == 0);
+}
+
 TEST_CASE ("Timing: gate 100 % releases exactly at the next step and the off precedes the on of the same pitch", "[seq][timing]")
 {
     for (int swing16 : { 8, 10, 12 })

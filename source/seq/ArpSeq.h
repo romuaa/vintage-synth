@@ -378,15 +378,15 @@ private:
         {
             case EventType::NoteOn:
             {
-                if (ev.note >= 128)
-                    return;
                 if (! on)
                 {
                     keys_.noteOn (ev.note, ev.value, false);
-                    if (passThrough (ev, t, false))
+                    if (passThrough (ev, t, false) && ev.note < 128)
                         markPassed (ev.note);
                     return;
                 }
+                if (ev.note >= 128)
+                    return;
                 const bool wasEmpty = keys_.empty();
                 const bool newPattern = keys_.noteOn (ev.note, ev.value, effectiveHold());
                 if (wasEmpty)
@@ -397,15 +397,16 @@ private:
             }
             case EventType::NoteOff:
             {
-                if (ev.note >= 128)
-                    return;
                 if (! on)
                 {
                     keys_.noteOff (ev.note, false);
                     passThrough (ev, t, true);
-                    clearPassed (ev.note);
+                    if (ev.note < 128)
+                        clearPassed (ev.note);
                     return;
                 }
+                if (ev.note >= 128)
+                    return;
                 keys_.noteOff (ev.note, effectiveHold());
                 if (active_ && keys_.empty())
                     deactivate (t);

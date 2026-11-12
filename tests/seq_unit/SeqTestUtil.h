@@ -320,9 +320,11 @@ inline bool matchesModel (const std::vector<NoteEvent>& actual, const std::vecto
 
 // ---- Event stream checks -------------------------------------------------------------------------
 
-/** Walks a note event stream and tracks what sounds. */
+/** Walks a note event stream and tracks what sounds. By default a panic event does not count as
+    releasing anything: the module must emit its own note-offs. */
 struct SoundLedger
 {
+    bool panicClears = false;
     std::set<int> sounding;
     int doubleOns = 0;   // note-on for a note that already sounds
     int orphanOffs = 0;  // note-off for a note that does not sound
@@ -343,7 +345,7 @@ struct SoundLedger
             if (sounding.erase (e.note) == 0)
                 ++orphanOffs;
         }
-        else if (e.type == EventType::AllNotesOff || e.type == EventType::AllSoundOff)
+        else if (panicClears && (e.type == EventType::AllNotesOff || e.type == EventType::AllSoundOff))
             sounding.clear();
     }
 };
