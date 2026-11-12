@@ -37,7 +37,9 @@ target_sources(VintageSynthTests PRIVATE
 
 # M4 arpeggiator and step sequencer (header-only, source/seq/).
 target_sources(VintageSynthTests PRIVATE
-    seq_unit/ClockTests.cpp)
+    seq_unit/ClockTests.cpp
+    seq_unit/TimingTests.cpp
+    seq_unit/ArpTests.cpp)
 
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
