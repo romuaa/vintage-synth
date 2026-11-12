@@ -5,6 +5,8 @@
 #include "params/ParameterLayout.h"
 #include "params/StateVersion.h"
 
+#include <cstring>
+
 namespace vs
 {
 namespace
@@ -26,6 +28,7 @@ VintageSynthProcessor::VintageSynthProcessor()
     splitPoint = apvts.getRawParameterValue (ParamID::keySplitPoint);
     balance = apvts.getRawParameterValue (ParamID::mixBalance);
     fxBinding.bind (apvts);
+    arpBinding.bind (apvts);
     jassert (masterVolume != nullptr && vintage != nullptr && keyMode != nullptr && splitPoint != nullptr
              && balance != nullptr);
 }
@@ -45,11 +48,33 @@ KeyMode keyModeOf (const std::atomic<float>* p) noexcept
 {
     return static_cast<KeyMode> (juce::jlimit (0, 2, static_cast<int> (p->load (std::memory_order_relaxed))));
 }
+
+bool sameBits (float a, float b) noexcept { return std::memcmp (&a, &b, sizeof (float)) == 0; }
+
+/** True if `out` is exactly what the arp/seq module writes when it only passes `in` on in mode
+    Off: the same events in the same order, offsets moved inside [0, len - 1] at most. */
+bool isPassThrough (std::span<const NoteEvent> in, std::span<const NoteEvent> out, int len) noexcept
+{
+    if (in.size() != out.size())
+        return false;
+    const int last = juce::jmax (len - 1, 0);
+    for (size_t i = 0; i < in.size(); ++i)
+        if (in[i].type != out[i].type || in[i].note != out[i].note || ! sameBits (in[i].value, out[i].value)
+            || juce::jlimit (0, last, in[i].offset) != out[i].offset)
+            return false;
+    return true;
+}
+
+bool partSelected (ArpTarget target, int part) noexcept
+{
+    return target == ArpTarget::Both || static_cast<int> (target) == part;
+}
 } // namespace
 
 void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock)
 {
     preparedBlockSize = juce::jmax (1, maximumExpectedSamplesPerBlock);
+    sampleRateHz = sampleRate;
 
     // Oversampling by host rate (docs/architecture.md 4.4): the internal rate stays >= 88.2 kHz.
     const int osFactor = voiceOversamplingFactor (sampleRate, isNonRealtime());
@@ -90,6 +115,17 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     delay.reset();
     reverb.reset();
 
+    // Arp/seq: output buffers that can never overflow for a prepared-size chunk (every parsed event
+    // passed on plus every step of the fastest rate at the highest host tempo, see ArpSeq).
+    const int arpCapacity = seq::ArpSeq::minimumCapacity (events.capacity(), seq::ArpSeq::maxStepsIn (preparedBlockSize, sampleRate));
+    lowerArpOut.assign (static_cast<size_t> (arpCapacity), NoteEvent {});
+    upperArpOut.assign (static_cast<size_t> (arpCapacity), NoteEvent {});
+    resyncScratch.assign (static_cast<size_t> (seq::ArpSeq::minimumCapacity (1, 2)), NoteEvent {});
+    lowerArp.reset();
+    upperArp.reset();
+    playerPedal = false;
+    lowerChunk = upperChunk = {};
+
     // Both parts share the factor, so they have the same latency.
     jassert (lowerPart.getLatencySamples() == upperPart.getLatencySamples());
     setLatencySamples (lowerPart.getLatencySamples());
@@ -101,9 +137,12 @@ void VintageSynthProcessor::resetEngine() noexcept
     upperPart.reset();
     router.reset(); // the parts forgot their keys
     mixer.reset();
+    lowerArp.reset(); // forgets keys and owed notes without emitting: the parts were reset too
+    upperArp.reset();
     chorus.reset(); // O(1): stale delay-line content is hidden by the blocks (section 5.1)
     delay.reset();
     reverb.reset();
+    playerPedal = false; // the parts cleared their pedal
 }
 
 void VintageSynthProcessor::reset()
@@ -125,6 +164,81 @@ double VintageSynthProcessor::getTailLengthSeconds() const
     if (f.reverb.level > 0.0f)
         tail = std::max (tail, fx::Reverb::tailSeconds (f.reverb));
     return tail;
+}
+
+void VintageSynthProcessor::readTransport() noexcept
+{
+    // Every field is optional; without a playing position and tempo the transport counts as
+    // stopped and the arp/seq runs on its own tempo (docs/architecture.md 6a.1).
+    hostPlaying = false;
+    if (auto* playHead = getPlayHead())
+    {
+        if (const auto pos = playHead->getPosition())
+        {
+            const auto bpm = pos->getBpm();
+            const auto ppq = pos->getPpqPosition();
+            if (pos->getIsPlaying() && bpm.hasValue() && ppq.hasValue())
+            {
+                hostPlaying = true;
+                hostBpm = *bpm;
+                hostPpq = *ppq;
+            }
+        }
+    }
+}
+
+seq::Transport VintageSynthProcessor::transportAt (int sampleOffset) const noexcept
+{
+    if (! hostPlaying)
+        return { sampleRateHz, 120.0, 0.0, false };
+    // A chunk of a host block larger than the prepared size: its position is advanced from the
+    // block's start position at the block's tempo (the host reports one tempo per block).
+    return { sampleRateHz, hostBpm, hostPpq + static_cast<double> (sampleOffset) * hostBpm / (60.0 * sampleRateHz), true };
+}
+
+std::span<const NoteEvent> VintageSynthProcessor::arpChunk (seq::ArpSeq& arp, bool selected, std::span<const NoteEvent> routed,
+                                                            std::vector<NoteEvent>& out, const seq::Transport& tr, int len) noexcept
+{
+    // The module always sees the events, also while Off: it keeps the held keys and the pedal,
+    // so switching it on (or selecting this part) hands them over cleanly.
+    const int n = arp.process (routed, tr, len, out);
+    const std::span<const NoteEvent> produced { out.data(), static_cast<size_t> (n) };
+
+    // Off (or this part not selected): the part gets the router's events themselves, bit-exactly.
+    // The module would move an event at or after the chunk's end onto its last sample, which a
+    // part applies after the last sample (section 2). Anything the module adds (the releases and
+    // pedal state of an on -> Off switch, an overflow marker) is not a pass-through: then its
+    // output is used.
+    if (! selected || arp.settings().mode == seq::Mode::Off)
+        if (isPassThrough (routed, produced, len))
+            return routed;
+    return produced;
+}
+
+void VintageSynthProcessor::resyncArpAfterKeyModeChange (seq::ArpSeq& arp, const Part& part, const seq::Transport& tr) noexcept
+{
+    // A key-mode change releases every voice of the part and the router forgets the held keys
+    // (their note-offs will never arrive), but the part keeps its pedal. The module must forget
+    // the keys too, or a pattern would play on without any key held: reset it (it owes nothing
+    // the part has not just released). Then put its pedal bookkeeping back in step with the part
+    // (down only if the module passed it on, in mode Off) and with the player (consumed while
+    // on). A zero-length call does that through the module's own event handling; its output
+    // only repeats what the part already has and is discarded.
+    const seq::Settings wanted = arp.settings();
+    arp.reset();
+    const bool partPedal = part.isSustainDown();
+    if (partPedal || playerPedal)
+    {
+        const NoteEvent down { 0, EventType::SustainPedal, 0, 1.0f };
+        seq::Settings s = wanted;
+        if (partPedal)
+            s.mode = seq::Mode::Off; // passed on: the module knows the part holds it
+        else
+            s.mode = wanted.mode != seq::Mode::Off ? wanted.mode : seq::Mode::Arp; // consumed
+        arp.setSettings (s);
+        arp.process ({ &down, 1 }, tr, 0, resyncScratch);
+    }
+    arp.setSettings (wanted);
 }
 
 bool VintageSynthProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -161,6 +275,18 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     delay.setParams (fxSettings.delay);
     reverb.setParams (fxSettings.reverb);
 
+    // Arp/seq settings, once per block; a part not selected by arp.target runs its module in Off.
+    arpBinding.read (arpSettings);
+    for (int p = 0; p < 2; ++p)
+    {
+        seq::Settings s = arpSettings.settings;
+        if (! partSelected (arpSettings.target, p))
+            s.mode = seq::Mode::Off;
+        (p == 0 ? lowerArp : upperArp).setSettings (s);
+    }
+    readTransport();
+    blockTransport = transportAt (0);
+
     // Key mode (docs/architecture.md 4.2). A change releases every voice of both parts (keeping
     // the controllers) and forgets the held keys. The split point only affects new notes.
     const auto mode = keyModeOf (keyMode);
@@ -169,6 +295,8 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     {
         lowerPart.releaseAllNotes();
         upperPart.releaseAllNotes();
+        resyncArpAfterKeyModeChange (lowerArp, lowerPart, blockTransport);
+        resyncArpAfterKeyModeChange (upperArp, upperPart, blockTransport);
         // Release tails keep the gain they were heard at until the part plays again (PartMixer).
         if (lowerPart.isSounding())
             mixer.latch (0);
@@ -204,11 +332,24 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
             events.add (meta.data, meta.numBytes, juce::jlimit (0, len, meta.samplePosition - start));
         }
         events.finish();
+        for (const auto& e : events.events())
+        {
+            if (e.type == EventType::SustainPedal)
+                playerPedal = e.value >= 0.5f;
+            else if (e.type == EventType::AllNotesOff || e.type == EventType::AllSoundOff || e.type == EventType::ResetControllers)
+                playerPedal = false;
+        }
 
         // One event list per part; each is as long as the parser's, so nothing is dropped here.
         const auto counts = router.route (events.events(), lowerEvents, upperEvents);
-        lowerChunk = { lowerEvents.data(), static_cast<size_t> (counts.lower) };
-        upperChunk = { upperEvents.data(), static_cast<size_t> (counts.upper) };
+        const std::span<const NoteEvent> routedLower { lowerEvents.data(), static_cast<size_t> (counts.lower) };
+        const std::span<const NoteEvent> routedUpper { upperEvents.data(), static_cast<size_t> (counts.upper) };
+
+        // Arp/seq in front of each part (after the router). Both instances run every chunk, so
+        // their clocks follow the host; Upper's gets only controllers in Whole mode.
+        const auto tr = transportAt (start);
+        lowerChunk = arpChunk (lowerArp, partSelected (arpSettings.target, 0), routedLower, lowerArpOut, tr, len);
+        upperChunk = arpChunk (upperArp, partSelected (arpSettings.target, 1), routedUpper, upperArpOut, tr, len);
     };
 
     if (numSamples <= 0)
@@ -320,7 +461,7 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
     if (nonFinite)
     {
         jassertfalse; // DSP produced NaN/Inf: find the cause, the guard only hides it in release builds
-        resetEngine(); // parts, router, mixer, all three effects
+        resetEngine(); // parts, router, mixer, both arp/seq instances, all three effects
     }
 
     // A latched part that has gone silent takes its new gain at once (nothing audible to fade).
