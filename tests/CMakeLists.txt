@@ -51,3 +51,6 @@ target_link_libraries(host_smoke PRIVATE
 add_dependencies(host_smoke VintageSynth_VST3)
 add_test(NAME host_smoke
          COMMAND host_smoke "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+
+# Golden-render regression harness (ctest label "render").
+add_subdirectory(render_regression)
