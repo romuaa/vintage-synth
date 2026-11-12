@@ -27,7 +27,7 @@ Working now (M2):
 - **LFO:** sine, triangle, saw, square, random (sample and hold) and noise, with delayed fade-in.
 - **Vintage amount:** 0 is exactly clean; turning it up adds per-voice tuning offsets, slow pitch drift,
   and filter and envelope tolerances. Deterministic, so renders repeat exactly.
-- **Sound quality:** anti-aliased oscillators (aliasing ≤ −113 dB up to a 5 kHz fundamental),
+- **Sound quality:** anti-aliased oscillators (measured aliasing ≤ −113 dB up to a 5 kHz fundamental),
   2× oversampling in real time and 4× when rendering offline. Latency (about 7 samples) is reported to the host.
 
 Planned: the Upper part with Whole/Dual/Split, arpeggiator, 16-step sequencer, patch banks, and
@@ -41,13 +41,15 @@ Linux (x86_64) is a planned target.
 | macOS 11+ | Universal (Apple silicon + Intel) | VST3 |
 | Windows 10/11 | x64 and ARM64 in one bundle | VST3 |
 
+There are no binary releases yet: build from source. Until v1.0 the parameter set may still change.
+
 ## Building
 
 Requirements: CMake ≥ 3.28, a C++20 compiler (Xcode on macOS, Visual Studio 2022 or newer on Windows), and
 Ninja on macOS (`brew install cmake ninja`).
 
 ```bash
-git clone --recurse-submodules git@github.com:romuaa/vintage-synth.git
+git clone --recurse-submodules https://github.com/romuaa/vintage-synth.git
 cd vintage-synth
 # (already cloned? run: git submodule update --init --recursive)
 ```
@@ -145,5 +147,13 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 
 Copyright © Exitium. Licensed under the **GNU Affero General Public License v3.0**; see [LICENSE](LICENSE).
 Built with [JUCE](https://juce.com) (AGPLv3). Every binary release comes with its complete source code.
+
+Third-party components: [JUCE](https://juce.com) (AGPLv3), Catch2 (BSL-1.0, tests only) and the
+Steinberg VST3 SDK as bundled with JUCE (MIT). CI uses pluginval (GPLv3), the VST3 SDK validator (MIT),
+Trivy (Apache-2.0), ccache and sccache as separate tools; none of them is linked into or shipped
+with the plugin.
+
+Contributions are welcome under the same licence: see [CONTRIBUTING.md](CONTRIBUTING.md).
+To report a security problem, see [SECURITY.md](SECURITY.md).
 
 VST is a registered trademark of Steinberg Media Technologies GmbH.

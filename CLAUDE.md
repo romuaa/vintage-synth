@@ -1,5 +1,7 @@
 # CLAUDE.md — Vintage Synth (VST3 instrument)
 
+This file instructs AI coding agents working on this repository. Humans: start with `README.md`.
+
 Bi-timbral, 16-voice-per-part analog-style polysynth plugin: two VCOs (sync, cross-mod), HPF,
 12/24 dB VCF, VCA, 2× ADSR, LFO with delay, Lower/Upper parts (Whole/Dual/Split), Solo/Unison/Poly,
 arpeggiator, 16-step sequencer, patch banks, Chorus/Delay/Reverb sends.

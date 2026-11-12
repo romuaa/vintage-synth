@@ -33,7 +33,7 @@ private:
 };
 
 /**
-    4-pole OTA cascade low-pass (IR3109 style), zero-delay feedback.
+    4-pole OTA cascade low-pass, zero-delay feedback.
 
     The global feedback is solved linearly, then saturated with tanh at the
     cascade input. That bounds self-oscillation and gives the resonance its
