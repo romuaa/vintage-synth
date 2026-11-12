@@ -16,23 +16,41 @@ namespace
 {
 constexpr float kSmoothingSeconds = 0.005f; // parameter smoothing time constant
 
+using Dev = PartModulator::Dev;
+
+inline double devValue (const Dev& d, double logKeep) noexcept
+{
+    return d.k == 0 ? d.d0 : d.d0 * std::exp (logKeep * static_cast<double> (d.k));
+}
+
 /**
     n samples of a one-pole smoother: dst[i] = tgt + dev * decay[i + 1], the value after i + 1
-    per-sample updates. No sample-to-sample dependency, so it vectorises. Then decays dev by n samples.
+    per-sample updates, with dev taken at the sub-block start from the absolute time since the
+    retarget. No sample-to-sample dependency, so it vectorises.
 */
-inline void smooth (float& dev, float tgt, const float* decay, float* dst, int n) noexcept
+inline void smooth (Dev& d, float tgt, const float* decay, double logKeep, float* dst, int n) noexcept
 {
+    if (std::fpclassify (d.d0) == FP_ZERO)
+    {
+        for (int i = 0; i < n; ++i)
+            dst[i] = tgt;
+        return;
+    }
+    const float dv = static_cast<float> (devValue (d, logKeep));
     for (int i = 0; i < n; ++i)
-        dst[i] = tgt + dev * decay[i + 1];
-    dev = std::abs (dev) < 1.0e-20f ? 0.0f : dev * decay[n];
+        dst[i] = tgt + dv * decay[i + 1];
+    d.k += n;
+    if (std::abs (dv) < 1.0e-20f)
+        d = Dev {}; // settled: exactly on the target
 }
 
 /** New target for a target + deviation smoother; the current value is kept. */
-inline void retarget (float& tgt, float& dev, float newTarget) noexcept
+inline void retarget (float& tgt, Dev& d, float newTarget, double logKeep) noexcept
 {
     if (std::bit_cast<std::uint32_t> (tgt) == std::bit_cast<std::uint32_t> (newTarget))
-        return; // unchanged: don't re-round the deviation to the target's ulp grid
-    dev = (tgt + dev) - newTarget;
+        return; // unchanged
+    d.d0 = (static_cast<double> (tgt) + devValue (d, logKeep)) - static_cast<double> (newTarget);
+    d.k = 0;
     tgt = newTarget;
 }
 } // namespace
@@ -40,9 +58,9 @@ inline void retarget (float& tgt, float& dev, float newTarget) noexcept
 void PartModulator::prepare (float oversampledRate, std::uint32_t lfoSeed) noexcept
 {
     fs = oversampledRate;
-    const double a = static_cast<double> (dsp::onePoleCoef (kSmoothingSeconds, fs));
+    logKeep = -1.0 / (static_cast<double> (kSmoothingSeconds) * static_cast<double> (fs)); // ln (1 - a), exactly
     for (int k = 0; k <= kMaxSubBlock; ++k)
-        decay[static_cast<size_t> (k)] = static_cast<float> (std::pow (1.0 - a, k));
+        decay[static_cast<size_t> (k)] = static_cast<float> (std::exp (logKeep * k));
     lfo.prepare (fs, lfoSeed);
     glideSeconds = -1.0f; // rebuild the glide table for the new rate
     reset (target);
@@ -52,31 +70,30 @@ void PartModulator::reset (const PartParams& p) noexcept
 {
     target = p;
     setTarget (p);
-    dev = PartParams {};
-#define VS_ZERO_DEV(member, ...) dev.member = 0.0f;
-    VS_PART_FLOAT_PARAMS (VS_ZERO_DEV)
-#undef VS_ZERO_DEV
-    bendTarget = bendDev = 0.0f;
-    wheelTarget = wheelDev = 0.0f;
+    dev = DevSet {};
+    bendTarget = 0.0f;
+    bendDev = Dev {};
+    wheelTarget = 0.0f;
+    wheelDev = Dev {};
     lfo.reset();
 }
 
 void PartModulator::setBendTarget (float semitones) noexcept
 {
-    retarget (bendTarget, bendDev, semitones);
+    retarget (bendTarget, bendDev, semitones, logKeep);
 }
 
 void PartModulator::setModWheel (float wheel) noexcept
 {
-    retarget (wheelTarget, wheelDev, dsp::clamp (wheel, 0.0f, 1.0f));
+    retarget (wheelTarget, wheelDev, dsp::clamp (wheel, 0.0f, 1.0f), logKeep);
 }
 
 void PartModulator::setControllersNow (float bendSemitones, float wheel) noexcept
 {
     bendTarget = bendSemitones;
-    bendDev = 0.0f;
+    bendDev = Dev {};
     wheelTarget = dsp::clamp (wheel, 0.0f, 1.0f);
-    wheelDev = 0.0f;
+    wheelDev = Dev {};
 }
 
 void PartModulator::updateGlideTable (float seconds) noexcept
@@ -104,7 +121,7 @@ void PartModulator::setTarget (const PartParams& p) noexcept
 {
     // Every float parameter gets a target + deviation pair, but only the ones next() lists are
     // smoothed and used here. The part's pan (mix.pan) is smoothed by the PartMixer instead.
-#define VS_RETARGET(member, ...) retarget (target.member, dev.member, p.member);
+#define VS_RETARGET(member, ...) retarget (target.member, dev.member, p.member, logKeep);
     VS_PART_FLOAT_PARAMS (VS_RETARGET)
 #undef VS_RETARGET
 #define VS_COPY_CHOICE(member, ...) target.member = p.member;
@@ -133,29 +150,29 @@ void PartModulator::next (int n, ModBlock& block) noexcept
     auto ctl = [&block] (ModBlock::Ctl c) { return block.ctl[c]; };
 
     // Linear mappings: smooth straight into the block, then scale where needed.
-    smooth (bendDev, bendTarget, d, ctl (ModBlock::BendOct), n);
-    smooth (s.pwmDepth, t.pwmDepth, d, ctl (ModBlock::PwmDepth), n);
-    smooth (s.vco2FineTune, t.vco2FineTune, d, ctl (ModBlock::Vco2FineOct), n);
-    smooth (s.sourceMix, t.sourceMix, d, ctl (ModBlock::SourceMix), n);
-    smooth (s.vcfCutoff, t.vcfCutoff, d, ctl (ModBlock::CutoffLog2), n);
-    smooth (s.vcfEnvMod, t.vcfEnvMod, d, ctl (ModBlock::VcfEnvOct), n);
-    smooth (s.vcfKeyFollow, t.vcfKeyFollow, d, ctl (ModBlock::VcfKeyOct), n);
-    smooth (s.vcfResonance, t.vcfResonance, d, ctl (ModBlock::ResonanceK), n);
-    smooth (s.env1Sustain, t.env1Sustain, d, ctl (ModBlock::Env1Sustain), n);
-    smooth (s.env2Sustain, t.env2Sustain, d, ctl (ModBlock::Env2Sustain), n);
+    smooth (bendDev, bendTarget, d, logKeep, ctl (ModBlock::BendOct), n);
+    smooth (s.pwmDepth, t.pwmDepth, d, logKeep, ctl (ModBlock::PwmDepth), n);
+    smooth (s.vco2FineTune, t.vco2FineTune, d, logKeep, ctl (ModBlock::Vco2FineOct), n);
+    smooth (s.sourceMix, t.sourceMix, d, logKeep, ctl (ModBlock::SourceMix), n);
+    smooth (s.vcfCutoff, t.vcfCutoff, d, logKeep, ctl (ModBlock::CutoffLog2), n);
+    smooth (s.vcfEnvMod, t.vcfEnvMod, d, logKeep, ctl (ModBlock::VcfEnvOct), n);
+    smooth (s.vcfKeyFollow, t.vcfKeyFollow, d, logKeep, ctl (ModBlock::VcfKeyOct), n);
+    smooth (s.vcfResonance, t.vcfResonance, d, logKeep, ctl (ModBlock::ResonanceK), n);
+    smooth (s.env1Sustain, t.env1Sustain, d, logKeep, ctl (ModBlock::Env1Sustain), n);
+    smooth (s.env2Sustain, t.env2Sustain, d, logKeep, ctl (ModBlock::Env2Sustain), n);
     // Squared tapers and the HPF.
-    smooth (s.vcoModLfo, t.vcoModLfo, d, ctl (ModBlock::VcoLfoOct), n);
-    smooth (s.vcoModEnv, t.vcoModEnv, d, ctl (ModBlock::VcoEnvOct), n);
-    smooth (s.vco1CrossMod, t.vco1CrossMod, d, ctl (ModBlock::CrossModOct), n);
-    smooth (s.vcfLfoMod, t.vcfLfoMod, d, ctl (ModBlock::VcfLfoOct), n);
-    smooth (s.hpfCutoff, t.hpfCutoff, d, ctl (ModBlock::HpfG), n);
-    smooth (s.unisonDetune, t.unisonDetune, d, ctl (ModBlock::UnisonSpreadOct), n);
-    smooth (s.velToVca, t.velToVca, d, ctl (ModBlock::VelToVca), n);
-    smooth (s.velToVcf, t.velToVcf, d, ctl (ModBlock::VelToVcf), n);
+    smooth (s.vcoModLfo, t.vcoModLfo, d, logKeep, ctl (ModBlock::VcoLfoOct), n);
+    smooth (s.vcoModEnv, t.vcoModEnv, d, logKeep, ctl (ModBlock::VcoEnvOct), n);
+    smooth (s.vco1CrossMod, t.vco1CrossMod, d, logKeep, ctl (ModBlock::CrossModOct), n);
+    smooth (s.vcfLfoMod, t.vcfLfoMod, d, logKeep, ctl (ModBlock::VcfLfoOct), n);
+    smooth (s.hpfCutoff, t.hpfCutoff, d, logKeep, ctl (ModBlock::HpfG), n);
+    smooth (s.unisonDetune, t.unisonDetune, d, logKeep, ctl (ModBlock::UnisonSpreadOct), n);
+    smooth (s.velToVca, t.velToVca, d, logKeep, ctl (ModBlock::VelToVca), n);
+    smooth (s.velToVcf, t.velToVcf, d, logKeep, ctl (ModBlock::VelToVcf), n);
     float level[kMaxSubBlock], wheel[kMaxSubBlock], wheelDepth[kMaxSubBlock];
-    smooth (s.vcaLevel, t.vcaLevel, d, level, n);
-    smooth (wheelDev, wheelTarget, d, wheel, n);
-    smooth (s.modWheelDepth, t.modWheelDepth, d, wheelDepth, n);
+    smooth (s.vcaLevel, t.vcaLevel, d, logKeep, level, n);
+    smooth (wheelDev, wheelTarget, d, logKeep, wheel, n);
+    smooth (s.modWheelDepth, t.modWheelDepth, d, logKeep, wheelDepth, n);
 
     {
         float* bendOct = ctl (ModBlock::BendOct);

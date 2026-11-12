@@ -24,16 +24,17 @@ void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor,
 
     // At 1x there is no decimator: the voices render straight into the output.
     oversampler.reset();
-    float decimatorLatency = 0.0f;
+    double decimatorLatency = 0.0;
     if (osFactor > 1)
     {
         oversampler = makeVoiceOversampler (osFactor);
         oversampler->initProcessing (static_cast<size_t> (maxBlock));
-        decimatorLatency = oversampler->getLatencyInSamples();
+        decimatorLatency = measureDecimatorDelay (osFactor);
     }
-    // Decimator delay + oscillator BLEP look-ahead (in oversampled samples).
-    latencySamples = juce::roundToInt (decimatorLatency
-                                       + static_cast<float> (dsp::Oscillator::kLatency) / static_cast<float> (osFactor));
+    // Decimator delay (low-frequency phase delay of the down path only) + oscillator BLEP
+    // look-ahead (kLatency oversampled samples), rounded to the nearest host sample.
+    exactLatency = decimatorLatency + static_cast<double> (dsp::Oscillator::kLatency) / static_cast<double> (osFactor);
+    latencySamples = juce::roundToInt (exactLatency);
     renderedSamples = 0;
 
     silence.setSize (1, maxBlock);
@@ -174,6 +175,8 @@ void Part::renderOversampled (float* os, int n) noexcept
                 len = juce::jmin (len, juce::jmax (1, voices[v].getFadeRemaining()));
             if (releaseCountdown[v] > 0)
                 len = juce::jmin (len, releaseCountdown[v]);
+            // A drift retarget lands on a sub-block boundary (block-size independence).
+            len = juce::jmin (len, juce::jmax (1, voices[v].samplesToDriftRetarget()));
         }
 
         modulator.next (len, modBlock);

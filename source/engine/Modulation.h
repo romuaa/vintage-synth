@@ -88,12 +88,36 @@ public:
 private:
     float fs = 96000.0f;
 
-    // Each smoother is target + deviation, and only the deviation decays. Unlike a value-form
-    // one-pole (s += (t - s) * a), it cannot stall a few hundred ulps short of the target when
-    // (t - s) * a drops below half an ulp of s; it converges exactly.
-    PartParams target, dev;
-    float bendTarget = 0.0f, bendDev = 0.0f;
-    float wheelTarget = 0.0f, wheelDev = 0.0f;
+public:
+    /**
+        Deviation of a target + deviation smoother, from the absolute time since its last
+        retarget: dev = d0 x e^(L k), L = ln of the per-sample factor. Unlike a value-form one-pole
+        (s += (t - s) * a) it cannot stall short of the target, and unlike a deviation decayed
+        per sub-block (dev *= decay[n]) its value at a sample does not depend on how the render
+        was split into sub-blocks (that chain's rounding grew with the number of sub-blocks and
+        cost ~10 dB of block-size independence at 192 kHz).
+    */
+    struct Dev
+    {
+        double d0 = 0.0;
+        std::int64_t k = 0;
+    };
+
+private:
+    struct DevSet
+    {
+#define VS_DECLARE_DEV(member, ...) Dev member;
+        VS_PART_FLOAT_PARAMS (VS_DECLARE_DEV)
+#undef VS_DECLARE_DEV
+    };
+
+    PartParams target;
+    DevSet dev;
+    double logKeep = 0.0; // ln of the per-sample smoothing factor
+    float bendTarget = 0.0f;
+    Dev bendDev;
+    float wheelTarget = 0.0f;
+    Dev wheelDev;
     float glideSeconds = -1.0f; // portamento time the glide table was built for
     double glideLog = 0.0;
     float vintage = 0.0f;

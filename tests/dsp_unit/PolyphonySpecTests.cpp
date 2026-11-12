@@ -8,10 +8,12 @@
 // most natural reading and says so in a comment ("SPEC-AMBIGUITY").
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "PluginProcessor.h"
 #include "TestHelpers.h"
 #include "engine/NoteEvent.h"
+#include "engine/Oversampler.h"
 #include "engine/Part.h"
 #include "params/Mappings.h"
 #include "params/PartParamList.h"
@@ -49,16 +51,43 @@ double noteHz (int note) { return 440.0 * std::pow (2.0, (note - 69) / 12.0); }
 double cents (double f, double ref) { return 1200.0 * std::log2 (f / ref); }
 double semis (double f) { return 69.0 + 12.0 * std::log2 (f / 440.0); }
 
+// ---- host rate (gate 4.4) ---------------------------------------------------------------------------
+// Test cases marked VS_EVERY_RATE run at 48 kHz (2x), 96 kHz (1x) and 192 kHz (1x). Positions and
+// lengths stay in 48 kHz samples: the Rig scales them to the host rate and returns the output on
+// the 48 kHz grid (every 2nd / 4th sample; the sine patch is band-limited far below 24 kHz), so
+// every analysis below keeps working at kFs. Host block sizes are passed through as they are.
+struct RateConfig
+{
+    double fs = 48000.0;
+    int os = 2;
+};
+RateConfig gRate;
+
+struct RateGuard
+{
+    explicit RateGuard (double fs) { gRate = { fs, vs::voiceOversamplingFactor (fs, false) }; }
+    ~RateGuard() { gRate = {}; }
+    RateGuard (const RateGuard&) = delete;
+    RateGuard& operator= (const RateGuard&) = delete;
+};
+
+#define VS_EVERY_RATE                                                   \
+    const double vsRateHz = GENERATE (48000.0, 96000.0, 192000.0);      \
+    RateGuard vsRateGuard (vsRateHz);                                   \
+    INFO ("host rate " << vsRateHz)
+
 // ---- rig -----------------------------------------------------------------------------------------
 struct Rig
 {
     vs::Part part;
     vs::PartParams params;
+    int scale = 1; // host samples per 48 kHz sample
 
     Rig()
     {
+        scale = static_cast<int> (std::lround (gRate.fs / kFs));
         part.setParams (params);
-        part.prepare (kFs, kMaxBlock, 2, 4321u);
+        part.prepare (gRate.fs, kMaxBlock, gRate.os, 4321u);
     }
 
     void apply()
@@ -67,7 +96,8 @@ struct Rig
         part.reset();
     }
 
-    int latency() const { return part.getLatencySamples(); }
+    /** Latency on the 48 kHz grid (rounded up). */
+    int latency() const { return (part.getLatencySamples() + scale - 1) / scale; }
 
     /** hook(startSample, params) runs before each host block and may change the parameters. */
     using Hook = std::function<void (int, vs::PartParams&)>;
@@ -77,12 +107,15 @@ struct Rig
         REQUIRE (blockSize >= 1);
         REQUIRE (blockSize <= kMaxBlock);
         std::stable_sort (events.begin(), events.end(), [] (const NoteEvent& a, const NoteEvent& b) { return a.offset < b.offset; });
-        std::vector<float> out (static_cast<size_t> (numSamples));
+        for (auto& e : events)
+            e.offset *= scale;
+        const int total = numSamples * scale;
+        std::vector<float> host (static_cast<size_t> (total));
         Events chunk;
-        for (int start = 0; start < numSamples; start += blockSize)
+        for (int start = 0; start < total; start += blockSize)
         {
-            const int len = std::min (blockSize, numSamples - start);
-            REQUIRE (static_cast<size_t> (start + len) <= out.size());
+            const int len = std::min (blockSize, total - start);
+            REQUIRE (static_cast<size_t> (start + len) <= host.size());
             chunk.clear();
             for (auto e : events)
                 if (e.offset >= start && e.offset < start + len)
@@ -91,10 +124,13 @@ struct Rig
                     chunk.push_back (e);
                 }
             if (hook)
-                hook (start, params);
+                hook (start / scale, params);
             part.setParams (params);
-            part.render (out.data() + start, len, chunk);
+            part.render (host.data() + start, len, chunk);
         }
+        std::vector<float> out (static_cast<size_t> (numSamples));
+        for (size_t i = 0; i < out.size(); ++i)
+            out[i] = host[i * static_cast<size_t> (scale)];
         return out;
     }
 };
@@ -297,6 +333,7 @@ struct JuceEnv
 // =================================================================================================
 TEST_CASE ("Spec Poly: N held notes sound as N distinct pitches", "[spec][poly]")
 {
+    VS_EVERY_RATE;
     // Lines are counted above -15 dB re the strongest: the VCF's nonlinearity adds a 3rd harmonic at about -23 dB.
     // Tolerance: 3 cents (FFT peak interpolation; lines are >= 10 bins apart); level spread 1.5 dB
     // (every voice has the same gain, leakage between lines is far below).
@@ -330,6 +367,7 @@ TEST_CASE ("Spec Poly: N held notes sound as N distinct pitches", "[spec][poly]"
 
 TEST_CASE ("Spec Poly: releasing one key removes exactly that pitch", "[spec][poly]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     sinePatch (rig.params);
     rig.apply();
@@ -348,6 +386,7 @@ TEST_CASE ("Spec Poly: releasing one key removes exactly that pitch", "[spec][po
 
 TEST_CASE ("Spec Poly: re-pressing a sounding note does not add a second voice", "[spec][poly]")
 {
+    VS_EVERY_RATE;
     // Spec: "(1) a voice already sounding the same note (retrigger it)". Level must not double
     // (a second voice would add 6 dB); tolerance 1 dB. The single note-off must then end the note.
     Rig rig;
@@ -412,6 +451,7 @@ std::vector<int> iota16()
 
 TEST_CASE ("Spec Poly: 17th note steals the oldest held voice when none is releasing", "[spec][poly][steal]")
 {
+    VS_EVERY_RATE;
     // 16 notes pressed in ascending order, then a 17th: the OLDEST held (first pressed, i = 0) goes.
     {
         const auto r = runSteal (iota16(), {}, 50000, { 80 }, 0.05f);
@@ -436,6 +476,7 @@ TEST_CASE ("Spec Poly: 17th note steals the oldest held voice when none is relea
 
 TEST_CASE ("Spec Poly: 17th note steals the oldest voice in release before any held voice", "[spec][poly][steal]")
 {
+    VS_EVERY_RATE;
     // Release 4 s so the released voices are still sounding at the 17th note-on.
     // Note 58 (i = 5) is released first and also started earlier than note 66 (i = 9): under either
     // reading of "oldest voice in release" the stolen one is 58, never the oldest held note (48).
@@ -450,6 +491,7 @@ TEST_CASE ("Spec Poly: 17th note steals the oldest voice in release before any h
 
 TEST_CASE ("Spec Poly: with two voices in release exactly one is stolen and no held voice", "[spec][poly][steal]")
 {
+    VS_EVERY_RATE;
     // SPEC-AMBIGUITY: "oldest voice in release" may mean longest in release or earliest started.
     // Release 66 (i = 9) first, then 58 (i = 5): the readings disagree, so only the certain part is checked:
     // one of the two releasing voices is gone, the oldest held note (48) survives, the new note sounds.
@@ -466,6 +508,7 @@ TEST_CASE ("Spec Poly: with two voices in release exactly one is stolen and no h
 
 TEST_CASE ("Spec Poly: the most recently started note is never stolen", "[spec][poly][steal]")
 {
+    VS_EVERY_RATE;
     // 16 held, 17th at 50000, 18th 0.3 s later: the 17th must survive the second steal.
     const auto r = runSteal (iota16(), {}, 50000, { 80, 82 }, 0.05f, 14400);
     std::vector<int> expected;
@@ -486,6 +529,7 @@ TEST_CASE ("Spec Poly: the most recently started note is never stolen", "[spec][
 
 TEST_CASE ("Spec Poly: a stolen note starts 3 ms later than an unstolen one", "[spec][poly][steal]")
 {
+    VS_EVERY_RATE;
     // The new note is 108 (4.2 kHz); the 16 or 15 held notes are 36..51 (< 190 Hz). A second difference
     // (x[n] - 2 x[n-1] + x[n-2]) suppresses the low notes by > 30 dB and isolates the new one. The onset
     // is the first sample where |y| exceeds 30 % of the steady maximum of y. Both runs share the same
@@ -523,6 +567,7 @@ TEST_CASE ("Spec Poly: a stolen note starts 3 ms later than an unstolen one", "[
 
 TEST_CASE ("Spec Poly: stealing is click-free", "[spec][poly][steal]")
 {
+    VS_EVERY_RATE;
     // Sum of sines: the largest possible step is the sum of the per-tone maxima (computed from the
     // measured single-voice amplitude). A truncated voice would add a step of up to 0.64 x amplitude
     // (here the sines have amplitude ~0.64). Eight steal positions so that no sine sits at a zero
@@ -605,6 +650,7 @@ void runSoloOrder (const std::vector<SoloStep>& steps)
 
 TEST_CASE ("Spec Solo: last-note priority and return without retrigger (orders)", "[spec][solo]")
 {
+    VS_EVERY_RATE;
     SECTION ("60 64 67 72, release 72 64 67")
     {
         runSoloOrder ({ { true, 60, 60, false }, { true, 64, 64, false }, { true, 67, 67, false }, { true, 72, 72, false },
@@ -624,6 +670,7 @@ TEST_CASE ("Spec Solo: last-note priority and return without retrigger (orders)"
 
 TEST_CASE ("Spec Solo: a new note retriggers the envelopes, a return to a held note does not", "[spec][solo]")
 {
+    VS_EVERY_RATE;
     // ENV-2: 1 ms attack, 0.2 s decay to sustain 0.3. After 2 s the level sits at the sustain.
     // A retrigger sends the envelope up again: rms 10..30 ms after the new note is >= 1.5x the sustain
     // level. Returning to a held note (release of the top key) must NOT: level <= 1.1x sustain.
@@ -661,6 +708,7 @@ std::vector<float> renderUnison (int voicesIdx, float detune, int note, int orde
 
 TEST_CASE ("Spec Unison: 2/4/8/16 voices sound for one key, spread equals the detune setting", "[spec][unison]")
 {
+    VS_EVERY_RATE;
     // Note 81 (880 Hz): the lines are at least 4 bins apart in a 2^17 Hann FFT (n = 16, 50 ct: 1.7 Hz = 4.6 bins).
     // Peaks are local maxima within +-2 bins above -20 dB (Hann sidelobes are below -31 dB).
     // SPEC-AMBIGUITY: the spec does not say how voices are distributed inside the spread; the count
@@ -695,6 +743,7 @@ TEST_CASE ("Spec Unison: 2/4/8/16 voices sound for one key, spread equals the de
 
 TEST_CASE ("Spec Unison: loudness stays roughly constant across voice counts", "[spec][unison]")
 {
+    VS_EVERY_RATE;
     // 1/sqrt(n) per voice keeps the POWER constant for uncorrelated (detuned) voices. Reference: one
     // voice (Solo). Detune 1.0 (50 ct) so the voices drift apart in phase quickly.
     // Tolerance +-1.5 dB: the residual coherent cross terms average out only to a few percent, and the
@@ -720,6 +769,7 @@ TEST_CASE ("Spec Unison: loudness stays roughly constant across voice counts", "
 
 TEST_CASE ("Spec Unison: monophonic, last-note priority", "[spec][unison]")
 {
+    VS_EVERY_RATE;
     // Detune 0.3 = 15 ct total, so every line of note N lies within +-7.5 ct (+ interpolation) of N.
     Rig rig;
     sinePatch (rig.params);
@@ -753,6 +803,7 @@ TEST_CASE ("Spec Unison: monophonic, last-note priority", "[spec][unison]")
 // =================================================================================================
 TEST_CASE ("Spec: changing assign mode or unison count releases all voices, click-free, and notes keep working", "[spec][modechange]")
 {
+    VS_EVERY_RATE;
     const double amp = singleVoiceAmp();
     constexpr int change = 25600; // a multiple of the 256-sample host block
     struct Case
@@ -822,6 +873,7 @@ TEST_CASE ("Spec: changing assign mode or unison count releases all voices, clic
 // =================================================================================================
 TEST_CASE ("Spec Pedal: key releases are deferred while down, applied at pedal up (Poly)", "[spec][pedal]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     sinePatch (rig.params);
     rig.apply();
@@ -836,6 +888,7 @@ TEST_CASE ("Spec Pedal: key releases are deferred while down, applied at pedal u
 
 TEST_CASE ("Spec Pedal: keys still held at pedal-up keep sounding", "[spec][pedal]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     sinePatch (rig.params);
     rig.apply();
@@ -847,6 +900,7 @@ TEST_CASE ("Spec Pedal: keys still held at pedal-up keep sounding", "[spec][peda
 
 TEST_CASE ("Spec Pedal: Solo and Unison hold the sounding note", "[spec][pedal]")
 {
+    VS_EVERY_RATE;
     for (const int mode : { 1, 2 })
     {
         INFO ((mode == 1 ? "Unison" : "Solo"));
@@ -881,6 +935,7 @@ TEST_CASE ("Spec Pedal: Solo and Unison hold the sounding note", "[spec][pedal]"
 
 TEST_CASE ("Spec Pedal: AllNotesOff releases everything with the pedal down and clears the pedal", "[spec][pedal][panic]")
 {
+    VS_EVERY_RATE;
     for (const int mode : { 0, 1, 2 })
     {
         INFO ("assign mode " << mode);
@@ -900,6 +955,7 @@ TEST_CASE ("Spec Pedal: AllNotesOff releases everything with the pedal down and 
 
 TEST_CASE ("Spec Pedal: ResetControllers clears bend, wheel and pedal", "[spec][pedal][panic]")
 {
+    VS_EVERY_RATE;
     // Bend and pedal.
     {
         Rig rig;
@@ -935,6 +991,7 @@ TEST_CASE ("Spec Pedal: ResetControllers clears bend, wheel and pedal", "[spec][
 
 TEST_CASE ("Spec: AllSoundOff silences the voices immediately", "[spec][panic]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     sinePatch (rig.params, 4.0f); // 4 s release: only an immediate cut can silence it
     rig.apply();
@@ -1019,6 +1076,7 @@ double glideFraction (const std::vector<float>& x, int onPos, int latency, doubl
 
 TEST_CASE ("Spec Portamento: time 0 is off", "[spec][porta]")
 {
+    VS_EVERY_RATE;
     for (const int mode : { 0, 2 })
     {
         INFO ("assign mode " << mode);
@@ -1035,6 +1093,7 @@ TEST_CASE ("Spec Portamento: time 0 is off", "[spec][porta]")
 
 TEST_CASE ("Spec Portamento: 99 % of the interval at the set time, RC shape (up and down)", "[spec][porta]")
 {
+    VS_EVERY_RATE;
     // Pitch in semitones over time follows from + (to - from) (1 - 0.01^(t/T)). Measured with a 25 ms
     // zero-crossing window centred on t (after the reported latency). Tolerance: 0.03 of the interval
     // (window averaging over a ~17 % relative change of the remaining distance and zero-crossing noise).
@@ -1063,6 +1122,7 @@ TEST_CASE ("Spec Portamento: 99 % of the interval at the set time, RC shape (up 
 
 TEST_CASE ("Spec Portamento: Solo glides from the held note (mode Always)", "[spec][porta]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     sinePatch (rig.params);
     rig.params.assignMode = 2;
@@ -1076,6 +1136,7 @@ TEST_CASE ("Spec Portamento: Solo glides from the held note (mode Always)", "[sp
 
 TEST_CASE ("Spec Portamento: Legato glides only when a key is already held", "[spec][porta]")
 {
+    VS_EVERY_RATE;
     // Legato mode (portaMode = 1). With a key held the glide follows the RC curve (0.25 T -> 0.684).
     // With no key held the pitch is already at the target within 0.05 semitone at 0.1 T.
     const float T = 1.0f;
@@ -1114,6 +1175,7 @@ TEST_CASE ("Spec Portamento: Legato glides only when a key is already held", "[s
 
 TEST_CASE ("Spec Portamento: in Poly a new voice glides from the previously played note", "[spec][porta]")
 {
+    VS_EVERY_RATE;
     // Previous note released and silent; the new voice starts at the previous pitch (60), not its own.
     Rig rig;
     sinePatch (rig.params);
@@ -1133,6 +1195,7 @@ TEST_CASE ("Spec Portamento: in Poly a new voice glides from the previously play
 // =================================================================================================
 TEST_CASE ("Spec Velocity: VCA gain = 1 - amount x (1 - velocity)", "[spec][velocity]")
 {
+    VS_EVERY_RATE;
     // rms over 24000 samples (~220 cycles) is exact to ~0.2 %; tolerance 2 % of the expected ratio.
     auto level = [] (float amount, float vel) {
         Rig rig;
@@ -1155,6 +1218,7 @@ TEST_CASE ("Spec Velocity: VCA gain = 1 - amount x (1 - velocity)", "[spec][velo
 
 TEST_CASE ("Spec Velocity: VCF envelope depth is scaled by 1 - amount x (1 - velocity)", "[spec][velocity]")
 {
+    VS_EVERY_RATE;
     // A saw through the 24 dB filter at a low cutoff with a strong ENV-1 sweep (sustain 1): brightness
     // (energy 1..6 kHz) depends monotonically on the envelope depth. Black-box equivalence: a note with
     // velocity v and amount a at ENV depth m must have the same brightness as a note at velocity 1 with
@@ -1201,6 +1265,7 @@ TEST_CASE ("Spec Velocity: VCF envelope depth is scaled by 1 - amount x (1 - vel
 // =================================================================================================
 TEST_CASE ("Spec Bend range: 0..12 semitones, full bend gives exactly the range", "[spec][bend]")
 {
+    VS_EVERY_RATE;
     // Tolerance 1 cent (the zero-crossing estimate over 0.75 s is good to ~0.05 cent, the exp2 approximation to 0.01).
     for (const int range : { 0, 1, 2, 5, 7, 12 })
         for (const float b : { 1.0f, -1.0f, 0.5f, 0.0f })
@@ -1219,6 +1284,7 @@ TEST_CASE ("Spec Bend range: 0..12 semitones, full bend gives exactly the range"
 
 TEST_CASE ("Spec Bend: the default range is 2 semitones, and a bend event moves a sounding note", "[spec][bend]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     sinePatch (rig.params);
     rig.apply();
@@ -1249,6 +1315,7 @@ double vibrato (float slider, float wheelDepth, float wheelPos, int target = 1)
 
 TEST_CASE ("Spec Mod wheel: adds wheel x depth to the VCO LFO mod amount", "[spec][wheel]")
 {
+    VS_EVERY_RATE;
     // Equivalence with the slider: wheel w at depth d on top of slider s must give the vibrato of a
     // slider at s + w d with the wheel at 0 ("same taper"). Tolerance 3 % of the deviation (both
     // renders are measured identically). SPEC-AMBIGUITY: the cap at the panel maximum is in
@@ -1270,6 +1337,7 @@ TEST_CASE ("Spec Mod wheel: adds wheel x depth to the VCO LFO mod amount", "[spe
 
 TEST_CASE ("Spec Mod wheel: respects the VCO mod target switch", "[spec][wheel]")
 {
+    VS_EVERY_RATE;
     // Only VCO-1 is audible (source mix 0). Target index: 0 = VCO-1, 1 = Both, 2 = VCO-2.
     CHECK (vibrato (0.0f, 0.5f, 1.0f, 0) > 100.0);
     CHECK (vibrato (0.0f, 0.5f, 1.0f, 1) > 100.0);
@@ -1278,6 +1346,7 @@ TEST_CASE ("Spec Mod wheel: respects the VCO mod target switch", "[spec][wheel]"
 
 TEST_CASE ("Spec LFO delay: restarts only when a note starts with no other key held", "[spec][lfo]")
 {
+    VS_EVERY_RATE;
     // Solo, LFO 5 Hz sine, delay 1 s, vibrato 0.3 from the slider. The first note starts the delay; at
     // 3 s the vibrato is at full depth. A second note pressed while the first is held must NOT restart
     // the delay (full depth immediately). After all keys are up, a new note restarts it (small depth
@@ -1531,6 +1600,7 @@ std::vector<float> renderStream (const Stream& s, int numPeriods, int blockSize,
 
 TEST_CASE ("Spec robustness: random valid event streams stay finite and never hang a voice", "[spec][robust]")
 {
+    VS_EVERY_RATE;
     constexpr int periods = 125; // 5 s
     for (const std::uint32_t seed : { 1u, 2u, 3u, 4u })
     {
@@ -1546,6 +1616,7 @@ TEST_CASE ("Spec robustness: random valid event streams stay finite and never ha
 
 TEST_CASE ("Spec robustness: random streams render the same with host block sizes 64 and 480", "[spec][robust]")
 {
+    VS_EVERY_RATE;
     // Parameter changes sit on multiples of 1920 samples, which both block sizes hit exactly. The
     // decisions log promises -110 dB between block sizes; the bound here is -90 dB of the rms (3e-5),
     // loose enough for float rounding in the steal/fade splitting (measured: about -108 dB), tight enough to catch a timing or

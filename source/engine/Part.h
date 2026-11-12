@@ -78,6 +78,8 @@ public:
     void setMaxSubBlock (int n) noexcept { maxSubBlock = juce::jlimit (1, kMaxSubBlock, n); }
 
     int getLatencySamples() const noexcept { return latencySamples; }
+    /** The latency before rounding to whole samples (decimator phase delay + BLEP delay). */
+    double getExactLatency() const noexcept { return exactLatency; }
     /** Samples rendered since prepare() (zero-length renders don't count). For tests: CPU use. */
     std::int64_t getRenderedSamples() const noexcept { return renderedSamples; }
     int getOversamplingFactor() const noexcept { return osFactor; }
@@ -117,6 +119,7 @@ private:
     int maxBlock = 0;
     int osFactor = 2;
     int latencySamples = 0;
+    double exactLatency = 0.0;
     std::int64_t renderedSamples = 0;
     float osRate = 96000.0f;
     int stealFadeSamples = 288;
