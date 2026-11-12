@@ -5,6 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### Wave 1 — test infrastructure and CI cost (2026-11-12)
+- Golden-render regression harness (`tests/render_regression/`, ctest label `render`): text event
+  scripts rendered through the real processor and compared by perceptual features, not samples.
+  One self-test reference; preset goldens follow in M6.
+- Steinberg VST3 validator runs in CI on macOS and Windows x64 (ctest `vst3_validator`), built from
+  the SDK pinned at `v3.8.1_build_84`.
+- CI cost control: docs-only changes don't build, draft pull requests build Windows x64 only,
+  job timeouts, monthly Dependabot.
+
 ### Wave 0 — contracts and orchestration (2026-11-12)
 - `docs/architecture.md`: contracts for M2–M5 (note events, voice allocation, new per-part
   parameters, CPU targets, effect block interface, arp/sequencer and test-infrastructure outlines).

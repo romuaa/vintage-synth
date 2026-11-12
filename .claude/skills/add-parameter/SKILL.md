@@ -3,6 +3,11 @@ name: add-parameter
 description: Checklist for adding or changing a host-automatable parameter, preset field, or saved plugin state without breaking existing sessions and presets.
 ---
 
+**Smoothing is not automatic for new continuous parameters.** Appending to the X-macro creates the
+parameter and its binding, but `PartModulator::next` (`engine/Modulation.cpp`) only smooths the
+parameters it lists. Add a new continuous parameter there (and to `ModBlock::Ctl` if voices need it
+per sample), or it is applied unsmoothed at block rate.
+
 # Add or change a parameter
 
 Host sessions store parameters by ID. Breaking IDs silently breaks users' songs.

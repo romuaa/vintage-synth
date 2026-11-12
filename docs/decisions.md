@@ -3,6 +3,23 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Wave 1 — M2a, test infrastructure, CI cost (2026-11-12)
+
+| Decision | Why |
+|---|---|
+| **Fast `exp2` / `tan` / `tanh` approximations in the voice path**, with tested bounds (relative error ≤ 2e-7 / 5e-7, absolute ≤ 2e-7; static pitch error ≤ 0.009 cent). They return NaN for NaN. | Profiling showed the voice is limited by its serial dependency chain per sample, where libm calls cost far more than in isolation. NaN must still reach the output guard. |
+| **Voices render sample by sample across all voices** (interleaved, groups of 32) after a vectorised per-voice block-prepare phase; shared modulation is computed once per part in sub-blocks of up to 32 oversampled samples. | Interleaving lets the CPU overlap the voices' serial chains: 32 voices went from 11.3 % to 4.7 % of one core. Fully voice-by-voice rendering measured several times slower. |
+| **Parameter smoothing stays per sample (closed form), not control rate.** | Linear control-rate ramps measured −55 dB of error on fast cutoff moves. |
+| **Smoothers and the drift walk are kept as target + deviation.** | A plain one-pole stalls short of its target by an amount that depends on the step size, which made renders depend on block splitting and left tiny permanent pitch/cutoff offsets. |
+| **Renders are independent of host block size and event positions at any Vintage amount** (tested: −110 dB between block sizes 512 and 500 at Vintage 1). | Offline bounces and golden renders must be reproducible. |
+| **All Notes Off (CC 123 and the overflow marker) also clears the sustain pedal;** Reset Controllers clears bend, mod wheel and pedal. | A held pedal must never be able to keep notes hanging after a panic or an event overflow. |
+| **Every MIDI event is applied exactly once:** before the block → offset 0, at or after its end → after the last sample, zero-length blocks still apply events. Malformed channel messages are dropped. | A note-off at the block boundary was being lost (possible hung note); masking bad data bytes could turn garbage into All Sound Off. |
+| **Golden renders compare third-octave band energy per 25 ms frame, level envelope and tail** (3 dB per cell with ≤ 1 % outliers, 0.4 dB mean, 2 dB level, −80 dB gate). References store features, not audio. | Verified in CI: a reference generated on arm64 matches on x64 and with MSVC. Detects a 3.5 % cutoff change, a missing note or a 25 ms timing change. |
+| **VST3 validator: built in CI only** from Steinberg's SDK at `v3.8.1_build_84` (pinned by commit SHA, MIT), cached, run as ctest `vst3_validator` on macOS and Windows x64. The test requires the validator's own "N tests passed, 0 tests failed" line. (owner decision) | JUCE does not bundle the validator; nothing is added to the repo or linked into the plugin. Exit code alone passed in 0.2 s and proved nothing. |
+| **CI cost control while the repo is private:** docs-only changes don't build; draft PRs build Windows x64 only, the full matrix runs when a PR is marked ready, on `main` and on manual dispatch; 30-minute job timeout; Dependabot monthly. (review) | macOS minutes are billed at a multiple; MSVC is the one thing that cannot be checked locally. To be relaxed when the repo goes public (free standard runners). |
+| **Push discipline:** one push per branch, after local tests, a local AddressSanitizer/UBSan run for engine changes, and the review fixes. Docs are batched with code. | 13 CI runs on the first orchestrated day, several of them avoidable. |
+| **Effects (owner feedback and review):** chorus full mix reaches wet ≈ dry, with the default at the earlier maximum; no bulk clearing on the audio thread; reported tail capped at 30 s; level 0 fades out in 20 ms and drops the tail (review). | See `docs/architecture.md` section 5. |
+
 ## Wave 0 — contracts for M2–M5 (2026-11-12)
 
 The interfaces are in `docs/architecture.md`. These are the judgement calls behind them.

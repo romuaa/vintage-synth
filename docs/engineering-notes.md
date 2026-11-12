@@ -3,6 +3,21 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Wave 1: M2a, effects, test infrastructure (2026-11-12)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Windows CI crashed in one new test (`0xc0000374` heap corruption on x64, `0xc0000409` on ARM64); macOS passed. | The test rendered a full 256-sample block past the end of a 24000-sample vector. The MSVC heap detects that; macOS without a sanitizer does not. | **Run the test binary under AddressSanitizer + UBSan before pushing engine or test changes** (`-fsanitize=address,undefined` in a second build dir). Test renders go through a helper that checks bounds. |
+| 32 voices cost 11.3 % although each math call is cheap in isolation. | The voice is one long serial dependency chain per sample; `exp2`/`tan`/`tanh` cost 3–4× more inside it than alone. | Interleave voices sample by sample, vectorise the coefficient work per block. **Profile by stubbing stages out, not by timing functions alone.** (`sample`/Instruments don't work in the sandbox.) |
+| Tiny permanent pitch and cutoff offsets; renders depended on block size with Vintage on. | `s += (t − s)·a` stops moving once the step is below half an ulp, up to hundreds of ulps short, and the stall point depends on the step size. | Keep one-pole smoothers as target + decaying deviation. |
+| `alignas` members made MSVC warn C4324 (padding) at `/W4`, an error in CI. | Warnings are errors. | Avoid `alignas` on struct members; MSVC-only warnings show up in CI only. |
+| The VST3 validator test "passed" in 0.2 s. | ctest only looked at the exit code and hid the output. | Require the tool's own summary line with `PASS_REGULAR_EXPRESSION`. **Check that a new CI check can fail.** |
+| Four effect tests could not fail for what they claimed (e.g. an interpolation test that linear interpolation would pass; a decay test that only used whole-sample delays). | Tests were written by the implementer against the implementation. | An independent reviewer asks of every test: "what wrong implementation would still pass?" |
+| Waking an idle delay/reverb could clear megabytes in one audio block. | "Clear in slices while idle" was finished at once on wake. | No bulk clearing on the audio thread: hide stale content by gating reads; `reset()` must be O(1). |
+| Counting allocations by replacing global `operator new` misses `malloc` (JUCE `HeapBlock`). | JUCE containers call `std::malloc` directly. | On macOS use libmalloc's `malloc_logger` hook, filtered to the test thread. The check is skipped on Windows and under ASan. |
+| Agent worktrees started from `main`, not from the wave branch, and lacked the contract file. | The worktree tool branches from the default branch. | Name the base branch in every brief. |
+| Submodules are empty in agent worktrees and the sandbox refuses `git config submodule.*`. | Sandbox. | Symlink `external/JUCE` and `external/Catch2` to the main checkout; commit with explicit paths (plain `git commit` may refuse; `commit-tree` works). |
+
 ## M0–M1 and CI hardening (2026-11-12)
 
 ### DSP

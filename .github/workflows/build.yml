@@ -1,9 +1,18 @@
 name: build
 
+# Cost control (private repo: macOS minutes are billed at a multiple of Linux, Windows at 2x):
+#  - Docs-only changes don't build.
+#  - Draft pull requests build Windows x64 only (MSVC is what can't be tested locally).
+#    The full matrix runs when the PR is marked "ready for review", on main and on manual dispatch.
+#  - Every job has a timeout, so a hung test can't burn hours.
+# Once the repository is public (free standard runners), the draft tier can be removed.
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**", ".claude/**", "LICENSE"]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore: ["**.md", "docs/**", ".claude/**", "LICENSE"]
   workflow_dispatch:
 
 permissions:
@@ -16,29 +25,31 @@ concurrency:
 env:
   PLUGINVAL_VERSION: v1.0.4
   BUNDLE: Vintage Synth.vst3
+  # Steinberg VST3 SDK, built only for its `validator` tool (MIT; not linked into the plugin).
+  # Pinned by commit SHA; the tag is for humans. Bump both together, deliberately.
+  VST3_SDK_TAG: v3.8.1_build_84
+  VST3_SDK_SHA: 3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96
 
 jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: macos-universal
-            os: macos-26 # Apple silicon; pinned (not -latest) for reproducible builds
-            cache: ccache # handles the multi-arch (-arch arm64 -arch x86_64) universal compile
-            pluginval: true
-          - name: windows-x64
-            os: windows-2025 # VS 2026 image; pinned (not -latest)
-            msvc_arch: x64
-            cache: sccache
-            pluginval: true
-          - name: windows-arm64
-            os: windows-11-arm # VS 2026 image
-            msvc_arch: arm64
-            cache: sccache
-            pluginval: false # no native ARM64 pluginval release yet
+        # Rows (JSON, because the draft tier is chosen by an expression):
+        #  macos-universal  macos-26 (Apple silicon, pinned, not -latest); ccache handles the
+        #                   multi-arch (-arch arm64 -arch x86_64) universal compile.
+        #  windows-x64      windows-2025 (VS 2026 image, pinned); sccache.
+        #  windows-arm64    windows-11-arm (VS 2026 image); no native ARM64 pluginval release yet;
+        #                   the VST3 SDK validator build on ARM64 is untested (set validator true to try).
+        include: >-
+          ${{ fromJSON(
+          (github.event_name == 'pull_request' && github.event.pull_request.draft)
+          && '[{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true}]'
+          || '[{"name":"macos-universal","os":"macos-26","cache":"ccache","pluginval":true,"validator":true},{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"windows-arm64","os":"windows-11-arm","msvc_arch":"arm64","cache":"sccache","pluginval":false,"validator":false}]'
+          ) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,6 +81,58 @@ jobs:
           variant: ${{ matrix.cache }}
           max-size: 2G
 
+      # Steinberg VST3 validator, built from the pinned SDK commit (shallow clone, only the four
+      # submodules the validator needs, no VSTGUI, no examples). The built binary is cached by SDK
+      # SHA + runner image, so the build cost is paid once; a cache hit skips the build but the
+      # binary is still located and exported below.
+      - name: VST3 validator (cache)
+        if: matrix.validator
+        id: validator-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: vst3-validator
+          key: vst3-validator-v1-${{ env.VST3_SDK_SHA }}-${{ matrix.os }}-${{ matrix.name }}
+
+      - name: VST3 validator (build)
+        if: matrix.validator && steps.validator-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init -q vst3sdk/src
+          git -C vst3sdk/src remote add origin https://github.com/steinbergmedia/vst3sdk.git
+          git -C vst3sdk/src fetch -q --depth 1 origin "$VST3_SDK_SHA"
+          git -C vst3sdk/src checkout -q --detach FETCH_HEAD
+          [[ "$(git -C vst3sdk/src rev-parse HEAD)" == "$VST3_SDK_SHA" ]]
+          git -C vst3sdk/src submodule update -q --init --depth 1 base cmake pluginterfaces public.sdk
+          extra=()
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            extra+=(-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0)
+          else
+            extra+=(-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl)
+          fi
+          cmake -S vst3sdk/src -B vst3sdk/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DSMTG_ENABLE_VSTGUI_SUPPORT=OFF -DSMTG_ENABLE_VST3_PLUGIN_EXAMPLES=OFF \
+            -DSMTG_ENABLE_VST3_HOSTING_EXAMPLES=OFF -DSMTG_ADD_VST3_UTILITIES=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=${{ matrix.cache }} -DCMAKE_CXX_COMPILER_LAUNCHER=${{ matrix.cache }} \
+            "${extra[@]}"
+          cmake --build vst3sdk/build --target validator --parallel
+          exe=$(/usr/bin/find vst3sdk/build -type f \( -name validator -o -name validator.exe \) | head -n 1)
+          echo "validator built at: $exe"
+          test -n "$exe"
+          mkdir -p vst3-validator
+          cp "$exe" vst3-validator/
+
+      # Runs on cache hits too: hand the absolute path of the validator to the Configure step.
+      - name: VST3 validator (locate)
+        if: matrix.validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe=$(/usr/bin/find vst3-validator -type f \( -name validator -o -name validator.exe \) | head -n 1)
+          test -n "$exe"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then root=$(pwd -W); else root=$(pwd); fi
+          echo "VS_VST3_VALIDATOR=$root/$exe" >> "$GITHUB_ENV"
+
       - name: Configure
         shell: bash
         run: >
@@ -77,6 +140,7 @@ jobs:
           -DCMAKE_C_COMPILER_LAUNCHER=${{ matrix.cache }}
           -DCMAKE_CXX_COMPILER_LAUNCHER=${{ matrix.cache }}
           ${{ runner.os == 'Windows' && '-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl' || '' }}
+          ${VS_VST3_VALIDATOR:+-DVS_VST3_VALIDATOR="$VS_VST3_VALIDATOR"}
 
       - name: Build
         shell: bash
@@ -125,7 +189,10 @@ jobs:
   # Merge Windows x64 + ARM64 into one .vst3 bundle (Contents/x86_64-win + Contents/arm64-win).
   windows-bundle:
     needs: build
+    # Needs both Windows builds, so it is skipped in the draft tier.
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: vst3-windows-x64, path: x64 }
