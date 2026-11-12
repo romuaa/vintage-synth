@@ -1,10 +1,20 @@
 // M3 bi-timbral tests (docs/architecture.md 4.6 item 2), through the real processor where the
 // contract is about the processor: Dual = sum of both parts, Split boundaries and split moves,
 // pan and balance laws, Whole mode (Upper silent and not rendered, and clean when it comes back),
-// stereo and mono output, key-mode changes, block-size independence with both parts at full
-// Vintage, event overflow and random streams with both parts, and state of the new parameters.
+// mixer latch after a key-mode change, stereo and mono output, key-mode changes, block-size
+// independence with both parts at full Vintage, when parameter changes take effect, event
+// overflow and random streams with both parts, and the new parameters.
+//
+// Host rates (gate 4.4): every engine behaviour test runs at 48 kHz (2x), 96 kHz (1x) and
+// 192 kHz (1x). Positions and lengths in the tests are written in 48 kHz samples; ProcRig scales
+// them to the host rate and returns the output on the 48 kHz grid (every 2nd / 4th sample: the
+// test signals are band-limited far below 24 kHz). Host block sizes are in host samples.
+// Only at 48 kHz: the pan/balance laws, mixer smoothing and parameter/state tests (pure gain
+// math and parameter plumbing, no rate-dependent code) and the large random-stream sweep (more
+// seeds at 48 kHz, fewer at the high rates to keep the suite fast).
 // Oversampling by host rate (4.4) is in OversamplingTests.cpp.
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "PluginProcessor.h"
 #include "TestHelpers.h"
@@ -23,7 +33,7 @@ namespace
 {
 struct Midi
 {
-    int pos;
+    int pos; // 48 kHz samples
     juce::MidiMessage msg;
 };
 
@@ -37,23 +47,45 @@ struct Stereo
     std::vector<float> l, r;
 };
 
+/** Host block boundaries: blockSize-long blocks, also split at every change position (host samples). */
+std::vector<int> blockStarts (int total, int blockSize, std::vector<int> splits)
+{
+    std::sort (splits.begin(), splits.end());
+    std::vector<int> starts;
+    size_t next = 0;
+    for (int pos = 0; pos < total;)
+    {
+        starts.push_back (pos);
+        while (next < splits.size() && splits[next] <= pos)
+            ++next;
+        int end = std::min (pos + blockSize, total);
+        if (next < splits.size())
+            end = std::min (end, splits[next]);
+        pos = end;
+    }
+    starts.push_back (total);
+    return starts;
+}
+
 /**
-    The real processor, driven like a host. Every render goes through render(), which checks the
-    output bounds (a render that overran its buffer corrupted the heap on Windows in M2a) and
-    splits host blocks at parameter changes, so a change lands on the same sample for any block size.
+    The real processor, driven like a host at a given rate. Every render goes through render(),
+    which checks the output bounds (a render that overran its buffer corrupted the heap on Windows
+    in M2a) and splits host blocks at parameter changes, so a change lands on the same sample for
+    any block size (see the "take effect" test for what happens without the split).
 */
 struct ProcRig
 {
     juce::ScopedJuceInitialiser_GUI init;
     vs::VintageSynthProcessor proc;
     double fs;
+    int scale; // host samples per 48 kHz sample
     int maxBlock;
     int channels;
-    bool offline;
 
-    explicit ProcRig (double rate = 48000.0, int maxBlockSize = 512, int numChannels = 2, bool isOffline = false)
-        : fs (rate), maxBlock (maxBlockSize), channels (numChannels), offline (isOffline)
+    explicit ProcRig (double rate = 48000.0, int maxBlockSize = 512, int numChannels = 2)
+        : fs (rate), scale (static_cast<int> (std::lround (rate / 48000.0))), maxBlock (maxBlockSize), channels (numChannels)
     {
+        REQUIRE (std::abs (rate - 48000.0 * scale) < 1.0e-6);
     }
 
     void set (const juce::String& id, float plain)
@@ -65,24 +97,26 @@ struct ProcRig
 
     float get (const juce::String& id) { return proc.getState().getRawParameterValue (id)->load(); }
 
-    /** Applies the bus layout and prepares (call after setting the starting parameters). */
     void prepare()
     {
         juce::AudioProcessor::BusesLayout layout;
         layout.outputBuses.add (channels == 1 ? juce::AudioChannelSet::mono() : juce::AudioChannelSet::stereo());
         REQUIRE (proc.setBusesLayout (layout));
-        proc.setNonRealtime (offline);
+        proc.setNonRealtime (false);
         proc.setPlayConfigDetails (0, channels, fs, maxBlock);
         proc.prepareToPlay (fs, maxBlock);
     }
 
     struct Change
     {
-        int at;
+        int at; // 48 kHz samples
         std::function<void (ProcRig&)> apply;
     };
 
-    /** afterBlock (end, rig) is called after every host block (end = first sample not yet rendered). */
+    /**
+        Renders numSamples (48 kHz units) and returns them on the 48 kHz grid. blockSize is in host
+        samples. afterBlock (end, rig) runs after every host block (end in host samples).
+    */
     Stereo render (int numSamples, std::vector<Midi> midi, int blockSize, std::vector<Change> changes = {},
                    const std::function<void (int, ProcRig&)>& afterBlock = {})
     {
@@ -90,37 +124,45 @@ struct ProcRig
         REQUIRE (blockSize <= maxBlock);
         std::stable_sort (midi.begin(), midi.end(), [] (const Midi& a, const Midi& b) { return a.pos < b.pos; });
         std::stable_sort (changes.begin(), changes.end(), [] (const Change& a, const Change& b) { return a.at < b.at; });
-        Stereo out;
-        out.l.assign (static_cast<size_t> (numSamples), 0.0f);
-        out.r.assign (static_cast<size_t> (numSamples), 0.0f);
+        const int total = numSamples * scale;
+        std::vector<int> splits;
+        for (const auto& c : changes)
+            splits.push_back (c.at * scale);
+        const auto starts = blockStarts (total, blockSize, splits);
+
+        std::vector<float> l (static_cast<size_t> (total)), r (static_cast<size_t> (total));
         juce::AudioBuffer<float> buffer (channels, blockSize);
         size_t nextMidi = 0, nextChange = 0;
-        for (int pos = 0; pos < numSamples;)
+        for (size_t b = 0; b + 1 < starts.size(); ++b)
         {
-            while (nextChange < changes.size() && changes[nextChange].at <= pos)
+            const int pos = starts[b], end = starts[b + 1], len = end - pos;
+            while (nextChange < changes.size() && changes[nextChange].at * scale <= pos)
                 changes[nextChange++].apply (*this);
-            int end = std::min (pos + blockSize, numSamples);
-            if (nextChange < changes.size())
-                end = std::min (end, changes[nextChange].at);
-            const int len = end - pos;
             REQUIRE (len >= 1);
-            REQUIRE (static_cast<size_t> (pos + len) <= out.l.size());
-
+            REQUIRE (len <= blockSize);
+            REQUIRE (static_cast<size_t> (end) <= l.size());
             juce::MidiBuffer mb;
-            while (nextMidi < midi.size() && midi[nextMidi].pos < end)
+            while (nextMidi < midi.size() && midi[nextMidi].pos * scale < end)
             {
-                mb.addEvent (midi[nextMidi].msg, std::max (0, midi[nextMidi].pos - pos));
+                mb.addEvent (midi[nextMidi].msg, std::max (0, midi[nextMidi].pos * scale - pos));
                 ++nextMidi;
             }
             buffer.setSize (channels, len, false, false, true);
             buffer.clear();
             proc.processBlock (buffer, mb);
-            std::copy (buffer.getReadPointer (0), buffer.getReadPointer (0) + len, out.l.begin() + pos);
+            std::copy (buffer.getReadPointer (0), buffer.getReadPointer (0) + len, l.begin() + pos);
             const int rch = channels > 1 ? 1 : 0;
-            std::copy (buffer.getReadPointer (rch), buffer.getReadPointer (rch) + len, out.r.begin() + pos);
-            pos = end;
+            std::copy (buffer.getReadPointer (rch), buffer.getReadPointer (rch) + len, r.begin() + pos);
             if (afterBlock)
-                afterBlock (pos, *this);
+                afterBlock (end, *this);
+        }
+        Stereo out;
+        out.l.resize (static_cast<size_t> (numSamples));
+        out.r.resize (static_cast<size_t> (numSamples));
+        for (int i = 0; i < numSamples; ++i)
+        {
+            out.l[static_cast<size_t> (i)] = l[static_cast<size_t> (i * scale)];
+            out.r[static_cast<size_t> (i)] = r[static_cast<size_t> (i * scale)];
         }
         return out;
     }
@@ -128,13 +170,14 @@ struct ProcRig
     float masterGain() { return juce::Decibels::decibelsToGain (get (vs::ParamID::masterVolume)); }
 };
 
-std::vector<vs::NoteEvent> toEvents (const std::vector<Midi>& midi)
+/** Parsed events at host positions (48 kHz positions x scale). */
+std::vector<vs::NoteEvent> toEvents (const std::vector<Midi>& midi, int scale)
 {
     std::vector<vs::NoteEvent> v;
     for (const auto& m : midi)
     {
         vs::NoteEvent e {};
-        if (vs::parseMidiMessage (m.msg.getRawData(), m.msg.getRawDataSize(), m.pos, e))
+        if (vs::parseMidiMessage (m.msg.getRawData(), m.msg.getRawDataSize(), m.pos * scale, e))
             v.push_back (e);
     }
     std::stable_sort (v.begin(), v.end(), [] (const auto& a, const auto& b) { return a.offset < b.offset; });
@@ -143,15 +186,16 @@ std::vector<vs::NoteEvent> toEvents (const std::vector<Midi>& midi)
 
 /**
     Stand-alone reference Part fed exactly what the processor's part gets: the same parameters
-    (read through the same binding), seed, oversampling factor, Vintage and events.
+    (read through the same binding), seed, oversampling factor, Vintage, events and host blocks.
 */
 struct RefPart
 {
     vs::Part part;
     vs::PartParams params;
     float vintage = 0.0f;
+    int scale;
 
-    RefPart (ProcRig& rig, const char* prefix, std::uint32_t seed)
+    RefPart (ProcRig& rig, const char* prefix, std::uint32_t seed) : scale (rig.scale)
     {
         vs::PartParamBinding b;
         b.bind (rig.proc.getState(), prefix);
@@ -161,13 +205,20 @@ struct RefPart
         part.prepare (rig.fs, rig.maxBlock, rig.proc.getOversamplingFactor(), seed);
     }
 
-    std::vector<float> render (int numSamples, const std::vector<vs::NoteEvent>& events, int blockSize)
+    /** numSamples and split points in 48 kHz units, events at host positions; output at host rate. */
+    std::vector<float> renderHost (int numSamples, const std::vector<vs::NoteEvent>& events, int blockSize,
+                                   const std::vector<int>& splits48 = {})
     {
-        std::vector<float> out (static_cast<size_t> (numSamples));
+        const int total = numSamples * scale;
+        std::vector<int> splits;
+        for (const int s : splits48)
+            splits.push_back (s * scale);
+        const auto starts = blockStarts (total, blockSize, splits);
+        std::vector<float> out (static_cast<size_t> (total));
         std::vector<vs::NoteEvent> chunk;
-        for (int start = 0; start < numSamples; start += blockSize)
+        for (size_t b = 0; b + 1 < starts.size(); ++b)
         {
-            const int len = std::min (blockSize, numSamples - start);
+            const int start = starts[b], len = starts[b + 1] - start;
             REQUIRE (static_cast<size_t> (start + len) <= out.size());
             chunk.clear();
             for (auto e : events)
@@ -183,6 +234,14 @@ struct RefPart
         return out;
     }
 };
+
+std::vector<float> onGrid (const std::vector<float>& host, int scale)
+{
+    std::vector<float> v (host.size() / static_cast<size_t> (scale));
+    for (size_t i = 0; i < v.size(); ++i)
+        v[i] = host[i * static_cast<size_t> (scale)];
+    return v;
+}
 
 double rmsDb (const std::vector<float>& x, int from, int len)
 {
@@ -249,6 +308,8 @@ void twoPatches (ProcRig& rig)
 }
 
 constexpr float kWhole = 0.0f, kDual = 1.0f, kSplit = 2.0f; // key.mode choice index (plain value)
+
+#define VS_EVERY_RATE const double rate = GENERATE (48000.0, 96000.0, 192000.0); INFO ("host rate " << rate)
 } // namespace
 
 // =================================================================================================
@@ -257,9 +318,10 @@ constexpr float kWhole = 0.0f, kDual = 1.0f, kSplit = 2.0f; // key.mode choice i
 
 TEST_CASE ("M3 Dual: the output is the sum of both parts rendered separately (full Vintage)", "[m3][dual]")
 {
+    VS_EVERY_RATE;
     for (const int block : { 512, 97 })
     {
-        ProcRig rig;
+        ProcRig rig (rate);
         twoPatches (rig);
         rig.set (vs::ParamID::keyMode, kDual);
         rig.set (vs::ParamID::vintage, 1.0f);
@@ -272,9 +334,9 @@ TEST_CASE ("M3 Dual: the output is the sum of both parts rendered separately (fu
 
         RefPart lower (rig, vs::kLowerPrefix, vs::VintageSynthProcessor::kLowerSeed);
         RefPart upper (rig, vs::kUpperPrefix, vs::VintageSynthProcessor::kUpperSeed);
-        const auto events = toEvents (midi);
-        const auto lo = lower.render (length, events, block);
-        const auto up = upper.render (length, events, block);
+        const auto events = toEvents (midi, rig.scale);
+        const auto lo = onGrid (lower.renderHost (length, events, block), rig.scale);
+        const auto up = onGrid (upper.renderHost (length, events, block), rig.scale);
         const float g = rig.masterGain();
 
         std::vector<float> expected (static_cast<size_t> (length));
@@ -291,8 +353,7 @@ TEST_CASE ("M3 Dual: the output is the sum of both parts rendered separately (fu
 
         const double errL = maxAbsDiff (out.l, expected), errR = maxAbsDiff (out.r, expected);
         INFO ("block " << block << ": max |L - (lower + upper) g| = " << errL << ", R: " << errR);
-        WARN ("Dual = sum of parts, block " << block << ": max deviation L " << errL << ", R " << errR
-                                             << " (peak " << peak (expected, 0, length) << ")");
+        WARN ("Dual = sum of parts, " << rate << " Hz, block " << block << ": max deviation L " << errL << ", R " << errR);
         CHECK (errL <= 1.0e-6);
         CHECK (errR <= 1.0e-6);
     }
@@ -300,8 +361,9 @@ TEST_CASE ("M3 Dual: the output is the sum of both parts rendered separately (fu
 
 TEST_CASE ("M3 Split: notes below the split point play Lower, at or above it Upper; moving it with held keys", "[m3][split]")
 {
+    VS_EVERY_RATE;
     // Lower hard left and Upper hard right: L carries only Lower, R only Upper.
-    ProcRig rig;
+    ProcRig rig (rate);
     rig.set (vs::ParamID::keyMode, kSplit);
     rig.set (vs::ParamID::keySplitPoint, 60.0f);
     rig.set ("lower.mix.pan", -1.0f);
@@ -345,7 +407,8 @@ TEST_CASE ("M3 Split: notes below the split point play Lower, at or above it Upp
 
 TEST_CASE ("M3 Whole: Upper is silent and never rendered; the output is Lower alone", "[m3][whole]")
 {
-    ProcRig rig;
+    VS_EVERY_RATE;
+    ProcRig rig (rate);
     twoPatches (rig);
     rig.set ("upper.mix.pan", 1.0f);
     rig.set (vs::ParamID::mixBalance, 1.0f); // balance has no effect in Whole
@@ -357,43 +420,19 @@ TEST_CASE ("M3 Whole: Upper is silent and never rendered; the output is Lower al
                                    noteOff (20000, 48), noteOff (21000, 64), cc (30000, 64, 0) };
     // Upper's parameters move all the time: still nothing may be rendered for it.
     std::vector<ProcRig::Change> changes;
+    std::vector<int> splits;
     for (int k = 1; k < 40; ++k)
+    {
         changes.push_back ({ k * 1000, [k] (ProcRig& r) { r.set ("upper.vcf.cutoff", static_cast<float> (k % 7) / 7.0f); } });
+        splits.push_back (k * 1000);
+    }
     const auto out = rig.render (48000, midi, 256, changes);
 
     CHECK (rig.proc.getUpperPart().getRenderedSamples() == 0);
     CHECK_FALSE (rig.proc.isUpperRendering());
 
     RefPart lower (rig, vs::kLowerPrefix, vs::VintageSynthProcessor::kLowerSeed);
-    // The reference uses the same block structure as the processor saw (256, split at changes).
-    std::vector<float> lo;
-    {
-        const auto ev = toEvents (midi);
-        std::vector<float> all (48000);
-        std::vector<vs::NoteEvent> chunk;
-        int pos = 0;
-        size_t c = 0;
-        while (pos < 48000)
-        {
-            int end = std::min (pos + 256, 48000);
-            while (c < changes.size() && changes[c].at <= pos)
-                ++c;
-            if (c < changes.size())
-                end = std::min (end, changes[c].at);
-            chunk.clear();
-            for (auto e : ev)
-                if (e.offset >= pos && e.offset < end)
-                {
-                    e.offset -= pos;
-                    chunk.push_back (e);
-                }
-            lower.part.setParams (lower.params);
-            lower.part.setVintage (lower.vintage);
-            lower.part.render (all.data() + pos, end - pos, chunk);
-            pos = end;
-        }
-        lo = std::move (all);
-    }
+    auto lo = onGrid (lower.renderHost (48000, toEvents (midi, rig.scale), 256, splits), rig.scale);
     const float g = rig.masterGain();
     for (auto& s : lo)
         s *= g;
@@ -404,17 +443,18 @@ TEST_CASE ("M3 Whole: Upper is silent and never rendered; the output is Lower al
 
 TEST_CASE ("M3 Whole -> Dual: Upper starts clean (parameters at target, fresh LFO), like a freshly prepared part", "[m3][whole]")
 {
-    ProcRig rig;
+    VS_EVERY_RATE;
+    ProcRig rig (rate);
     twoPatches (rig);
     rig.set ("lower.mix.pan", -1.0f); // R carries Upper only
     rig.set ("upper.mix.pan", 1.0f);
     rig.prepare();
 
-    // One second of Whole with Upper's parameters far away from where they end up.
+    // One second of Whole with Upper's parameters far away from where they end up. The final
+    // values differ from those at prepare time, so a part that was never rendered would still
+    // glide from stale smoother values.
     std::vector<ProcRig::Change> changes;
     changes.push_back ({ 1000, [] (ProcRig& r) { r.set ("upper.vcf.cutoff", 0.1f); r.set ("upper.vca.level", 0.2f); } });
-    // Final values differ from those at prepare time, so a part that was never rendered would
-    // still glide from stale smoother values.
     changes.push_back ({ 47000, [] (ProcRig& r) { r.set ("upper.vcf.cutoff", 0.62f); r.set ("upper.vca.level", 0.7f); } });
     changes.push_back ({ 48000, [] (ProcRig& r) { r.set (vs::ParamID::keyMode, kDual); } });
     const std::vector<Midi> midi { noteOn (100, 40), noteOff (20000, 40), noteOn (48000, 67), noteOff (70000, 67) };
@@ -422,7 +462,8 @@ TEST_CASE ("M3 Whole -> Dual: Upper starts clean (parameters at target, fresh LF
 
     // Reference: a fresh Upper part with the final parameters, the note at its first sample.
     RefPart upper (rig, vs::kUpperPrefix, vs::VintageSynthProcessor::kUpperSeed);
-    const auto ref = upper.render (48000, { { 0, vs::EventType::NoteOn, 67, 100.0f / 127.0f }, { 22000, vs::EventType::NoteOff, 67, 0.0f } }, 256);
+    const auto ref = onGrid (upper.renderHost (48000, { { 0, vs::EventType::NoteOn, 67, 100.0f / 127.0f },
+                                                        { 22000 * rig.scale, vs::EventType::NoteOff, 67, 0.0f } }, 256), rig.scale);
     const float k = rig.masterGain() * vs::map::panGains (1.0f).right;
     std::vector<float> got (out.r.begin() + 48000, out.r.end()), expected (ref.size());
     for (size_t i = 0; i < ref.size(); ++i)
@@ -436,7 +477,8 @@ TEST_CASE ("M3 Whole -> Dual: Upper starts clean (parameters at target, fresh LF
 
 TEST_CASE ("M3 Whole: controllers sent in Whole are in effect when Upper starts (pedal, bend)", "[m3][whole][pedal]")
 {
-    ProcRig rig;
+    VS_EVERY_RATE;
+    ProcRig rig (rate);
     rig.set ("lower.mix.pan", -1.0f);
     rig.set ("upper.mix.pan", 1.0f);
     rig.set ("upper.vco1.waveform", 0.0f); // sine
@@ -461,7 +503,8 @@ TEST_CASE ("M3 Whole: controllers sent in Whole are in effect when Upper starts 
 
 TEST_CASE ("M3 Dual -> Whole: Upper releases (no click), then stops being rendered", "[m3][whole][mode]")
 {
-    ProcRig rig;
+    VS_EVERY_RATE;
+    ProcRig rig (rate);
     twoPatches (rig);
     rig.set (vs::ParamID::keyMode, kDual);
     rig.set ("upper.env2.release", 0.5f); // 100 ms
@@ -472,8 +515,8 @@ TEST_CASE ("M3 Dual -> Whole: Upper releases (no click), then stops being render
 
     const auto rendered = rig.proc.getUpperPart().getRenderedSamples();
     CHECK_FALSE (rig.proc.isUpperRendering());
-    CHECK (rendered > 24000);          // it kept rendering its release tail ...
-    CHECK (rendered < 24000 + 24000);  // ... and stopped well before the end
+    CHECK (rendered > 24000 * rig.scale);          // it kept rendering its release tail ...
+    CHECK (rendered < (24000 + 24000) * rig.scale); // ... and stopped well before the end
     rig.render (4800, {}, 256);
     CHECK (rig.proc.getUpperPart().getRenderedSamples() == rendered); // nothing more in Whole
 
@@ -485,10 +528,118 @@ TEST_CASE ("M3 Dual -> Whole: Upper releases (no click), then stops being render
 }
 
 // =================================================================================================
+// Mixer latch after a key-mode change (owner decision, M3 review)
+// =================================================================================================
+
+TEST_CASE ("M3 latch: after Dual -> Whole a Lower tail the balance had silenced stays silent until Lower plays again", "[m3][mixer][latch]")
+{
+    VS_EVERY_RATE;
+    // Dual with balance +1 (Lower at 0), Lower hard left: L carries only Lower. A long Lower
+    // release is running when the mode changes to Whole (Lower's target becomes unity). The tail
+    // must stay inaudible (L exactly 0) until Lower's next note-on, from where Lower moves to unity.
+    auto run = [rate] (int block) {
+        ProcRig rig (rate);
+        rig.set (vs::ParamID::keyMode, kDual);
+        rig.set (vs::ParamID::mixBalance, 1.0f);
+        rig.set ("lower.mix.pan", -1.0f);
+        rig.set ("upper.mix.pan", 1.0f);
+        rig.set ("lower.env2.release", 0.8f); // 1.6 s
+        rig.prepare();
+        const std::vector<Midi> midi { noteOn (100, 48), noteOn (100, 55), noteOn (40001, 60), noteOff (60000, 60) };
+        const std::vector<ProcRig::Change> changes { { 24000, [] (ProcRig& r) { r.set (vs::ParamID::keyMode, kWhole); } } };
+        return rig.render (72000, midi, block, changes);
+    };
+    const auto ref = run (512);
+    CHECK (peak (ref.l, 0, 40001) <= 0.0);                // silent in Dual and through the whole Lower tail in Whole
+    CHECK (rmsDb (ref.r, 4800, 9600) > -40.0);            // (Upper was audible in Dual)
+    CHECK (rmsDb (ref.l, 40001 + 2400, 9600) > -40.0);    // the new note plays Lower at unity
+    // Without the latch the tail would come back here (measured -23 dB in the review).
+    for (const int block : { 97, 1 })
+    {
+        const auto other = run (block);
+        const double db = differenceDb (ref, other);
+        INFO ("block " << block << " vs 512: " << db << " dB");
+        CHECK (peak (other.l, 0, 40001) <= 0.0);
+        CHECK (db < -100.0);
+    }
+}
+
+TEST_CASE ("M3 latch: after Whole -> Dual a Lower tail keeps unity until Lower's next note, then moves to its balance gain", "[m3][mixer][latch]")
+{
+    VS_EVERY_RATE;
+    // Whole, Lower hard left (L = Lower only), long release running at the change to Dual with
+    // balance +1 (Lower's target 0). Until the next note-on the output equals the same render with
+    // balance 0 (no change of Lower's gain); after it, Lower falls to 0.
+    auto run = [rate] (int block, float balance) {
+        ProcRig rig (rate);
+        rig.set (vs::ParamID::mixBalance, balance);
+        rig.set ("lower.mix.pan", -1.0f);
+        rig.set ("upper.mix.pan", 1.0f);
+        rig.set ("lower.env2.release", 0.8f);
+        rig.prepare();
+        const std::vector<Midi> midi { noteOn (100, 48), noteOn (100, 55), noteOn (40001, 60), noteOff (60000, 60) };
+        const std::vector<ProcRig::Change> changes { { 24000, [] (ProcRig& r) { r.set (vs::ParamID::keyMode, kDual); } } };
+        return rig.render (72000, midi, block, changes);
+    };
+    for (const int block : { 512, 97, 1 })
+    {
+        INFO ("block " << block);
+        const auto latched = run (block, 1.0f), reference = run (block, 0.0f);
+        const std::vector<float> a (latched.l.begin(), latched.l.begin() + 40001), b (reference.l.begin(), reference.l.begin() + 40001);
+        CHECK (maxAbsDiff (a, b) <= 0.0);                    // the tail at the level it was heard at
+        CHECK (rmsDb (latched.l, 30000, 4800) > -60.0);      // (and there is a tail to hear)
+        CHECK (peak (latched.l, 40001 + 4800, 72000) < 1.0e-4); // after the note-on: Lower at its balance gain 0
+        CHECK (rmsDb (latched.r, 40001 + 2400, 9600) > -40.0);  // Upper plays the new note
+    }
+}
+
+// =================================================================================================
 // Mixer: pan and balance laws, smoothing, stereo and mono output
 // =================================================================================================
 
-TEST_CASE ("M3 pan law: constant power (+-0.1 dB), unity in both channels at the centre, for both parts", "[m3][mixer]")
+namespace
+{
+/** The decided law: unity at the centre, the near side exactly 1, the far side sqrt2 cos. */
+double lawFar (double x) // x in 0..1: how far toward the near side
+{
+    return std::sqrt (2.0) * std::cos ((x + 1.0) * juce::MathConstants<double>::pi / 4.0);
+}
+} // namespace
+
+TEST_CASE ("M3 pan and balance law (map): never a boost, near side unity, far side falls to exactly 0, monotonic, continuous", "[m3][mixer]")
+{
+    float prevL = 2.0f, prevR = -1.0f;
+    for (int k = -1000; k <= 1000; ++k)
+    {
+        const float p = static_cast<float> (k) / 1000.0f;
+        const auto g = vs::map::panGains (p);
+        const auto b = vs::map::balanceGains (p);
+        INFO ("pan " << p);
+        CHECK (g.left <= 1.0f);
+        CHECK (g.right <= 1.0f);
+        CHECK (g.left >= 0.0f);
+        CHECK (g.right >= 0.0f);
+        CHECK (std::abs (b.lower - g.left) <= 0.0f); // the same law for the part balance
+        CHECK (std::abs (b.upper - g.right) <= 0.0f);
+        if (p <= 0.0f)
+            CHECK (std::abs (g.left - 1.0f) <= 0.0f); // near side: exactly unity
+        if (p >= 0.0f)
+            CHECK (std::abs (g.right - 1.0f) <= 0.0f);
+        const double far = p < 0.0f ? g.right : g.left;
+        CHECK (std::abs (far - lawFar (std::abs (static_cast<double> (p)))) < 2.0e-6);
+        CHECK (g.left <= prevL);  // monotonic
+        CHECK (g.right >= prevR);
+        CHECK (std::abs (g.left - prevL) < 0.003f + (k == -1000 ? 2.0f : 0.0f)); // continuous: small steps
+        prevL = g.left;
+        prevR = g.right;
+    }
+    CHECK (std::abs (vs::map::panGains (-1.0f).right) <= 0.0f); // exactly 0 at the far extreme
+    CHECK (std::abs (vs::map::panGains (1.0f).left) <= 0.0f);
+    CHECK (std::abs (vs::map::panGains (0.0f).left - 1.0f) <= 0.0f); // exactly unity at the centre
+    CHECK (std::abs (vs::map::panGains (0.0f).right - 1.0f) <= 0.0f);
+}
+
+TEST_CASE ("M3 pan law through the processor, both parts: levels follow the law (+-0.05 dB), centre is unity", "[m3][mixer]")
 {
     for (const bool upperPart : { false, true })
     {
@@ -511,32 +662,23 @@ TEST_CASE ("M3 pan law: constant power (+-0.1 dB), unity in both channels at the
         const auto [cl, cr] = levels (0.0f);
         INFO ((upperPart ? "Upper" : "Lower"));
         CHECK (std::abs (cl - cr) < 1.0e-4);
-
-        // Unity at the centre: Whole/Split with one part centred equals that part alone; checked
-        // against the Dual-sum test, which compares with stand-alone parts at the centre.
         for (const float pan : { -1.0f, -0.6f, -0.25f, 0.3f, 0.8f, 1.0f })
         {
             const auto [l, r] = levels (pan);
-            const double theta = (static_cast<double> (pan) + 1.0) * juce::MathConstants<double>::pi / 4.0;
-            const double expL = 20.0 * std::log10 (std::max (1.0e-12, std::sqrt (2.0) * std::cos (theta)));
-            const double expR = 20.0 * std::log10 (std::max (1.0e-12, std::sqrt (2.0) * std::sin (theta)));
-            const double power = 10.0 * std::log10 (std::pow (10.0, (l - cl) / 10.0) + std::pow (10.0, (r - cl) / 10.0));
-            INFO ("pan " << pan << ": L " << l - cl << " dB (law " << expL << "), R " << r - cl << " dB (law " << expR
-                         << "), total power " << power << " dB re centre channel (law 3.01)");
-            CHECK (std::abs (power - 10.0 * std::log10 (2.0)) <= 0.1);
-            if (pan > -1.0f)
-                CHECK (std::abs ((r - cl) - expR) <= 0.1);
+            const double x = std::abs (static_cast<double> (pan));
+            const double expFar = 20.0 * std::log10 (std::max (1.0e-12, lawFar (x)));
+            const double nearDb = pan < 0.0f ? l - cl : r - cl, farDb = pan < 0.0f ? r - cl : l - cl;
+            INFO ("pan " << pan << ": near " << nearDb << " dB (law 0), far " << farDb << " dB (law " << expFar << ")");
+            CHECK (std::abs (nearDb) <= 0.05);
+            if (x < 1.0)
+                CHECK (std::abs (farDb - expFar) <= 0.05);
             else
-                CHECK (r < -200.0); // exactly silent on the far side
-            if (pan < 1.0f)
-                CHECK (std::abs ((l - cl) - expL) <= 0.1);
-            else
-                CHECK (l < -200.0);
+                CHECK (farDb < -200.0); // exactly silent
         }
     }
 }
 
-TEST_CASE ("M3 balance law: constant power (+-0.1 dB), both parts at unity at 0, no effect in Whole", "[m3][mixer]")
+TEST_CASE ("M3 balance law through the processor: Lower and Upper follow the law, unity at 0, no effect in Whole", "[m3][mixer]")
 {
     // Dual, Lower hard left, Upper hard right: L measures Lower's gain, R Upper's.
     auto levels = [] (float balance, float mode) {
@@ -560,22 +702,15 @@ TEST_CASE ("M3 balance law: constant power (+-0.1 dB), both parts at unity at 0,
     {
         const auto out = levels (b, kDual);
         const double dl = rmsDb (out.l, 9600, 9600) - l0, dr = rmsDb (out.r, 9600, 9600) - r0;
-        const auto law = vs::map::balanceGains (b);
-        const double theta = (static_cast<double> (b) + 1.0) * juce::MathConstants<double>::pi / 4.0;
-        const double expLo = 20.0 * std::log10 (std::max (1.0e-12, std::sqrt (2.0) * std::cos (theta)));
-        const double expUp = 20.0 * std::log10 (std::max (1.0e-12, std::sqrt (2.0) * std::sin (theta)));
-        const double power = 10.0 * std::log10 (std::pow (10.0, dl / 10.0) + std::pow (10.0, dr / 10.0));
-        INFO ("balance " << b << ": Lower " << dl << " dB (law " << expLo << "), Upper " << dr << " dB (law " << expUp
-                         << "), power " << power << " dB (law 3.01); map gains " << law.lower << " / " << law.upper);
-        CHECK (std::abs (power - 10.0 * std::log10 (2.0)) <= 0.1);
-        if (b > -1.0f)
-            CHECK (std::abs (dr - expUp) <= 0.1);
+        const double x = std::abs (static_cast<double> (b));
+        const double expFar = 20.0 * std::log10 (std::max (1.0e-12, lawFar (x)));
+        const double nearDb = b < 0.0f ? dl : dr, farDb = b < 0.0f ? dr : dl;
+        INFO ("balance " << b << ": near part " << nearDb << " dB (law 0), far part " << farDb << " dB (law " << expFar << ")");
+        CHECK (std::abs (nearDb) <= 0.05);
+        if (x < 1.0)
+            CHECK (std::abs (farDb - expFar) <= 0.05);
         else
-            CHECK (dr < -200.0);
-        if (b < 1.0f)
-            CHECK (std::abs (dl - expLo) <= 0.1);
-        else
-            CHECK (dl < -200.0);
+            CHECK (farDb < -200.0);
     }
 
     // Whole: the balance does nothing (Lower at unity), bit for bit.
@@ -588,7 +723,7 @@ TEST_CASE ("M3 balance law: constant power (+-0.1 dB), both parts at unity at 0,
     }
 }
 
-TEST_CASE ("M3 mixer: gain changes are smoothed (bounded step, no zipper), exact at the target", "[m3][mixer]")
+TEST_CASE ("M3 mixer: gain changes are smoothed (bounded step, no zipper), exact at the target, block-size independent", "[m3][mixer]")
 {
     vs::PartMixer m;
     constexpr double fs = 48000.0;
@@ -600,8 +735,8 @@ TEST_CASE ("M3 mixer: gain changes are smoothed (bounded step, no zipper), exact
     m.setTargets (0.0f, 1.0f, 0.0f, false); // jump to hard right
     m.process (one.data(), nullptr, l.data(), r.data(), 4800);
     // A one-pole with tau = 10 ms: the largest per-sample step is |delta| (1 - e^(-1/(tau fs))).
-    const double bound = std::sqrt (2.0) * (1.0 - std::exp (-1.0 / (vs::PartMixer::kSmoothingSeconds * fs))) * 1.0001;
-    CHECK (std::abs (l[0] - std::sqrt (2.0f)) < 0.01f); // starts where it was
+    const double bound = 1.0 * (1.0 - std::exp (-1.0 / (vs::PartMixer::kSmoothingSeconds * fs))) * 1.0001;
+    CHECK (std::abs (l[0] - 1.0f) < 0.01f); // starts where it was
     CHECK (maxStep (l, 0, 4800) <= bound);
     CHECK (maxStep (r, 0, 4800) <= bound);
     for (size_t i = 1; i < l.size(); ++i)
@@ -614,13 +749,38 @@ TEST_CASE ("M3 mixer: gain changes are smoothed (bounded step, no zipper), exact
     for (int k = 0; k < 3; ++k)
         m.process (one.data(), nullptr, l.data(), r.data(), 4800);
     CHECK (std::fpclassify (m.gain (0, 0)) == FP_ZERO);
-    CHECK (std::abs (m.gain (0, 1) - std::sqrt (2.0f)) < 1.0e-6f);
+    CHECK (std::abs (m.gain (0, 1) - 1.0f) <= 0.0f);
+
+    // The same jump processed in blocks of 1, 7 and 4800 gives bit-identical gains (the settled
+    // deviation is snapped per sample, not at the end of a call).
+    auto curve = [] (int block) {
+        vs::PartMixer mx;
+        mx.prepare (fs);
+        mx.setTargets (0.0f, -1.0f, 0.3f, false);
+        mx.reset();
+        mx.setTargets (0.7f, 1.0f, -0.4f, false);
+        std::vector<float> in (24000, 1.0f), up (24000, 0.5f), ll (24000), rr (24000);
+        for (int pos = 0; pos < 24000; pos += block)
+        {
+            const int n = std::min (block, 24000 - pos);
+            mx.process (in.data() + pos, up.data() + pos, ll.data() + pos, rr.data() + pos, n);
+        }
+        return std::pair { ll, rr };
+    };
+    const auto a = curve (4800);
+    for (const int block : { 1, 7 })
+    {
+        const auto b = curve (block);
+        CHECK (maxAbsDiff (a.first, b.first) <= 0.0);
+        CHECK (maxAbsDiff (a.second, b.second) <= 0.0);
+    }
 }
 
 TEST_CASE ("M3 output: true stereo, and a mono bus gets (L + R) / 2", "[m3][mixer][mono]")
 {
-    auto run = [] (int channels) {
-        ProcRig rig (48000.0, 512, channels);
+    VS_EVERY_RATE;
+    auto run = [rate] (int channels) {
+        ProcRig rig (rate, 512, channels);
         twoPatches (rig);
         rig.set (vs::ParamID::keyMode, kSplit);
         rig.set ("lower.mix.pan", -0.8f);
@@ -640,14 +800,15 @@ TEST_CASE ("M3 output: true stereo, and a mono bus gets (L + R) / 2", "[m3][mixe
 }
 
 // =================================================================================================
-// Key-mode changes, block-size independence, overflow, random streams
+// Key-mode changes, block-size independence, when changes take effect, overflow, random streams
 // =================================================================================================
 
 TEST_CASE ("M3 key-mode change releases every voice of both parts, keeps the controllers, no click", "[m3][mode][pedal]")
 {
+    VS_EVERY_RATE;
     for (const float to : { kSplit, kWhole })
     {
-        ProcRig rig;
+        ProcRig rig (rate);
         twoPatches (rig);
         rig.set (vs::ParamID::keyMode, kDual);
         rig.set ("lower.env2.release", 0.4f); // 40 ms
@@ -672,15 +833,21 @@ TEST_CASE ("M3 key-mode change releases every voice of both parts, keeps the con
     }
 }
 
-TEST_CASE ("M3 render does not depend on the host block size with both parts sounding (Vintage 1, voice reuse, mode changes)", "[m3][control]")
+TEST_CASE ("M3 render does not depend on the host block size when every parameter change lands on the same sample (both parts, Vintage 1, voice reuse, mode changes)", "[m3][control]")
 {
+    // What this proves: given the same parameter change samples, everything else (routing, both
+    // parts, mixer, latch, Upper stopping and resuming) is independent of the host block size.
+    // ProcRig ends host blocks at every change, which a real host does not do; when a change takes
+    // effect with real host blocks is pinned by the next test.
+    //
     // Lower Poly (voices reused after idle), Upper Solo (one voice reused for every note), pans
-    // and balance off-centre, full Vintage, notes at odd offsets, and key-mode / split changes
-    // at fixed samples: Dual -> Split -> Whole -> Dual. Upper's release tail ends shortly before
-    // Dual comes back, at a point where one block size has already stopped rendering Upper and
-    // the other has not (checked), so Upper must come back the same either way.
-    auto run = [] (int block, int backToDual, bool* upperRenderingAtReturn, int* upperSilentFrom) {
-        ProcRig rig;
+    // and balance off-centre, full Vintage, notes at odd offsets, and key-mode / split changes:
+    // Dual -> Split -> Whole -> Dual. Upper's release tail ends shortly before Dual comes back,
+    // at a point where one block size has already stopped rendering Upper and the other has not
+    // (checked), so Upper must come back the same either way.
+    VS_EVERY_RATE;
+    auto run = [rate] (int block, int backToDual, bool* upperRenderingAtReturn, int* upperSilentFrom) {
+        ProcRig rig (rate);
         twoPatches (rig);
         rig.set (vs::ParamID::vintage, 1.0f);
         rig.set (vs::ParamID::keyMode, kDual);
@@ -715,8 +882,8 @@ TEST_CASE ("M3 render does not depend on the host block size with both parts sou
              } },
         };
         return rig.render (backToDual + 20000, midi, block, changes, [upperSilentFrom] (int end, ProcRig& r) {
-            if (upperSilentFrom != nullptr && end > 52000 && *upperSilentFrom < 0 && ! r.proc.getUpperPart().isSounding())
-                *upperSilentFrom = end;
+            if (upperSilentFrom != nullptr && end > 52000 * r.scale && *upperSilentFrom < 0 && ! r.proc.getUpperPart().isSounding())
+                *upperSilentFrom = end / r.scale;
         });
     };
 
@@ -728,7 +895,7 @@ TEST_CASE ("M3 render does not depend on the host block size with both parts sou
 
     // A return point at which 512 and 37 disagree about whether Upper is still rendered.
     int backToDual = -1;
-    for (int r = silentFrom + 8; r < silentFrom + 1200 && backToDual < 0; r += 8)
+    for (int r = silentFrom + 4; r < silentFrom + 1200 && backToDual < 0; r += 4)
     {
         bool a = false, b = false;
         run (512, r, &a, nullptr);
@@ -740,20 +907,56 @@ TEST_CASE ("M3 render does not depend on the host block size with both parts sou
     REQUIRE (backToDual > 0);
 
     const auto ref = run (512, backToDual, nullptr, nullptr);
-    for (const int block : { 500, 37 })
+    for (const int block : { 500, 37, 1 })
     {
         const double db = differenceDb (ref, run (block, backToDual, nullptr, nullptr));
         INFO ("block " << block << " vs 512: " << db << " dB");
-        WARN ("M3 block-size independence (both parts, Vintage 1), " << block << " vs 512: " << db << " dB");
+        WARN ("M3 block-size independence (both parts, Vintage 1), " << rate << " Hz, " << block << " vs 512: " << db << " dB");
         CHECK (db < -100.0);
+    }
+}
+
+TEST_CASE ("M3 key.mode and key.split_point take effect at the first sample of the host block that delivers them (accepted, documented)", "[m3][control][mode]")
+{
+    // Hosts deliver parameter changes per block, so a key-mode change (which releases notes)
+    // lands at a block-size-dependent time. Decision (M3 review): accept and document, no
+    // quantisation. Pinned here: with 512-sample host blocks, a change the host delivers with the
+    // block starting at 3 x 512 acts exactly like a change at that sample with 1-sample blocks,
+    // and not like one at the sample inside the previous block where a user might have set it.
+    VS_EVERY_RATE;
+    auto run = [rate] (int block, int changeAt48, bool splitToo) {
+        ProcRig rig (rate);
+        twoPatches (rig);
+        rig.set (vs::ParamID::keyMode, kDual);
+        rig.prepare();
+        const std::vector<Midi> midi { noteOn (100, 48), noteOn (100, 67), noteOn (3000, 62), noteOff (9000, 62) };
+        const std::vector<ProcRig::Change> changes { { changeAt48, [splitToo] (ProcRig& r) {
+            r.set (vs::ParamID::keyMode, kSplit);
+            if (splitToo)
+                r.set (vs::ParamID::keySplitPoint, 64.0f);
+        } } };
+        return rig.render (12000, midi, block, changes);
+    };
+    const int blockHost = 512;
+    // Host block boundary 3 x 512 host samples, in 48 kHz units.
+    const int boundary48 = 3 * blockHost / static_cast<int> (std::lround (rate / 48000.0));
+    for (const bool splitToo : { false, true })
+    {
+        INFO ("split point changed too: " << splitToo);
+        const auto delivered = run (blockHost, boundary48, splitToo);
+        const auto exact = run (1, boundary48, splitToo);
+        const auto intended = run (1, boundary48 - 100, splitToo); // what a sample-accurate change would give
+        CHECK (differenceDb (exact, delivered) < -100.0);
+        CHECK (differenceDb (exact, intended) > -60.0);
     }
 }
 
 TEST_CASE ("M3 event-buffer overflow reaches both parts (pedal down too): no hanging note", "[m3][events][pedal]")
 {
+    VS_EVERY_RATE;
     for (const bool pedal : { false, true })
     {
-        ProcRig rig;
+        ProcRig rig (rate);
         rig.set (vs::ParamID::keyMode, kDual);
         rig.set ("lower.env2.sustain", 1.0f);
         rig.set ("upper.env2.sustain", 1.0f);
@@ -763,14 +966,16 @@ TEST_CASE ("M3 event-buffer overflow reaches both parts (pedal down too): no han
         std::vector<Midi> midi { noteOn (0, 48), noteOn (0, 67) };
         if (pedal)
             midi.push_back (cc (1, 64, 127));
-        // One block: 3000 bends (more than the 2048-event buffer), then the note-offs and pedal
-        // up, which are dropped with the overflow.
+        // One host block: 3000 bends (more than the 2048-event buffer), then the note-offs and
+        // pedal up, which are dropped with the overflow. 24064 x scale is a 512-sample host block
+        // start at every rate, and the events end 111 x scale <= 444 host samples later.
+        constexpr int base = 24064;
         for (int i = 0; i < 3000; ++i)
-            midi.push_back (bend (24064 + 1 + i % 400, 8192)); // all inside the block 24064 .. 24575
-        midi.push_back (noteOff (24500, 48));
-        midi.push_back (noteOff (24500, 67));
+            midi.push_back (bend (base + 1 + i % 100, 8192));
+        midi.push_back (noteOff (base + 110, 48));
+        midi.push_back (noteOff (base + 110, 67));
         if (pedal)
-            midi.push_back (cc (24501, 64, 0));
+            midi.push_back (cc (base + 111, 64, 0));
         const auto out = rig.render (72000, midi, 512);
         INFO ("pedal " << pedal);
         CHECK (rmsDb (out.l, 12000, 4800) > -40.0);
@@ -780,17 +985,21 @@ TEST_CASE ("M3 event-buffer overflow reaches both parts (pedal down too): no han
     }
 }
 
-TEST_CASE ("M3 random event streams with key-mode and split changes never hang a note", "[m3][robust]")
+TEST_CASE ("M3 random event streams (panic, overflow, mode/split/assign changes) never hang a note", "[m3][robust]")
 {
-    for (std::uint32_t seed = 1; seed <= 12; ++seed)
+    VS_EVERY_RATE;
+    const std::uint32_t seeds = rate < 50000.0 ? 40u : 8u;
+    for (std::uint32_t seed = 1; seed <= seeds; ++seed)
     {
-        std::mt19937 rng (seed);
+        std::mt19937 rng (seed * 7919u + static_cast<std::uint32_t> (rate));
         auto uni = [&rng] (int a, int b) { return std::uniform_int_distribution<int> (a, b) (rng); };
 
-        ProcRig rig;
+        ProcRig rig (rate);
         rig.set ("lower.env2.sustain", 1.0f);
         rig.set ("upper.env2.sustain", 1.0f);
+        rig.set ("lower.assign.mode", static_cast<float> (uni (0, 2)));
         rig.set ("upper.assign.mode", static_cast<float> (uni (0, 2)));
+        rig.set ("lower.assign.unison_voices", static_cast<float> (uni (0, 3)));
         rig.set (vs::ParamID::keyMode, static_cast<float> (uni (0, 2)));
         rig.prepare();
 
@@ -800,35 +1009,49 @@ TEST_CASE ("M3 random event streams with key-mode and split changes never hang a
         constexpr int length = 96000;
         for (int pos = 0; pos < length - 4000; pos += uni (10, 400))
         {
-            const int k = uni (0, 20);
+            const int k = uni (0, 26);
             if (k < 9)
             {
                 const int note = uni (30, 90);
                 midi.push_back (noteOn (pos, note));
                 down.push_back (note);
             }
-            else if (k < 16 && ! down.empty())
+            else if (k < 15 && ! down.empty())
             {
                 const auto idx = static_cast<size_t> (uni (0, static_cast<int> (down.size()) - 1));
                 midi.push_back (noteOff (pos, down[idx]));
                 down.erase (down.begin() + static_cast<std::ptrdiff_t> (idx));
             }
-            else if (k == 16)
+            else if (k == 15)
                 midi.push_back (cc (pos, 64, uni (0, 1) * 127));
-            else if (k == 17)
+            else if (k == 16)
                 changes.push_back ({ pos, [m = uni (0, 2)] (ProcRig& r) { r.set (vs::ParamID::keyMode, static_cast<float> (m)); } });
-            else if (k == 18)
+            else if (k == 17)
                 changes.push_back ({ pos, [s = uni (40, 80)] (ProcRig& r) { r.set (vs::ParamID::keySplitPoint, static_cast<float> (s)); } });
+            else if (k == 18)
+                changes.push_back ({ pos, [m = uni (0, 2), p = uni (0, 1)] (ProcRig& r) {
+                    r.set (p == 0 ? "lower.assign.mode" : "upper.assign.mode", static_cast<float> (m));
+                } });
             else if (k == 19)
                 midi.push_back (bend (pos, uni (0, 16383)));
+            else if (k == 20 && uni (0, 3) == 0)
+                midi.push_back (cc (pos, 120, 0)); // All Sound Off (keys stay physically down)
+            else if (k == 21 && uni (0, 3) == 0)
+                midi.push_back (cc (pos, 121, 0)); // Reset Controllers
+            else if (k == 22 && uni (0, 3) == 0)
+                midi.push_back (cc (pos, 123, 0)); // All Notes Off
+            else if (k == 23 && uni (0, 8) == 0)
+                for (int i = 0; i < 2100; ++i) // overflow: the rest of this block's events are dropped
+                    midi.push_back (bend (pos, 8192));
         }
         // Let go of everything: every key still down, and the pedal.
         for (const int note : down)
             midi.push_back (noteOff (length - 3000, note));
         midi.push_back (cc (length - 3000, 64, 0));
-        const auto out = rig.render (length + 48000, midi, uni (0, 1) == 0 ? 512 : 61, changes);
+        const int block = uni (0, 1) == 0 ? 512 : 61;
+        const auto out = rig.render (length + 48000, midi, block, changes);
 
-        INFO ("seed " << seed);
+        INFO ("seed " << seed << ", block " << block);
         CHECK (peak (out.l, length + 24000, length + 48000) < 1.0e-6);
         CHECK (peak (out.r, length + 24000, length + 48000) < 1.0e-6);
         CHECK_FALSE (rig.proc.getLowerPart().isSounding());
@@ -889,6 +1112,7 @@ TEST_CASE ("M3 parameters: IDs, order, ranges, defaults and display text", "[m3]
     juce::RangedAudioParameter* sp = split; // getText / getValueForText are public in the base
     auto textOf = [sp] (int note) { return sp->getText (sp->convertTo0to1 (static_cast<float> (note)), 16); };
     CHECK (textOf (0) == "C-1");
+    CHECK (textOf (1) == "C#-1");
     CHECK (textOf (61) == "C#4");
     CHECK (textOf (69) == "A4");
     CHECK (textOf (127) == "G9");
@@ -897,9 +1121,20 @@ TEST_CASE ("M3 parameters: IDs, order, ranges, defaults and display text", "[m3]
     CHECK (noteFor ("c#4") == 61);
     CHECK (noteFor ("Db4") == 61);
     CHECK (noteFor ("A-1") == 9);
+    CHECK (noteFor ("Db-1") == 1); // flat with a negative octave
+    CHECK (noteFor ("C#-1") == 1);
     CHECK (noteFor ("64") == 64);
     for (int n = 0; n < 128; ++n)
         CHECK (noteFor (textOf (n).toRawUTF8()) == n); // every name parses back
+
+    // Unreadable or out-of-range text leaves the value unchanged (here 47, not the default 60).
+    split->setValueNotifyingHost (split->convertTo0to1 (47.0f));
+    for (const char* bad : { "C-", "C", "H4", "C#x", "", "Cb-1", "G#9", "200", "-3", "4-" })
+    {
+        INFO ("text '" << bad << "'");
+        CHECK (noteFor (bad) == 47);
+        CHECK (vs::noteFromName (bad) == -1);
+    }
 
     auto* pan = state.getParameter ("lower.mix.pan");
     auto panText = [pan] (float v) { return pan->getText (pan->convertTo0to1 (v), 16); };

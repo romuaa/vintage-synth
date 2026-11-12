@@ -165,14 +165,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 
     // M3: key modes and the part mixer (appended, docs/architecture.md 4.5).
     layout.add (makeChoice (ParamID::keyMode, "Key Mode", kKeyModeLabels, 0));
-    layout.add (std::make_unique<juce::AudioParameterInt> (
+    // The text parser needs the parameter's own value (unreadable text leaves it unchanged); the
+    // parameter does not exist yet when the lambda is made, so it reads it through a shared slot.
+    auto splitPointHolder = std::make_shared<juce::AudioParameterInt*> (nullptr);
+    auto split = std::make_unique<juce::AudioParameterInt> (
         juce::ParameterID { ParamID::keySplitPoint, kParamVersionHint }, "Split Point", 0, 127, kDefaultSplitPoint,
         juce::AudioParameterIntAttributes()
             .withStringFromValueFunction ([] (int v, int) { return noteName (v); })
-            .withValueFromStringFunction ([] (const juce::String& t) {
+            .withValueFromStringFunction ([current = splitPointHolder] (const juce::String& t) {
                 const int n = noteFromName (t);
-                return n < 0 ? kDefaultSplitPoint : n;
-            })));
+                return n >= 0 ? n : (*current != nullptr ? (*current)->get() : kDefaultSplitPoint);
+            }));
+    *splitPointHolder = split.get(); // owned by the processor's parameter tree for its whole life
+    layout.add (std::move (split));
     layout.add (makeFloat (ParamID::mixBalance, "Balance", -1.0f, 1.0f, 0.0f, Display::Balance));
 
     return layout;
@@ -190,21 +195,32 @@ int noteFromName (const juce::String& text)
     const auto t = text.trim();
     if (t.isEmpty())
         return -1;
-    if (juce::CharacterFunctions::isDigit (t[0]))
-        return juce::jlimit (0, 127, t.getIntValue()); // a plain MIDI note number
-
-    static constexpr int semis[] { 9, 11, 0, 2, 4, 5, 7 }; // A B C D E F G
-    const auto letter = static_cast<int> (juce::CharacterFunctions::toUpperCase (t[0]));
-    if (letter < 'A' || letter > 'G')
-        return -1;
-    int pc = semis[static_cast<size_t> (letter - 'A')];
-    int i = 1;
-    for (; i < t.length() && (static_cast<int> (t[i]) == '#' || static_cast<int> (t[i]) == 'b'); ++i)
-        pc += static_cast<int> (t[i]) == '#' ? 1 : -1;
-    const auto octaveText = t.substring (i).trim();
-    if (octaveText.isEmpty() || ! octaveText.containsOnly ("-0123456789"))
-        return -1;
-    return juce::jlimit (0, 127, (octaveText.getIntValue() + 1) * 12 + pc);
+    const auto isInteger = [] (const juce::String& x) {
+        // An optional minus sign, then at least one digit, nothing else.
+        const int start = x.startsWithChar ('-') ? 1 : 0;
+        return x.length() > start && x.substring (start).containsOnly ("0123456789");
+    };
+    int note = -1;
+    if (isInteger (t))
+    {
+        note = t.getIntValue(); // a plain MIDI note number
+    }
+    else
+    {
+        static constexpr int semis[] { 9, 11, 0, 2, 4, 5, 7 }; // A B C D E F G
+        const auto letter = static_cast<int> (juce::CharacterFunctions::toUpperCase (t[0]));
+        if (letter < 'A' || letter > 'G')
+            return -1;
+        int pc = semis[static_cast<size_t> (letter - 'A')];
+        int i = 1;
+        for (; i < t.length() && (static_cast<int> (t[i]) == '#' || static_cast<int> (t[i]) == 'b'); ++i)
+            pc += static_cast<int> (t[i]) == '#' ? 1 : -1;
+        const auto octaveText = t.substring (i).trim();
+        if (! isInteger (octaveText)) // "C-" or "C#x": not a note
+            return -1;
+        note = (octaveText.getIntValue() + 1) * 12 + pc;
+    }
+    return note >= 0 && note <= 127 ? note : -1; // out of range ("Cb-1", "G#9", "200"): rejected
 }
 
 void PartParamBinding::bind (juce::AudioProcessorValueTreeState& state, const juce::String& prefix)

@@ -31,6 +31,15 @@ VintageSynthProcessor::VintageSynthProcessor()
 
 namespace
 {
+/** Offset of the first note-on in a routed chunk, or -1. */
+int firstNoteOn (std::span<const NoteEvent> events) noexcept
+{
+    for (const auto& e : events)
+        if (e.type == EventType::NoteOn)
+            return e.offset;
+    return -1;
+}
+
 KeyMode keyModeOf (const std::atomic<float>* p) noexcept
 {
     return static_cast<KeyMode> (juce::jlimit (0, 2, static_cast<int> (p->load (std::memory_order_relaxed))));
@@ -113,6 +122,11 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     {
         lowerPart.releaseAllNotes();
         upperPart.releaseAllNotes();
+        // Release tails keep the gain they were heard at until the part plays again (PartMixer).
+        if (lowerPart.isSounding())
+            mixer.latch (0);
+        if (upperActive && upperPart.isSounding())
+            mixer.latch (1);
     }
     router.setSplitPoint (static_cast<int> (splitPoint->load (std::memory_order_relaxed)));
 
@@ -155,6 +169,9 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         parseChunk (0, 0, true);
         lowerPart.render (partBuffer.getWritePointer (0), 0, lowerChunk);
         upperPart.render (partBuffer.getWritePointer (1), 0, upperChunk);
+        for (int p = 0; p < 2; ++p)
+            if (mixer.isLatched (p) && firstNoteOn (p == 0 ? lowerChunk : upperChunk) >= 0)
+                mixer.unlatch (p, false);
         return;
     }
 
@@ -182,7 +199,34 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
 
     float* left = mixBuffer.getWritePointer (0);
     float* right = mixBuffer.getWritePointer (1);
-    mixer.process (lower, upperActive ? upper : nullptr, left, right, len);
+    const float* upperIn = upperActive ? upper : nullptr;
+
+    // A latched part (after a key-mode change) moves to its new gain from its first note-on.
+    int cut[2] { -1, -1 };
+    for (int p = 0; p < 2; ++p)
+        if (mixer.isLatched (p))
+            cut[p] = firstNoteOn (p == 0 ? lowerChunk : upperChunk);
+    int pos = 0;
+    for (;;)
+    {
+        int next = len, which = -1;
+        for (int p = 0; p < 2; ++p)
+            if (cut[p] >= pos && cut[p] < next)
+            {
+                next = cut[p];
+                which = p;
+            }
+        if (next > pos)
+            mixer.process (lower + pos, upperIn != nullptr ? upperIn + pos : nullptr, left + pos, right + pos, next - pos);
+        pos = next;
+        if (which < 0)
+            break;
+        mixer.unlatch (which, false);
+        cut[which] = -1;
+    }
+    for (int p = 0; p < 2; ++p)
+        if (cut[p] >= 0)
+            mixer.unlatch (p, false); // a note-on at the very end of the chunk
 
     bool nonFinite = false;
     for (int i = 0; i < len; ++i)
@@ -221,6 +265,12 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
         router.reset(); // the parts forgot their keys
         mixer.reset();
     }
+
+    // A latched part that has gone silent takes its new gain at once (nothing audible to fade).
+    if (mixer.isLatched (0) && ! lowerPart.isSounding())
+        mixer.unlatch (0, true);
+    if (mixer.isLatched (1) && ! (upperActive && upperPart.isSounding()))
+        mixer.unlatch (1, true);
 
     // Whole mode: Upper stops being rendered once its release tails (and the decimator's) are over.
     if (upperActive && router.getMode() == KeyMode::Whole)

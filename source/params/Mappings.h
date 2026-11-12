@@ -83,20 +83,23 @@ struct PanGains
 };
 
 /**
-    Constant-power pan, -1 (left) .. +1 (right): unity in both channels at the centre,
-    left^2 + right^2 = 2 everywhere (+3 dB in one channel at the extremes, the other silent).
+    Pan, -1 (left) .. +1 (right), with the classic balance-knob law (owner decision, M3 review):
+    never a boost. Unity in both channels at the centre; toward a side, the near channel stays at
+    exactly 1 and the far one falls along sqrt2 x cos (constant power's far-side curve), reaching
+    exactly 0 at the extreme. Monotonic and continuous.
 */
 inline PanGains panGains (float pan) noexcept
 {
-    constexpr float kSqrt2 = 1.414213562f;
     if (std::isnan (pan) || std::fpclassify (pan) == FP_ZERO)
-        return { 1.0f, 1.0f }; // exactly unity at the centre (sqrt2 x cos (pi/4) rounds in float)
+        return { 1.0f, 1.0f };
     if (pan <= -1.0f)
-        return { kSqrt2, 0.0f }; // exactly silent on the far side (cos (pi/2) is not 0 in float)
+        return { 1.0f, 0.0f }; // exactly silent on the far side (cos (pi/2) is not 0 in float)
     if (pan >= 1.0f)
-        return { 0.0f, kSqrt2 };
+        return { 0.0f, 1.0f };
+    constexpr float kSqrt2 = 1.414213562f;
     const float theta = (pan + 1.0f) * 0.785398163f; // 0 .. pi/2
-    return { kSqrt2 * std::cos (theta), kSqrt2 * std::sin (theta) };
+    const float l = kSqrt2 * std::cos (theta), r = kSqrt2 * std::sin (theta);
+    return { l < 1.0f ? l : 1.0f, r < 1.0f ? r : 1.0f };
 }
 
 struct BalanceGains
@@ -104,7 +107,7 @@ struct BalanceGains
     float lower, upper;
 };
 
-/** Constant-power part balance, -1 (Lower only) .. +1 (Upper only): both parts at unity at 0. */
+/** Part balance, -1 (Lower only) .. +1 (Upper only): the same law as panGains (both at unity at 0, never above 1). */
 inline BalanceGains balanceGains (float balance) noexcept
 {
     const auto g = panGains (balance);
