@@ -74,7 +74,7 @@ public:
             const auto idx = static_cast<std::size_t> (i);
             length[idx] = nextPrime (static_cast<int> (std::lround (lineMs[idx] * sampleRate / 1000.0)));
             modDepth[idx] = static_cast<float> (modMs[idx] * sampleRate / 1000.0);
-            modInc[idx] = static_cast<float> (static_cast<double> (modHz[idx]) / sampleRate);
+            modInc[idx] = static_cast<double> (modHz[idx]) / sampleRate;
             lines[idx].resize (static_cast<std::size_t> (length[idx]) + static_cast<std::size_t> (std::ceil (modDepth[idx])) + 4);
         }
 
@@ -191,10 +191,10 @@ public:
             std::array<float, kLines> y;
             for (std::size_t i = 0; i < static_cast<std::size_t> (kLines); ++i)
             {
-                modPhase[i] += modInc[i];
-                if (modPhase[i] >= 1.0f)
-                    modPhase[i] -= 1.0f;
-                const float d = static_cast<float> (length[i] - 1) + modDepth[i] * fastSin01 (modPhase[i]);
+                modPhase[i] += modInc[i]; // double: at 192 kHz a 0.11 Hz increment is ~10 float ulp
+                if (modPhase[i] >= 1.0)
+                    modPhase[i] -= 1.0;
+                const float d = static_cast<float> (length[i] - 1) + modDepth[i] * fastSin01 (static_cast<float> (modPhase[i]));
                 y[i] = lines[i].read (d);
             }
 
@@ -364,7 +364,7 @@ private:
         shelfState.fill (0.0f);
         for (std::size_t i = 0; i < static_cast<std::size_t> (kLines); ++i)
         {
-            modPhase[i] = static_cast<float> (i) * 0.137f; // spread start phases (deterministic)
+            modPhase[i] = static_cast<double> (i) * 0.137; // spread start phases (deterministic)
             modPhase[i] -= std::floor (modPhase[i]);
         }
     }
@@ -379,7 +379,8 @@ private:
     double fs = 48000.0;
     std::array<DelayLine, kLines> lines;
     std::array<int, kLines> length {};
-    std::array<float, kLines> modDepth {}, modInc {}, modPhase {};
+    std::array<float, kLines> modDepth {};
+    std::array<double, kLines> modInc {}, modPhase {};
     std::array<float, kLines> glo {}, ghi {}, gloTarget {}, ghiTarget {}, shelfState {};
     std::array<DelayLine, 4> apL, apR;
     std::array<std::size_t, 4> apLenL {}, apLenR {};

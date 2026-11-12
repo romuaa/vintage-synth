@@ -308,3 +308,15 @@ TEST_CASE ("Chorus: click-free when re-enabled during the fade-out and on level 
 {
     checkClickFreeWithContent<Chorus> (cp (ChorusMode::I, 1.0f), cp (ChorusMode::Off, 1.0f), cp (ChorusMode::I, kDefaultMix));
 }
+
+TEST_CASE ("Chorus: block-size independent with mode, mix and on/off changes", "[fx][chorus]")
+{
+    checkBlockSizeIndependenceScripted<Chorus> ([] (size_t s) {
+        if (s < 40) return cp (ChorusMode::I);
+        if (s < 80) return cp (ChorusMode::II, 1.0f);
+        if (s < 100) return cp (ChorusMode::Off);
+        if (s < 140) return cp (ChorusMode::I, 1.0f);
+        if (s < 160) return cp (ChorusMode::I, 0.0f);
+        return cp (ChorusMode::II);
+    });
+}

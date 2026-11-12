@@ -494,3 +494,13 @@ TEST_CASE ("Reverb: tailSeconds is a pure function of the params, bounds the rea
     const auto small = rp (2.0f, 0.5f, 0.02f, 1.0f);
     CHECK (std::abs (Reverb::tailSeconds (small) - Reverb::tailSecondsUncapped (small)) < 1.0e-12);
 }
+
+TEST_CASE ("Reverb: block-size independent with decay/damping/pre-delay changes and level toggles", "[fx][reverb]")
+{
+    checkBlockSizeIndependenceScripted<Reverb> ([] (size_t s) {
+        if (s < 50) return rp (2.0f, 0.5f, 0.02f, 0.8f);
+        if (s < 60) return rp (2.0f, 0.5f, 0.02f, 0.0f);  // off (fade, idle)
+        if (s < 120) return rp (8.0f, 1.0f, 0.1f, 1.0f);  // wake, pre-delay glide
+        return rp (0.5f, 0.0f, 0.0f, 0.6f);
+    });
+}

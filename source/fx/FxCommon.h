@@ -151,15 +151,22 @@ public:
 
     float readInt (std::size_t d) const noexcept { return d < written ? buffer[(writeIndex - d) & mask] : 0.0f; }
 
-    /** Double-precision position for long lines (float has a 0.03-sample ulp at 384000). */
+    /** Double-precision position for long lines (float has a 0.03-sample ulp at 384000).
+        The position is clamped into [1, capacity - 3] (NaN -> 1), so the cast can never be UB. */
     float read (double d) const noexcept
     {
+        const double hi = static_cast<double> (buffer.size()) - 3.0;
+        if (! (d >= 1.0)) d = 1.0;
+        if (! (d <= hi)) d = hi;
         const auto n = static_cast<std::size_t> (d);
         return readAt (n, static_cast<float> (d - static_cast<double> (n)));
     }
 
     float read (float d) const noexcept
     {
+        const float hi = static_cast<float> (buffer.size()) - 3.0f;
+        if (! (d >= 1.0f)) d = 1.0f;
+        if (! (d <= hi)) d = hi;
         const auto n = static_cast<std::size_t> (d);
         return readAt (n, d - static_cast<float> (n));
     }

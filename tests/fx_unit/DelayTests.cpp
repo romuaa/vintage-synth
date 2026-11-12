@@ -357,3 +357,14 @@ TEST_CASE ("Delay: tailSeconds is a pure function of the params, includes build-
     CHECK (std::abs (Delay::tailSeconds (shortOne) - Delay::tailSecondsUncapped (shortOne)) < 1.0e-12);
     CHECK (std::isfinite (Delay::tailSeconds (dp (std::numeric_limits<float>::quiet_NaN(), 2.0f, 0.0f, false, 1.0f))));
 }
+
+TEST_CASE ("Delay: block-size independent with time glides, level toggles and ping-pong changes", "[fx][delay]")
+{
+    checkBlockSizeIndependenceScripted<Delay> ([] (size_t s) {
+        if (s < 50) return dp (0.1f, 0.5f, 0.3f, false, 0.7f);
+        if (s < 120) return dp (0.35f, 0.5f, 0.3f, false, 0.7f); // glide
+        if (s < 130) return dp (0.35f, 0.5f, 0.3f, false, 0.0f); // off (fade, idle)
+        if (s < 160) return dp (0.05f, 0.6f, 0.3f, true, 0.5f);  // wake, ping-pong
+        return dp (0.0731f, 0.9f, 0.8f, false, 0.5f);           // glide, routing crossfade
+    });
+}

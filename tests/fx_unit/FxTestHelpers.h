@@ -173,6 +173,47 @@ void checkBlockSizeIndependence (const Params& p, double fs = 48000.0, double se
     CHECK (d2 <= 1.0e-6f);
 }
 
+/**
+    Block-size independence with parameter changes (mode/level toggles, glides): the script gives
+    the params per 512-sample segment, and setParams is called at the start of every block. Block
+    patterns 512, 1 and random sizes that never cross a segment boundary, so every pattern sees
+    each change at the same sample position (repeated identical setParams calls are no-ops).
+*/
+template <typename Fx, typename Script>
+void checkBlockSizeIndependenceScripted (Script&& paramsForSegment, double fs = 48000.0, double seconds = 2.2)
+{
+    constexpr size_t seg = 512;
+    const auto n = static_cast<size_t> (seconds * fs);
+    const Stereo in = noise (n, 0.5f, 4321u);
+    auto render = [&] (int pattern) {
+        Stereo io = in;
+        Fx fx;
+        fx.prepare (fs, kMaxBlock);
+        std::uint32_t st = 77u;
+        size_t pos = 0;
+        while (pos < n)
+        {
+            const size_t toBoundary = seg - pos % seg;
+            size_t len = pattern == 0 ? seg : 1;
+            if (pattern == 2)
+            {
+                st = st * 1664525u + 1013904223u;
+                len = 1 + (st >> 8) % seg;
+            }
+            len = std::min ({ len, toBoundary, n - pos });
+            fx.setParams (paramsForSegment (pos / seg));
+            fx.process (io.l.data() + pos, io.r.data() + pos, static_cast<int> (len));
+            pos += len;
+        }
+        return io;
+    };
+    const Stereo a = render (0), b = render (1), c = render (2);
+    const float d1 = maxAbsDiff (a, b), d2 = maxAbsDiff (a, c);
+    INFO ("max diff 512 vs 1: " << d1 << ", 512 vs random: " << d2);
+    CHECK (d1 <= 1.0e-6f);
+    CHECK (d2 <= 1.0e-6f);
+}
+
 /** Level/mix 0 (or Off) from the start, and after switching off: output == input bit for bit. */
 template <typename Fx, typename Params>
 void checkBitExactBypass (const Params& on, const Params& off, double fs = 48000.0)

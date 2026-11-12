@@ -1,6 +1,8 @@
 // CPU benchmark for the M5 effect blocks. Reports cost as % of one core in real time
-// (stereo, 48 kHz, 256-sample blocks, best of 3) for chorus, delay, reverb and all three in series.
-// Budget (docs/architecture.md 5.3): all three together <= 1.5 %.
+// (stereo, 256-sample blocks, best of 3) for chorus, delay, reverb and all three in series at
+// 48 kHz, all three at 192 kHz, and a worst case that toggles every effect off/on on every block
+// (so the wake and fade paths run constantly). Budget (docs/architecture.md 5.3): all three
+// together <= 1.5 % at 48 kHz.
 // Run: build/mac-arm64/tests/fx_bench
 #include "fx/Chorus.h"
 #include "fx/Delay.h"
@@ -15,7 +17,6 @@
 
 namespace
 {
-constexpr double fs = 48000.0;
 constexpr int block = 256;
 constexpr int seconds = 10; // audio per timed run
 constexpr int repeats = 3;  // best of
@@ -27,7 +28,7 @@ struct Chain
     bool chorus = false, delay = false, reverb = false;
 };
 
-double bench (Chain which)
+double bench (Chain which, double fs = 48000.0, bool toggleEveryBlock = false)
 {
     // Pad-like input: band-limited noise, fresh for every block (identical across runs).
     std::vector<float> srcL (static_cast<size_t> (fs)), srcR (srcL.size());
@@ -75,9 +76,15 @@ double bench (Chain which)
             const auto off = static_cast<size_t> ((b * block) % (static_cast<int> (fs) - block));
             std::copy_n (srcL.begin() + static_cast<std::ptrdiff_t> (off), block, l.begin());
             std::copy_n (srcR.begin() + static_cast<std::ptrdiff_t> (off), block, rch.begin());
-            if (which.chorus) { chorus.setParams (cp); chorus.process (l.data(), rch.data(), block); }
-            if (which.delay) { delay.setParams (dp); delay.process (l.data(), rch.data(), block); }
-            if (which.reverb) { reverb.setParams (rp); reverb.process (l.data(), rch.data(), block); }
+            const bool on = ! toggleEveryBlock || b % 2 == 0;
+            auto dpb = dp;
+            auto rpb = rp;
+            dpb.level = on ? dp.level : 0.0f;
+            rpb.level = on ? rp.level : 0.0f;
+            const vs::fx::ChorusParams cpb { on ? cp.mode : vs::fx::ChorusMode::Off, cp.mix };
+            if (which.chorus) { chorus.setParams (cpb); chorus.process (l.data(), rch.data(), block); }
+            if (which.delay) { delay.setParams (dpb); delay.process (l.data(), rch.data(), block); }
+            if (which.reverb) { reverb.setParams (rpb); reverb.process (l.data(), rch.data(), block); }
             sum += static_cast<double> (l[0] + rch[block - 1]);
         }
         const auto t1 = std::chrono::steady_clock::now();
@@ -94,11 +101,15 @@ int main()
     const double d = bench ({ false, true, false });
     const double r = bench ({ false, false, true });
     const double all = bench ({ true, true, true });
+    const double all192 = bench ({ true, true, true }, 192000.0);
+    const double toggle = bench ({ true, true, true }, 48000.0, true);
     constexpr double budget = 1.5;
     std::printf ("chorus (mode I):                 %.3f%% of one core\n", c);
     std::printf ("delay (ping-pong, fb 0.5):       %.3f%% of one core\n", d);
     std::printf ("reverb (2.5 s, 16-line FDN):     %.3f%% of one core\n", r);
     std::printf ("all three in series:             %.3f%% of one core (budget %.1f%%: %s)\n",
                  all, budget, all <= budget ? "ok" : "OVER");
+    std::printf ("all three at 192 kHz:            %.3f%% of one core\n", all192);
+    std::printf ("all three, off/on every block:   %.3f%% of one core (48 kHz; wake + fade paths)\n", toggle);
     return 0;
 }
