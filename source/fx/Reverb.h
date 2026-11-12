@@ -25,7 +25,8 @@
 // Absorption filter per line i: H = Glo * LP + Ghi * HP, with a complementary 1-pole TPT pair at
 // 5 kHz. The LP and HP outputs are in quadrature, so |H(f)|^2 = Glo^2 |LP|^2 + Ghi^2 |HP|^2 exactly;
 // Glo is solved so that |H(1 kHz)| equals the gain for the requested RT60 at 1 kHz (exact at every
-// sample rate) and Ghi gives the high-frequency RT60 = decay * (1 - 0.85 * damping).
+// sample rate) and Ghi gives the high-frequency RT60 = decay * (1 - 0.85 * damping), limited for
+// short, heavily damped settings so the high-frequency decay stays uniform (see computeAbsorption).
 // Low frequencies then decay slightly slower than 1 kHz (at most about 1.3x RT60 at full damping),
 // like a real hall.
 
@@ -93,6 +94,10 @@ public:
         shelfG = tptCoef (kShelfHz, sampleRate);
         const double x = std::tan (kPiD * 1000.0 / sampleRate) / std::tan (kPiD * kShelfHz / sampleRate);
         shelfX2 = x * x;
+        // |LP(16 kHz)| of the shelf's low-pass (quadrature form), used to keep the HF decay uniform.
+        const double x16 = std::tan (kPiD * std::min (16000.0, 0.45 * sampleRate) / sampleRate) / std::tan (kPiD * kShelfHz / sampleRate);
+        lp16Db = -10.0 * std::log10 (1.0 + x16 * x16);
+        maxLength = *std::max_element (length.begin(), length.end());
 
         coefSmooth = smoothCoef (0.05, sampleRate);
         preCoef = 1.0 - std::exp (-1.0 / (0.05 * sampleRate));
@@ -240,6 +245,8 @@ public:
 
     // ---- test hooks ----
     bool isIdle() const noexcept { return idle; }
+    /** HF/1 kHz RT60 ratio actually used (the requested one, limited for uniform HF decay). */
+    double hfRatio() const noexcept { return effectiveQ; }
     std::uint64_t bufferWrites() const noexcept
     {
         std::uint64_t n = 0;
@@ -289,7 +296,20 @@ private:
 
     void computeAbsorption (float decay, float damp) noexcept
     {
-        const double q = 1.0 - 0.85 * static_cast<double> (damp);
+        // Requested HF/1 kHz RT60 ratio. Above the 5 kHz corner the shelf's low-pass branch only
+        // rolls off at 6 dB/oct, so Glo |LP(f)| leaks past the intended high-band gain Ghi. That leak
+        // is not proportional to the line length: if it dominates, the long lines outlast the short
+        // ones at high frequencies and the late HF tail turns sparse and peaky (measured +7.5 dB at
+        // 15.5 kHz for decay 1 s, damping 1). So q is limited such that the proportional Ghi term
+        // stays at least 6 dB above the leak at 16 kHz for the longest line:
+        //   A1/q >= A1 + lp16Db + 6  <=>  q >= 1 / (1 + (lp16Db + 6) / A1).
+        // This only bites for short decays with heavy damping (e.g. q >= 0.37 at 1 s); from about
+        // 4 s on the full range (q down to 0.15) is available.
+        double q = 1.0 - 0.85 * static_cast<double> (damp);
+        const double a1Max = -60.0 * static_cast<double> (maxLength) / (fs * static_cast<double> (decay));
+        if (lp16Db + 6.0 < 0.0)
+            q = std::max (q, 1.0 / (1.0 + (lp16Db + 6.0) / a1Max));
+        effectiveQ = q;
         double ratio = 1.0;
         for (std::size_t i = 0; i < static_cast<std::size_t> (kLines); ++i)
         {
@@ -345,7 +365,8 @@ private:
     std::array<std::size_t, 4> apLenL {}, apLenR {};
     DelayLine preL, preR;
     float shelfG = 0.0f, coefSmooth = 1.0f;
-    double shelfX2 = 0.0, preCoef = 1.0, pre = 1.0, preTarget = 1.0;
+    double shelfX2 = 0.0, lp16Db = 0.0, effectiveQ = 1.0, preCoef = 1.0, pre = 1.0, preTarget = 1.0;
+    int maxLength = 1;
     double lowFreqRatio = 1.0;
     float lastDecay = -1.0f, lastDamping = -1.0f, tailDecay = ReverbParams {}.decaySeconds;
     LinearRamp fade, level;

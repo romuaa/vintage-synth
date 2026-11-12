@@ -230,31 +230,42 @@ TEST_CASE ("Reverb: tail falls below -120 dBFS within tailSeconds", "[fx][reverb
     }
 }
 
-TEST_CASE ("Reverb: no metallic ringing (tail spectrum peaks <= 6 dB above the 1/3-octave mean)", "[fx][reverb]")
+namespace
 {
-    // Welch average of energy-normalised frames over the tail, compared with its own 1/3-octave
-    // smoothed version. A ringing mode shows up in every frame of every excitation and survives the
-    // averaging; estimator noise does not. The excitation must be white, so it is an impulse; it is
-    // repeated 8 times at different start offsets (different modulation phases, so the fine
-    // structure decorrelates) to give even the short (1 s) tail about 100 averages. A plain
-    // 6-frame average spreads about +-5 dB over 1000 bins, which would hide or fake a 6 dB peak.
-    // (Noise bursts are not usable: a short burst's own random spectrum passes straight through.)
-    const double fs = 48000.0;
-    for (const float damping : { 0.0f, 0.5f })
-        for (const float decay : { 1.0f, 4.0f })
+
+// Welch average of energy-normalised frames over the tail, compared with its own 1/3-octave
+// smoothed version (150 Hz .. 16 kHz). A ringing mode shows up in every frame of every
+// excitation and survives the averaging; estimator noise does not. The excitation must be white,
+// so it is an impulse; it is repeated at different start offsets (different modulation phases,
+// so the fine structure decorrelates) to give even the short (1 s) tail about 100 averages.
+// A plain 6-frame average spreads about +-5 dB over 1000 bins, which would hide or fake a 6 dB
+// peak; noise bursts are not usable either (a short burst's own random spectrum passes through).
+// Frames scale with the rate (about 5.9 Hz bins everywhere); renders are capped at 4 s.
+struct RingCase
+{
+    double fs;
+    float decay;
+    float damping;
+};
+
+void checkNoRinging (const RingCase& c)
+{
+    {
+        const double fs = c.fs;
+        const int order = 13 + static_cast<int> (std::lround (std::log2 (fs / 48000.0)));
+        const size_t frame = static_cast<size_t> (1) << order, hop = frame / 2;
+        const double seconds = std::min (4.0, 0.3 + 0.6 * static_cast<double> (c.decay));
+        const int reps = c.decay >= 4.0f ? 4 : 8; // long tails give many frames per excitation
+        std::vector<double> avg (frame / 2, 0.0);
+        int frames = 0;
+        for (int rep = 0; rep < reps; ++rep)
         {
-            constexpr int order = 13;
-            constexpr size_t frame = 1u << order, hop = frame / 2;
-            std::vector<double> avg (frame / 2, 0.0);
-            int frames = 0;
-            for (int rep = 0; rep < 8; ++rep)
-            {
             const auto t0 = static_cast<size_t> (0.173 * rep * fs);
-            Stereo ir (t0 + static_cast<size_t> ((0.3 + 0.6 * decay) * fs));
+            Stereo ir (t0 + static_cast<size_t> (seconds * fs));
             ir.l[t0] = ir.r[t0] = 1.0f;
             Reverb r;
             r.prepare (fs, kMaxBlock);
-            runConst (r, ir, rp (decay, damping, 0.0f, 1.0f));
+            runConst (r, ir, rp (c.decay, c.damping, 0.0f, 1.0f));
             for (size_t s = t0 + static_cast<size_t> (0.25 * fs); s + frame <= ir.size(); s += hop)
             {
                 for (const auto* ch : { &ir.l, &ir.r })
@@ -268,29 +279,49 @@ TEST_CASE ("Reverb: no metallic ringing (tail spectrum peaks <= 6 dB above the 1
                 }
                 ++frames;
             }
-            }
-            const double binHz = fs / static_cast<double> (frame);
-            double worst = 0.0, worstHz = 0.0;
-            const double third = std::pow (2.0, 1.0 / 6.0);
-            for (size_t k = static_cast<size_t> (150.0 / binHz); k < static_cast<size_t> (12000.0 / binHz); ++k)
-            {
-                const auto lo = static_cast<size_t> (static_cast<double> (k) / third);
-                const auto hi = static_cast<size_t> (static_cast<double> (k) * third) + 1;
-                double mean = 0.0;
-                for (size_t j = lo; j <= hi; ++j)
-                    mean += avg[j];
-                mean /= static_cast<double> (hi - lo + 1);
-                const double db = 10.0 * std::log10 (avg[k] / mean);
-                if (db > worst)
-                {
-                    worst = db;
-                    worstHz = static_cast<double> (k) * binHz;
-                }
-            }
-            WARN ("reverb decay " << decay << " damping " << damping << ": " << frames << " frames, highest tail peak "
-                                  << worst << " dB above the 1/3-octave mean at " << worstHz << " Hz");
-            CHECK (worst <= 6.0);
         }
+        const double binHz = fs / static_cast<double> (frame);
+        double worst = 0.0, worstHz = 0.0;
+        const double third = std::pow (2.0, 1.0 / 6.0);
+        for (size_t k = static_cast<size_t> (150.0 / binHz); k < static_cast<size_t> (16000.0 / binHz); ++k)
+        {
+            const auto lo = static_cast<size_t> (static_cast<double> (k) / third);
+            const auto hi = static_cast<size_t> (static_cast<double> (k) * third) + 1;
+            double mean = 0.0;
+            for (size_t j = lo; j <= hi; ++j)
+                mean += avg[j];
+            mean /= static_cast<double> (hi - lo + 1);
+            const double db = 10.0 * std::log10 (avg[k] / mean);
+            if (db > worst)
+            {
+                worst = db;
+                worstHz = static_cast<double> (k) * binHz;
+            }
+        }
+        WARN ("reverb fs " << fs << " decay " << c.decay << " damping " << c.damping << ": " << frames << " frames, highest tail peak "
+                           << worst << " dB above the 1/3-octave mean at " << worstHz << " Hz");
+        CHECK (worst <= 6.0);
+    }
+}
+} // namespace
+
+TEST_CASE ("Reverb: no metallic ringing at 48 kHz (decay 1/4/20 s x damping 0/0.5/1)", "[fx][reverb]")
+{
+    for (const float decay : { 1.0f, 4.0f, 20.0f })
+        for (const float damping : { 0.0f, 0.5f, 1.0f })
+            checkNoRinging ({ 48000.0, decay, damping });
+}
+
+TEST_CASE ("Reverb: no metallic ringing at 96 kHz", "[fx][reverb]")
+{
+    for (const auto& c : { RingCase { 96000.0, 1.0f, 1.0f }, RingCase { 96000.0, 4.0f, 0.5f }, RingCase { 96000.0, 20.0f, 1.0f } })
+        checkNoRinging (c);
+}
+
+TEST_CASE ("Reverb: no metallic ringing at 192 kHz", "[fx][reverb]")
+{
+    for (const auto& c : { RingCase { 192000.0, 1.0f, 1.0f }, RingCase { 192000.0, 4.0f, 0.5f }, RingCase { 192000.0, 20.0f, 0.0f } })
+        checkNoRinging (c);
 }
 
 TEST_CASE ("Reverb: all sample rates, bounded and finite", "[fx][reverb]")
@@ -310,6 +341,48 @@ TEST_CASE ("Reverb: silence after a burst decays to exactly zero, no subnormals"
 {
     checkSilenceTail<Reverb> (rp (0.3f, 0.5f, 0.0f, 1.0f), 48000.0, 0.2, 3.0, true);
     checkSilenceTail<Reverb> (rp (20.0f, 0.0f, 0.2f, 1.0f), 48000.0, 0.2, 2.0, false);
+}
+
+TEST_CASE ("Reverb diag: HF tail level and window dynamic range", "[.diag]")
+{
+    // Is a high-frequency "peak" in a heavily damped short tail real, or window leakage?
+    // Prints the averaged normalised tail spectrum around 1 kHz and 12..16 kHz (dB re total).
+    const double fs = 48000.0;
+    for (const float damping : { 0.5f, 1.0f })
+    {
+        constexpr int order = 13;
+        constexpr size_t frame = 1u << order, hop = frame / 2;
+        std::vector<double> avg (frame / 2, 0.0);
+        for (int rep = 0; rep < 8; ++rep)
+        {
+            const auto t0 = static_cast<size_t> (0.173 * rep * fs);
+            Stereo ir (t0 + static_cast<size_t> (0.9 * fs));
+            ir.l[t0] = ir.r[t0] = 1.0f;
+            Reverb r;
+            r.prepare (fs, kMaxBlock);
+            runConst (r, ir, rp (1.0f, damping, 0.0f, 1.0f));
+            for (size_t s = t0 + static_cast<size_t> (0.25 * fs); s + frame <= ir.size(); s += hop)
+                for (const auto* ch : { &ir.l, &ir.r })
+                {
+                    const auto p = powerSpectrumBH (ch->data() + s, order);
+                    double tot = 0.0;
+                    for (const double v : p)
+                        tot += v;
+                    for (size_t k = 0; k < avg.size(); ++k)
+                        avg[k] += p[k] / tot;
+                }
+        }
+        const double binHz = fs / static_cast<double> (frame);
+        auto bandDb = [&] (double f) {
+            const auto k = static_cast<size_t> (f / binHz);
+            double m = 0.0;
+            for (size_t j = k - 10; j <= k + 10; ++j)
+                m += avg[j];
+            return 10.0 * std::log10 (m / 21.0);
+        };
+        for (const double f : { 1000.0, 5000.0, 10000.0, 12000.0, 14000.0, 15000.0, 15500.0, 16000.0, 20000.0, 23000.0 })
+            WARN ("damping " << damping << ": " << f << " Hz " << bandDb (f) << " dB");
+    }
 }
 
 TEST_CASE ("Reverb diag: wet level for sustained input", "[.diag]")
