@@ -18,7 +18,7 @@ option(VS_BUILD_TESTS "Build unit tests" ON)
 add_subdirectory(external/JUCE)
 
 juce_add_plugin(VintageSynth
-    PRODUCT_NAME                "Vintage Synth"
+    PRODUCT_NAME                "Exitium Vintage Synth"
     COMPANY_NAME                "Exitium"
     BUNDLE_ID                   "com.exitium.vintagesynth"
     PLUGIN_MANUFACTURER_CODE    Exit

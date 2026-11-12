@@ -76,4 +76,41 @@ inline int unisonVoices (int index) noexcept { return 2 << (index < 0 ? 0 : (ind
 
 /** Choice index -> pitch-bend range in semitones (0..12). */
 inline float bendRangeSemis (int index) noexcept { return static_cast<float> (index < 0 ? 0 : (index > 12 ? 12 : index)); }
+
+struct PanGains
+{
+    float left, right;
+};
+
+/**
+    Pan, -1 (left) .. +1 (right), with the classic balance-knob law (owner decision, M3 review):
+    never a boost. Unity in both channels at the centre; toward a side, the near channel stays at
+    exactly 1 and the far one falls along sqrt2 x cos (constant power's far-side curve), reaching
+    exactly 0 at the extreme. Monotonic and continuous.
+*/
+inline PanGains panGains (float pan) noexcept
+{
+    if (std::isnan (pan) || std::fpclassify (pan) == FP_ZERO)
+        return { 1.0f, 1.0f };
+    if (pan <= -1.0f)
+        return { 1.0f, 0.0f }; // exactly silent on the far side (cos (pi/2) is not 0 in float)
+    if (pan >= 1.0f)
+        return { 0.0f, 1.0f };
+    constexpr float kSqrt2 = 1.414213562f;
+    const float theta = (pan + 1.0f) * 0.785398163f; // 0 .. pi/2
+    const float l = kSqrt2 * std::cos (theta), r = kSqrt2 * std::sin (theta);
+    return { l < 1.0f ? l : 1.0f, r < 1.0f ? r : 1.0f };
+}
+
+struct BalanceGains
+{
+    float lower, upper;
+};
+
+/** Part balance, -1 (Lower only) .. +1 (Upper only): the same law as panGains (both at unity at 0, never above 1). */
+inline BalanceGains balanceGains (float balance) noexcept
+{
+    const auto g = panGains (balance);
+    return { g.left, g.right };
+}
 } // namespace vs::map

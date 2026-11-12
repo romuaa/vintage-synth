@@ -10,7 +10,7 @@
 // reads the same bytes). ALWAYS convert a name with juce::String::fromUTF8 (name): building a
 // juce::String from it directly asserts in debug builds (non-ASCII char*) and mangles the arrow.
 // Guarded by the ProcessorTests "parameter names" test.
-// Float params are normalised slider values (0..1, or -1..1 for fine tune).
+// Float params are normalised slider values (0..1, or -1..1 for fine tune and pan).
 // Physical mappings live in params/Mappings.h, shared by DSP and display text.
 
 #include <array>
@@ -69,7 +69,8 @@ inline constexpr int kVco2RangeIndexOf8ft = 1;
     X (unisonDetune,  "unison.detune",     "Unison Detune",      0.0f, 1.0f, 0.3f,  DetuneCents) \
     X (velToVca,      "vel.vca",           "Velocity \xe2\x86\x92 VCA", 0.0f, 1.0f, 0.5f, Percent) \
     X (velToVcf,      "vel.vcf",           "Velocity \xe2\x86\x92 VCF", 0.0f, 1.0f, 0.0f, Percent) \
-    X (modWheelDepth, "mod.wheel_vco",     "Mod Wheel Vibrato",  0.0f, 1.0f, 0.3f,  Panel10)
+    X (modWheelDepth, "mod.wheel_vco",     "Mod Wheel Vibrato",  0.0f, 1.0f, 0.3f,  Panel10)   \
+    X (pan,           "mix.pan",           "Pan",               -1.0f, 1.0f, 0.0f,  Pan)
 
 // X(member, idSuffix, name, labels, defaultIndex)
 #define VS_PART_CHOICE_PARAMS(X)                                                              \

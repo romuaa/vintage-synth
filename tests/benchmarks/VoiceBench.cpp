@@ -3,9 +3,13 @@
 //   2. N vs::Voice objects driven directly at the oversampled rate (no Part, but the same
 //      PartModulator + Voice::renderBlock path a Part uses),
 //   3. the derived per-part overhead and a projection against the 15 % budget,
-//   4. real Parts with 16 voices each driven through the allocator (M2b), 1 and 2 Parts.
+//   4. real Parts with 16 voices each driven through the allocator (M2b), 1 and 2 Parts,
+//   5. the whole processor in Dual mode (M3: parser, KeyRouter, both Parts, PartMixer, stereo
+//      output) with 32 voices, at the oversampling factor the host rate selects (1x from 88.2 kHz).
 // Run: build/mac-arm64/tests/voice_bench [base sample rate, default 48000] [Vintage, default 0.5]
+#include "PluginProcessor.h"
 #include "engine/Modulation.h"
+#include "engine/Oversampler.h"
 #include "engine/Part.h"
 #include "engine/Voice.h"
 #include "params/Mappings.h"
@@ -174,6 +178,73 @@ double benchPolyParts (int factor, int numParts, PolyLoad load)
         gSink = static_cast<float> (sum);
     });
 }
+// The whole processor (processBlock: parse, route, two Parts, mix, master gain, guard) in Dual
+// mode: 16 keys -> 32 voices. Real-time factor for the host rate. Times the processing only.
+struct ProcessorResult
+{
+    double percent;
+    int factor;
+};
+
+ProcessorResult benchProcessor (PolyLoad load)
+{
+    double best = 1.0e9;
+    int factor = 0;
+    for (int r = 0; r < repeats; ++r)
+    {
+        vs::VintageSynthProcessor proc;
+        auto set = [&proc] (const juce::String& id, float plain) {
+            auto* p = proc.getState().getParameter (id);
+            p->setValueNotifyingHost (p->convertTo0to1 (plain));
+        };
+        set ("key.mode", 1.0f); // Dual
+        set ("global.vintage", gVintage);
+        for (const juce::String prefix : { "lower.", "upper." })
+        {
+            set (prefix + "vco2.sync", 1.0f);
+            set (prefix + "vco1.cross_mod", 0.3f);
+            set (prefix + "vcf.resonance", 0.6f);
+            set (prefix + "vcomod.lfo_mod", 0.1f);
+            set (prefix + "env2.sustain", 1.0f);
+            if (load == PolyLoad::GlideSteal)
+                set (prefix + "porta.time", vs::map::portaFromSec (1.0f));
+        }
+        proc.setNonRealtime (false);
+        proc.setPlayConfigDetails (0, 2, fs, block);
+        proc.prepareToPlay (fs, block);
+        factor = proc.getOversamplingFactor();
+
+        juce::AudioBuffer<float> buffer (2, block);
+        const int blocks = static_cast<int> (fs) * seconds / block;
+        const int stealEvery = static_cast<int> (0.02 * fs);
+        int nextSteal = stealEvery, stealNote = 40;
+        double sum = 0.0;
+        juce::MidiBuffer midi;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int b = 0; b < blocks; ++b)
+        {
+            midi.clear();
+            if (b == 0)
+            {
+                for (int v = 0; v < vs::kMaxVoices; ++v)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 36 + 3 * v, 0.5f + 0.03f * static_cast<float> (v)), 0);
+                midi.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 1);
+            }
+            else if (load == PolyLoad::GlideSteal && nextSteal < (b + 1) * block)
+            {
+                midi.addEvent (juce::MidiMessage::noteOn (1, stealNote, 0.7f), nextSteal - b * block);
+                stealNote = 40 + (stealNote - 40 + 7) % 40;
+                nextSteal += stealEvery;
+            }
+            proc.processBlock (buffer, midi);
+            sum += static_cast<double> (buffer.getSample (0, 0));
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+        gSink = static_cast<float> (sum);
+        best = std::min (best, std::chrono::duration<double> (t1 - t0).count());
+    }
+    return { 100.0 * best / seconds, factor };
+}
 } // namespace
 
 int main (int argc, char** argv)
@@ -183,7 +254,10 @@ int main (int argc, char** argv)
         fs = std::atof (argv[1]);
     if (argc > 2)
         gVintage = static_cast<float> (std::atof (argv[2]));
-    std::printf ("base rate %.0f Hz, Vintage %.2f\n\n", fs, static_cast<double> (gVintage));
+    std::printf ("base rate %.0f Hz, Vintage %.2f\n", fs, static_cast<double> (gVintage));
+    std::printf ("Sections 1-4 use fixed 2x/4x factors. At this rate the plugin uses %dx real time and %dx offline\n"
+                 "(docs/architecture.md 4.4); section 5 measures the processor with the real-time factor.\n\n",
+                 vs::voiceOversamplingFactor (fs, false), vs::voiceOversamplingFactor (fs, true));
 
     // 1. Original measurement (output line format unchanged).
     double part1[2] {};
@@ -252,6 +326,19 @@ int main (int argc, char** argv)
         if (factor == 2)
             std::printf ("2x budget: 32 voices in 2 Parts (worst case, glide+steal) %.2f%% + effects %.1f%% = %.2f%% of %.0f%% (%s)\n",
                          steal32, fxShare, steal32 + fxShare, budget, steal32 + fxShare <= budget ? "ok" : "OVER");
+    }
+
+    // 5. M3: the real processor path in Dual mode (router + both Parts + mixer), host-rate factor.
+    {
+        juce::ScopedJuceInitialiser_GUI juceInit;
+        const auto held = benchProcessor (PolyLoad::HeldChord);
+        const auto steal = benchProcessor (PolyLoad::GlideSteal);
+        std::printf ("\nProcessor, Dual mode (M3: parse + KeyRouter + 2 Parts + PartMixer, stereo), %.0f Hz real time -> %dx\n",
+                     fs, held.factor);
+        std::printf ("processor, Dual, 32 voices held:                      %.3f%% (%.3f%% per voice)\n", held.percent, held.percent / 32.0);
+        std::printf ("processor, Dual, 32 voices, steal/20 ms + 1 s glide: %.3f%%\n", steal.percent);
+        std::printf ("processor budget: worst case %.2f%% + effects %.1f%% = %.2f%% of %.0f%% (%s)\n",
+                     steal.percent, fxShare, steal.percent + fxShare, budget, steal.percent + fxShare <= budget ? "ok" : "OVER");
     }
     return 0;
 }

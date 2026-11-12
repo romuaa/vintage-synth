@@ -33,10 +33,20 @@ private:
     std::uint32_t state = 0x9E3779B9u;
 };
 
-/** One-pole smoothing coefficient for time constant tau (seconds) at sampleRate. */
+/**
+    One-pole coefficient 1 - e^(-1 / (tau fs)) for time constant tau (seconds) at sampleRate,
+    in double via expm1. At high internal rates (up to 384 kHz) the argument is ~1e-6 and
+    1 - exp() in float loses several percent (a 10 s time was 7.7 % long at 384 kHz).
+*/
+inline double onePoleCoefD (double tauSeconds, double sampleRate) noexcept
+{
+    return tauSeconds <= 0.0 ? 1.0 : -std::expm1 (-1.0 / (tauSeconds * sampleRate));
+}
+
+/** onePoleCoefD rounded once to float (exact to float precision at any rate). */
 inline float onePoleCoef (float tauSeconds, float sampleRate) noexcept
 {
-    return tauSeconds <= 0.0f ? 1.0f : 1.0f - std::exp (-1.0f / (tauSeconds * sampleRate));
+    return static_cast<float> (onePoleCoefD (static_cast<double> (tauSeconds), static_cast<double> (sampleRate)));
 }
 
 inline float midiNoteToHz (float note) noexcept { return 440.0f * std::exp2 ((note - 69.0f) / 12.0f); }

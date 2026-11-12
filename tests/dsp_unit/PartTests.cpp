@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "TestHelpers.h"
 #include "engine/EventParser.h"
+#include "engine/Oversampler.h"
 #include "engine/Part.h"
 #include "params/Mappings.h"
 
@@ -13,16 +15,48 @@ constexpr double kFs = 48000.0;
 constexpr int kBlock = 256;    // default host block size of the tests
 constexpr int kMaxBlock = 512; // prepared maximum
 
+// ---- host rate (gate 4.4) ---------------------------------------------------------------------------
+// Test cases marked VS_EVERY_RATE run at 48 kHz (2x), 96 kHz (1x) and 192 kHz (1x). Positions and
+// lengths stay in 48 kHz samples: the Rig scales them to the host rate and returns the output on
+// the 48 kHz grid (every 2nd / 4th sample), so the analyses keep working at kFs. Host block sizes
+// are passed through unchanged. Rig (osFactor) with an explicit factor always runs at 48 kHz.
+struct RateConfig
+{
+    double fs = 48000.0;
+    int os = 2;
+};
+RateConfig gRate;
+
+struct RateGuard
+{
+    explicit RateGuard (double fs) { gRate = { fs, vs::voiceOversamplingFactor (fs, false) }; }
+    ~RateGuard() { gRate = {}; }
+    RateGuard (const RateGuard&) = delete;
+    RateGuard& operator= (const RateGuard&) = delete;
+};
+
+#define VS_EVERY_RATE                                                   \
+    const double vsRateHz = GENERATE (48000.0, 96000.0, 192000.0);      \
+    RateGuard vsRateGuard (vsRateHz);                                   \
+    INFO ("host rate " << vsRateHz)
+
 struct Rig
 {
     vs::Part part;
     vs::PartParams params;
+    int scale = 1; // host samples per 48 kHz sample
 
-    explicit Rig (int osFactor = 2)
+    /** osFactor 0: the current host rate configuration; otherwise 48 kHz with that factor. */
+    explicit Rig (int osFactor = 0)
     {
+        const double fs = osFactor == 0 ? gRate.fs : kFs;
+        scale = static_cast<int> (std::lround (fs / kFs));
         part.setParams (params);
-        part.prepare (kFs, kMaxBlock, osFactor, 1234u);
+        part.prepare (fs, kMaxBlock, osFactor == 0 ? gRate.os : osFactor, 1234u);
     }
+
+    /** Latency on the 48 kHz grid (rounded up). */
+    int latency() const { return (part.getLatencySamples() + scale - 1) / scale; }
 
     /** Makes the current params the starting state (no smoothing from the defaults). */
     void apply()
@@ -45,24 +79,36 @@ struct Rig
     {
         REQUIRE (blockSize >= 1);
         REQUIRE (blockSize <= kMaxBlock);
-        std::vector<float> out (static_cast<size_t> (numSamples));
+        // Events must reach the Part in time order. (The block-size test used to append its note-off
+        // after later pitch bends; the Part applies an out-of-order event at the previous one's
+        // position, which depends on the block size: -33 dB once the test ran at 96 kHz.)
+        auto sorted = events;
+        std::stable_sort (sorted.begin(), sorted.end(), [] (const auto& a, const auto& b) { return a.offset < b.offset; });
+        const int total = numSamples * scale;
+        std::vector<float> host (static_cast<size_t> (total));
         std::vector<vs::NoteEvent> chunk;
-        for (int start = 0, b = 0; start < numSamples; start += blockSize, ++b)
+        for (int start = 0, b = 0; start < total; start += blockSize, ++b)
         {
-            const int len = std::min (blockSize, numSamples - start);
-            REQUIRE (static_cast<size_t> (start + len) <= out.size());
+            const int len = std::min (blockSize, total - start);
+            REQUIRE (static_cast<size_t> (start + len) <= host.size());
             chunk.clear();
-            for (auto e : events)
+            for (auto e : sorted)
+            {
+                e.offset *= scale;
                 if (e.offset >= start && e.offset < start + len)
                 {
                     e.offset -= start;
                     chunk.push_back (e);
                 }
+            }
             if (onBlock)
                 onBlock (b, params);
             part.setParams (params);
-            part.render (out.data() + start, len, chunk);
+            part.render (host.data() + start, len, chunk);
         }
+        std::vector<float> out (static_cast<size_t> (numSamples));
+        for (size_t i = 0; i < out.size(); ++i)
+            out[i] = host[i * static_cast<size_t> (scale)];
         return out;
     }
 };
@@ -98,6 +144,7 @@ int firstNonSilent (const std::vector<float>& x, float threshold = 1.0e-4f)
 
 TEST_CASE ("Part is silent without notes", "[part]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     const auto out = rig.render (48000);
     CHECK (vs::test::rms (out.data(), out.size()) < 1.0e-7);
@@ -105,20 +152,22 @@ TEST_CASE ("Part is silent without notes", "[part]")
 
 TEST_CASE ("Note-on is sample-accurate", "[part]")
 {
+    VS_EVERY_RATE;
     for (const int pos : { 0, 100, 257, 1000 })
     {
         Rig rig;
         rig.params.env2Attack = 0.0f; // 1 ms
         const auto out = rig.render (4096, notes ({ { pos, 60, true } }));
         const int first = firstNonSilent (out);
-        INFO ("note at " << pos << " first sound at " << first << " latency " << rig.part.getLatencySamples());
+        INFO ("note at " << pos << " first sound at " << first << " latency " << rig.latency());
         CHECK (first >= pos);
-        CHECK (first <= pos + rig.part.getLatencySamples() + 4);
+        CHECK (first <= pos + rig.latency() + 4);
     }
 }
 
 TEST_CASE ("Note plays at the right pitch", "[part]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     rig.params.vco1Wave = 0; // sine
     rig.params.sourceMix = 0.0f;
@@ -133,6 +182,7 @@ TEST_CASE ("Note plays at the right pitch", "[part]")
 
 TEST_CASE ("Release ends in silence and frees the voice", "[part]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     rig.params.env2Release = vs::map::envTimeFromSec (0.2f);
     const auto out = rig.render (48000, notes ({ { 0, 60, true }, { 4800, 60, false } }));
@@ -143,6 +193,7 @@ TEST_CASE ("Release ends in silence and frees the voice", "[part]")
 
 TEST_CASE ("Last-note priority returns to held notes (legato)", "[part]")
 {
+    VS_EVERY_RATE;
     // M2: Poly is now the default; this M1 behaviour is the Solo mode.
     Rig rig;
     rig.params.assignMode = 2; // Solo
@@ -163,6 +214,7 @@ TEST_CASE ("Last-note priority returns to held notes (legato)", "[part]")
 
 TEST_CASE ("Every waveform/switch combination renders finite, bounded audio", "[part]")
 {
+    VS_EVERY_RATE;
     // Solo: one voice per combination (M1 semantics). Poly: each note is released after 2000
     // samples, so with the 63 ms release at most two voices overlap (in Poly un-released notes
     // would stack up to 16 voices).
@@ -206,6 +258,7 @@ TEST_CASE ("Every waveform/switch combination renders finite, bounded audio", "[
 
 TEST_CASE ("Rendering is deterministic", "[part]")
 {
+    VS_EVERY_RATE;
     auto run = [] {
         Rig rig;
         rig.params.vcoModLfo = 0.3f;
@@ -217,6 +270,7 @@ TEST_CASE ("Rendering is deterministic", "[part]")
 
 TEST_CASE ("Vintage zero is exactly clean; vintage detunes", "[part][vintage]")
 {
+    VS_EVERY_RATE;
     auto pitchAt = [] (float vintage) {
         Rig rig;
         rig.params.vco1Wave = 0;
@@ -236,6 +290,7 @@ TEST_CASE ("Vintage zero is exactly clean; vintage detunes", "[part][vintage]")
 
 TEST_CASE ("MIDI parsing: pitch bend, note-on velocity 0, all-notes-off, SysEx ignored", "[part][midi]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     rig.params.vco1Wave = 0;
     rig.params.sourceMix = 0.0f;
@@ -293,15 +348,15 @@ namespace
     256 samples, pitch bend jumping between -1 and +1 every 384 samples, fast LFO on pitch, cutoff
     and PWM, 1 ms ENV-1 attack on pitch, resonance, cross-mod, sync and full Vintage (drift).
 */
-std::vector<float> renderFastModulation (int maxSubBlock, int blockSize = kBlock, int numSamples = 24000)
+std::vector<float> renderFastModulation (int maxSubBlock, int blockSize = kBlock, int numSamples = 24000, bool syncAndCrossMod = true)
 {
     Rig rig;
     rig.part.setMaxSubBlock (maxSubBlock);
     rig.part.setVintage (1.0f);
     auto& p = rig.params;
     p.vcfResonance = 0.7f;
-    p.vcoSync = 1;
-    p.vco1CrossMod = 0.5f;
+    p.vcoSync = syncAndCrossMod ? 1 : 0;
+    p.vco1CrossMod = syncAndCrossMod ? 0.5f : 0.0f;
     p.vco1Wave = 4; // pulse
     p.pwmDepth = 0.8f;
     p.vcoModEnv = 0.3f;
@@ -343,19 +398,33 @@ TEST_CASE ("Sub-block rendering equals per-sample rendering within -90 dB (no co
     // Sub-block 1 runs every stage (smoothing, LFO, drift, coefficients, oscillators, filter)
     // one oversampled sample at a time, like the M1 engine. Any control-rate shortcut (stepped
     // or ramped parameters, zipper sidebands, drift retargets moved to a sub-block start) would
-    // show up as a difference; only float rounding is allowed (measured -99.5 dB on arm64 with
-    // Vintage 1, -105 dB with Vintage 0 in M2a; -95.8 dB with Vintage 1 since M2b computes the
-    // drift walk from the time since its last retarget, which rounds the walk to float once per
-    // sub-block instead of along a chain, and made real host block sizes agree much better).
-    const auto reference = renderFastModulation (1);
-    const auto control = renderFastModulation (vs::kMaxSubBlock);
-    const double ratioDb = differenceDb (reference, control);
-    INFO ("difference relative to the signal: " << ratioDb << " dB");
-    CHECK (ratioDb < -90.0);
+    // show up as a difference; only float rounding is allowed.
+    //
+    // Two patches. Without hard sync and cross-mod (every other path moving fast, Vintage 1) the
+    // bound is -90 dB (measured -92.6 dB on arm64 after the M3 review; -94 dB before it).
+    // With sync and cross-mod the same differences are amplified: a sync reset is a
+    // discontinuous function of the master phase and 2-octave exponential FM multiplies phase
+    // errors, so a 1e-7 rounding difference (smoother closed form per sub-block vs per sample)
+    // can move a reset by a sample. That measure follows the trajectory, not a control-rate step:
+    // with the pre-review code it moved between -94 and -102 dB when ENV-1 decay was nudged by
+    // 1e-4, and the double-precision LFO phase (a ~1e-7 change of the LFO signal) took it to
+    // -63.6 dB with no control-rate change at all (cross-mod alone: -86 dB). Its bound is -55 dB:
+    // it still catches gross control-rate errors in the sync/FM paths (a stepped pitch per
+    // sub-block is far louder), and the smooth patch carries the -90 dB gate.
+    for (const bool sync : { false, true })
+    {
+        const auto reference = renderFastModulation (1, kBlock, 24000, sync);
+        const auto control = renderFastModulation (vs::kMaxSubBlock, kBlock, 24000, sync);
+        const double ratioDb = differenceDb (reference, control);
+        INFO ("sync and cross-mod " << sync << ": difference relative to the signal: " << ratioDb << " dB");
+        WARN ("sub-block 32 vs 1, sync and cross-mod " << sync << ": " << ratioDb << " dB");
+        CHECK (ratioDb < (sync ? -55.0 : -90.0));
+    }
 }
 
 TEST_CASE ("Render does not depend on the host block size (Vintage 1, odd event offsets)", "[part][control]")
 {
+    VS_EVERY_RATE;
     // The same 4 s in 512- vs 500-sample host blocks, with drift at full Vintage: bend events
     // every 384 samples (odd offsets) land at different positions inside the blocks, and all
     // sub-block boundaries differ. The patch is constant (parameter changes are per host block,
@@ -384,6 +453,7 @@ TEST_CASE ("Render does not depend on the host block size (Vintage 1, odd event 
 
 TEST_CASE ("AllNotesOff releases every key and clears the pedal; ResetControllers resets bend, wheel and pedal", "[part][midi]")
 {
+    VS_EVERY_RATE;
     using vs::EventType;
     Rig rig;
     rig.params.vco1Wave = 0;
@@ -555,6 +625,7 @@ double noteHz (double note) { return 440.0 * std::pow (2.0, (note - 69.0) / 12.0
 
 TEST_CASE ("Poly: a 16-note chord renders 16 distinct pitches at equal level", "[part][poly]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     sinePatch (rig.params);
     rig.apply();
@@ -600,6 +671,7 @@ TEST_CASE ("Poly: a 16-note chord renders 16 distinct pitches at equal level", "
 
 TEST_CASE ("Poly: the 17th note steals the oldest voice with a 3 ms fade (no click) and starts 3 ms late", "[part][poly][steal]")
 {
+    VS_EVERY_RATE;
     // 16 low sines (32.7 .. 77.8 Hz) make a smooth signal whose largest sample-to-sample step is
     // small; cutting one voice off would step by up to its whole amplitude (several times more).
     static constexpr int stealAt = 24000;
@@ -613,7 +685,7 @@ TEST_CASE ("Poly: the 17th note steals the oldest voice with a 3 ms fade (no cli
         if (steal)
             events.push_back (on (stealAt, 84)); // 1047 Hz: easy to see when it starts
         *out = rig.render (stealAt + 12000, events);
-        return rig.part.getLatencySamples();
+        return rig.latency();
     };
     std::vector<float> a, b;
     const int latency = run (true, &a);
@@ -661,6 +733,7 @@ TEST_CASE ("Poly: the 17th note steals the oldest voice with a 3 ms fade (no cli
 
 TEST_CASE ("Poly: the stolen voice is reset and replays the new note; no voice is added", "[part][poly][steal]")
 {
+    VS_EVERY_RATE;
     Rig rig;
     sinePatch (rig.params);
     rig.apply();
@@ -679,6 +752,7 @@ TEST_CASE ("Poly: the stolen voice is reset and replays the new note; no voice i
 
 TEST_CASE ("Sustain pedal holds released notes in Poly, Solo and Unison", "[part][pedal]")
 {
+    VS_EVERY_RATE;
     SECTION ("Poly: released notes sound until pedal up")
     {
         Rig rig;
@@ -716,6 +790,7 @@ TEST_CASE ("Sustain pedal holds released notes in Poly, Solo and Unison", "[part
 
 TEST_CASE ("Portamento: RC glide covers 99 % of the interval in the portamento time", "[part][porta]")
 {
+    VS_EVERY_RATE;
     static constexpr double glideSec = 0.4;
     static constexpr int noteAt = 24000;
 
@@ -731,7 +806,7 @@ TEST_CASE ("Portamento: RC glide covers 99 % of the interval in the portamento t
             events.push_back (off (12000, 57));
         events.push_back (on (noteAt, 69));
         const auto out = rig.render (noteAt + static_cast<int> (1.5 * glideSec * kFs), events);
-        return std::make_pair (pitchTrack (out, noteAt + 1000, static_cast<int> (out.size())), rig.part.getLatencySamples());
+        return std::make_pair (pitchTrack (out, noteAt + 1000, static_cast<int> (out.size())), rig.latency());
     };
 
     // Expected: 69 - 12 * 100^(-t / T) after the note-on (plus the output latency).
@@ -791,6 +866,7 @@ TEST_CASE ("Portamento: RC glide covers 99 % of the interval in the portamento t
 
 TEST_CASE ("Velocity scales the VCA gain: 1 - amount x (1 - velocity)", "[part][velocity]")
 {
+    VS_EVERY_RATE;
     auto level = [] (float amount, float velocity) {
         Rig rig;
         sinePatch (rig.params);
@@ -812,6 +888,7 @@ TEST_CASE ("Velocity scales the VCA gain: 1 - amount x (1 - velocity)", "[part][
 
 TEST_CASE ("Velocity scales the VCF envelope depth (and nothing else)", "[part][velocity]")
 {
+    VS_EVERY_RATE;
     auto run = [] (float velocity, float velToVcf, float envMod) {
         Rig rig;
         auto& p = rig.params;
@@ -839,6 +916,7 @@ TEST_CASE ("Velocity scales the VCF envelope depth (and nothing else)", "[part][
 
 TEST_CASE ("Pitch bend range is set per part (0..12 semitones)", "[part][bend]")
 {
+    VS_EVERY_RATE;
     auto pitch = [] (int range, float bend, int newRangeAtBlock = -1, int newRange = 0) {
         Rig rig;
         sinePatch (rig.params);
@@ -861,6 +939,7 @@ TEST_CASE ("Pitch bend range is set per part (0..12 semitones)", "[part][bend]")
 
 TEST_CASE ("Mod wheel adds wheel x depth to the VCO LFO mod amount (same taper and target)", "[part][wheel]")
 {
+    VS_EVERY_RATE;
     // The wheel moves 100 ms before the note, so its smoothing has settled.
     auto run = [] (float slider, float depth, float wheel) {
         Rig rig;
@@ -907,6 +986,7 @@ TEST_CASE ("Mod wheel adds wheel x depth to the VCO LFO mod amount (same taper a
 
 TEST_CASE ("Unison: voices detuned symmetrically across the spread, loudness about constant (1/sqrt n)", "[part][unison]")
 {
+    VS_EVERY_RATE;
     SECTION ("detune spread")
     {
         Rig rig;
@@ -959,6 +1039,7 @@ TEST_CASE ("Unison: voices detuned symmetrically across the spread, loudness abo
 
 TEST_CASE ("Changing the assign mode or unison count releases the voices without a click", "[part][mode]")
 {
+    VS_EVERY_RATE;
     static constexpr int changeBlock = 100; // 25600 samples
     static constexpr int changeAt = changeBlock * kBlock;
     auto run = [] (int fromMode, int toMode, int fromCount, int toCount, std::vector<int> chord) {
@@ -972,8 +1053,9 @@ TEST_CASE ("Changing the assign mode or unison count releases the voices without
         std::vector<vs::NoteEvent> events;
         for (const int n : chord)
             events.push_back (on (0, n));
+        const int scale = static_cast<int> (std::lround (gRate.fs / kFs));
         const auto out = rig.render (changeAt + 48000, events, kBlock, [=] (int b, vs::PartParams& p) {
-            if (b >= changeBlock)
+            if (b >= changeBlock * scale) // host blocks of kBlock samples: the change stays at changeAt
             {
                 p.assignMode = toMode;
                 p.unisonVoices = toCount;
@@ -997,6 +1079,7 @@ TEST_CASE ("Changing the assign mode or unison count releases the voices without
 
 TEST_CASE ("Render does not depend on the host block size with 16 voices, steals, glide and pedal (Vintage 1)", "[part][control][poly]")
 {
+    VS_EVERY_RATE;
     static constexpr int length = 3 * 48000;
     auto run = [] (int blockSize) {
         Rig rig;
@@ -1037,6 +1120,7 @@ TEST_CASE ("Render does not depend on the host block size with 16 voices, steals
 
 TEST_CASE ("Render does not depend on the host block size when a voice is reused after it went idle", "[part][control]")
 {
+    VS_EVERY_RATE;
     // A voice whose envelope finishes inside a sub-block used to keep its oscillators running to
     // the end of that sub-block (and then freeze), so the next note on that voice depended on the
     // host block size (Solo and Unison reuse the same voices on every note): -9 dB before the fix.
@@ -1098,6 +1182,7 @@ double hfDifferenceDb (const std::vector<float>& a, const std::vector<float>& b,
 
 TEST_CASE ("Poly: a voice reused after idle starts ENV-1 from zero; renders independent of block size", "[part][control][poly]")
 {
+    VS_EVERY_RATE;
     // ENV-1 release (1.6 s) far longer than ENV-2's (0.16 s): when ENV-2 finishes, ENV-1 is still
     // open. It used to freeze at the end of that sub-block and the next note on the voice started
     // its filter envelope from there (-82 .. -92 dB between block sizes before the fix).
@@ -1166,6 +1251,7 @@ TEST_CASE ("Poly: a voice reused after idle starts ENV-1 from zero; renders inde
 
 TEST_CASE ("Poly: idle voices are reported in the order they finished, whatever the block size", "[part][control][poly]")
 {
+    VS_EVERY_RATE;
     // Voices of 41 and 40 finish 3 samples apart, often in the same sub-block. The voice that
     // finished first (41's, voice 1) has been idle longest and takes the next note.
     auto run = [] (int bs, int* voiceOf72) {
@@ -1202,6 +1288,7 @@ TEST_CASE ("Poly: idle voices are reported in the order they finished, whatever 
 
 TEST_CASE ("Solo: a legato note change applies key-follow envelope times at the event", "[part][control][solo]")
 {
+    VS_EVERY_RATE;
     // Decision: key follow tracks the keyboard at the legato change (as a keyboard CV would), not
     // latched at the note start: a legato line upwards gets the shorter times of the new note.
     auto run = [] (int bs) {
@@ -1243,6 +1330,7 @@ TEST_CASE ("Solo: a legato note change applies key-follow envelope times at the 
 
 TEST_CASE ("Unison: the level is the same on every note and equals one voice, also at detune 0", "[part][unison]")
 {
+    VS_EVERY_RATE;
     auto soloLevel = [] {
         Rig rig;
         sinePatch (rig.params);
@@ -1316,6 +1404,7 @@ TEST_CASE ("Poly: a stolen note keeps its gate length (released during the fade 
 
 TEST_CASE ("Poly: events during a steal fade (release, re-steal, retrigger)", "[part][poly][steal]")
 {
+    VS_EVERY_RATE;
     auto chord = [] {
         std::vector<vs::NoteEvent> e;
         for (int n = 0; n < vs::kMaxVoices; ++n)
@@ -1392,7 +1481,7 @@ TEST_CASE ("Steal fade is click-free with a self-oscillating filter, on voices i
                 e.push_back (off (12000, 24)); // voice 0 releasing: stolen first
             e.push_back (on (stealAt, 26 + vs::kMaxVoices)); // a low note, no high-frequency onset
             const auto out = rig.render (stealAt + 9600, e);
-            const int fadeHost = 144, latency = rig.part.getLatencySamples();
+            const int fadeHost = 144, latency = rig.latency();
             const double before = maxStep (out, stealAt - 2400, stealAt);
             const double after = maxStep (out, stealAt + fadeHost + latency + 1, stealAt + fadeHost + latency + 2400);
             const double fade = maxStep (out, stealAt, stealAt + fadeHost + latency);
@@ -1405,6 +1494,7 @@ TEST_CASE ("Steal fade is click-free with a self-oscillating filter, on voices i
 
 TEST_CASE ("LFO delay restarts only when no note is held by a key or by the pedal (audio)", "[part][lfo]")
 {
+    VS_EVERY_RATE;
     // Poly. A first note (velocity ~0 with velocity -> VCA 1, so inaudible) starts the 1 s LFO delay.
     // At 2 s the vibrato is at full depth. The probe note B (A4) then shows whether the delay restarted:
     // its pitch spread over its first 0.25 s is small after a restart and full otherwise.
@@ -1439,6 +1529,7 @@ TEST_CASE ("LFO delay restarts only when no note is held by a key or by the peda
 
 TEST_CASE ("Portamento: changing the target or the time mid-glide keeps the pitch continuous", "[part][porta]")
 {
+    VS_EVERY_RATE;
     auto maxJump = [] (const std::vector<PitchPoint>& t, double from, double to) {
         double m = 0.0;
         for (size_t i = 1; i < t.size(); ++i)
@@ -1498,7 +1589,7 @@ TEST_CASE ("Portamento: changing the target or the time mid-glide keeps the pitc
         rig.apply();
         const auto out = rig.render (24000 + 28800, { on (0, 57), on (24000, 69) });
         const auto track = pitchTrack (out, 24000 + 500, static_cast<int> (out.size()));
-        const int latency = rig.part.getLatencySamples();
+        const int latency = rig.latency();
         for (const double frac : { 0.25, 0.5, 1.0 })
         {
             const double expected = 69.0 - 12.0 * std::pow (100.0, -frac);

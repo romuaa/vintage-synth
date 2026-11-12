@@ -9,6 +9,8 @@
 // Script format (one command per line, '#' starts a comment, times in seconds, default 0):
 //   rate 48000                       sample rate (header, optional, default 48000)
 //   length 3.0                       rendered length in seconds (header, required)
+//   channels 2                       analyse left and right (header, optional; default 1 = left
+//                                    only, the format of the M1/M2 references)
 //   [t] param <id> <plain value>     set a parameter, e.g.  0.5 param lower.vcf.cutoff 0.62
 //                                    (plain value = what the parameter's range uses: 0..1 for
 //                                     most sliders, the choice index for choice params)
@@ -41,6 +43,7 @@ struct Script
 {
     double sampleRate = 48000.0;
     double length = 0.0;
+    int channels = 1;          // 1: left channel only; 2: left and right
     std::vector<Event> events; // sorted by time (stable)
 };
 
@@ -50,6 +53,12 @@ Script parseScript (const std::string& text);
 /** Renders mono (channel 0 of the stereo output). All blocks are `blockSize` long except where a
     parameter event splits a block, so parameter changes land at the same sample for any block size. */
 std::vector<float> renderScript (const Script& script, int blockSize);
+
+/** The same render, both output channels: { left, right }. */
+std::vector<std::vector<float>> renderScriptStereo (const Script& script, int blockSize);
+
+/** The channels a script asks to analyse: { left } or { left, right }. */
+std::vector<std::vector<float>> renderScriptChannels (const Script& script, int blockSize);
 
 // ---- Features ----
 constexpr int kFftSize = 4096; // 85 ms window at 48 kHz, centred on each frame
@@ -93,9 +102,14 @@ struct Comparison
 Comparison compare (const Features& reference, const Features& candidate, const Tolerances& tol = {});
 
 // ---- Golden files (text, 0.1 dB integers) ----
+// Version 1: one channel (left). Version 2: "channels N" followed by N version-1 bodies (L, R).
+// A one-channel reference is always written as version 1, so the M1/M2 files stay byte-identical.
 std::string featuresToText (const Features& f);
 Features featuresFromText (const std::string& text); // throws std::runtime_error
+std::string channelFeaturesToText (const std::vector<Features>& channels);
+std::vector<Features> channelFeaturesFromText (const std::string& text); // reads version 1 and 2
 
 /** Optional audition output: writes <dir>/<name>.wav if the environment variable VS_RENDER_DIR is set. */
 void maybeWriteWav (const std::vector<float>& mono, double sampleRate, const std::string& name);
+void maybeWriteWav (const std::vector<std::vector<float>>& channels, double sampleRate, const std::string& name);
 } // namespace vs::rr

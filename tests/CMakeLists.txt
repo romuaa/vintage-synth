@@ -26,7 +26,11 @@ add_executable(VintageSynthTests
     dsp_unit/FastMathTests.cpp
     dsp_unit/VoiceAllocatorTests.cpp
     dsp_unit/PolyphonySpecTests.cpp
-    dsp_unit/RenderDemo.cpp)
+    dsp_unit/KeyRouterTests.cpp
+    dsp_unit/BitimbralTests.cpp
+    dsp_unit/OversamplingTests.cpp
+    dsp_unit/RenderDemo.cpp
+    dsp_unit/RenderDemoM3.cpp)
 
 # M5 effect blocks (header-only, source/fx/).
 target_sources(VintageSynthTests PRIVATE
