@@ -83,9 +83,11 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
-- **Wave 2 merged** (M3 + M4 module). **Wave 3 in progress:** wiring effects and arp/sequencer into the
-  plugin (`docs/architecture.md` 6a; ends with the owner's M5 audition), then extracting the common
-  library (S0), then M6 presets. Side tracks: cross-mod aliasing study, Linux containers + ARM64.
+- **Wave 3 (M5) is complete on branch `wave3/product`, awaiting the owner's audition (`m5_demo`)
+  and merge approval:** effects and arp/sequencer in the plugin (170 parameters), host bypass,
+  parameter sanitising, tail length, the sine-sync alias fix and offline = real time for Cross Mod.
+  Verified by the local gate only. Open for the owner: output level / hard clip (see decisions).
+- **Next:** extract the common library (S0), then M6 presets and banks; B-Side S1 after S0.
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
   in `source/seq/`, not wired in. Audition approved by the owner.

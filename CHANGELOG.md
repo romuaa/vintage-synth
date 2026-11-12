@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M5 — effects and arpeggiator/sequencer in the plugin (2026-11-12)
+- Chorus, delay and reverb on the stereo bus (11 parameters); arpeggiator and 16-step sequencer in
+  front of each part with a part selector, locked to the host tempo (58 parameters). 170 in total.
+- Host bypass is a clean stop; non-finite parameter values are sanitised; integer parameters are
+  stepped for hosts; the reported tail includes the synth's release.
+- Hard sync with a sine VCO-1 no longer aliases (−109 dB or better, was −43 to −60 dB).
+- Offline renders of Cross Mod patches now match real-time playback.
+
 ### Local-first verification (2026-11-12)
 - `scripts/preflight.sh`: one local gate for everything a Mac can check, including the VST3
   validator built from the pinned SDK commit, the security scan and repository hygiene checks.
