@@ -35,7 +35,9 @@ juce_add_plugin(VintageSynth
 
 target_sources(VintageSynth PRIVATE
     source/PluginProcessor.cpp
-    source/params/ParameterLayout.cpp)
+    source/params/ParameterLayout.cpp
+    source/engine/Voice.cpp
+    source/engine/Part.cpp)
 
 target_include_directories(VintageSynth PRIVATE source)
 

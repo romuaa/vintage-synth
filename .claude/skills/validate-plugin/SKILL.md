@@ -7,22 +7,28 @@ description: Run unit tests, golden-render regression tests, CPU benchmarks, plu
 
 Run these in order and stop at the first failure. Report each step as pass, fail, or not run, with the reason.
 
-1. **Unit tests:** `ctest --test-dir build/mac --output-on-failure`
-2. **Golden renders:** `ctest --test-dir build/mac -L render`.
+1. **Unit tests + host smoke:** `ctest --test-dir build/mac --output-on-failure`. This includes
+   `host_smoke`, which loads the real `.vst3` through JUCE's VST3 host (identity, parameter count,
+   rendering at 44.1/48/96 kHz, silence after release, state round-trip). Claude can run it even
+   when pluginval is blocked. It doesn't replace pluginval.
+2. **Golden renders** (from M6, when factory presets exist; not set up yet): `ctest --test-dir build/mac -L render`.
    Each factory preset renders a fixed MIDI file, and the output is compared against
    `tests/render_regression/golden/`.
    - Only regenerate goldens (`-DUPDATE_GOLDENS=ON`) for an **intended** sound change.
      State which presets changed and why.
-3. **pluginval** (v1.0.4, same as CI). Claude may not be allowed to run downloaded binaries.
-   If it's blocked, ask the user under "What I need from you" to run this command with `! `:
+3. **pluginval** (v1.0.4, same as CI). **Claude is allowed to run pluginval itself** (user rule,
+   2026-11-12). Use the official v1.0.4 release from github.com/Tracktion/pluginval, unpacked into the
+   session scratchpad (download it again if the scratchpad is new):
    ```bash
-   pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
+   <scratchpad>/pluginval/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
      --skip-gui-tests "build/mac/VintageSynth_artefacts/Release/VST3/Vintage Synth.vst3"
    ```
-   Pass = the output ends with `SUCCESS` and the exit code is 0.
+   Pass = the output ends with `SUCCESS` and the exit code is 0. Only if the tool harness still
+   refuses the command, ask the user under "What I need from you" to run it with `! `.
 4. **VST3 validator** (not wired up yet; it gets built from the VST3 SDK once added):
    `validator "<path>.vst3"`
-5. **CPU benchmark** (from M2 on): `build/mac/benchmarks/voice_bench`.
+5. **CPU benchmark:** `build/mac/tests/voice_bench`. M1 baseline on an Apple M5 Pro: 0.35 % of one core
+   per voice at 2×, and 0.75 % at 4×.
    Budget: 16 voices per part with 2× oversampling, and 32 voices in Dual mode must stay under 15% of one
    core at 48 kHz. Flag any regression above 5%.
 
@@ -32,3 +38,12 @@ state save → load round-trip.
 
 Windows x64 and ARM64 validation runs in CI (`.github/workflows/build.yml`). Report the CI result
 or say it is pending.
+
+## Audition render (manual listening and visual check)
+
+```bash
+VS_RENDER_DIR=<scratchpad>/renders build/mac/tests/VintageSynthTests "[.render]"
+```
+This writes `m1_demo.wav` and `m1_demo_spectrogram.png`. Never read renders under `build/`, because it's
+gitignored. Point `VS_RENDER_DIR` at the scratchpad instead. Look at the spectrogram for aliasing (lines
+folding downward), clicks (vertical lines), and noise floor problems.

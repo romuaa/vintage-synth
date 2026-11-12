@@ -2,6 +2,9 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "engine/Part.h"
+#include "params/ParameterLayout.h"
+
 namespace vs
 {
 class VintageSynthProcessor final : public juce::AudioProcessor
@@ -43,6 +46,17 @@ public:
 
 private:
     juce::AudioProcessorValueTreeState apvts;
+
+    PartParamBinding lowerBinding;
+    PartParams lowerParams;
+    Part lowerPart;
+
+    std::atomic<float>* masterVolume = nullptr;
+    std::atomic<float>* vintage = nullptr;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
+
+    juce::AudioBuffer<float> partBuffer;
+    int preparedBlockSize = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VintageSynthProcessor)
 };

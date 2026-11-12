@@ -28,18 +28,36 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - **Identity:** company "Exitium", bundle ID `com.exitium.vintagesynth`, manufacturer code
   `Exit`, plugin code `Vsy1`. **Never change these after the first release**, because hosts identify
   the plugin by them.
+- **pluginval: Claude runs it itself** (official Tracktion release v1.0.4, unpacked in the session
+  scratchpad). Don't hand it to the user unless the harness refuses the command. See skill `validate-plugin`.
 - **CI:** `.github/workflows/build.yml` builds, tests, and runs pluginval on macOS and Win x64.
-  Win ARM64 is build + unit tests only (there's no ARM64 pluginval).
+  Win ARM64 runs build, unit tests and host_smoke (there's no ARM64 pluginval).
+- **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new
+  judgement call there (with the reason), and mark the ones the user should review.
+
+## Status
+
+- M0 skeleton: done. M1 single-part voice engine: done (mono, Lower part only).
+- Next: M2 polyphony (16 voices, Poly/Unison/Solo, portamento, voice stealing, velocity, bend range).
 
 ## Layout
 
 ```
-source/   dsp/ engine/ fx/ params/ presets/ ui/   PluginProcessor.*  PluginEditor.*
-resources/ factory_presets/ fonts/ graphics/
-tests/    dsp_unit/ render_regression/ benchmarks/
-installer/ mac/ win/
-.github/workflows/
+source/dsp/      JUCE-free DSP blocks: Oscillator (+BlepTable), Filters, Envelope, Lfo, Drift
+source/engine/   Voice, Part (note handling, LFO, oversampling), Oversampler
+source/params/   PartParamList.h (X-macro list of all per-part params), Mappings.h (value -> unit),
+                 ParameterLayout (APVTS layout + binding), StateVersion.h
+source/          PluginProcessor.*   (later: fx/ presets/ ui/)
+tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
+tests/benchmarks/ voice_bench (CPU cost per voice)
+tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)
+docs/decisions.md  design decision log
+external/        JUCE, Catch2 (submodules)
 ```
+
+**Adding a per-part parameter:** add one line to `VS_PART_FLOAT_PARAMS` or `VS_PART_CHOICE_PARAMS`
+in `PartParamList.h` (append at the end). The layout, binding and smoothing follow automatically.
+Put any physical mapping in `Mappings.h` so the display text and the DSP agree.
 
 ## Hard rules
 
@@ -53,12 +71,14 @@ installer/ mac/ win/
 **Parameters and state:**
 - Parameter IDs are dotted and stable: `lower.vcf.cutoff`, `upper.lfo.rate`, `fx.reverb.level`.
 - After v1.0 IDs are **frozen**: never rename, remove, or reorder. Only append new ones.
-- Every state change bumps `stateVersion` and gets a migration plus a test that loads old state.
+- From v1.0 on, every state change bumps `stateVersion` and gets a migration plus a test that loads
+  old state. Before v1.0, `stateVersion` stays 1 (there are no released states to migrate).
 - Panel Mode (Lower/Upper edit target) is UI state, not a host parameter.
 
 **DSP quality:**
-- Oscillators use PolyBLEP/BLAMP. Sync and cross-mod reset at the exact sub-sample point.
-- The voice path is 2× oversampled (4× HQ option, also used for offline renders).
+- Oscillators use the windowed-sinc BLEP/BLAMP table (`dsp/BlepTable.h`). Sync and cross-mod reset at
+  the exact sub-sample point. The alias gate is ≤ −100 dB (0–20 kHz) up to a 5 kHz fundamental; don't relax it.
+- The voice path is 2× oversampled in real time and 4× offline. Report total latency (decimator + BLEP).
 - The VCF is a ZDF/TPT 4-pole with a nonlinear feedback path.
 - Analog drift is seeded per voice, so renders are deterministic.
 
