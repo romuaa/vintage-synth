@@ -53,7 +53,7 @@ void Part::applyBlockParams() noexcept
     voice.setBlockParams (target, vintage);
 }
 
-void Part::render (float* out, int numSamples, const juce::MidiBuffer& midi, int startSample) noexcept
+void Part::render (float* out, int numSamples, std::span<const NoteEvent> events) noexcept
 {
     jassert (numSamples <= maxBlock);
     numSamples = juce::jmin (numSamples, maxBlock);
@@ -69,22 +69,19 @@ void Part::render (float* out, int numSamples, const juce::MidiBuffer& midi, int
     float* os = osBlock.getChannelPointer (0);
 
     int pos = 0;
-    for (const auto meta : midi)
+    for (const auto& e : events)
     {
-        const int at = meta.samplePosition - startSample;
-        if (at < 0)
-            continue;
-        if (at >= numSamples)
-            break;
-
+        jassert (e.offset >= pos); // offsets must be ascending
+        const int at = juce::jlimit (pos, numSamples, e.offset);
         if (at > pos)
         {
             renderOversampled (os + pos * osFactor, (at - pos) * osFactor);
             pos = at;
         }
-        handleMidi (meta.data, meta.numBytes);
+        handleEvent (e);
     }
-    renderOversampled (os + pos * osFactor, (numSamples - pos) * osFactor);
+    if (numSamples > pos)
+        renderOversampled (os + pos * osFactor, (numSamples - pos) * osFactor);
 
     float* channels[] { out };
     juce::dsp::AudioBlock<float> outBlock (channels, 1, static_cast<size_t> (numSamples));
@@ -115,45 +112,18 @@ void Part::renderOversampled (float* os, int n) noexcept
     }
 }
 
-void Part::handleMidi (const juce::uint8* data, int numBytes) noexcept
+void Part::handleEvent (const NoteEvent& e) noexcept
 {
-    if (numBytes < 2 || data[0] < 0x80 || data[0] >= 0xF0)
-        return; // running status is resolved by the host; system messages are ignored
-
-    const int status = data[0] & 0xF0;
-    const int d1 = data[1] & 0x7F;
-    const int d2 = numBytes > 2 ? (data[2] & 0x7F) : 0;
-
-    switch (status)
+    switch (e.type)
     {
-        case 0x90:
-            if (d2 > 0)
-                noteOn (d1, static_cast<float> (d2) / 127.0f);
-            else
-                noteOff (d1);
-            break;
-
-        case 0x80:
-            noteOff (d1);
-            break;
-
-        case 0xE0:
-            bendTarget = static_cast<float> ((d2 << 7 | d1) - 8192) / 8192.0f * bendRangeSemis;
-            break;
-
-        case 0xB0:
-            if (d1 == 123) // all notes off
-                allNotesOff();
-            else if (d1 == 120) // all sound off
-            {
-                allNotesOff();
-                voice.reset();
-            }
-            else if (d1 == 121) // reset all controllers
-                bendTarget = 0.0f;
-            break;
-
-        default:
+        case EventType::NoteOn:           noteOn (e.note, e.value); break;
+        case EventType::NoteOff:          noteOff (e.note); break;
+        case EventType::PitchBend:        bendTarget = e.value * bendRangeSemis; break;
+        case EventType::AllNotesOff:      allNotesOff(); break;
+        case EventType::AllSoundOff:      allNotesOff(); voice.reset(); break;
+        case EventType::ResetControllers: bendTarget = 0.0f; break;
+        case EventType::ModWheel:         // M2b: vibrato
+        case EventType::SustainPedal:     // M2b: deferred releases
             break;
     }
 }

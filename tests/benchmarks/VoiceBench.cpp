@@ -57,16 +57,14 @@ double benchPart (int factor)
         part.prepare (fs, block, factor, 1u);
         part.setVintage (0.5f);
 
-        juce::MidiBuffer on;
-        on.addEvent (juce::MidiMessage::noteOn (1, 48, 0.8f), 0);
-        const juce::MidiBuffer none;
+        const vs::NoteEvent on[] { { 0, vs::EventType::NoteOn, 48, 0.8f } };
         std::vector<float> out (block);
 
         double sum = 0.0;
         const int blocks = static_cast<int> (fs) * seconds / block;
         for (int b = 0; b < blocks; ++b)
         {
-            part.render (out.data(), block, b == 0 ? on : none, 0);
+            part.render (out.data(), block, b == 0 ? std::span<const vs::NoteEvent> (on) : std::span<const vs::NoteEvent> {});
             sum += static_cast<double> (out[0]);
         }
         gSink = static_cast<float> (sum);

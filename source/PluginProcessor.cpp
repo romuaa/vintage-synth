@@ -33,6 +33,7 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     lowerPart.setParams (lowerParams);
     lowerPart.prepare (sampleRate, preparedBlockSize, osFactor, 0x1001u);
 
+    events.prepare (EventParser::kDefaultCapacity);
     partBuffer.setSize (1, preparedBlockSize);
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterVolume->load()));
@@ -70,7 +71,19 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     for (int start = 0; start < numSamples; start += preparedBlockSize)
     {
         const int len = juce::jmin (preparedBlockSize, numSamples - start);
-        lowerPart.render (mono, len, midi, start);
+
+        // Raw bytes only: building a juce::MidiMessage could allocate (SysEx).
+        events.clear();
+        for (auto it = midi.findNextSamplePosition (start); it != midi.cend(); ++it)
+        {
+            const auto meta = *it;
+            if (meta.samplePosition >= start + len)
+                break;
+            events.add (meta.data, meta.numBytes, meta.samplePosition - start);
+        }
+        events.finish();
+
+        lowerPart.render (mono, len, events.events());
 
         bool nonFinite = false;
         for (int i = 0; i < len; ++i)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsp/Lfo.h"
+#include "engine/NoteEvent.h"
 #include "engine/Voice.h"
 #include "params/PartParamList.h"
 
@@ -9,6 +10,7 @@
 
 #include <array>
 #include <memory>
+#include <span>
 
 namespace vs
 {
@@ -16,7 +18,7 @@ namespace vs
     One timbre (Lower or Upper): parameters, LFO, note handling, voices.
 
     The whole voice path runs at the oversampled rate and is decimated once per part.
-    MIDI is applied sample-accurately: the block is split at each event's position.
+    Events are applied sample-accurately: the block is split at each event's offset.
 
     M1: a single voice, last-note priority (legato pitch change, envelopes retrigger
     on every new note). M2 adds polyphony, unison and portamento.
@@ -31,15 +33,12 @@ public:
     void setParams (const PartParams& p) noexcept { target = p; }
     void setVintage (float v) noexcept { vintage = v; }
 
-    /** Raw MIDI bytes (no MidiMessage construction: SysEx would allocate). Ignores non-channel messages. */
-    void handleMidi (const juce::uint8* data, int numBytes) noexcept;
-
     /**
-        Renders numSamples (<= maxBlockSize) into out (overwrites it). MIDI events
-        with positions in [startSample, startSample + numSamples) are applied at
-        their exact position.
+        Renders numSamples (<= maxBlockSize) into out (overwrites it). Each event is applied
+        at its offset (relative to out[0], ascending). Offsets past the end are applied after
+        the last sample, so a note-off is never lost.
     */
-    void render (float* out, int numSamples, const juce::MidiBuffer& midi, int startSample) noexcept;
+    void render (float* out, int numSamples, std::span<const NoteEvent> events) noexcept;
 
     int getLatencySamples() const noexcept { return latencySamples; }
     int getOversamplingFactor() const noexcept { return osFactor; }
@@ -48,6 +47,7 @@ public:
 private:
     void renderOversampled (float* os, int numOsSamples) noexcept;
     void applyBlockParams() noexcept;
+    void handleEvent (const NoteEvent& e) noexcept;
     void noteOn (int note, float velocity) noexcept;
     void noteOff (int note) noexcept;
     void allNotesOff() noexcept;

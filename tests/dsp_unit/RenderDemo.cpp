@@ -10,6 +10,8 @@
 #include <juce_dsp/juce_dsp.h>
 #include <juce_graphics/juce_graphics.h>
 
+#include <algorithm>
+
 namespace
 {
 constexpr double kFs = 48000.0;
@@ -37,17 +39,19 @@ void renderScene (const Scene& s, std::vector<float>& out)
     for (int start = 0; start < total; start += kBlock)
     {
         const int len = std::min (kBlock, total - start);
-        juce::MidiBuffer midi;
+        std::vector<vs::NoteEvent> events;
         for (const auto& [t, note, on] : s.notes)
         {
             const int pos = static_cast<int> (t * kFs);
             if (pos >= start && pos < start + len)
-                midi.addEvent (on ? juce::MidiMessage::noteOn (1, note, 0.8f) : juce::MidiMessage::noteOff (1, note), pos);
+                events.push_back ({ pos - start, on ? vs::EventType::NoteOn : vs::EventType::NoteOff,
+                                    static_cast<std::uint8_t> (note), on ? 0.8f : 0.0f });
         }
+        std::stable_sort (events.begin(), events.end(), [] (const auto& a, const auto& b) { return a.offset < b.offset; });
         if (s.automate != nullptr)
             s.automate (p, start / kFs);
         part.setParams (p);
-        part.render (buf.data(), len, midi, start);
+        part.render (buf.data(), len, events);
         for (int i = 0; i < len; ++i)
             out.push_back (0.5f * buf[static_cast<size_t> (i)]);
     }

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "TestHelpers.h"
+#include "engine/EventParser.h"
 #include "engine/Part.h"
 #include "params/Mappings.h"
 
@@ -20,26 +21,46 @@ struct Rig
         part.prepare (kFs, kBlock, osFactor, 1234u);
     }
 
-    /** Renders numSamples, applying the given MIDI (positions relative to the first sample). */
-    std::vector<float> render (int numSamples, const juce::MidiBuffer& midi = {})
+    /** Renders numSamples, applying the given events (offsets relative to the first sample, ascending). */
+    std::vector<float> render (int numSamples, const std::vector<vs::NoteEvent>& events = {})
     {
         std::vector<float> out (static_cast<size_t> (numSamples));
+        std::vector<vs::NoteEvent> chunk;
         for (int start = 0; start < numSamples; start += kBlock)
         {
             const int len = std::min (kBlock, numSamples - start);
+            chunk.clear();
+            for (auto e : events)
+                if (e.offset >= start && e.offset < start + len)
+                {
+                    e.offset -= start;
+                    chunk.push_back (e);
+                }
             part.setParams (params);
-            part.render (out.data() + start, len, midi, start);
+            part.render (out.data() + start, len, chunk);
         }
         return out;
     }
 };
 
-juce::MidiBuffer notes (std::initializer_list<std::tuple<int, int, bool>> events)
+std::vector<vs::NoteEvent> notes (std::initializer_list<std::tuple<int, int, bool>> events)
 {
-    juce::MidiBuffer m;
+    std::vector<vs::NoteEvent> v;
     for (const auto& [pos, note, on] : events)
-        m.addEvent (on ? juce::MidiMessage::noteOn (1, note, 0.8f) : juce::MidiMessage::noteOff (1, note), pos);
-    return m;
+        v.push_back ({ pos, on ? vs::EventType::NoteOn : vs::EventType::NoteOff, static_cast<std::uint8_t> (note), on ? 0.8f : 0.0f });
+    return v;
+}
+
+/** Parses a MidiBuffer the way the processor does (raw bytes, one chunk). */
+std::vector<vs::NoteEvent> parse (const juce::MidiBuffer& midi)
+{
+    vs::EventParser parser;
+    parser.prepare();
+    for (const auto meta : midi)
+        parser.add (meta.data, meta.numBytes, meta.samplePosition);
+    parser.finish();
+    const auto ev = parser.events();
+    return { ev.begin(), ev.end() };
 }
 
 int firstNonSilent (const std::vector<float>& x, float threshold = 1.0e-4f)
@@ -192,18 +213,18 @@ TEST_CASE ("MIDI parsing: pitch bend, note-on velocity 0, all-notes-off, SysEx i
     m.addEvent (juce::MidiMessage::createSysExMessage (sysex, sizeof (sysex)), 0);
     m.addEvent (juce::MidiMessage::noteOn (1, 69, 0.8f), 0);
     m.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 1); // +2 semitones
-    const auto bent = rig.render (48000, m);
+    const auto bent = rig.render (48000, parse (m));
     const double hz = vs::test::measureFrequency (std::vector<float> (bent.begin() + 12000, bent.end()), kFs);
     CHECK (std::abs (hz - 440.0 * std::pow (2.0, (2.0 * 8191.0 / 8192.0) / 12.0)) < 0.5);
 
     juce::MidiBuffer off;
     off.addEvent (juce::MidiMessage::noteOn (1, 69, static_cast<juce::uint8> (0)), 0); // velocity 0 = note off
-    rig.render (4800, off);
+    rig.render (4800, parse (off));
     CHECK_FALSE (rig.part.isSounding());
 
     juce::MidiBuffer panic;
     panic.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
     panic.addEvent (juce::MidiMessage::allNotesOff (1), 100);
-    rig.render (9600, panic);
+    rig.render (9600, parse (panic));
     CHECK_FALSE (rig.part.isSounding());
 }
