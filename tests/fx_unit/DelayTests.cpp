@@ -340,3 +340,8 @@ TEST_CASE ("Delay: fractional time settles on a whole sample, repeats stay flat 
             }
         }
 }
+
+TEST_CASE ("Delay: click-free when re-enabled during the fade-out and on level steps (lines full)", "[fx][delay]")
+{
+    checkClickFreeWithContent<Delay> (dp (0.1f, 0.5f, 0.3f, false, 0.9f), dp (0.1f, 0.5f, 0.3f, false, 0.0f), dp (0.1f, 0.5f, 0.3f, false, 0.3f));
+}

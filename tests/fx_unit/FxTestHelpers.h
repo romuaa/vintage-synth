@@ -227,6 +227,61 @@ void checkClickFreeToggle (const Params& on, const Params& off, double fs = 4800
     CHECK (aroundOff <= limit);
 }
 
+/**
+    Click-free with content in the lines: a 50 Hz sine fills the effect (1.5 s), then it is
+    switched off and back on 10 ms later (inside the 20 ms fade-out, lines still full), and later
+    the level/mix steps between two non-zero values (on -> low -> on). Metric: the largest second
+    difference |y[n] - 2 y[n-1] + y[n-2]|, which for a 50 Hz sine is only A w^2 (about 2e-5) while a
+    jump of size J adds about J. The 20 ms gain ramps are linear, so where a ramp starts, ends or
+    reverses the gain slope changes by at most 2/N per sample (N = ramp length); fade and level
+    ramps can coincide, so the allowance for these slope kinks (not clicks) is 4 max|wet| / N.
+    Limit per event: 1.5x the steady-state value (full, low, dry) + that allowance. Verified: with
+    instant ramps all three effects fail it.
+*/
+template <typename Fx, typename Params>
+void checkClickFreeWithContent (const Params& on, const Params& off, const Params& low, double fs = 48000.0)
+{
+    const auto n = static_cast<size_t> (4.0 * fs);
+    Stereo io = sine (n, 50.0, fs, 0.5f);
+    const Stereo dry = io;
+    const auto offAt = static_cast<size_t> (1.5 * fs), backOn = offAt + 448; // 64-sample blocks
+    const auto lowAt = static_cast<size_t> (2.5 * fs), highAt = static_cast<size_t> (3.2 * fs);
+    Fx fx;
+    fx.prepare (fs, kMaxBlock);
+    run (fx, io, [] (int) { return 64; }, [&] (Fx& f, size_t pos) {
+        if (pos >= offAt && pos < backOn)
+            f.setParams (off);
+        else if (pos >= lowAt && pos < highAt)
+            f.setParams (low);
+        else
+            f.setParams (on);
+    });
+    auto d2 = [] (const std::vector<float>& x, size_t a, size_t b) {
+        float m = 0.0f;
+        for (size_t i = std::max<size_t> (a, 2); i < b; ++i)
+            m = std::max (m, std::abs (x[i] - 2.0f * x[i - 1] + x[i - 2]));
+        return m;
+    };
+    auto step = [&] (size_t a, size_t b) { return std::max (d2 (io.l, a, b), d2 (io.r, a, b)); };
+    const float steady = std::max ({ step (offAt - static_cast<size_t> (0.4 * fs), offAt - 64),
+                                     step (highAt - static_cast<size_t> (0.3 * fs), highAt - 64),
+                                     step (n - static_cast<size_t> (0.3 * fs), n), d2 (dry.l, 0, n) });
+    const auto win = static_cast<size_t> (0.1 * fs);
+    const float atOff = step (offAt - 64, backOn), atOn = step (backOn - 64, backOn + win);
+    const float atLow = step (lowAt - 64, lowAt + win), atHigh = step (highAt - 64, highAt + win);
+    float maxWet = 0.0f;
+    for (size_t i = 0; i < n; ++i)
+        maxWet = std::max ({ maxWet, std::abs (io.l[i] - dry.l[i]), std::abs (io.r[i] - dry.r[i]) });
+    const float limit = 1.5f * steady + 4.0f * maxWet / static_cast<float> (0.02 * fs);
+    WARN ("max second difference: steady " << steady << ", switch off " << atOff << ", back on during fade " << atOn
+                              << ", level down " << atLow << ", level up " << atHigh << "; limit " << limit
+                              << " (max |wet| " << maxWet << ")");
+    CHECK (atOff <= limit);
+    CHECK (atOn <= limit);
+    CHECK (atLow <= limit);
+    CHECK (atHigh <= limit);
+}
+
 /** A burst, then silence, without flush-to-zero: no subnormal outputs, and the tail decays. */
 template <typename Fx, typename Params>
 void checkSilenceTail (const Params& p, double fs, double burstSeconds, double silenceSeconds, bool expectExactZero)

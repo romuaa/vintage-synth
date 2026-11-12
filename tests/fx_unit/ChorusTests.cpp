@@ -303,3 +303,8 @@ TEST_CASE ("Chorus: NaN/Inf input never poisons the state (output finite, recove
 {
     checkNonFiniteInputRecovers<Chorus> (cp (ChorusMode::I, 1.0f));
 }
+
+TEST_CASE ("Chorus: click-free when re-enabled during the fade-out and on level steps (lines full)", "[fx][chorus]")
+{
+    checkClickFreeWithContent<Chorus> (cp (ChorusMode::I, 1.0f), cp (ChorusMode::Off, 1.0f), cp (ChorusMode::I, kDefaultMix));
+}

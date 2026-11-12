@@ -466,3 +466,8 @@ TEST_CASE ("Reverb: NaN/Inf input never poisons the state (output finite, recove
 {
     checkNonFiniteInputRecovers<Reverb> (rp (8.0f, 0.3f, 0.05f, 1.0f));
 }
+
+TEST_CASE ("Reverb: click-free when re-enabled during the fade-out and on level steps (lines full)", "[fx][reverb]")
+{
+    checkClickFreeWithContent<Reverb> (rp (2.5f, 0.5f, 0.0f, 1.0f), rp (2.5f, 0.5f, 0.0f, 0.0f), rp (2.5f, 0.5f, 0.0f, 0.3f));
+}
