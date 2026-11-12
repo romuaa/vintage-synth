@@ -8,6 +8,8 @@
 #include "engine/Modulation.h"
 #include "params/PartParamList.h"
 
+#include <array>
+
 namespace vs
 {
 /**
@@ -133,8 +135,82 @@ public:
         return y * gain[k];
     }
 
-    /** Renders one sub-block of any number of voices into out (overwrites m.numSamples samples). */
-    static void renderBlock (Voice* const* voices, int numVoices, const ModBlock& m, float* out) noexcept;
+    /**
+        renderSample() for a note on the real-time-rate path (see setRealTimePairRatio). The whole
+        voice (VCO pair, mixer, HPF, VCF, VCA) runs on every second sample, on the samples that
+        are real-time samples (even absolute index: real-time sample k is sample 2k here), with
+        the same code and coefficients the real-time plugin uses; its output is interpolated back
+        to this rate (half-band FIR). The result is the real-time voice, delayed by the
+        interpolator's 2 kRtInterpTaps - 1 samples.
+    */
+    float renderSampleRtPair (int i, float hpfG, float crossModOct, float sourceMix) noexcept
+    {
+        const auto k = static_cast<size_t> (i);
+        constexpr auto K = static_cast<size_t> (kRtInterpTaps);
+        if (((blockClock + static_cast<unsigned> (i)) & 1u) != 0u)
+            return rtHist[K];
+
+        // Increments at the real-time rate are twice those at this rate (exact: invFs halves).
+        float wrap2 = -1.0f, unused = -1.0f;
+        const float o2 = vco2Rt.process (dsp::clamp (2.0f * dt2[k], kMinDt, kMaxDt), width[k], -1.0f, wrap2);
+        const float raw1 = 2.0f * dt1Raw[k];
+        const float dt1 = dsp::clamp (crossModOn ? raw1 * dsp::fast::exp2 (crossModOct * o2) : raw1, kMinDt, kMaxDt);
+        const float o1 = vco1Rt.process (dt1, width[k], sync ? wrap2 : -1.0f, unused);
+
+        // The part's HPF coefficient is G = g / (1 + g), g = tan (theta) at this rate; the
+        // real-time rate needs tan (2 theta) = 2 g / (1 - g^2). (The VCF coefficients of this voice
+        // are already computed for the real-time rate in beginBlock.)
+        const float g = hpfG / (1.0f - hpfG);
+        const float g2 = 2.0f * g / (1.0f - g * g);
+        const float mixed = o1 + (o2 - o1) * sourceMix;
+        const float hp = hpf.processG (mixed, g2 / (1.0f + g2));
+        const float y = vcf.tick (hp, cG[k], c1[k], c2[k], c3[k], c4[k], cK[k], cInv[k], slope24) * gain[k];
+
+        for (size_t j = 0; j + 1 < rtHist.size(); ++j)
+            rtHist[j] = rtHist[j + 1];
+        rtHist[rtHist.size() - 1] = y;
+
+        // Half-way point between rtHist[K - 1] and rtHist[K].
+        float h = 0.0f;
+        for (size_t m = 0; m < K; ++m)
+            h += kRtInterp[m] * (rtHist[K - 1 - m] + rtHist[K + m]);
+        return h;
+    }
+
+    /**
+        Offline rendering (docs/architecture.md 4.4) runs the voice path at twice the real-time
+        internal rate. Classic Cross Mod is exempt from the alias gate and its aliasing (in the
+        oscillators and in the VCF's saturation) depends on the rate, so a note that starts from
+        idle while the part's Cross Mod slider is above zero renders its whole voice at the
+        real-time rate instead: same code, same rate, same sound as in real time. The choice is
+        made at note start and holds for the whole note (no path switch mid-note, no click; a note
+        already sounding when Cross Mod is raised from zero stays on the offline-rate path).
+        ratio 2: offline at twice the real-time rate; 1: off (real time, or the same factor in
+        both). Call after prepare().
+    */
+    void setRealTimePairRatio (int ratio) noexcept { rtPairRatio = ratio; }
+    /** True while the current note renders at the real-time rate. For tests. */
+    bool usesRealTimePair() const noexcept { return rtPair; }
+
+    /**
+        Renders one sub-block of any number of voices into out (overwrites m.numSamples samples).
+        If outRtPath is given, notes on the real-time-rate path are summed there instead (also
+        overwritten), so the caller can align the two groups (Part); else they go into out too.
+    */
+    static void renderBlock (Voice* const* voices, int numVoices, const ModBlock& m, float* out, float* outRtPath = nullptr) noexcept;
+
+    /** Real-time-rate path: interpolator taps on each side of the half-sample point. */
+    static constexpr int kRtInterpTaps = 4;
+    /**
+        The latency a note on the real-time-rate path adds, in samples at this rate: its BLEP
+        look-ahead counts at the real-time rate (2 kLatency instead of kLatency) and the
+        interpolator adds 2 kRtInterpTaps - 1. Part delays its ordinary notes by this much and
+        reports it, so the real-time-rate notes are exactly at the reported latency (they are
+        the real-time voice, delayed by the interpolator). Ordinary notes then sound one sample
+        (at this rate) later than those, as offline renders always did against real time: an
+        oscillator outputs the phase at the end of its sample, one sample at either rate.
+    */
+    static constexpr int kRtPathExtraDelay = dsp::Oscillator::kLatency + 2 * kRtInterpTaps - 1;
 
     /** Voices interleaved together in renderBlock (more are rendered in further groups). */
     static constexpr int kVoiceGroup = 32;
@@ -142,14 +218,33 @@ public:
 private:
     void applyEnvTimes() noexcept;
     void restartFromIdle() noexcept;
+    void mirrorRealTimePair() noexcept;
 
     static constexpr float kMinDt = 1.0e-7f, kMaxDt = 0.45f; // phase increment limits (cycles/sample)
 
     float fs = 96000.0f;
     float invFs = 1.0f / 96000.0f;
     float maxLog2Cutoff = 15.0f;
+    float maxLog2CutoffRt = 15.0f; // maxLog2Cutoff at the real-time rate (half this rate)
 
     dsp::Oscillator vco1, vco2;
+
+    // Offline only (setRealTimePairRatio): a Cross Mod note rendered at the real-time rate. Its
+    // VCO pair is seeded and reset together with vco1/vco2, so it starts from exactly the state
+    // the real-time pair would have; HPF and VCF are the voice's own, ticked at the real-time
+    // rate. The output passes a 2x half-band interpolator: half-sample points from kRtInterpTaps
+    // taps on each side (least squares, flat to 0.25 of the real-time rate: within 0.0004
+    // (0.003 dB) up to 20 kHz at 88.2 kHz; images below -68 dB before the decimator, which removes
+    // them) and delays the note by 2 kRtInterpTaps - 1 samples (see kRtPathExtraDelay).
+    static constexpr float kRtInterp[kRtInterpTaps] { 0.6100089598f, -0.1426984697f, 0.0394689421f, -0.0067794322f };
+    dsp::Oscillator vco1Rt, vco2Rt;
+    std::array<float, 2 * static_cast<size_t> (kRtInterpTaps)> rtHist {}; // the voice's output at the real-time rate, newest last
+    int rtPairRatio = 1;
+    bool rtPair = false;          // this note renders at the real-time rate (vco1Rt/vco2Rt, renderSampleRtPair)
+    bool crossModWanted = false;  // the part's Cross Mod slider is above zero (block parameters)
+    unsigned clock = 0;           // samples since prepare(), counted for every sub-block (parity only)
+    unsigned blockClock = 0;      // clock at the start of the current sub-block
+
     dsp::OnePoleHighPass hpf;
     dsp::OtaLadder vcf;
     dsp::Envelope env1, env2;

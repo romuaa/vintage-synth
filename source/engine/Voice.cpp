@@ -38,6 +38,7 @@ void Voice::prepare (float oversampledRate, std::uint32_t seed) noexcept
     fs = oversampledRate;
     invFs = 1.0f / fs;
     maxLog2Cutoff = std::log2 (0.42f * fs);
+    maxLog2CutoffRt = std::log2 (0.42f * (0.5f * fs));
     env1.setSampleRate (fs);
     env2.setSampleRate (fs);
     drift.prepare (fs, seed);
@@ -49,6 +50,10 @@ void Voice::prepare (float oversampledRate, std::uint32_t seed) noexcept
     dsp::Random r (seed ^ 0xA5A5A5A5u);
     vco1.reset (r.unipolar());
     vco2.reset (r.unipolar());
+    mirrorRealTimePair();
+    rtPairRatio = 1;
+    rtPair = false;
+    clock = blockClock = 0;
     restartRng.setSeed (seed * 747796405u + 2891336453u);
     freshPhases = true;
     reset();
@@ -72,6 +77,8 @@ void Voice::setBlockParams (const PartParams& p, float vintage) noexcept
 {
     vco1.setWave (static_cast<dsp::Wave> (p.vco1Wave));
     vco2.setWave (static_cast<dsp::Wave> (p.vco2Wave));
+    vco1Rt.setWave (static_cast<dsp::Wave> (p.vco1Wave));
+    vco2Rt.setWave (static_cast<dsp::Wave> (p.vco2Wave));
 
     vcoModTarget = p.vcoModTarget;
     pwmSource = p.pwmSource;
@@ -85,6 +92,7 @@ void Voice::setBlockParams (const PartParams& p, float vintage) noexcept
     env1KeyFollow = p.env1KeyFollow == 1;
     env2KeyFollow = p.env2KeyFollow == 1;
     vintageAmount = vintage;
+    crossModWanted = p.vco1CrossMod > 0.0f;
 
     env1Times[0] = map::envTimeSec (p.env1Attack);
     env1Times[1] = map::envTimeSec (p.env1Decay);
@@ -132,6 +140,10 @@ void Voice::restartFromIdle() noexcept
     hpf.reset();
     vcf.reset();
 
+    // Offline: a note that starts while Cross Mod is up renders at the real-time rate.
+    rtPair = rtPairRatio == 2 && crossModWanted;
+    rtHist.fill (0.0f);
+
     const bool forced = restartPhasesSet;
     restartPhasesSet = false;
     if (freshPhases && ! forced)
@@ -146,6 +158,15 @@ void Voice::restartFromIdle() noexcept
     const float p1 = restartRng.unipolar(), p2 = restartRng.unipolar();
     vco1.reset (forced ? restartPhase1 : p1);
     vco2.reset (forced ? restartPhase2 : p2);
+    mirrorRealTimePair();
+}
+
+void Voice::mirrorRealTimePair() noexcept
+{
+    // Same start state as the main pair (phases, noise seeds, empty BLEP rings): the real-time
+    // pair then renders what the real-time plugin renders for this note.
+    vco1Rt = vco1;
+    vco2Rt = vco2;
 }
 
 void Voice::start (int note, float vel, float levelScale, float pos) noexcept
@@ -183,6 +204,8 @@ void Voice::noteOff() noexcept
 bool Voice::beginBlock (const ModBlock& m) noexcept
 {
     const int n = m.numSamples;
+    blockClock = clock;
+    clock += static_cast<unsigned> (n);
     if (! env2.isActive())
     {
         // A steal fade keeps counting even if the old note has finished meanwhile.
@@ -340,8 +363,9 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
         const float* velVcf = m.ctl[ModBlock::VelToVcf];
         const float keyDist = note - 60.0f;
         const float driftOct = drift.cutoffOct * dsp::Drift::kCutoffOct * vintage;
-        const float piOverFs = dsp::kPi * invFs;
-        const float maxLog2 = maxLog2Cutoff;
+        // A note on the real-time-rate path (offline) takes its VCF coefficients at that rate.
+        const float piOverFs = rtPair ? dsp::kPi * (2.0f * invFs) : dsp::kPi * invFs;
+        const float maxLog2 = rtPair ? maxLog2CutoffRt : maxLog2Cutoff;
         for (int i = 0; i < n; ++i)
         {
             const float envDepth = envOct[i] * map::velocityScale (velVcf[i], vel[i]);
@@ -371,11 +395,15 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
     return true;
 }
 
-void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m, float* out) noexcept
+void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m, float* out, float* outRtPath) noexcept
 {
     const int n = m.numSamples;
     for (int i = 0; i < n; ++i)
         out[i] = 0.0f;
+    float* rtOut = outRtPath != nullptr ? outRtPath : out;
+    if (outRtPath != nullptr)
+        for (int i = 0; i < n; ++i)
+            outRtPath[i] = 0.0f;
 
     const float* hpfG = m.ctl[ModBlock::HpfG];
     const float* crossOct = m.ctl[ModBlock::CrossModOct];
@@ -386,11 +414,17 @@ void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m,
     for (int first = 0; first < numVoices; first += kVoiceGroup)
     {
         Voice* active[kVoiceGroup];
-        int numActive = 0;
+        Voice* rtPairs[kVoiceGroup]; // offline Cross Mod notes rendered at the real-time rate
+        int numActive = 0, numRtPairs = 0;
         const int last = std::min (numVoices, first + kVoiceGroup);
         for (int v = first; v < last; ++v)
             if (voices[v]->beginBlock (m))
-                active[numActive++] = voices[v];
+            {
+                if (voices[v]->rtPair)
+                    rtPairs[numRtPairs++] = voices[v];
+                else
+                    active[numActive++] = voices[v];
+            }
 
         for (int i = 0; i < n; ++i)
         {
@@ -399,6 +433,14 @@ void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m,
                 sum += active[a]->renderSample (i, hpfG[i], crossOct[i], mix[i]);
             out[i] += sum;
         }
+        if (numRtPairs > 0) // offline only
+            for (int i = 0; i < n; ++i)
+            {
+                float sum = 0.0f;
+                for (int a = 0; a < numRtPairs; ++a)
+                    sum += rtPairs[a]->renderSampleRtPair (i, hpfG[i], crossOct[i], mix[i]);
+                rtOut[i] += sum;
+            }
     }
 }
 } // namespace vs

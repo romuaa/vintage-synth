@@ -37,8 +37,13 @@ public:
         Allocates. Call from prepareToPlay only. Voice i is seeded seed + i.
         @param oversamplingFactor 1, 2 or 4. At 1 the voices render straight into the output
                                   (no decimator); the latency is then the BLEP delay only.
+        @param realTimeFactor     the factor real-time rendering uses at this rate (0: the same).
+                                  When oversamplingFactor is twice that (offline), notes that start
+                                  with Cross Mod up render at the real-time rate, so a bounce sounds
+                                  like playback (Voice::setRealTimePairRatio); the latency then
+                                  includes Voice::kRtPathExtraDelay.
     */
-    void prepare (double sampleRate, int maxBlockSize, int oversamplingFactor, std::uint32_t seed);
+    void prepare (double sampleRate, int maxBlockSize, int oversamplingFactor, std::uint32_t seed, int realTimeFactor = 0);
     void reset() noexcept;
 
     /**
@@ -115,6 +120,15 @@ private:
     }
 
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+
+    // Offline with Cross Mod notes at the real-time rate (see prepare): their sum, and the delay
+    // line that aligns the ordinary notes with them.
+    static constexpr int kAlignRingSize = 16;
+    static_assert (Voice::kRtPathExtraDelay < kAlignRingSize, "alignment delay must fit the ring");
+    bool rtPathOn = false;
+    std::array<float, kMaxSubBlock> rtPathOut {};
+    std::array<float, kAlignRingSize> alignRing {};
+    unsigned alignPos = 0;
     juce::AudioBuffer<float> silence;
     int maxBlock = 0;
     int osFactor = 2;
