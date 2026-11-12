@@ -45,6 +45,12 @@ Run these in order and stop at the first failure. Report each step as pass, fail
    Budget: 32 voices at 2× oversampling (Dual mode) under 15 % of one core at 48 kHz, effects
    included. 4× is offline only and has no real-time budget. Flag any regression above 5 %.
 
+**Linux pre-flight (before pushing engine or test changes):** `scripts/linux-check.sh` builds
+everything with GCC (warnings as errors, all errors shown) and runs the full ctest in a native
+Linux ARM64 container; `scripts/linux-check.sh --sanitize` is the Clang ASan + UBSan run that
+mirrors CI. About 1 min warm, 3 min cold; `--clean` removes its image and volume. It copies the
+working tree by content, so it is safe across branch switches.
+
 Linux and sanitizers in CI: the `linux-x64` row (ubuntu-22.04, GCC) runs everything including
 pluginval and the validator; the `linux-sanitizers` job (ubuntu-24.04, Clang, ASan + UBSan,
 `halt_on_error`) runs the tests without `host_smoke` in every CI tier. A Linux-only manual run:

@@ -5,7 +5,8 @@ name: build
 #  - Draft pull requests build Windows x64 and Linux x64 only (MSVC is what can't be tested
 #    locally; Linux is the cheapest runner). The full matrix runs when the PR is marked "ready
 #    for review", on main and on manual dispatch.
-#  - A manual dispatch with targets=linux builds only the Linux row and the sanitizer job.
+#  - A manual dispatch with targets=linux builds only the Linux row, the multi-distribution load
+#    check of its bundle (linux-distros) and the sanitizer job.
 #  - The sanitizer job (ASan + UBSan, Linux) runs in every tier.
 #  - Every job has a timeout, so a hung test can't burn hours.
 # Once the repository is public (free standard runners), the draft tier can be removed.
@@ -58,15 +59,17 @@ jobs:
         #  windows-x64      windows-2025 (VS 2026 image, pinned); sccache.
         #  linux-x64        ubuntu-22.04, the OLDEST image GitHub offers: the binary must not need a
         #                   newer glibc than the oldest distributions we support; ccache.
+        #  linux-arm64      ubuntu-22.04-arm (same Ubuntu, glibc 2.35); full tier and targets=linux
+        #                   only. No pluginval: v1.0.4 has no Linux ARM64 release asset.
         #  windows-arm64    windows-11-arm (VS 2026 image); no native ARM64 pluginval release yet;
         #                   the VST3 SDK validator build on ARM64 is untested (set validator true to try).
         include: >-
           ${{ fromJSON(
           (github.event_name == 'workflow_dispatch' && inputs.targets == 'linux')
-          && '[{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true}]'
+          && '[{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true,"arch_dir":"x86_64-linux"},{"name":"linux-arm64","os":"ubuntu-22.04-arm","cache":"ccache","pluginval":false,"validator":true,"arch_dir":"aarch64-linux"}]'
           || (github.event_name == 'pull_request' && github.event.pull_request.draft)
-          && '[{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true}]'
-          || '[{"name":"macos-universal","os":"macos-26","cache":"ccache","pluginval":true,"validator":true},{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"windows-arm64","os":"windows-11-arm","msvc_arch":"arm64","cache":"sccache","pluginval":false,"validator":false},{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true}]'
+          && '[{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true,"arch_dir":"x86_64-linux"}]'
+          || '[{"name":"macos-universal","os":"macos-26","cache":"ccache","pluginval":true,"validator":true},{"name":"windows-x64","os":"windows-2025","msvc_arch":"x64","cache":"sccache","pluginval":true,"validator":true},{"name":"windows-arm64","os":"windows-11-arm","msvc_arch":"arm64","cache":"sccache","pluginval":false,"validator":false},{"name":"linux-x64","os":"ubuntu-22.04","cache":"ccache","pluginval":true,"validator":true,"arch_dir":"x86_64-linux"},{"name":"linux-arm64","os":"ubuntu-22.04-arm","cache":"ccache","pluginval":false,"validator":true,"arch_dir":"aarch64-linux"}]'
           ) }}
 
     steps:
@@ -226,8 +229,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          so="build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/x86_64-linux/Exitium Vintage Synth.so"
+          dir="build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/${{ matrix.arch_dir }}"
+          so=$(ls "$dir"/*.so | head -n 1)
           test -f "$so"
+          file "$so"
           ldd "$so"
           objdump -p "$so" | grep -E "NEEDED|SONAME"
           ! ldd "$so" | grep -q "not found"
@@ -254,6 +259,87 @@ jobs:
           retention-days: 7
           path: build/VintageSynth_artefacts/Release/VST3/${{ env.BUNDLE }}
 
+  # The ONE bundle built by the linux-x64 row must load on other distributions than the image it
+  # was built on. Each entry runs pluginval (strictness 10) inside a container of that
+  # distribution; the entry marked NEGATIVE is older than the glibc floor (2.35, the build image)
+  # and asserts that the plugin is refused with "GLIBC_x.y not found", so the documented floor is
+  # tested, not assumed. Tags are pinned by hand (Dependabot doesn't bump them): check Docker Hub
+  # for newer releases when touching CI. Runs wherever the Linux row ran (every tier).
+  linux-distros:
+    name: distro ${{ matrix.name }}
+    needs: build
+    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # glibc: ubuntu 22.04 = 2.35 (build distribution), debian 12 = 2.36, debian 13 = 2.41,
+          # ubuntu 26.04 / fedora 45 / arch = newest (each log prints the exact version).
+          - name: ubuntu-22.04
+            image: "ubuntu:22.04"
+            pm: apt
+            expect: pass
+            pkgs: "libasound2 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4 xvfb xauth"
+          - name: ubuntu-26.04
+            image: "ubuntu:26.04"
+            pm: apt
+            expect: pass
+            pkgs: "libasound2t64 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4t64 xvfb xauth"
+          - name: debian-12
+            image: "debian:bookworm-slim"
+            pm: apt
+            expect: pass
+            pkgs: "libasound2 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4 xvfb xauth"
+          - name: debian-13
+            image: "debian:trixie-slim"
+            pm: apt
+            expect: pass
+            pkgs: "libasound2t64 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4t64 xvfb xauth"
+          - name: fedora-45
+            image: "fedora:45"
+            pm: dnf
+            expect: pass
+            pkgs: "alsa-lib freetype fontconfig libX11 libXext libXrandr libXinerama libXcursor libXrender libXcomposite libXi libcurl xorg-x11-server-Xvfb xauth"
+          - name: arch-20261108
+            image: "archlinux:base-20261108.0.623074"
+            pm: pacman
+            expect: pass
+            pkgs: "alsa-lib freetype2 fontconfig libx11 libxext libxrandr libxinerama libxcursor libxrender libxcomposite libxi curl xorg-server-xvfb xorg-xauth"
+          # NEGATIVE: glibc 2.31 < 2.35. The plugin is EXPECTED to be refused; the job is green only if it is.
+          - name: negative-debian-11-glibc-2.31
+            image: "debian:bullseye-slim"
+            pm: none
+            expect: fail
+            pkgs: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/linux-check
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vst3-linux-x64
+          path: ${{ env.BUNDLE }}
+
+      - name: pluginval (download, checksum)
+        run: |
+          curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Linux.zip"
+          echo "$PLUGINVAL_SHA256_LINUX  pv.zip" | sha256sum -c -
+          unzip -q pv.zip
+          chmod +x pluginval
+
+      - name: Validate in ${{ matrix.image }}
+        run: |
+          start=$(date +%s)
+          docker pull -q "${{ matrix.image }}" >/dev/null
+          rc=0
+          docker run --rm -v "$PWD":/w -w /w "${{ matrix.image }}" \
+            sh /w/scripts/linux-check/distro-check.sh "${{ matrix.pm }}" "${{ matrix.expect }}" "/w/$BUNDLE" "${{ matrix.pkgs }}" || rc=$?
+          echo "distribution ${{ matrix.name }}: exit $rc after $(( $(date +%s) - start ))s"
+          exit $rc
+
   # Merge Windows x64 + ARM64 into one .vst3 bundle (Contents/x86_64-win + Contents/arm64-win).
   windows-bundle:
     needs: build
@@ -276,6 +362,31 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vst3-windows-universal
+          retention-days: 7
+          path: merged
+
+  # Merge Linux x86_64 + ARM64 into one .vst3 bundle (Contents/x86_64-linux + Contents/aarch64-linux).
+  linux-bundle:
+    needs: build
+    # Needs both Linux builds: skipped in the draft tier (x86_64 only).
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: vst3-linux-x64, path: x64 }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: vst3-linux-arm64, path: arm64 }
+      - name: Merge
+        run: |
+          mkdir -p "merged/$BUNDLE"
+          cp -R x64/. "merged/$BUNDLE/"
+          cp -R arm64/Contents/aarch64-linux "merged/$BUNDLE/Contents/"
+          ls -R "merged/$BUNDLE/Contents" | head -40
+          test -n "$(ls "merged/$BUNDLE"/Contents/x86_64-linux/*.so)" && test -n "$(ls "merged/$BUNDLE"/Contents/aarch64-linux/*.so)"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vst3-linux-universal
           retention-days: 7
           path: merged
 
