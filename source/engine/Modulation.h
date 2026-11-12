@@ -77,6 +77,8 @@ public:
     void setBendTarget (float semitones) noexcept;
     /** Mod wheel 0..1 (smoothed; its depth is the "Mod Wheel Vibrato" parameter). */
     void setModWheel (float wheel) noexcept;
+    /** Bend (semitones) and mod wheel jump to these values now (no smoothing). */
+    void setControllersNow (float bendSemitones, float wheel) noexcept;
     void setVintage (float v) noexcept { vintage = v; }
     void triggerLfo() noexcept { lfo.trigger(); }
 

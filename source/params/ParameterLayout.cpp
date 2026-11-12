@@ -17,7 +17,9 @@ enum class Display
     Cents,
     PortaTime,
     DetuneCents,
-    Percent
+    Percent,
+    Pan,     // -1..1: "L 50", "C", "R 50"
+    Balance  // -1..1: "Lower 50", "Centre", "Upper 50"
 };
 
 juce::String formatHz (float hz)
@@ -28,6 +30,30 @@ juce::String formatHz (float hz)
 juce::String formatSeconds (float s)
 {
     return s >= 1.0f ? juce::String (s, 2) + " s" : juce::String (s * 1000.0f, s < 0.01f ? 1 : 0) + " ms";
+}
+
+/** -1..1 -> "<neg> 50" / centre / "<pos> 50" (percent of the way to the side). */
+juce::String formatSide (float v, const char* negative, const char* centre, const char* positive)
+{
+    const int pct = juce::roundToInt (std::abs (v) * 100.0f);
+    if (pct == 0)
+        return centre;
+    return juce::String (v < 0.0f ? negative : positive) + " " + juce::String (pct);
+}
+
+/** Inverse of formatSide: a leading negative/positive word (or its first letter) gives the side. */
+float parseSide (const juce::String& text, const char* negative, const char* positive)
+{
+    const auto t = text.trim();
+    const float amount = juce::jlimit (0.0f, 100.0f, std::abs (t.retainCharacters ("0123456789.").getFloatValue())) / 100.0f;
+    const auto startsWithWord = [&t] (const char* word) {
+        return t.startsWithIgnoreCase (word) || (t.isNotEmpty() && juce::CharacterFunctions::toLowerCase (t[0]) == juce::CharacterFunctions::toLowerCase (static_cast<juce::juce_wchar> (word[0])));
+    };
+    if (startsWithWord (negative))
+        return -amount;
+    if (startsWithWord (positive))
+        return amount;
+    return juce::jlimit (-1.0f, 1.0f, t.getFloatValue() / 100.0f); // plain signed percent; "C"/"Centre" = 0
 }
 
 /** Parse "1.2 kHz" / "350 Hz" -> Hz, and "350 ms" / "1.2 s" -> seconds. */
@@ -51,6 +77,8 @@ juce::String toText (Display d, float v)
         case Display::PortaTime: return v <= 0.0f ? juce::String ("Off") : formatSeconds (map::portaTimeSec (v));
         case Display::DetuneCents: return juce::String (map::unisonDetuneCents (v), 1) + " ct";
         case Display::Percent:  return juce::String (juce::roundToInt (v * 100.0f)) + " %";
+        case Display::Pan:      return formatSide (v, "L", "C", "R");
+        case Display::Balance:  return formatSide (v, "Lower", "Centre", "Upper");
     }
     return {};
 }
@@ -72,6 +100,8 @@ float fromText (Display d, const juce::String& t)
             return map::portaFromSec (t.containsIgnoreCase ("ms") ? t.getFloatValue() / 1000.0f : t.getFloatValue());
         case Display::DetuneCents: return t.getFloatValue() / map::unisonDetuneCents (1.0f);
         case Display::Percent:  return t.getFloatValue() / 100.0f;
+        case Display::Pan:      return parseSide (t, "L", "R");
+        case Display::Balance:  return parseSide (t, "Lower", "Upper");
     }
     return 0.0f;
 }
@@ -133,7 +163,48 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 
     layout.add (makeFloat (ParamID::vintage, "Vintage", 0.0f, 1.0f, 0.0f, Display::Panel10));
 
+    // M3: key modes and the part mixer (appended, docs/architecture.md 4.5).
+    layout.add (makeChoice (ParamID::keyMode, "Key Mode", kKeyModeLabels, 0));
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { ParamID::keySplitPoint, kParamVersionHint }, "Split Point", 0, 127, kDefaultSplitPoint,
+        juce::AudioParameterIntAttributes()
+            .withStringFromValueFunction ([] (int v, int) { return noteName (v); })
+            .withValueFromStringFunction ([] (const juce::String& t) {
+                const int n = noteFromName (t);
+                return n < 0 ? kDefaultSplitPoint : n;
+            })));
+    layout.add (makeFloat (ParamID::mixBalance, "Balance", -1.0f, 1.0f, 0.0f, Display::Balance));
+
     return layout;
+}
+
+juce::String noteName (int note)
+{
+    static constexpr const char* names[] { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    const int n = juce::jlimit (0, 127, note);
+    return juce::String (names[n % 12]) + juce::String (n / 12 - 1);
+}
+
+int noteFromName (const juce::String& text)
+{
+    const auto t = text.trim();
+    if (t.isEmpty())
+        return -1;
+    if (juce::CharacterFunctions::isDigit (t[0]))
+        return juce::jlimit (0, 127, t.getIntValue()); // a plain MIDI note number
+
+    static constexpr int semis[] { 9, 11, 0, 2, 4, 5, 7 }; // A B C D E F G
+    const auto letter = juce::CharacterFunctions::toUpperCase (t[0]);
+    if (letter < 'A' || letter > 'G')
+        return -1;
+    int pc = semis[static_cast<size_t> (letter - 'A')];
+    int i = 1;
+    for (; i < t.length() && (t[i] == '#' || t[i] == 'b'); ++i)
+        pc += t[i] == '#' ? 1 : -1;
+    const auto octaveText = t.substring (i).trim();
+    if (octaveText.isEmpty() || ! octaveText.containsOnly ("-0123456789"))
+        return -1;
+    return juce::jlimit (0, 127, (octaveText.getIntValue() + 1) * 12 + pc);
 }
 
 void PartParamBinding::bind (juce::AudioProcessorValueTreeState& state, const juce::String& prefix)

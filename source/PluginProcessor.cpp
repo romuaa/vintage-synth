@@ -17,10 +17,23 @@ VintageSynthProcessor::VintageSynthProcessor()
       apvts (*this, nullptr, kStateTag, createParameterLayout())
 {
     lowerBinding.bind (apvts, kLowerPrefix);
+    upperBinding.bind (apvts, kUpperPrefix);
     masterVolume = apvts.getRawParameterValue (ParamID::masterVolume);
     vintage = apvts.getRawParameterValue (ParamID::vintage);
-    jassert (masterVolume != nullptr && vintage != nullptr);
+    keyMode = apvts.getRawParameterValue (ParamID::keyMode);
+    splitPoint = apvts.getRawParameterValue (ParamID::keySplitPoint);
+    balance = apvts.getRawParameterValue (ParamID::mixBalance);
+    jassert (masterVolume != nullptr && vintage != nullptr && keyMode != nullptr && splitPoint != nullptr
+             && balance != nullptr);
 }
+
+namespace
+{
+KeyMode keyModeOf (const std::atomic<float>* p) noexcept
+{
+    return static_cast<KeyMode> (juce::jlimit (0, 2, static_cast<int> (p->load (std::memory_order_relaxed))));
+}
+} // namespace
 
 void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock)
 {
@@ -30,14 +43,35 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     const int osFactor = isNonRealtime() ? 4 : 2;
 
     lowerBinding.read (lowerParams);
+    upperBinding.read (upperParams);
     lowerPart.setParams (lowerParams);
-    lowerPart.prepare (sampleRate, preparedBlockSize, osFactor, 0x1001u);
+    upperPart.setParams (upperParams);
+    lowerPart.prepare (sampleRate, preparedBlockSize, osFactor, kLowerSeed);
+    upperPart.prepare (sampleRate, preparedBlockSize, osFactor, kUpperSeed);
+
+    const auto mode = keyModeOf (keyMode);
+    router.setMode (mode);
+    router.setSplitPoint (static_cast<int> (splitPoint->load()));
+    router.reset();
+    upperActive = mode != KeyMode::Whole;
+    upperQuietSamples = 0;
 
     events.prepare (EventParser::kDefaultCapacity);
-    partBuffer.setSize (1, preparedBlockSize);
+    lowerEvents.assign (static_cast<size_t> (events.capacity()), NoteEvent {});
+    upperEvents.assign (static_cast<size_t> (events.capacity()), NoteEvent {});
+    partBuffer.setSize (2, preparedBlockSize);
+    mixBuffer.setSize (2, preparedBlockSize);
+    partBuffer.clear();
+    mixBuffer.clear();
+
+    mixer.prepare (sampleRate);
+    mixer.setTargets (balance->load(), lowerParams.pan, upperParams.pan, mode == KeyMode::Whole);
+    mixer.reset();
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterVolume->load()));
 
+    // Both parts share the factor, so they have the same latency.
+    jassert (lowerPart.getLatencySamples() == upperPart.getLatencySamples());
     setLatencySamples (lowerPart.getLatencySamples());
 }
 
@@ -60,12 +94,37 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         return;
     }
 
+    const float vintageAmount = vintage->load (std::memory_order_relaxed);
     lowerBinding.read (lowerParams);
+    upperBinding.read (upperParams);
     lowerPart.setParams (lowerParams);
-    lowerPart.setVintage (vintage->load (std::memory_order_relaxed));
+    upperPart.setParams (upperParams);
+    lowerPart.setVintage (vintageAmount);
+    upperPart.setVintage (vintageAmount);
     masterGain.setTargetValue (juce::Decibels::decibelsToGain (masterVolume->load (std::memory_order_relaxed)));
 
-    float* mono = partBuffer.getWritePointer (0);
+    // Key mode (docs/architecture.md 4.2). A change releases every voice of both parts (keeping
+    // the controllers) and forgets the held keys. The split point only affects new notes.
+    const auto mode = keyModeOf (keyMode);
+    const bool leavingWhole = router.getMode() == KeyMode::Whole && mode != KeyMode::Whole;
+    if (router.setMode (mode))
+    {
+        lowerPart.releaseAllNotes();
+        upperPart.releaseAllNotes();
+    }
+    router.setSplitPoint (static_cast<int> (splitPoint->load (std::memory_order_relaxed)));
+
+    // Upper comes back from Whole mode clean: parameters at their targets (no glide from stale
+    // values), LFO restarted, decimator cleared. Done whenever it is silent at that moment, not
+    // only when it was idle long enough to stop being rendered, so the result does not depend on
+    // the host block size (when it stopped). A release tail still running just continues.
+    if (mode != KeyMode::Whole && (! upperActive || (leavingWhole && ! upperPart.isSounding())))
+    {
+        upperPart.resume();
+        upperActive = true;
+        upperQuietSamples = 0;
+    }
+    mixer.setTargets (balance->load (std::memory_order_relaxed), lowerParams.pan, upperParams.pan, mode == KeyMode::Whole);
 
     // Every event in the buffer is applied exactly once, whatever its position: negative
     // positions count as 0, positions at or past the end apply after the last sample, and a
@@ -82,12 +141,18 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
             events.add (meta.data, meta.numBytes, juce::jlimit (0, len, meta.samplePosition - start));
         }
         events.finish();
+
+        // One event list per part; each is as long as the parser's, so nothing is dropped here.
+        const auto counts = router.route (events.events(), lowerEvents, upperEvents);
+        lowerChunk = { lowerEvents.data(), static_cast<size_t> (counts.lower) };
+        upperChunk = { upperEvents.data(), static_cast<size_t> (counts.upper) };
     };
 
     if (numSamples <= 0)
     {
         parseChunk (0, 0, true);
-        lowerPart.render (mono, 0, events.events());
+        lowerPart.render (partBuffer.getWritePointer (0), 0, lowerChunk);
+        upperPart.render (partBuffer.getWritePointer (1), 0, upperChunk);
         return;
     }
 
@@ -96,28 +161,71 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     {
         const int len = juce::jmin (preparedBlockSize, numSamples - start);
         parseChunk (start, len, start + len >= numSamples);
+        renderChunk (buffer.getArrayOfWritePointers(), numChannels, start, len);
+    }
+}
 
-        lowerPart.render (mono, len, events.events());
+void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int start, int len) noexcept
+{
+    float* lower = partBuffer.getWritePointer (0);
+    float* upper = partBuffer.getWritePointer (1);
+    lowerPart.render (lower, len, lowerChunk);
 
-        bool nonFinite = false;
+    // Upper: rendered only while active. Otherwise it costs no CPU, but still receives the
+    // controllers (zero-length render), so pedal, bend and wheel are right when it starts.
+    if (upperActive)
+        upperPart.render (upper, len, upperChunk);
+    else
+        upperPart.render (upper, 0, upperChunk);
+
+    float* left = mixBuffer.getWritePointer (0);
+    float* right = mixBuffer.getWritePointer (1);
+    mixer.process (lower, upperActive ? upper : nullptr, left, right, len);
+
+    bool nonFinite = false;
+    for (int i = 0; i < len; ++i)
+    {
+        const float g = masterGain.getNextValue();
+        float l = left[i] * g;
+        float r = right[i] * g;
+        if (! std::isfinite (l) || ! std::isfinite (r))
+        {
+            nonFinite = true;
+            l = r = 0.0f;
+        }
+        // Speaker/ear safety, never reached normally.
+        left[i] = juce::jlimit (-kOutputClamp, kOutputClamp, l);
+        right[i] = juce::jlimit (-kOutputClamp, kOutputClamp, r);
+    }
+
+    if (numChannels >= 2)
+    {
+        std::copy (left, left + len, out[0] + start);
+        std::copy (right, right + len, out[1] + start);
+        for (int ch = 2; ch < numChannels; ++ch)
+            std::fill (out[ch] + start, out[ch] + start + len, 0.0f);
+    }
+    else if (numChannels == 1)
+    {
         for (int i = 0; i < len; ++i)
-        {
-            float s = mono[i] * masterGain.getNextValue();
-            if (! std::isfinite (s))
-            {
-                nonFinite = true;
-                s = 0.0f;
-            }
-            s = juce::jlimit (-kOutputClamp, kOutputClamp, s); // speaker/ear safety, never reached normally
-            for (int ch = 0; ch < numChannels; ++ch)
-                buffer.setSample (ch, start + i, s);
-        }
+            out[0][start + i] = 0.5f * (left[i] + right[i]); // mono bus: (L + R) / 2
+    }
 
-        if (nonFinite)
-        {
-            jassertfalse; // DSP produced NaN/Inf: find the cause, the guard only hides it in release builds
-            lowerPart.reset();
-        }
+    if (nonFinite)
+    {
+        jassertfalse; // DSP produced NaN/Inf: find the cause, the guard only hides it in release builds
+        lowerPart.reset();
+        upperPart.reset();
+        router.reset(); // the parts forgot their keys
+        mixer.reset();
+    }
+
+    // Whole mode: Upper stops being rendered once its release tails (and the decimator's) are over.
+    if (upperActive && router.getMode() == KeyMode::Whole)
+    {
+        upperQuietSamples = upperPart.isSounding() ? 0 : upperQuietSamples + len;
+        if (upperQuietSamples >= kUpperIdleSamples)
+            upperActive = false;
     }
 }
 

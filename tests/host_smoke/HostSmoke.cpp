@@ -98,7 +98,7 @@ int main (int argc, char** argv)
         return 1;
 
     const int numParams = ownParameters (*plugin).size();
-    check (numParams == 2 + 2 * 47, "own parameter count " + juce::String (numParams)
+    check (numParams == 2 + 2 * 48 + 3, "own parameter count " + juce::String (numParams)
                                         + " (total incl. wrapper params " + juce::String (plugin->getParameters().size()) + ")");
 
     for (const double sr : { 44100.0, 48000.0, 96000.0 })

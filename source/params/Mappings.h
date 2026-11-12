@@ -76,4 +76,38 @@ inline int unisonVoices (int index) noexcept { return 2 << (index < 0 ? 0 : (ind
 
 /** Choice index -> pitch-bend range in semitones (0..12). */
 inline float bendRangeSemis (int index) noexcept { return static_cast<float> (index < 0 ? 0 : (index > 12 ? 12 : index)); }
+
+struct PanGains
+{
+    float left, right;
+};
+
+/**
+    Constant-power pan, -1 (left) .. +1 (right): unity in both channels at the centre,
+    left^2 + right^2 = 2 everywhere (+3 dB in one channel at the extremes, the other silent).
+*/
+inline PanGains panGains (float pan) noexcept
+{
+    constexpr float kSqrt2 = 1.414213562f;
+    if (std::isnan (pan) || std::fpclassify (pan) == FP_ZERO)
+        return { 1.0f, 1.0f }; // exactly unity at the centre (sqrt2 x cos (pi/4) rounds in float)
+    if (pan <= -1.0f)
+        return { kSqrt2, 0.0f }; // exactly silent on the far side (cos (pi/2) is not 0 in float)
+    if (pan >= 1.0f)
+        return { 0.0f, kSqrt2 };
+    const float theta = (pan + 1.0f) * 0.785398163f; // 0 .. pi/2
+    return { kSqrt2 * std::cos (theta), kSqrt2 * std::sin (theta) };
+}
+
+struct BalanceGains
+{
+    float lower, upper;
+};
+
+/** Constant-power part balance, -1 (Lower only) .. +1 (Upper only): both parts at unity at 0. */
+inline BalanceGains balanceGains (float balance) noexcept
+{
+    const auto g = panGains (balance);
+    return { g.left, g.right };
+}
 } // namespace vs::map

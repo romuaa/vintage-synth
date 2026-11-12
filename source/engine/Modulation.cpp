@@ -71,6 +71,14 @@ void PartModulator::setModWheel (float wheel) noexcept
     retarget (wheelTarget, wheelDev, dsp::clamp (wheel, 0.0f, 1.0f));
 }
 
+void PartModulator::setControllersNow (float bendSemitones, float wheel) noexcept
+{
+    bendTarget = bendSemitones;
+    bendDev = 0.0f;
+    wheelTarget = dsp::clamp (wheel, 0.0f, 1.0f);
+    wheelDev = 0.0f;
+}
+
 void PartModulator::updateGlideTable (float seconds) noexcept
 {
     if (std::bit_cast<std::uint32_t> (seconds) == std::bit_cast<std::uint32_t> (glideSeconds))
@@ -94,6 +102,8 @@ void PartModulator::updateGlideTable (float seconds) noexcept
 
 void PartModulator::setTarget (const PartParams& p) noexcept
 {
+    // Every float parameter gets a target + deviation pair, but only the ones next() lists are
+    // smoothed and used here. The part's pan (mix.pan) is smoothed by the PartMixer instead.
 #define VS_RETARGET(member, ...) retarget (target.member, dev.member, p.member);
     VS_PART_FLOAT_PARAMS (VS_RETARGET)
 #undef VS_RETARGET
