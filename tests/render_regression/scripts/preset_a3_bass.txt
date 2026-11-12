@@ -1,0 +1,12 @@
+# Preset mechanism (M6a): factory program A3, loaded by the script like a preset change. Placeholder Bass: solo bass, two notes.
+# One of the placeholder bank programs; when the designed factory bank replaces it, regenerate this reference.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program A3
+
+0.10 on 36 110
+0.90 off 36
+1.00 on 43 110
+1.80 off 43

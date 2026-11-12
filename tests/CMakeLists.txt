@@ -11,6 +11,7 @@ target_link_libraries(vs_test_core
     PRIVATE
         juce::juce_audio_utils
         juce::juce_dsp
+        VintageSynthFactoryData
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
@@ -61,6 +62,12 @@ target_sources(VintageSynthTests PRIVATE
     integration/ArpIntegrationTests.cpp
     integration/RobustnessTests.cpp
     integration/RenderDemoM5.cpp)
+
+# M6a presets and banks (docs/architecture.md 6b): files, manager, factory bank, state, MIDI, host list.
+target_sources(VintageSynthTests PRIVATE
+    preset_unit/PresetFormatTests.cpp
+    preset_unit/PresetManagerTests.cpp)
+target_compile_definitions(VintageSynthTests PRIVATE VS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core

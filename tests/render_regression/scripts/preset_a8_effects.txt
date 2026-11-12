@@ -1,0 +1,12 @@
+# Preset mechanism (M6a): factory program A8, loaded by the script like a preset change. Placeholder Effects: chorus I, ping-pong delay and reverb; short notes so the tails are heard.
+# One of the placeholder bank programs; when the designed factory bank replaces it, regenerate this reference.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program A8
+
+0.10 on 60 100
+0.40 off 60
+0.60 on 67 100
+0.90 off 67

@@ -1,5 +1,6 @@
 #include "RenderHarness.h"
 
+#include "common/presets/FactoryBank.h"
 #include "vintage/PluginProcessor.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -88,6 +89,14 @@ Script parseScript (const std::string& text)
             e.kind = Event::Kind::param;
             e.id = tok[i];
             e.value = arg (1);
+        }
+        else if (cmd == "program")
+        {
+            if (args < 1)
+                fail ("program <slot|name>");
+            e.kind = Event::Kind::program;
+            for (size_t k = i; k < tok.size(); ++k)
+                e.id += (k > i ? " " : "") + tok[k];
         }
         else if (cmd == "on")
         {
@@ -212,7 +221,7 @@ struct ScriptPlayHead final : public juce::AudioPlayHead
             case Event::Kind::locate: anchorPpq = e.value; anchor = at; break;
             case Event::Kind::stop:   playing = false; break;
             case Event::Kind::param: case Event::Kind::noteOn: case Event::Kind::noteOff:
-            case Event::Kind::cc: case Event::Kind::bend: case Event::Kind::allOff: break;
+            case Event::Kind::cc: case Event::Kind::bend: case Event::Kind::allOff: case Event::Kind::program: break;
         }
     }
 
@@ -230,7 +239,7 @@ struct ScriptPlayHead final : public juce::AudioPlayHead
 bool isBlockEvent (Event::Kind k)
 {
     return k == Event::Kind::param || k == Event::Kind::play || k == Event::Kind::tempo || k == Event::Kind::locate
-           || k == Event::Kind::stop;
+           || k == Event::Kind::stop || k == Event::Kind::program;
 }
 } // namespace
 
@@ -243,6 +252,9 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
     proc.setPlayHead (&playHead);
     proc.setPlayConfigDetails (0, 2, script.sampleRate, blockSize);
     proc.prepareToPlay (script.sampleRate, blockSize);
+    // Offline there is no other thread to wait for: a program change is requested and the audio side
+    // (this thread, the next block) honours it, so the render does not depend on timing.
+    proc.getPresets().getGate().setTimeouts (0, 0);
 
     const auto total = static_cast<int> (std::llround (script.length * script.sampleRate));
     const auto sampleOf = [&] (const Event& e) { return static_cast<int> (std::llround (e.time * script.sampleRate)); };
@@ -258,6 +270,20 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
         if (p == nullptr)
             throw std::runtime_error ("script: unknown parameter id: " + e.id);
         p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (e.value)));
+    };
+
+    const auto applyProgram = [&] (const Event& e) {
+        auto& presets = proc.getPresets();
+        int slot = vs::presets::slotFromFileName (juce::String (e.id));
+        if (slot < 0 || e.id.size() != 2)
+        {
+            slot = -1;
+            for (int k = 0; k < vs::presets::kBankSize && slot < 0; ++k)
+                if (presets.programName (k) == juce::String (e.id))
+                    slot = k;
+        }
+        if (slot < 0 || ! presets.selectProgram (slot))
+            throw std::runtime_error ("script: no such program: " + e.id);
     };
 
     int pos = 0;
@@ -276,6 +302,8 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
             {
                 if (e.kind == Event::Kind::param)
                     applyParam (e);
+                else if (e.kind == Event::Kind::program)
+                    applyProgram (e);
                 else
                     playHead.apply (e, pos);
                 applied[k] = true;
@@ -300,7 +328,7 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
                 case Event::Kind::bend:    midi.addEvent (juce::MidiMessage::pitchWheel (e.channel, note), s - pos); break;
                 case Event::Kind::allOff:  midi.addEvent (juce::MidiMessage::allNotesOff (e.channel), s - pos); break;
                 case Event::Kind::param: case Event::Kind::play: case Event::Kind::tempo:
-                case Event::Kind::locate: case Event::Kind::stop: break;
+                case Event::Kind::locate: case Event::Kind::stop: case Event::Kind::program: break;
             }
         }
 

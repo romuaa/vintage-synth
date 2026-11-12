@@ -1,0 +1,14 @@
+# Preset mechanism (M6a): factory program A2, loaded by the script like a preset change. Placeholder Pad: slow attack and release, chorus II, reverb; a held triad.
+# One of the placeholder bank programs; when the designed factory bank replaces it, regenerate this reference.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program A2
+
+0.10 on 48 90
+0.10 on 55 85
+0.10 on 64 90
+2.20 off 48
+2.20 off 55
+2.20 off 64

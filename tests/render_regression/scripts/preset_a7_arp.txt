@@ -1,0 +1,14 @@
+# Preset mechanism (M6a): factory program A7, loaded by the script like a preset change. Placeholder Arp: arpeggiator (up and down, 2 octaves, 1/16, internal tempo 120) on held keys.
+# One of the placeholder bank programs; when the designed factory bank replaces it, regenerate this reference.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program A7
+
+0.10 on 48 100
+0.10 on 55 100
+0.10 on 60 100
+2.40 off 48
+2.40 off 55
+2.40 off 60

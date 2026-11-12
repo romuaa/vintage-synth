@@ -14,6 +14,12 @@
 //   [t] param <id> <plain value>     set a parameter, e.g.  0.5 param lower.vcf.cutoff 0.62
 //                                    (plain value = what the parameter's range uses: 0..1 for
 //                                     most sliders, the choice index for choice params)
+//   [t] program <slot|name>          load a program of the factory bank, like a preset change at that
+//                                    moment: by position ("A2" ... "H8") or by exact name
+//                                    ("Placeholder Pad"). Applied before the block that starts at t, so
+//                                    the sounding notes are released and the parameters replaced
+//                                    exactly as the plugin does it (parameters set before it stay
+//                                    unless the program overwrites them; master volume is not part of one)
 //   [t] on <note> <velocity 1..127> [channel]
 //   [t] off <note> [channel]
 //   [t] cc <controller> <value 0..127> [channel]
@@ -38,10 +44,10 @@ namespace vs::rr
 {
 struct Event
 {
-    enum class Kind { param, noteOn, noteOff, cc, bend, allOff, play, tempo, locate, stop };
+    enum class Kind { param, noteOn, noteOff, cc, bend, allOff, play, tempo, locate, stop, program };
     double time = 0.0;
     Kind kind = Kind::param;
-    std::string id;     // param only
+    std::string id;     // param: the ID; program: the slot ("A2") or the name
     double value = 0.0; // param value, or note/controller number, or bend; bpm (play, tempo), ppq (locate)
     double ppq = 0.0;   // play only
     int data = 0;       // velocity / controller value

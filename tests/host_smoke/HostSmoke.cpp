@@ -24,14 +24,15 @@ struct RenderStats
     bool finite = true;
 };
 
-/** Our own parameters: excludes the JUCE VST3 wrapper's MIDI-CC emulation params and Bypass. */
+/** Our own parameters: excludes the JUCE VST3 wrapper's MIDI-CC emulation params, Bypass and the
+    "Program" parameter it adds for the host program list (the plugin has more than one program). */
 juce::Array<juce::AudioProcessorParameter*> ownParameters (juce::AudioPluginInstance& p)
 {
     juce::Array<juce::AudioProcessorParameter*> result;
     for (auto* param : p.getParameters())
     {
         const auto name = param->getName (100);
-        if (! name.startsWith ("MIDI CC") && name != "Bypass")
+        if (! name.startsWith ("MIDI CC") && name != "Bypass" && name != "Program")
             result.add (param);
     }
     return result;
@@ -101,6 +102,33 @@ int main (int argc, char** argv)
     check (numParams == 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3, "own parameter count " + juce::String (numParams)
                                         + " (total incl. wrapper params " + juce::String (plugin->getParameters().size()) + ")");
 
+    // Host program list: the 64 programs of the factory bank, through the VST3 wrapper's program list.
+    // The wrapper adds one parameter named "Program" (flagged as the program-change parameter).
+    {
+        bool hasProgramParam = false;
+        for (auto* param : plugin->getParameters())
+            hasProgramParam = hasProgramParam || param->getName (100) == "Program";
+        check (hasProgramParam, "the wrapper's Program parameter exists (host program list)");
+        check (plugin->getNumPrograms() == 64, "64 programs: " + juce::String (plugin->getNumPrograms()));
+        check (plugin->getCurrentProgram() == 0, "current program 0");
+        check (plugin->getProgramName (0) == "Init", "program 0 is Init: " + plugin->getProgramName (0));
+        check (plugin->getProgramName (1) == "Placeholder Pad", "program 1 name: " + plugin->getProgramName (1));
+        check (plugin->getProgramName (63) == "Init", "program 63 is Init");
+
+        const auto cutoffOf = [&] {
+            for (auto* param : ownParameters (*plugin))
+                if (param->getName (100) == "Lower VCF Cutoff")
+                    return param->getValue();
+            return -1.0f;
+        };
+        const float before = cutoffOf();
+        plugin->setCurrentProgram (2); // Placeholder Bass: a darker filter than the default
+        check (plugin->getCurrentProgram() == 2, "setCurrentProgram(2) sticks: " + juce::String (plugin->getCurrentProgram()));
+        const float after = cutoffOf();
+        check (before > 0.55f && after < 0.35f, "the program's parameters were applied: cutoff " + juce::String (before) + " -> " + juce::String (after));
+        check (plugin->getProgramName (2) == "Placeholder Bass", "program 2 name: " + plugin->getProgramName (2));
+    }
+
     for (const double sr : { 44100.0, 48000.0, 96000.0 })
         for (const int bs : { 32, 512 })
         {
@@ -154,6 +182,7 @@ int main (int argc, char** argv)
         }
     }
     check (mismatches == 0, "state round-trip, mismatches: " + juce::String (mismatches));
+    check (second->getCurrentProgram() == 2, "the state carries the program: " + juce::String (second->getCurrentProgram()));
 
     second.reset();
     plugin.reset();
