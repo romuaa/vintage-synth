@@ -186,14 +186,68 @@ return NaN for NaN input, so the processor's non-finite output guard still fires
 4. pluginval strictness 10; `realtime-review` by a fresh reviewer; CI green on all three targets.
 5. Audition render (`[.render]`) updated with a polyphonic demo for the owner's ear.
 
-## 4. M3 — bi-timbral (outline; refined before Wave 2)
+## 4. M3 — bi-timbral (serial track of Wave 2)
 
-- `KeyRouter` (JUCE-free): Whole = all notes to Lower; Dual = all notes to both parts;
-  Split = notes below the split point to Lower, the rest to Upper. Non-note events go to both parts.
-- `PartMixer`: per-part level via balance, constant-power pan per part, mono → stereo.
-- Global parameters, added in the M3 parameter step: `key.mode`, `key.split_point`, `mix.balance`,
-  and per-part `mix.pan`.
-- Two `Part` instances with different seeds; latency is identical for both.
+### 4.1 Structure
+- Two `Part` instances, **Lower** and **Upper**, with different seeds, each fed by its own parameter
+  binding (`lower.*`, `upper.*`; the parameters already exist). One LFO per part. Vintage is global.
+- `engine/KeyRouter.h` (new, JUCE-free, no allocation): takes the parsed `NoteEvent`s of a render
+  chunk and writes one event list per part.
+- `engine/PartMixer.h` (new, JUCE-free): mono part outputs → stereo bus.
+- The processor output becomes true stereo. With a mono output bus the result is (L + R) / 2.
+
+### 4.2 Key modes (global choice parameter `key.mode`)
+| Mode | Routing |
+|---|---|
+| Whole (default) | All notes to Lower. Upper is silent and costs no CPU. |
+| Dual | All notes to both parts (up to 32 voices). |
+| Split | Notes below the split point to Lower, notes at or above it to Upper. |
+
+- Pitch bend, mod wheel, sustain pedal, All Notes Off, All Sound Off and Reset Controllers go to
+  both parts in every mode. MIDI channel is ignored (omni).
+- **A note-off always goes to the part(s) that received the note-on.** The router remembers the
+  owner of each of the 128 keys, so moving the split point while keys are held can never hang a note.
+- **Changing the key mode releases all voices of both parts** (as All Notes Off, without clearing
+  controllers) and forgets held keys; no click.
+- The split point (`key.split_point`, MIDI note 0–127, default 60, shown as a note name) only
+  affects notes pressed after the change.
+
+### 4.3 Mixer
+- `mix.balance` (global, −1…+1, default 0): constant-power balance between Lower and Upper; at 0
+  both are at unity. It has no effect in Whole mode (Lower at unity).
+- `mix.pan` (per part, −1…+1, default 0, appended to the per-part float list): constant-power pan,
+  unity at centre.
+- All three are smoothed (no zipper noise).
+
+### 4.4 Oversampling by host rate (closes the open CPU item)
+| Host rate | Real time | Offline render |
+|---|---|---|
+| below 88.2 kHz | 2× | 4× |
+| 88.2 kHz and above | 1× | 2× |
+
+The internal rate is then at least 88.2 kHz at every host rate. Latency is reported per
+configuration (decimator + BLEP; BLEP only at 1×). The alias gate (≤ −100 dB, 0–20 kHz) and all
+existing DSP tests must pass in every configuration; `voice_bench 192000` must show 32 voices
+inside the 15 % budget.
+
+### 4.5 New parameters
+Appended after all existing ones, in this order: per-part float `mix.pan` (at the end of
+`VS_PART_FLOAT_PARAMS`, so it exists as `lower.mix.pan` and `upper.mix.pan`); then global
+`key.mode` (Whole, Dual, Split), `key.split_point`, `mix.balance`. Host parameter count 96 → 101.
+`stateVersion` stays 1 (pre-release). Follow the `add-parameter` skill.
+
+### 4.6 Gates for M3
+1. All existing tests pass; changed expectations are listed and justified (parameter count, stereo).
+2. New tests: router (every row of 4.2, split-point moves with held keys, mode change, controllers
+   to both parts, random event streams never hang a note); Dual = sum of both parts within float
+   tolerance when rendered separately; Split boundaries; balance and pan laws (constant power
+   ±0.1 dB); Whole mode: Upper costs no CPU and is silent; stereo output and mono fold-down;
+   block-size independence with both parts sounding at full Vintage; oversampling table 4.4 incl.
+   latency and the alias gate at a 96 kHz host rate; state round-trip of the new parameters.
+3. `voice_bench`: Dual with 32 voices at 48 kHz and at 192 kHz inside the budget.
+4. Sanitizer run, pluginval strictness 10, independent review, CI green on all four targets.
+5. Audition render `m3_demo`: a Dual layer (two different patches), a Split (bass below, lead
+   above), a split-point move and a mode change while playing.
 
 ## 5. M5 — effects (parallel track, new files only)
 
@@ -248,19 +302,58 @@ public:
 - A hidden `[.render]` test writes an audition WAV (dry pad phrase, then each effect, then all three).
 - `realtime-review` by a fresh reviewer.
 
-## 6. M4 — arpeggiator and sequencer (outline; refined before Wave 2)
+## 6. M4 — arpeggiator and sequencer (parallel track of Wave 2: module and tests only)
 
-A JUCE-free event transformer in `source/seq/`, one instance per part, between the KeyRouter and the Part:
+Pure, JUCE-free event transformers in `source/seq/`, tested on event lists. Host parameters and
+wiring into the processor happen in Wave 3. One instance sits in front of a part.
 
 ```cpp
 struct Transport { double sampleRate; double bpm; double ppqPosition; bool playing; };
 
+// Returns the number of events written to `out` (ascending offsets). Never allocates.
 int process (std::span<const NoteEvent> in, const Transport&, int numSamples,
-             std::span<NoteEvent> out) noexcept;   // returns the number of events written, ascending offsets
+             std::span<NoteEvent> out) noexcept;
 ```
 
-It never allocates, emits a NoteOff for every NoteOn it emits (also on bypass, mode change and
-transport stop), and is tested purely on event lists.
+### 6.1 Common rules
+- **Clock:** when the host transport is playing, steps are locked to the host's musical position
+  (`ppqPosition`, `bpm`), sample-accurately, including tempo changes, loop jumps and playback
+  starting mid-bar. When the transport is stopped, an internal clock runs at the module's own tempo
+  setting and starts on the first key.
+- Rate as a note division: 1/4, 1/8, 1/8 triplet, 1/16, 1/16 triplet, 1/32. Swing 50–75 %
+  (delays every second step). Gate length 5–100 % of the step.
+- **Every note-on it emits gets a note-off**, also on bypass, mode or setting changes, All Notes
+  Off, transport stop/start and reset. A random stream of events and setting changes must never
+  leave a note sounding.
+- Pitch bend, mod wheel, sustain pedal and panic events pass through unchanged, in order.
+- Output velocity: the pressed key's velocity (arp) or the step's velocity (sequencer).
+- Deterministic: same input, transport and seed → same output, for any block size.
+- When off, events pass through bit-exactly.
+- Output capacity is fixed; on overflow it stops emitting new notes but still emits the note-offs
+  it owes.
+
+### 6.2 Arpeggiator
+- Modes: Up, Down, Up & Down (end notes not repeated), Random (seeded), As Played.
+- Octave range 1–4. Hold (latch): notes stay in the pattern after the keys are released; the next
+  key pressed after all keys were up starts a new pattern.
+- Keys added or released change the pattern from the next step. With the sustain pedal down,
+  released keys stay in the pattern.
+
+### 6.3 Step sequencer
+- 1–16 steps. Each step: semitone offset (−24…+24), type (Note, Rest, Tie) and velocity.
+  A Tie extends the previous note without retriggering.
+- It plays while a key is held: the lowest held key sets the transposition (relative to C4) and
+  the sequence restarts from step 1 when the first key is pressed. With Hold on it keeps playing
+  after release, and a new key re-transposes without restarting.
+- Step data is plain data in the module's settings struct (host parameters are defined in Wave 3).
+
+### 6.4 Gates for M4
+- Tests in `tests/seq_unit/`: every rule above; timing exact to the sample against an independently
+  computed expectation at several tempi, rates, swing values, sample rates and block sizes
+  (including 1-sample blocks and tempo changes mid-block); loop jumps; long random streams with the
+  "no hanging note" and "note-offs match note-ons" invariants.
+- No allocation (the existing allocation counter test pattern), sanitizer-clean, independent review.
+- Does not touch `source/engine/`, `source/params/` or `PluginProcessor.*`.
 
 ## 7. Test and validation infrastructure (parallel track in Wave 1)
 

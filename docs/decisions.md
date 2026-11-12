@@ -3,6 +3,20 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Wave 2 contracts (2026-11-12)
+
+All (review).
+
+| Decision | Why |
+|---|---|
+| Key modes: Whole = Lower only; Dual = both; Split = below the split point to Lower. The router remembers which part received each key's note-on. | A moved split point can never hang a note. |
+| Changing the key mode releases all voices and forgets held keys. | Same rule as the assign-mode change in M2. |
+| Balance is constant-power with both parts at unity in the centre; pan per part. Mono output is (L + R) / 2. | Predictable levels; Dual at centre is simply the sum of both parts. |
+| Oversampling follows the host rate: 2× below 88.2 kHz, 1× at or above (offline 4× / 2×). | Keeps the internal rate at 88.2 kHz or more everywhere and brings 192 kHz sessions back inside the CPU budget (was 18 % for 32 voices). |
+| MIDI stays omni; no per-part channels yet. | Not needed for Whole/Dual/Split; can be appended later. |
+| Arpeggiator and sequencer follow the host transport when it plays and an internal clock when it is stopped. | Works in a DAW and when just playing the plugin in a host. |
+| Arp modes: Up, Down, Up & Down, Random, As Played; 1–4 octaves; hold; swing; gate length. Sequencer: 16 steps with offset, Note/Rest/Tie and velocity; transposed by the lowest held key. | The classic set plus the two things players expect today (as-played order, swing). |
+
 ## M7 UI direction (owner decision, 2026-11-12)
 
 - **The custom UI does not reproduce the reference panel's layout.** It gets its own arrangement,
