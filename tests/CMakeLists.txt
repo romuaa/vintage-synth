@@ -26,7 +26,8 @@ add_executable(VintageSynthTests
 
 # M5 effect blocks (header-only, source/fx/).
 target_sources(VintageSynthTests PRIVATE
-    fx_unit/ChorusTests.cpp)
+    fx_unit/ChorusTests.cpp
+    fx_unit/DelayTests.cpp)
 
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
