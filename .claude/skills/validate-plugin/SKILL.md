@@ -27,10 +27,21 @@ Run these in order and stop at the first failure. Report each step as pass, fail
    refuses the command, ask the user under "What I need from you" to run it with `! `.
 4. **VST3 validator** (not wired up yet; it gets built from the VST3 SDK once added):
    `validator "<path>.vst3"`
-5. **CPU benchmark:** `build/mac/tests/voice_bench`. M1 baseline on an Apple M5 Pro: 0.35 % of one core
-   per voice at 2×, and 0.75 % at 4×.
+5. **CPU benchmark:** `build/mac/tests/voice_bench`. M1 baseline on an Apple M5 Pro: 0.35–0.43 % of one core
+   per voice at 2×, and 0.71–0.75 % at 4× (run-to-run spread).
    Budget: 16 voices per part with 2× oversampling, and 32 voices in Dual mode must stay under 15% of one
    core at 48 kHz. Flag any regression above 5%.
+
+Windows CI: after a push, check with `gh run list --limit 3` and `gh run view <id> --log-failed`.
+
+## Writing tests: traps we hit
+- When a quality gate fails, write a hidden `[.diag]` test that isolates the stage before tuning anything.
+- Filters: measure far below Nyquist (bilinear warping) and with small input (0.01) so the response
+  stays linear and above the float floor. Our slope test uses fc = 500 Hz and a 2 k / 4 k pair.
+- Alias measurements: coherent FFT (integer cycles) after the real decimator.
+- Loaded-VST3 tests: JUCE's wrapper adds 2080 "MIDI CC" params + "Bypass"; exclude them. Compare
+  stepped params by step index, not normalised value.
+- New delay in the signal path breaks the sample-accurate note-on test until latency is updated.
 
 DSP tests must cover: alias floor (below −90 dB up to a 5 kHz fundamental), VCF cutoff/Q accuracy,
 ENV segment timing, sync/cross-mod continuity, sample-accurate note timing, and a

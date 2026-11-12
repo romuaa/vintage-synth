@@ -30,14 +30,19 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   the plugin by them.
 - **pluginval: Claude runs it itself** (official Tracktion release v1.0.4, unpacked in the session
   scratchpad). Don't hand it to the user unless the harness refuses the command. See skill `validate-plugin`.
+- **Repo:** GitHub `romuaa/vintage-synth` (private), branch `main`. Commit and push only when the user asks.
 - **CI:** `.github/workflows/build.yml` builds, tests, and runs pluginval on macOS and Win x64.
-  Win ARM64 runs build, unit tests and host_smoke (there's no ARM64 pluginval).
+  Win ARM64 runs build, unit tests and host_smoke (there's no ARM64 pluginval). Check results with
+  `gh run list` / `gh run view <id> --log-failed` (gh is installed and authenticated). Never claim
+  Windows is green without a passing run. CI uses CMake's default Windows generator (newest Visual
+  Studio on the runner); don't hardcode a VS version.
 - **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new
   judgement call there (with the reason), and mark the ones the user should review.
 
 ## Status
 
-- M0 skeleton: done. M1 single-part voice engine: done (mono, Lower part only).
+- M0 skeleton: done. M1 single-part voice engine: done (mono, Lower part only; demo approved by ear,
+  pluginval SUCCESS on macOS).
 - Next: M2 polyphony (16 voices, Poly/Unison/Solo, portamento, voice stealing, velocity, bend range).
 
 ## Layout
@@ -51,7 +56,9 @@ source/          PluginProcessor.*   (later: fx/ presets/ ui/)
 tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
 tests/benchmarks/ voice_bench (CPU cost per voice)
 tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)
-docs/decisions.md  design decision log
+docs/decisions.md  design decision log (what we chose and why)
+docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
+README.md        public overview, build and test instructions
 external/        JUCE, Catch2 (submodules)
 ```
 
@@ -84,6 +91,19 @@ Put any physical mapping in `Mappings.h` so the display text and the DSP agree.
 
 **Portability:** no x86-only intrinsics without a NEON path and runtime dispatch. Every change
 must build for all three targets (mac universal, win x64, win ARM64).
+
+## Known traps (details in `docs/engineering-notes.md`)
+
+- Never build a `juce::MidiMessage` on the audio thread (SysEx allocates); parse raw bytes.
+- Any stage that adds delay must be added to the reported latency.
+- JUCE's VST3 wrapper adds 2080 "MIDI CC" params + "Bypass"; exclude them when counting ours.
+- Wrap `JUCE_PLUGIN_ARTEFACT_FILE` in `$<GENEX_EVAL:…>`; tests take include dirs/defines from the plugin target.
+- Measure filters far below Nyquist and above the float floor; isolate a failing gate with a diagnostic test.
+- Rosetta isn't installed: the x86_64 slice is checked with `lipo` only, never run locally.
+- Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
+  script); use the Edit tool for such text. Never read anything under `build/`.
+
+When something new bites, add a row to `docs/engineering-notes.md` and, if it's a rule, a line here.
 
 ## Definition of done (per change)
 

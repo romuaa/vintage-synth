@@ -30,13 +30,13 @@ jobs:
             pluginval: true
           - name: windows-x64
             os: windows-latest
-            generator: -G "Visual Studio 17 2022" -A x64
+            generator: -A x64 # default generator = newest installed Visual Studio
             build_args: --config Release
             artefacts: build/VintageSynth_artefacts/Release/VST3
             pluginval: true
           - name: windows-arm64
             os: windows-11-arm
-            generator: -G "Visual Studio 17 2022" -A ARM64
+            generator: -A ARM64
             build_args: --config Release
             artefacts: build/VintageSynth_artefacts/Release/VST3
             pluginval: false # no native ARM64 pluginval release yet

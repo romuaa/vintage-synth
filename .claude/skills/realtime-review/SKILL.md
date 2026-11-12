@@ -14,13 +14,18 @@ Trace every call reachable from `processBlock`, including any third-party functi
 - Logging, `DBG` in release builds, file or network I/O, exceptions, `dynamic_cast`-heavy paths.
 - Unbounded loops, or loops bounded by user data without a hard cap.
 
+- Constructing `juce::MidiMessage` (e.g. `metadata.getMessage()`): SysEx can allocate. Parse
+  `metadata.data` / `numBytes` directly.
+
 ## Must happen
 - `ScopedNoDenormals` at block start. Feedback paths (filters, reverb, delay) must be denormal-safe.
 - Parameter reads through cached atomics. Smoothing per sample or per sub-block.
 - Sample-accurate MIDI: the block is split at event offsets, never quantized to block start.
 - Voice stealing has a short fade (about 2–5 ms), never a hard cut.
 - `prepareToPlay` handles every sample rate (44.1–192 kHz) and every block size from 1 to max,
-  including a block size that varies from call to call.
+  including a block size that varies from call to call. `processBlock` must also survive blocks
+  *larger* than announced: render in chunks of the prepared size.
+- Every stage that adds delay (BLEP, oversampling, look-ahead) is included in `setLatencySamples`.
 - Tempo-synced code (arp, sequencer, delay) tolerates missing playhead info, tempo changes,
   and loop jumps.
 - NaN/Inf guard at the output stage in debug builds (assert), and a safe clamp in release builds.

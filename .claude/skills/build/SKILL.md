@@ -33,8 +33,8 @@ Use `-DCMAKE_BUILD_TYPE=Debug` for debugging. Use a separate build dir (`build/m
 ## Windows (CI, or a Windows machine)
 
 ```bat
-cmake -S . -B build/win-x64   -G "Visual Studio 17 2022" -A x64
-cmake -S . -B build/win-arm64 -G "Visual Studio 17 2022" -A ARM64
+cmake -S . -B build/win-x64   -A x64
+cmake -S . -B build/win-arm64 -A ARM64
 cmake --build build/win-x64   --config Release --parallel
 cmake --build build/win-arm64 --config Release --parallel
 ```
@@ -42,8 +42,23 @@ cmake --build build/win-arm64 --config Release --parallel
 The release job merges both builds into one bundle: `Contents/x86_64-win/` and `Contents/arm64-win/`.
 Check the machine type with `dumpbin /headers <file>.vst3 | findstr machine` (x64 = 8664, ARM64 = AA64).
 
+This Mac has no Rosetta, so the x86_64 slice can only be checked with `lipo`, not run. Say so.
+
+## CMake traps (JUCE 9.0.5)
+
+- Test/benchmark targets compile plugin sources: give them
+  `$<TARGET_PROPERTY:VintageSynth,INCLUDE_DIRECTORIES>` and `…,COMPILE_DEFINITIONS>`.
+- `JUCE_PLUGIN_ARTEFACT_FILE` contains genexes; pass it as `$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>`.
+- Don't define `JUCE_DISPLAY_SPLASH_SCREEN` (JUCE 9 warns → error).
+- Use `AudioFormatWriterOptions` with `createWriterFor`; the old overload is deprecated (→ error).
+- Warnings are errors everywhere, tests included. MSVC warnings only show up in CI.
+
 ## Rules
 
 - Never commit `build/`. Dependency versions are pinned in CMake; never float to `main`.
 - An x86-only intrinsic or a missing NEON path is a build bug, even if the mac build passes.
 - Windows can't be built locally on this Mac. Say that it was verified "via CI only".
+- CI runs on push to `main` at GitHub `romuaa/vintage-synth` (private). Check it with `gh run list` and
+  `gh run view <id> --log-failed`; report Windows as "pending CI" until a run passes.
+- Don't pass `-G "Visual Studio NN YYYY"`: runner images change VS versions. Use only `-A x64|ARM64`
+  so CMake picks the newest installed Visual Studio.
