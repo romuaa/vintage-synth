@@ -9,8 +9,16 @@
 #include "vintage/presets/VintagePresets.h"
 
 #include "../seq_unit/AllocationCounter.h" // VS_SEQ_TEST_ASAN
+#include "common/presets/PresetFiles.h"
 
+#include <chrono>
+#include <cstdio>
 #include <thread>
+
+#if ! JUCE_WINDOWS
+ #include <sys/stat.h>
+ #include <unistd.h>
+#endif
 
 using namespace vs;
 using namespace vs::presets;
@@ -53,9 +61,9 @@ TEST_CASE ("A new instance is on factory program A1 (Init), unmodified, with the
     CHECK (pm.isFactoryBank());
     CHECK_FALSE (pm.isModified());
     CHECK (rig.differences (rig.schema().defaults()).isEmpty());
-    CHECK (PresetManager::positionName (0) == "A1");
-    CHECK (PresetManager::positionName (9) == "B2");
-    CHECK (PresetManager::positionName (63) == "H8");
+    CHECK (rig.presets().positionName (0) == "A1");
+    CHECK (rig.presets().positionName (9) == "B2");
+    CHECK (rig.presets().positionName (63) == "H8");
 }
 
 TEST_CASE ("Factory bank: placeholders in A1-A8, Init everywhere else, nothing fails to parse", "[presets][factory]")
@@ -65,7 +73,7 @@ TEST_CASE ("Factory bank: placeholders in A1-A8, Init everywhere else, nothing f
     const auto bank = makeVintageFactoryBank (rig.schema(), &errors);
     INFO (errors.joinIntoString ("; "));
     CHECK (errors.isEmpty());
-    REQUIRE (bank.programs.size() == static_cast<size_t> (kBankSize));
+    REQUIRE (bank.programs.size() == static_cast<size_t> (kPresetBankSize));
     CHECK (bank.name == "Factory");
 
     const char* names[] = { "Init", "Placeholder Pad", "Placeholder Bass", "Placeholder Lead", "Placeholder Dual Layer",
@@ -89,7 +97,7 @@ TEST_CASE ("Factory bank: placeholders in A1-A8, Init everywhere else, nothing f
                 CHECK_FALSE (sameValues (p.values, bank.programs[static_cast<size_t> (j)].values));
         }
     }
-    for (int i = 8; i < kBankSize; ++i)
+    for (int i = 8; i < kPresetBankSize; ++i)
     {
         const auto& p = bank.programs[static_cast<size_t> (i)];
         CHECK (p.meta.name == "Init");
@@ -155,7 +163,7 @@ TEST_CASE ("selectProgram sets every program parameter and nothing else", "[pres
         Bank b = makeInitBank (rig.schema());
         b.programs[5] = program;
         return b;
-    }(), (rig.temp / "b.vsbank").getFullPathName());
+    }(), rig.temp / "b.vsbank");
 
     REQUIRE (pm.selectProgram (5));
     CHECK (pm.currentIndex() == 5);
@@ -483,15 +491,18 @@ TEST_CASE ("Banks: save, load, store a program into a slot", "[presets][files]")
     CHECK_FALSE (pm.isFactoryBank());
     CHECK (pm.bankName() == "My Bank");
 
-    // Now a user bank: a sound can be stored into a slot.
+    // Now a user bank: a sound can be stored into a slot, and storing writes the bank file at once.
     const auto mine = randomProgram (rig.schema(), 41, "Stored One");
     rig.setAll (mine.values);
-    pm.renameProgram (pm.currentIndex(), "Stored One"); // the sound is stored under the current name
+    REQUIRE (pm.renameProgram (pm.currentIndex(), "Stored One").isEmpty()); // the sound is stored under the current name
     REQUIRE (pm.storeInBank (9).isEmpty());
     CHECK (pm.currentIndex() == 9);
     CHECK_FALSE (pm.isModified());
     CHECK (pm.programName (9) == "Stored One");
-    REQUIRE (pm.saveBankFile (bankFile).isEmpty());
+    // Move on, so slot 9 is no longer the current one (the current slot always shows the current
+    // name: only a non-current slot shows what the bank holds). No explicit save of the bank.
+    REQUIRE (pm.selectProgram (3));
+    CHECK (pm.programName (9) == "Stored One");
 
     PresetRig other;
     REQUIRE (other.presets().loadBankFile (bankFile).isEmpty());
@@ -600,10 +611,26 @@ TEST_CASE ("MIDI Program Change selects a program of the current bank", "[preset
         pm.pollRequests(); // nothing pending any more: no re-apply, no change
         CHECK (pm.currentIndex() == 2);
     }
-    SECTION ("a program change does not disturb notes in the same block, and the other channel's too (omni)")
+    SECTION ("notes in the same block as a program change start on the old program; the apply (message thread) then releases them; any channel counts (omni)")
     {
+        // What happens today (an owner decision, ApplyGate.h): the Program Change is only handed
+        // over in the audio block; the message thread applies it later (its poll timer), so the
+        // note starts on the old program, and the apply then releases it although the key is held.
+        rig.render (512, { pc (0, 0) }, 512);
+        pm.pollRequests();
+        REQUIRE (pm.currentIndex() == 0);
         const auto out = rig.render (4800, { noteOn (static_cast<int> (rig.now), 60, 100), pc (50, 1) }, 512);
-        CHECK (peakAbs (out.l, 0, out.l.size()) > 0.01);
+        CHECK (peakAbs (out.l, 0, out.l.size()) > 0.01);   // the note sounds ...
+        CHECK (pm.currentIndex() == 0);                      // ... on the old program: nothing applied yet
+        CHECK (rig.differences (expected (0)).isEmpty());
+        REQUIRE (rig.proc.getLowerPart().isSounding());
+        pm.pollRequests();                                   // the message thread's turn
+        CHECK (pm.currentIndex() == 1);
+        CHECK (rig.differences (expected (1)).isEmpty());
+        const auto tail = rig.render (rig.samples (4.0), {}, 512); // the key is still held, the voice was released
+        CHECK (peakAbs (tail.l, tail.l.size() - 4800, tail.l.size()) < 1.0e-3);
+        CHECK_FALSE (rig.proc.getLowerPart().isSounding());
+
         rig.render (512, { Midi { static_cast<int> (rig.now), juce::MidiMessage::programChange (7, 6) } }, 512);
         pm.pollRequests();
         CHECK (pm.currentIndex() == 6);
@@ -771,7 +798,7 @@ TEST_CASE ("Session state carries bank, program, name and modified flag; the sou
 TEST_CASE ("A session restores the sound exactly whether or not the user bank still exists", "[presets][state]")
 {
     PresetRig rig;
-    const auto bankFile = rig.temp / "gone.vsbank";
+    const auto bankFile = (rig.temp / "Banks").getChildFile ("gone.vsbank");
     REQUIRE (rig.presets().saveBankFile (bankFile, "Gone Bank").isEmpty());
     const auto mine = randomProgram (rig.schema(), 51, "Only Here");
     rig.setAll (mine.values);
@@ -781,36 +808,406 @@ TEST_CASE ("A session restores the sound exactly whether or not the user bank st
     rig.proc.getStateInformation (state);
     const auto sound = rig.raw();
 
-    SECTION ("the bank is still there")
+    // The session names the bank by its file name inside Banks/, never by a path.
+    const auto info = rig.presets().createSessionInfo();
+    CHECK (info.getProperty ("bank").toString() == "gone.vsbank");
+    CHECK_FALSE (info.hasProperty ("bankPath"));
+
+    // Another instance with the same user folder.
+    PresetRig other;
+    other.presets().setLocations ({ rig.temp.dir });
+
+    SECTION ("the bank is still there: looked up on the message thread, not in setStateInformation")
     {
-        PresetRig other;
         other.proc.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+        CHECK (sameValues (other.raw(), sound)); // the sound at once, without the bank
+        CHECK (other.presets().bankStatus() == BankStatus::Pending);
+        CHECK (other.presets().currentIndex() == 12);
+        CHECK (other.presets().currentName() == "Only Here");
+        other.presets().pollRequests();
+        CHECK (other.presets().bankStatus() == BankStatus::User);
         CHECK (other.presets().bankName() == "Gone Bank");
         CHECK_FALSE (other.presets().isFactoryBank());
         CHECK (other.presets().currentIndex() == 12);
+        CHECK_FALSE (other.presets().isDetached());
+        CHECK_FALSE (other.presets().isModified());
         CHECK (other.proc.getProgramName (12) == "Only Here");
         CHECK (sameValues (other.raw(), sound));
     }
-    SECTION ("the bank file was deleted: back to the factory bank, same sound, same name")
+    SECTION ("the bank file was deleted: same sound and name, marked modified, in no slot, the bank reported missing")
     {
         REQUIRE (bankFile.deleteFile());
-        PresetRig other;
         other.proc.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
-        CHECK (other.presets().isFactoryBank());
-        CHECK (other.presets().bankName() == "Factory");
-        CHECK (other.presets().currentIndex() == 12);
+        other.presets().pollRequests();
+        CHECK (other.presets().bankStatus() == BankStatus::Missing);
+        CHECK_FALSE (other.presets().isFactoryBank());
+        CHECK (other.presets().bankName() == "Gone Bank");
+        CHECK (other.presets().isDetached());
+        CHECK (other.presets().currentIndex() == 0);       // the host needs an index: slot 1 ...
+        CHECK (other.proc.getProgramName (0) == "Init");   // ... which shows what that slot holds, not the restored name
         CHECK (other.presets().currentName() == "Only Here");
-        CHECK_FALSE (other.presets().isModified());
+        CHECK (other.presets().isModified());
         CHECK (sameValues (other.raw(), sound));
+
+        // Saved again, the session still says "in no slot"; choosing a program ends it.
+        CHECK (other.presets().createSessionInfo().getProperty ("program").toString() == "-1");
+        REQUIRE (other.presets().selectProgram (2));
+        CHECK (other.presets().isFactoryBank());
+        CHECK_FALSE (other.presets().isDetached());
+        CHECK (other.presets().currentIndex() == 2);
     }
     SECTION ("the bank file was replaced by garbage")
     {
         bankFile.replaceWithText ("this is not a bank");
-        PresetRig other;
         other.proc.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
-        CHECK (other.presets().isFactoryBank());
+        other.presets().pollRequests();
+        CHECK (other.presets().bankStatus() == BankStatus::Missing);
         CHECK (other.presets().currentName() == "Only Here");
+        CHECK (other.presets().isDetached());
         CHECK (sameValues (other.raw(), sound));
+    }
+    SECTION ("the instance is destroyed before the bank was looked up: nothing is left to run")
+    {
+        auto doomed = std::make_unique<PresetRig>();
+        doomed->presets().setLocations ({ rig.temp.dir });
+        doomed->proc.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+        CHECK (doomed->presets().bankStatus() == BankStatus::Pending);
+        doomed.reset(); // the poll timer stops with the manager; no callback refers to it
+        SUCCEED();
+    }
+}
+
+TEST_CASE ("The preset bar names a missing bank and shows a program that is in no slot", "[presets][ui]")
+{
+#if defined(VS_SEQ_TEST_ASAN)
+    SKIP ("not run under AddressSanitizer: system graphics library reports (see the other bar test)");
+#endif
+    PresetRig rig;
+    const auto bankFile = (rig.temp / "Banks").getChildFile ("Mine.vsbank");
+    REQUIRE (rig.presets().saveBankFile (bankFile, "Mine").isEmpty());
+    rig.presets().renameProgram (0, "Lead");
+    juce::MemoryBlock state;
+    rig.proc.getStateInformation (state);
+    REQUIRE (bankFile.deleteFile());
+
+    PresetRig other;
+    other.presets().setLocations ({ rig.temp.dir });
+    std::unique_ptr<juce::AudioProcessorEditor> editor (other.proc.createEditor());
+    auto* ed = dynamic_cast<VintageSynthEditor*> (editor.get());
+    REQUIRE (ed != nullptr);
+    other.proc.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    other.presets().pollRequests();
+    CHECK (ed->getBar().describe() == "bank not found: Mine  --  Lead *");
+}
+
+#if ! JUCE_WINDOWS
+TEST_CASE ("A session's bank reference cannot reach anything but an ordinary file in the banks folder, and never blocks", "[presets][state][security]")
+{
+    // Every case: setStateInformation returns at once (it does no file I/O), the bank lookup on the
+    // message thread returns promptly, the bank is reported missing and the sound is the session's.
+    // A watchdog ends the process if anything hangs (a FIFO opened for reading without O_NONBLOCK
+    // blocks forever; /dev/zero read to the end never ends).
+    PresetRig rig;
+    const auto banks = rig.temp / "Banks";
+    REQUIRE (banks.createDirectory());
+    const auto outside = rig.temp / "outside.vsbank";
+    REQUIRE (rig.presets().saveBankFile (outside, "Outside").isEmpty()); // a valid bank, but not in Banks/
+    REQUIRE (rig.presets().selectProgram (3));
+    rig.set ("lower.vcf.cutoff", 0.123f);
+    const auto sound = rig.raw();
+
+    REQUIRE (mkfifo (banks.getChildFile ("fifo.vsbank").getFullPathName().toRawUTF8(), 0600) == 0);
+    REQUIRE (banks.getChildFile ("dir.vsbank").createDirectory());
+    REQUIRE (outside.createSymbolicLink (banks.getChildFile ("link.vsbank"), true));
+    REQUIRE (juce::File ("/dev/zero").createSymbolicLink (banks.getChildFile ("zero.vsbank"), true));
+    {
+        // Larger than the cap (a regular file), and a sparse file claiming 8 GB.
+        juce::FileOutputStream big (banks.getChildFile ("big.vsbank"));
+        REQUIRE (big.openedOk());
+        const std::string chunk (65536, ' ');
+        for (size_t written = 0; written <= kMaxFileBytes; written += chunk.size())
+            big.write (chunk.data(), chunk.size());
+    }
+    {
+        const auto sparse = banks.getChildFile ("sparse.vsbank");
+        REQUIRE (sparse.create().wasOk());
+        REQUIRE (truncate (sparse.getFullPathName().toRawUTF8(), 8LL * 1024 * 1024 * 1024) == 0);
+    }
+
+    struct Case
+    {
+        const char* what;
+        juce::String bank;
+        juce::String legacyPath = {};
+    };
+    const std::vector<Case> cases {
+        { "a FIFO", "fifo.vsbank" },
+        { "a directory", "dir.vsbank" },
+        { "a symbolic link out of the banks folder (to a valid bank)", "link.vsbank" },
+        { "a symbolic link to a character device", "zero.vsbank" },
+        { "a file over the size cap", "big.vsbank" },
+        { "a sparse file claiming 8 GB", "sparse.vsbank" },
+        { "a missing file", "nothere.vsbank" },
+        { "parent traversal", "../outside.vsbank" },
+        { "traversal inside a name", "a..b.vsbank" },
+        { "an absolute path", outside.getFullPathName() },
+        { "a character device by absolute path", "/dev/zero" },
+        { "a UNC path", "\\\\server\\share\\bank.vsbank" },
+        { "a drive path", "C:\\banks\\bank.vsbank" },
+        { "a drive-relative name", "C:bank.vsbank" },
+        { "a Windows device name", "NUL.vsbank" },
+        { "a control character", juce::String ("a") + juce::String::charToString (1) + "b.vsbank" },
+        { "a bidirectional override", juce::String::fromUTF8 ("a\xe2\x80\xae" "knabsv.vsbank") },
+        { "another extension", "outside.vsprog" },
+        { "nothing at all", "" },
+        { "a legacy absolute path to a device", "", "/dev/zero" },
+        { "a legacy absolute path to a FIFO", "", banks.getChildFile ("fifo.vsbank").getFullPathName() },
+    };
+
+    std::atomic<bool> done { false };
+    std::thread watchdog ([&] {
+        for (int i = 0; i < 600 && ! done; ++i)
+            std::this_thread::sleep_for (std::chrono::milliseconds (100));
+        if (! done)
+        {
+            std::fprintf (stderr, "watchdog: a bank reference made the session restore hang\n");
+            std::fflush (stderr);
+            std::_Exit (3);
+        }
+    });
+
+    for (const auto& c : cases)
+    {
+        INFO (c.what);
+        juce::ValueTree t ("Preset");
+        t.setProperty ("bankKind", "user", nullptr);
+        t.setProperty ("bank", c.bank, nullptr);
+        if (c.legacyPath.isNotEmpty())
+            t.setProperty ("bankPath", c.legacyPath, nullptr);
+        t.setProperty ("bankName", "Evil", nullptr);
+        t.setProperty ("program", 5, nullptr);
+        t.setProperty ("name", "Restored", nullptr);
+        t.setProperty ("modified", false, nullptr);
+        auto st = rig.proc.getState().copyState();
+        st.appendChild (t, nullptr);
+        juce::MemoryBlock mb;
+        if (auto xml = st.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*xml, mb);
+
+        PresetRig other;
+        other.presets().setLocations ({ rig.temp.dir });
+        const auto t0 = std::chrono::steady_clock::now();
+        other.proc.setStateInformation (mb.getData(), static_cast<int> (mb.getSize()));
+        const auto t1 = std::chrono::steady_clock::now();
+        CHECK (other.presets().bankStatus() == BankStatus::Pending);
+        other.presets().pollRequests();
+        const auto t2 = std::chrono::steady_clock::now();
+        CHECK (std::chrono::duration<double> (t1 - t0).count() < 0.5);
+        CHECK (std::chrono::duration<double> (t2 - t1).count() < 0.5);
+        CHECK (other.presets().bankStatus() == BankStatus::Missing);
+        CHECK (other.presets().isDetached());
+        CHECK (other.presets().currentName() == "Restored");
+        CHECK (other.presets().isModified());
+        CHECK (sameValues (other.raw(), sound));
+    }
+    done = true;
+    watchdog.join();
+
+    // The control: the same session naming a real bank in the folder finds it.
+    REQUIRE (outside.copyFileTo (banks.getChildFile ("real.vsbank")));
+    juce::ValueTree t ("Preset");
+    t.setProperty ("bankKind", "user", nullptr);
+    t.setProperty ("bank", "real.vsbank", nullptr);
+    t.setProperty ("program", 5, nullptr);
+    auto st = rig.proc.getState().copyState();
+    st.appendChild (t, nullptr);
+    juce::MemoryBlock mb;
+    if (auto xml = st.createXml())
+        juce::AudioProcessor::copyXmlToBinary (*xml, mb);
+    PresetRig other;
+    other.presets().setLocations ({ rig.temp.dir });
+    other.proc.setStateInformation (mb.getData(), static_cast<int> (mb.getSize()));
+    other.presets().pollRequests();
+    CHECK (other.presets().bankStatus() == BankStatus::User);
+    CHECK (other.presets().bankName() == "Outside");
+}
+
+TEST_CASE ("The bounded file reader reads only ordinary files, never more than the cap, and never blocks", "[presets][files][security]")
+{
+    TempDir temp;
+    REQUIRE (temp.dir.createDirectory());
+    const auto fifo = temp / "fifo.vsprog";
+    REQUIRE (mkfifo (fifo.getFullPathName().toRawUTF8(), 0600) == 0);
+    const auto good = temp / "good.vsprog";
+    REQUIRE (good.replaceWithText ("{}"));
+    const auto link = temp / "link.vsprog";
+    REQUIRE (good.createSymbolicLink (link, true));
+    const auto empty = temp / "empty.vsprog";
+    REQUIRE (empty.create().wasOk());
+
+    std::atomic<bool> done { false };
+    std::thread watchdog ([&] {
+        for (int i = 0; i < 300 && ! done; ++i)
+            std::this_thread::sleep_for (std::chrono::milliseconds (100));
+        if (! done)
+        {
+            std::fprintf (stderr, "watchdog: the bounded reader hung\n");
+            std::fflush (stderr);
+            std::_Exit (3);
+        }
+    });
+    std::string out;
+    const auto t0 = std::chrono::steady_clock::now();
+    CHECK (readPresetFile (fifo, 1024, true, out).isNotEmpty());
+    CHECK (readPresetFile (juce::File ("/dev/zero"), 1024, true, out).isNotEmpty());
+    CHECK (readPresetFile (juce::File ("/dev/null"), 1024, true, out).isNotEmpty());
+    CHECK (readPresetFile (temp.dir, 1024, true, out).isNotEmpty());
+    CHECK (readPresetFile (empty, 1024, true, out).isNotEmpty());
+    CHECK (readPresetFile (temp / "missing.vsprog", 1024, true, out).isNotEmpty());
+    CHECK (readPresetFile (good, 1, true, out).isNotEmpty()); // 2 bytes > cap 1
+    CHECK (readPresetFile (link, 1024, false, out).isNotEmpty()); // links refused when asked
+    CHECK (out.empty());
+    CHECK (std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count() < 1.0);
+    done = true;
+    watchdog.join();
+
+    CHECK (readPresetFile (link, 1024, true, out).isEmpty());
+    CHECK (out == "{}");
+    CHECK (readPresetFile (good, 2, false, out).isEmpty());
+    CHECK (out == "{}");
+
+    // The bar's loads go through it too: a device is refused at once, nothing is applied.
+    PresetRig rig;
+    const auto before = rig.raw();
+    CHECK (rig.presets().loadBankFile (juce::File ("/dev/zero")).isNotEmpty());
+    CHECK (rig.presets().loadProgramFile (fifo).isNotEmpty());
+    CHECK (rig.presets().loadToneFile (juce::File ("/dev/random"), 0).isNotEmpty());
+    CHECK (sameValues (rig.raw(), before));
+}
+#endif
+
+TEST_CASE ("Bank names a session may use", "[presets][state][security]")
+{
+    const juce::String ext (".vsbank");
+    for (const char* ok : { "Mine.vsbank", "my bank 2.vsbank", "a.b.vsbank", "A1.VSBANK" })
+    {
+        INFO (ok);
+        CHECK (isSafeBankFileName (ok, ext));
+    }
+    CHECK (isSafeBankFileName (juce::String::fromUTF8 ("B\xc3\xa4nk.vsbank"), ext));
+    for (const char* bad : { "", ".vsbank", "..vsbank", "../x.vsbank", "x/../y.vsbank", "sub/x.vsbank", "sub\\x.vsbank", "/abs.vsbank",
+                             "C:x.vsbank", "\\\\srv\\x.vsbank", "x.vsprog", "x.vsbank.", " x.vsbank", "x.vsbank ", "-x.vsbank",
+                             ".hidden.vsbank", "con.vsbank", "NUL.vsbank", "com1.vsbank", "LPT9.x.vsbank", "a?b.vsbank", "a*b.vsbank",
+                             "a|b.vsbank", "a<b.vsbank", "a\"b.vsbank", "x.vsbank:stream" })
+    {
+        INFO (bad);
+        CHECK_FALSE (isSafeBankFileName (bad, ext));
+    }
+    CHECK_FALSE (isSafeBankFileName (juce::String::repeatedString ("x", 130) + ext, ext));
+    CHECK_FALSE (isSafeBankFileName (juce::String::fromUTF8 ("a\xc2\x85" "b.vsbank"), ext));      // C1 control (NEL)
+    CHECK_FALSE (isSafeBankFileName (juce::String::fromUTF8 ("a\xe2\x81\xa6" "b.vsbank"), ext));  // left-to-right isolate
+    CHECK_FALSE (isSafeBankFileName (juce::String::fromUTF8 ("a\xe2\x80\x8b" "b.vsbank"), ext));  // zero-width space
+}
+
+TEST_CASE ("The largest legitimate bank fits the file cap", "[presets][files]")
+{
+    // Every value at its longest text (a 9-digit mantissa with an exponent) and every name, category
+    // and author at its longest UTF-8 form (4-byte characters). Measured, so the cap can be argued.
+    PresetRig rig;
+    const auto& schema = rig.schema();
+    Bank bank = makeInitBank (schema);
+    const auto longName = juce::String::repeatedString (juce::String::fromUTF8 ("\xf0\x9f\x8e\xb9"), kMaxAuthorChars);
+    bank.name = longName;
+    bank.author = longName;
+    for (auto& p : bank.programs)
+    {
+        p.meta.name = longName;
+        p.meta.category = longName;
+        p.meta.author = longName;
+        for (int i = 0; i < schema.numParams(); ++i)
+        {
+            const auto& s = schema.spec (i);
+            // Discrete values are whole numbers (short): the top of the range. A continuous value
+            // gets the longest text its range allows: "-1.17549435e-38" where the range includes it.
+            constexpr float tiny = 1.17549435e-38f;
+            float v = s.lo + (s.hi - s.lo) * 0.123456789f;
+            if (s.discrete)
+                v = s.hi;
+            else if (s.lo <= -tiny)
+                v = -tiny;
+            else if (s.lo <= tiny && s.hi >= tiny)
+                v = tiny;
+            p.values[static_cast<size_t> (i)] = v;
+        }
+    }
+    const auto text = toJson (schema, bank);
+    INFO ("largest legitimate bank: " << text.size() << " bytes; cap " << kMaxFileBytes);
+    std::printf ("largest legitimate bank: %zu bytes (cap %zu)\n", text.size(), kMaxFileBytes);
+    CHECK (text.size() < kMaxFileBytes * 9 / 10); // with room to spare
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto back = parseBank (schema, text);
+    const double seconds = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+    std::printf ("parse time of the largest legitimate bank: %.3f s\n", seconds);
+    REQUIRE (back.ok);
+    CHECK (toJson (schema, back.value) == text);
+    CHECK (seconds < 2.0);
+}
+
+TEST_CASE ("Lower and Upper have identical parameter specs, so a tone file fits either part", "[presets][format]")
+{
+    PresetRig rig;
+    const auto& schema = rig.schema();
+    REQUIRE (schema.isValid());
+    REQUIRE (schema.numTones() == 2);
+    for (int k = 0; k < schema.toneSize(); ++k)
+    {
+        const auto& a = schema.spec (schema.toneParam (0, k));
+        const auto& b = schema.spec (schema.toneParam (1, k));
+        INFO (a.id << " / " << b.id);
+        CHECK (feq (a.lo, b.lo));
+        CHECK (feq (a.hi, b.hi));
+        CHECK (feq (a.def, b.def));
+        CHECK (a.discrete == b.discrete);
+    }
+}
+
+TEST_CASE ("The poll timer runs even when the instance is built off the message thread", "[presets][threads]")
+{
+    std::unique_ptr<VintageSynthProcessor> proc;
+    std::thread t ([&] { proc = std::make_unique<VintageSynthProcessor>(); });
+    t.join();
+    CHECK (proc->getPresets().isPolling());
+    proc.reset();
+}
+
+TEST_CASE ("A loaded program is exactly the file's values (no 'close enough' skipping)", "[presets][manager]")
+{
+    PresetRig rig;
+    auto& pm = rig.presets();
+    const auto& schema = rig.schema();
+    // A program 1e-7 away from what the parameters hold now: the old tolerance (1e-6 of the range)
+    // skipped such writes and left the old value in place.
+    auto p = pm.captureProgram();
+    int nudged = 0;
+    for (int i = 0; i < schema.numParams(); ++i)
+    {
+        const auto& s = schema.spec (i);
+        if (schema.isExcluded (i) || s.discrete || ! (feq (s.lo, 0.0f) && feq (s.hi, 1.0f)))
+            continue;
+        auto& v = p.values[static_cast<size_t> (i)];
+        v = v < 0.5f ? v + 1.0e-7f : v - 1.0e-7f;
+        ++nudged;
+    }
+    REQUIRE (nudged > 50);
+    pm.applyProgram (p, 0, false, false);
+    const auto now = rig.raw();
+    for (int i = 0; i < schema.numParams(); ++i)
+    {
+        const auto& s = schema.spec (i);
+        if (schema.isExcluded (i) || s.discrete || ! (feq (s.lo, 0.0f) && feq (s.hi, 1.0f)))
+            continue;
+        INFO (s.id);
+        CHECK (sameBitsF (now[static_cast<size_t> (i)], p.values[static_cast<size_t> (i)])); // 0..1: the host representation is exact
     }
 }
 
@@ -877,21 +1274,41 @@ TEST_CASE ("Damaged session blobs are ignored without harm", "[presets][state]")
 
     // A preset child with nonsense in it (hand-edited or from a future version) is cleaned up.
     juce::ValueTree t ("Preset");
-    t.setProperty ("program", 9999, nullptr);
-    t.setProperty ("name", "A\nBad\tName " + juce::String::repeatedString ("x", 100), nullptr);
+    t.setProperty ("program", 9999, nullptr); // out of range: not a slot, so slot A1
+    t.setProperty ("name", juce::String::fromUTF8 ("A\nBad\tName\xe2\x80\xae") + juce::String::repeatedString ("x", 100), nullptr);
     t.setProperty ("bankKind", "user", nullptr);
-    t.setProperty ("bankPath", "/definitely/not/there.vsbank", nullptr);
+    t.setProperty ("bankPath", "/definitely/not/there.vsbank", nullptr); // an absolute path is never used
     auto state = rig.proc.getState().copyState();
     state.appendChild (t, nullptr);
     juce::MemoryBlock mb;
     if (auto xml = state.createXml())
         juce::AudioProcessor::copyXmlToBinary (*xml, mb);
     rig.proc.setStateInformation (mb.getData(), static_cast<int> (mb.getSize()));
-    CHECK (rig.presets().currentIndex() == 63);
+    CHECK (rig.presets().currentIndex() == 0);
     CHECK (rig.presets().currentName().length() <= kMaxNameChars);
     CHECK_FALSE (rig.presets().currentName().containsAnyOf ("\n\t"));
-    CHECK (rig.presets().isFactoryBank());
+    CHECK_FALSE (rig.presets().currentName().containsChar (static_cast<juce::juce_wchar> (0x202e)));
+    rig.presets().pollRequests(); // no usable bank name: the user bank is reported missing
+    CHECK (rig.presets().bankStatus() == BankStatus::Missing);
+    CHECK (rig.presets().isDetached());
     CHECK (rig.differences (before).isEmpty());
+
+    // Numbers that a cast would mangle (overflow) or misread are not trusted either.
+    for (const char* bad : { "99999999999999999999", "-99999999999", " 5", "5 ", "+5", "0x10", "1e3", "5.0", "", "--1", "05" })
+    {
+        INFO (bad);
+        juce::ValueTree u ("Preset");
+        u.setProperty ("program", bad, nullptr);
+        u.setProperty ("name", "N", nullptr);
+        auto s2 = rig.proc.getState().copyState();
+        s2.appendChild (u, nullptr);
+        juce::MemoryBlock m2;
+        if (auto xml = s2.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*xml, m2);
+        rig.proc.setStateInformation (m2.getData(), static_cast<int> (m2.getSize()));
+        CHECK (rig.presets().currentIndex() == 0);
+        CHECK_FALSE (rig.presets().isDetached());
+    }
 }
 
 // =================================================================================================
@@ -1169,3 +1586,320 @@ TEST_CASE ("Applying presets while the audio thread runs: acknowledged, finite, 
     CHECK (blocks.load() > 100);
     CHECK (acknowledged >= applies * 9 / 10); // a running audio thread answers (allow a few late ones on a busy machine)
 }
+
+TEST_CASE ("ApplyGate: holds nest, and a read that overlaps a hold is discarded", "[presets][gate]")
+{
+    ApplyGate gate;
+    auto token = gate.beginRead();
+    CHECK (gate.endRead (token)); // nothing happened
+
+    // A hold that begins while the reader copies: the copy is discarded.
+    token = gate.beginRead();
+    gate.beginHold();
+    CHECK_FALSE (gate.endRead (token));
+    CHECK (gate.isHolding());
+    // Reads during a hold are not usable (odd token).
+    token = gate.beginRead();
+    CHECK ((token & 1u) != 0u);
+    CHECK_FALSE (gate.endRead (token));
+    // Nested hold (a state restore inside an apply on the same thread): still held after the inner end.
+    gate.beginHold();
+    CHECK (gate.holdDepth() == 2);
+    gate.endHold();
+    CHECK (gate.isHolding());
+    gate.endHold();
+    CHECK_FALSE (gate.isHolding());
+    // A hold that begins and ends while the reader copies: discarded too (the sequence moved by 2).
+    token = gate.beginRead();
+    gate.beginHold();
+    gate.endHold();
+    CHECK_FALSE (gate.endRead (token));
+    token = gate.beginRead();
+    CHECK (gate.endRead (token));
+}
+
+namespace
+{
+/** Programs whose parameters carry one marker each: every continuous 0..1 tone parameter of both
+    parts and Vintage equal frac(m), every choice of both parts m % 2, the split point 40 + m,
+    Dual mode. A block that mixes two programs breaks one of these equalities. */
+constexpr int kMarkers = 6;
+float markerValue (int m) { return static_cast<float> (static_cast<double> (m + 1) / static_cast<double> (kMarkers + 1)); }
+
+Program markerProgram (const Schema& schema, int m)
+{
+    Program p = makeInitProgram (schema);
+    p.meta.name = "Marker " + juce::String (m);
+    for (int t = 0; t < schema.numTones(); ++t)
+        for (int k = 0; k < schema.toneSize(); ++k)
+        {
+            const int i = schema.toneParam (t, k);
+            const auto& s = schema.spec (i);
+            if (s.discrete)
+                p.values[static_cast<size_t> (i)] = static_cast<float> (m % 2);
+            else if (feq (s.lo, 0.0f) && feq (s.hi, 1.0f))
+                p.values[static_cast<size_t> (i)] = markerValue (m);
+        }
+    p.values[static_cast<size_t> (schema.indexOf ("global.vintage"))] = markerValue (m);
+    p.values[static_cast<size_t> (schema.indexOf ("key.split_point"))] = static_cast<float> (40 + m);
+    p.values[static_cast<size_t> (schema.indexOf ("key.mode"))] = 1.0f; // Dual: both parts play
+    return p;
+}
+
+/** The marker of a block's parameter set, or -1 if the set is mixed (or not a marker program). */
+int markerOf (const VintageSynthProcessor::BlockParams& b)
+{
+    const int m = b.splitPoint - 40;
+    if (m < 0 || m >= kMarkers)
+        return -1;
+    const float f = markerValue (m);
+    bool ok = feq (b.vintage, f);
+#define VS_CHECK_FLOAT(member, id, name, mn, mx, def, kind) \
+    ok = ok && feq (b.lower.member, b.upper.member);          \
+    if (feq (mn, 0.0f) && feq (mx, 1.0f))                     \
+        ok = ok && feq (b.lower.member, f);
+#define VS_CHECK_CHOICE(member, id, name, labels, def) ok = ok && b.lower.member == m % 2 && b.upper.member == m % 2;
+    VS_PART_FLOAT_PARAMS (VS_CHECK_FLOAT)
+    VS_PART_CHOICE_PARAMS (VS_CHECK_CHOICE)
+#undef VS_CHECK_FLOAT
+#undef VS_CHECK_CHOICE
+    return ok ? m : -1;
+}
+} // namespace
+
+TEST_CASE ("No block ever uses a mixed parameter set while programs are applied and states restored on other threads", "[presets][threads][handover]")
+{
+    // A real audio thread renders blocks back to back while the message thread applies marker
+    // programs and a host thread restores states of other marker programs. After every block the
+    // audio thread checks the set it used (the processor's per-block snapshot) is one program.
+    // Without the writer lock, the hold counter and the seqlock read this fails within a second.
+    PresetRig rig (48000.0, 64);
+    rig.prepare();
+    auto& pm = rig.presets();
+    pm.getGate().setTimeouts (250, 40);
+    const auto& schema = rig.schema();
+
+    std::vector<Program> programs;
+    std::vector<juce::MemoryBlock> states (kMarkers);
+    for (int m = 0; m < kMarkers; ++m)
+    {
+        programs.push_back (markerProgram (schema, m));
+        pm.applyProgram (programs.back(), m, false, false);
+        rig.proc.getStateInformation (states[static_cast<size_t> (m)]);
+    }
+    pm.applyProgram (programs[0], 0, false, false);
+    {
+        juce::AudioBuffer<float> buf (2, 64);
+        juce::MidiBuffer none;
+        rig.proc.processBlock (buf, none);
+        REQUIRE (markerOf (rig.proc.getBlockParams()) == 0);
+    }
+
+    const double seconds = 6.0;
+    std::atomic<bool> stop { false };
+    std::atomic<long> blocks { 0 }, mixed { 0 }, held { 0 }, changes { 0 };
+    std::thread audio ([&] {
+        juce::AudioBuffer<float> buf (2, 64);
+        std::mt19937 rng (1);
+        int last = 0;
+        while (! stop)
+        {
+            juce::MidiBuffer mb;
+            if (rng() % 7 == 0)
+                mb.addEvent (juce::MidiMessage::noteOn (1, 40 + static_cast<int> (rng() % 40), static_cast<juce::uint8> (100)), 0);
+            if (rng() % 7 == 0)
+                mb.addEvent (juce::MidiMessage::noteOff (1, 40 + static_cast<int> (rng() % 40)), 3);
+            buf.clear();
+            rig.proc.processBlock (buf, mb);
+            const int m = markerOf (rig.proc.getBlockParams());
+            if (m < 0)
+                ++mixed;
+            else if (m != last)
+            {
+                ++changes;
+                last = m;
+            }
+            ++blocks;
+            if (rng() % 4 == 0)
+                std::this_thread::yield();
+        }
+        held = static_cast<long> (rig.proc.getHeldBlocks());
+    });
+    std::atomic<long> restores { 0 };
+    std::thread host ([&] {
+        std::mt19937 rng (2);
+        while (! stop)
+        {
+            const auto& st = states[rng() % static_cast<unsigned> (kMarkers)];
+            rig.proc.setStateInformation (st.getData(), static_cast<int> (st.getSize()));
+            ++restores;
+            if (rng() % 3 == 0)
+            {
+                juce::MemoryBlock saved; // a host saving meanwhile gets one program too
+                rig.proc.getStateInformation (saved);
+            }
+            std::this_thread::sleep_for (std::chrono::microseconds (100 + rng() % 400));
+        }
+    });
+    std::mt19937 rng (3);
+    long applies = 0;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double> (seconds);
+    while (std::chrono::steady_clock::now() < until)
+    {
+        const int m = static_cast<int> (rng() % static_cast<unsigned> (kMarkers));
+        pm.applyProgram (programs[static_cast<size_t> (m)], m, false, false);
+        ++applies;
+        pm.pollRequests();
+        if (rng() % 4 == 0)
+            std::this_thread::sleep_for (std::chrono::microseconds (rng() % 300));
+    }
+    stop = true;
+    audio.join();
+    host.join();
+    std::printf ("hand-over stress: %ld blocks, %ld held, %ld program changes seen, %ld applies, %ld state restores, %ld mixed\n",
+                 blocks.load(), held.load(), changes.load(), applies, restores.load(), mixed.load());
+    CHECK (mixed.load() == 0);
+    CHECK (blocks.load() > 1000);
+    CHECK (changes.load() > 20); // the audio thread really saw the programs change
+    CHECK (applies > 50);
+    CHECK (restores.load() > 50);
+}
+
+TEST_CASE ("Menu results after the bar is gone, or a dismissed menu, do nothing", "[presets][ui]")
+{
+#if defined(VS_SEQ_TEST_ASAN)
+    SKIP ("not run under AddressSanitizer: system graphics library reports (see the other bar test)");
+#endif
+    PresetRig rig;
+    rig.presets().selectProgram (2);
+    const auto before = rig.raw();
+    std::unique_ptr<juce::AudioProcessorEditor> editor (rig.proc.createEditor());
+    auto* ed = dynamic_cast<VintageSynthEditor*> (editor.get());
+    REQUIRE (ed != nullptr);
+    juce::Component::SafePointer<PresetBar> bar (const_cast<PresetBar*> (&ed->getBar()));
+    // Dismissed (0) while open: nothing.
+    PresetBar::handleLoadMenuResult (bar, 0);
+    PresetBar::handleSaveMenuResult (bar, 0);
+    // The editor closes while a menu is open; JUCE then calls back with 0 (or anything): nothing.
+    editor.reset();
+    CHECK (bar == nullptr);
+    for (int choice : { 0, 1, 2, 3, 10, 11 })
+    {
+        PresetBar::handleLoadMenuResult (bar, choice);
+        PresetBar::handleSaveMenuResult (bar, choice);
+    }
+    CHECK (sameValues (rig.raw(), before));
+    CHECK (rig.presets().currentIndex() == 2);
+}
+
+TEST_CASE ("Host calls from another thread during applies, restores, bypass and MIDI Program Changes: finite, no crash", "[presets][threads]")
+{
+    // The review's stress (any host call from a host thread while the message thread applies and a
+    // real audio thread renders, bypasses and receives Program Changes). Run under ThreadSanitizer
+    // too (the preset tests in a -fsanitize=thread build).
+    PresetRig rig (48000.0, 64);
+    rig.prepare();
+    auto& pm = rig.presets();
+    pm.getGate().setTimeouts (250, 40);
+    juce::MemoryBlock stateA;
+    pm.selectProgram (4);
+    rig.proc.getStateInformation (stateA);
+
+    std::atomic<bool> stop { false }, bad { false };
+    std::atomic<long> blocks { 0 }, hostOps { 0 };
+    std::thread audio ([&] {
+        juce::AudioBuffer<float> buf (2, 64);
+        std::mt19937 rng (1);
+        while (! stop)
+        {
+            juce::MidiBuffer mb;
+            if (rng() % 5 == 0)
+                mb.addEvent (juce::MidiMessage::noteOn (1, 40 + static_cast<int> (rng() % 30), static_cast<juce::uint8> (100)), 0);
+            if (rng() % 5 == 0)
+                mb.addEvent (juce::MidiMessage::noteOff (1, 40 + static_cast<int> (rng() % 30)), 3);
+            if (rng() % 50 == 0)
+                mb.addEvent (juce::MidiMessage::programChange (1, static_cast<int> (rng() % 128)), 7);
+            buf.clear();
+            if (rng() % 200 < 3)
+                for (int k = 0; k < 20; ++k)
+                    rig.proc.processBlockBypassed (buf, mb);
+            rig.proc.processBlock (buf, mb);
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 64; ++i)
+                    if (! std::isfinite (buf.getSample (ch, i)))
+                        bad = true;
+            ++blocks;
+            if (rng() % 3 == 0)
+                std::this_thread::sleep_for (std::chrono::microseconds (300));
+        }
+    });
+    std::thread host ([&] {
+        std::mt19937 rng (2);
+        while (! stop)
+        {
+            switch (rng() % 6)
+            {
+                case 0: rig.proc.setCurrentProgram (static_cast<int> (rng() % 64)); break;
+                case 1: (void) rig.proc.getProgramName (static_cast<int> (rng() % 64)); break;
+                case 2: (void) rig.proc.getCurrentProgram(); break;
+                case 3: { juce::MemoryBlock m; rig.proc.getStateInformation (m); break; }
+                case 4: rig.proc.setStateInformation (stateA.getData(), static_cast<int> (stateA.getSize())); break;
+                default: rig.proc.changeProgramName (static_cast<int> (rng() % 64), "H" + juce::String (static_cast<int> (rng() % 100))); break;
+            }
+            ++hostOps;
+            std::this_thread::sleep_for (std::chrono::microseconds (200));
+        }
+    });
+    std::mt19937 rng (3);
+    long iters = 0;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds (4);
+    while (std::chrono::steady_clock::now() < until)
+    {
+        switch (rng() % 6)
+        {
+            case 0: pm.selectProgram (static_cast<int> (rng() % 8)); break;
+            case 1: pm.initialise(); break;
+            case 2: rig.proc.setStateInformation (stateA.getData(), static_cast<int> (stateA.getSize())); break;
+            case 3: pm.applyTone (pm.captureTone (0), 1); break;
+            case 4: rig.set ("lower.vcf.cutoff", static_cast<float> (rng() % 100) / 100.0f); break;
+            default: pm.pollRequests(); break;
+        }
+        ++iters;
+    }
+    stop = true;
+    audio.join();
+    host.join();
+    std::printf ("host stress: %ld message-thread ops, %ld audio blocks, %ld host ops\n", iters, blocks.load(), hostOps.load());
+    CHECK_FALSE (bad.load());
+    CHECK (blocks.load() > 100);
+    CHECK (hostOps.load() > 100);
+}
+
+#if ! JUCE_WINDOWS
+TEST_CASE ("Storing into or renaming a slot fails visibly, and changes nothing, when the bank file cannot be written", "[presets][files]")
+{
+    PresetRig rig;
+    auto& pm = rig.presets();
+    const auto folder = rig.temp / "Banks";
+    const auto bankFile = folder.getChildFile ("ro.vsbank");
+    REQUIRE (pm.saveBankFile (bankFile, "Read Only").isEmpty());
+    REQUIRE (pm.selectProgram (2));
+    const auto before = readText (bankFile);
+    const auto nameBefore = pm.programName (9);
+    const auto currentBefore = pm.currentName();
+    REQUIRE (chmod (folder.getFullPathName().toRawUTF8(), 0500) == 0); // no new files in the folder: the temporary file fails
+    rig.set ("lower.vcf.cutoff", 0.31f);
+    CHECK (pm.storeInBank (9).isNotEmpty());
+    CHECK (pm.programName (9) == nameBefore);
+    CHECK (pm.currentIndex() == 2);
+    CHECK (pm.isModified());
+    CHECK (pm.renameProgram (9, "Nope").isNotEmpty());
+    CHECK (pm.programName (9) == nameBefore);
+    CHECK (pm.renameProgram (2, "Nope").isNotEmpty()); // the current slot: neither the slot nor the shown name changes
+    CHECK (pm.currentName() == currentBefore);
+    REQUIRE (chmod (folder.getFullPathName().toRawUTF8(), 0700) == 0);
+    CHECK (readText (bankFile) == before);
+    CHECK (pm.storeInBank (9).isEmpty()); // writable again: works
+    CHECK (readText (bankFile) != before);
+}
+#endif

@@ -17,7 +17,9 @@ using namespace vs::itest;
 struct TempDir
 {
     juce::File dir;
-    TempDir() : dir (juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("vs_preset_test", "")) {}
+    // A random name: ctest runs test processes in parallel, and "the next name that does not exist
+    // yet" is not unique across processes (the folder is only created by a test's first save).
+    TempDir() : dir (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vs_preset_test_" + juce::Uuid().toString())) {}
     ~TempDir() { dir.deleteRecursively(); }
     juce::File operator/ (const juce::String& name) const { return dir.getChildFile (name); }
 };
@@ -113,6 +115,22 @@ inline std::string readText (const juce::File& f)
     return std::string (static_cast<const char*> (mb.getData()), mb.getSize());
 }
 
+inline constexpr int kTestBankSize = 64;
+inline constexpr const char* kTestInstrumentId = "test-synth";
+
+/** The small schema's instrument: 8 x 8 slots, its own id and extensions. */
+inline presets::Instrument testInstrument()
+{
+    presets::Instrument i;
+    i.id = kTestInstrumentId;
+    i.groups = 8;
+    i.slotsPerGroup = 8;
+    i.programExtension = ".tprog";
+    i.toneExtension = ".ttone";
+    i.bankExtension = ".tbank";
+    return i;
+}
+
 /** A processor-free schema for the format tests: a few parameters of each kind, two tone prefixes. */
 inline presets::Schema smallSchema()
 {
@@ -128,6 +146,6 @@ inline presets::Schema smallSchema()
     add ("g.mode", 0.0f, 2.0f, 0.0f, true);
     add ("g.split", 0.0f, 127.0f, 60.0f, true);
     add ("g.mix", -1.0f, 1.0f, 0.25f, false);
-    return presets::Schema (std::move (all), { "a.", "b." }, { "master.vol" });
+    return presets::Schema (std::move (all), { "a.", "b." }, { "master.vol" }, testInstrument());
 }
 } // namespace vs::ptest

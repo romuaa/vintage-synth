@@ -16,7 +16,7 @@ namespace
 /** A valid program file for the small schema, with `a.cut` set to the given JSON text. */
 std::string programWith (const std::string& cutJson, const std::string& extraTop = {})
 {
-    return "{\"format\":1,\"kind\":\"program\",\"name\":\"T\"," + extraTop + "\"a\":{\"cut\":" + cutJson + "}}";
+    return "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"T\"," + extraTop + "\"a\":{\"cut\":" + cutJson + "}}";
 }
 
 Parsed<Program> parse (const std::string& s) { return parseProgram (smallSchema(), s); }
@@ -38,7 +38,7 @@ TEST_CASE ("Schema: tones, globals and exclusions are derived from the IDs", "[p
 
     // Parts that do not match are reported, not silently half-handled.
     std::vector<ParamSpec> odd { { "a.x", 0, 1, 0, false }, { "b.y", 0, 1, 0, false } };
-    CHECK_FALSE (Schema (odd, { "a.", "b." }, {}).isValid());
+    CHECK_FALSE (Schema (odd, { "a.", "b." }, {}, testInstrument()).isValid());
 }
 
 TEST_CASE ("Schema::sanitise: clamp, round discrete values, non-finite becomes the default", "[presets][format]")
@@ -108,6 +108,7 @@ TEST_CASE ("File layout: fixed key order, tones without the part prefix, one par
     const std::string expected =
         "{\n"
         "  \"format\": 1,\n"
+        "  \"instrument\": \"test-synth\",\n"
         "  \"kind\": \"program\",\n"
         "  \"name\": \"Layout\",\n"
         "  \"category\": \"\",\n"
@@ -165,15 +166,15 @@ TEST_CASE ("Bank round trip: 64 programs, byte-identical re-save", "[presets][fo
     Bank bank = makeInitBank (schema);
     bank.name = "My Bank";
     bank.author = "Me";
-    for (int i = 0; i < kBankSize; ++i)
+    for (int i = 0; i < kTestBankSize; ++i)
         bank.programs[static_cast<size_t> (i)] = randomProgram (schema, 100u + static_cast<unsigned> (i), "Program " + juce::String (i));
     const auto text = toJson (schema, bank);
     const auto back = parseBank (schema, text);
     REQUIRE (back.ok);
     CHECK (back.value.name == "My Bank");
     CHECK (back.value.author == "Me");
-    REQUIRE (back.value.programs.size() == static_cast<size_t> (kBankSize));
-    for (int i = 0; i < kBankSize; ++i)
+    REQUIRE (back.value.programs.size() == static_cast<size_t> (kTestBankSize));
+    for (int i = 0; i < kTestBankSize; ++i)
     {
         CHECK (back.value.programs[static_cast<size_t> (i)].meta.name == "Program " + juce::String (i));
         for (int k = 0; k < schema.numParams(); ++k)
@@ -184,7 +185,7 @@ TEST_CASE ("Bank round trip: 64 programs, byte-identical re-save", "[presets][fo
     CHECK (toJson (schema, back.value) == text);
 
     // A bank file with fewer programs: the rest are Init.
-    const auto few = parseBank (schema, "{\"format\":1,\"kind\":\"bank\",\"programs\":[{\"name\":\"One\"}]}");
+    const auto few = parseBank (schema, "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"bank\",\"programs\":[{\"name\":\"One\"}]}");
     REQUIRE (few.ok);
     CHECK (few.value.programs[0].meta.name == "One");
     CHECK (few.value.programs[63].meta.name == "Init");
@@ -200,7 +201,7 @@ TEST_CASE ("Tolerant reading: unknown IDs ignored, missing take the default, val
 
     SECTION ("unknown IDs, sections and keys are ignored")
     {
-        const auto r = parse ("{\"format\":1,\"kind\":\"program\",\"future\":{\"x\":1},\"a\":{\"cut\":0.3,\"nonsense\":9},"
+        const auto r = parse ("{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"future\":{\"x\":1},\"a\":{\"cut\":0.3,\"nonsense\":9},"
                               "\"global\":{\"g.unknown\":4,\"g.split\":70},\"c\":{\"cut\":1}}");
         REQUIRE (r.ok);
         CHECK (feq (r.value.values[cut], 0.3f));
@@ -209,13 +210,13 @@ TEST_CASE ("Tolerant reading: unknown IDs ignored, missing take the default, val
     }
     SECTION ("missing parameters, missing sections and an empty program take the defaults")
     {
-        const auto r = parse ("{\"format\":1,\"kind\":\"program\",\"a\":{\"cut\":0.3}}");
+        const auto r = parse ("{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"a\":{\"cut\":0.3}}");
         REQUIRE (r.ok);
         CHECK (feq (r.value.values[cut], 0.3f));
         CHECK (feq (r.value.values[wave], 2.0f));
         CHECK (feq (r.value.values[split], 60.0f));
         CHECK (r.value.meta.name == "Untitled");
-        const auto empty = parse ("{\"format\":1,\"kind\":\"program\"}");
+        const auto empty = parse ("{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\"}");
         REQUIRE (empty.ok);
         CHECK (sameValues (empty.value.values, schema.defaults()));
     }
@@ -223,7 +224,7 @@ TEST_CASE ("Tolerant reading: unknown IDs ignored, missing take the default, val
     {
         CHECK (feq (parse (programWith ("5.5")).value.values[cut], 1.0f));
         CHECK (feq (parse (programWith ("-5")).value.values[cut], 0.0f));
-        auto r = parse ("{\"format\":1,\"kind\":\"program\",\"a\":{\"wave\":2.4},\"global\":{\"g.split\":300,\"g.mode\":-1}}");
+        auto r = parse ("{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"a\":{\"wave\":2.4},\"global\":{\"g.split\":300,\"g.mode\":-1}}");
         REQUIRE (r.ok);
         CHECK (feq (r.value.values[wave], 2.0f));
         CHECK (feq (r.value.values[split], 127.0f));
@@ -256,16 +257,16 @@ TEST_CASE ("Names, categories and authors are cleaned and limited", "[presets][f
     CHECK (r.value.meta.category.length() == kMaxCategoryChars);
     CHECK (r.value.meta.author.length() == kMaxAuthorChars);
 
-    auto named = parse ("{\"format\":1,\"kind\":\"program\",\"name\":\"" + longName + "\"}");
+    auto named = parse ("{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"" + longName + "\"}");
     REQUIRE (named.ok);
     CHECK (named.value.meta.name.length() == kMaxNameChars);
 
-    auto control = parse ("{\"format\":1,\"kind\":\"program\",\"name\":\"  Bad\\n\\tName\\u0001 \"}");
+    auto control = parse ("{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"  Bad\\n\\tName\\u0001 \"}");
     REQUIRE (control.ok);
     CHECK (control.value.meta.name == "Bad  Name");
 
-    CHECK (parse ("{\"format\":1,\"kind\":\"program\",\"name\":\"   \"}").value.meta.name == "Untitled");
-    CHECK (parse ("{\"format\":1,\"kind\":\"program\",\"name\":\"\"}").value.meta.name == "Untitled");
+    CHECK (parse ("{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"   \"}").value.meta.name == "Untitled");
+    CHECK (parse ("{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"\"}").value.meta.name == "Untitled");
 
     // Non-ASCII names survive a round trip (characters, not bytes, are counted).
     auto p = makeInitProgram (schema);
@@ -308,20 +309,20 @@ TEST_CASE ("Malformed files are rejected whole, with a message", "[presets][form
         { "format 2 (newer)", "{\"format\":2,\"kind\":\"program\"}" },
         { "format as text", "{\"format\":\"1\",\"kind\":\"program\"}" },
         { "format 1.5", "{\"format\":1.5,\"kind\":\"program\"}" },
-        { "no kind", "{\"format\":1}" },
-        { "wrong kind (a tone)", "{\"format\":1,\"kind\":\"tone\"}" },
-        { "wrong kind (a bank)", "{\"format\":1,\"kind\":\"bank\"}" },
-        { "tone section is a list", "{\"format\":1,\"kind\":\"program\",\"a\":[1]}" },
-        { "tone section is a number", "{\"format\":1,\"kind\":\"program\",\"b\":3}" },
-        { "global section is text", "{\"format\":1,\"kind\":\"program\",\"global\":\"x\"}" },
-        { "name is a number", "{\"format\":1,\"kind\":\"program\",\"name\":5}" },
-        { "category is a list", "{\"format\":1,\"kind\":\"program\",\"category\":[]}" },
-        { "NUL byte", [] { std::string t = "{\"format\":1,\"kind\":\"program\",\"name\":\"a"; t += '\0'; return t + "b\"}"; }() },
-        { "invalid UTF-8", "{\"format\":1,\"kind\":\"program\",\"name\":\"\xff\xfe\"}" },
-        { "overlong UTF-8", "{\"format\":1,\"kind\":\"program\",\"name\":\"\xc0\xaf\"}" },
+        { "no kind", "{\"format\":1,\"instrument\":\"test-synth\"}" },
+        { "wrong kind (a tone)", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"tone\"}" },
+        { "wrong kind (a bank)", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"bank\"}" },
+        { "tone section is a list", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"a\":[1]}" },
+        { "tone section is a number", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"b\":3}" },
+        { "global section is text", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"global\":\"x\"}" },
+        { "name is a number", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":5}" },
+        { "category is a list", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"category\":[]}" },
+        { "NUL byte", [] { std::string t = "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"a"; t += '\0'; return t + "b\"}"; }() },
+        { "invalid UTF-8", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"\xff\xfe\"}" },
+        { "overlong UTF-8", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"\xc0\xaf\"}" },
         { "nested far too deep", std::string (5000, '[') + std::string (5000, ']') },
-        { "nested objects too deep", "{\"format\":1,\"kind\":\"program\",\"a\":" + std::string (100, '{') + std::string (100, '}') + "}" },
-        { "far too large", "{\"format\":1,\"kind\":\"program\",\"name\":\"" + std::string (kMaxFileBytes, 'x') + "\"}" },
+        { "nested objects too deep", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"a\":" + std::string (100, '{') + std::string (100, '}') + "}" },
+        { "far too large", "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"" + std::string (kMaxFileBytes, 'x') + "\"}" },
     };
     for (const auto& c : bad)
     {
@@ -334,13 +335,13 @@ TEST_CASE ("Malformed files are rejected whole, with a message", "[presets][form
     const auto schema = smallSchema();
     CHECK_FALSE (parseTone (schema, good).ok);                                           // a program is not a tone
     CHECK_FALSE (parseBank (schema, good).ok);                                           // nor a bank
-    CHECK_FALSE (parseTone (schema, "{\"format\":1,\"kind\":\"tone\",\"params\":5}").ok);
-    CHECK_FALSE (parseBank (schema, "{\"format\":1,\"kind\":\"bank\",\"programs\":\"x\"}").ok);
-    CHECK_FALSE (parseBank (schema, "{\"format\":1,\"kind\":\"bank\",\"programs\":[5]}").ok);
-    CHECK_FALSE (parseBank (schema, "{\"format\":1,\"kind\":\"bank\",\"programs\":[{\"a\":3}]}").ok); // a broken program breaks the bank
+    CHECK_FALSE (parseTone (schema, "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"tone\",\"params\":5}").ok);
+    CHECK_FALSE (parseBank (schema, "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"bank\",\"programs\":\"x\"}").ok);
+    CHECK_FALSE (parseBank (schema, "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"bank\",\"programs\":[5]}").ok);
+    CHECK_FALSE (parseBank (schema, "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"bank\",\"programs\":[{\"a\":3}]}").ok); // a broken program breaks the bank
 
-    std::string tooMany = "{\"format\":1,\"kind\":\"bank\",\"programs\":[";
-    for (int i = 0; i < kBankSize + 1; ++i)
+    std::string tooMany = "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"bank\",\"programs\":[";
+    for (int i = 0; i < kTestBankSize + 1; ++i)
         tooMany += std::string (i == 0 ? "" : ",") + "{}";
     const auto many = parseBank (schema, tooMany + "]}");
     CHECK_FALSE (many.ok);
@@ -365,13 +366,15 @@ TEST_CASE ("Adversarial numbers are rejected or handled, never undefined behavio
         CHECK_FALSE (r.ok);
         CHECK (r.error.isNotEmpty());
     }
-    // Inside text, the same characters are just text.
-    CHECK (parse (programWith ("\"" + manyDigits + "\"")).ok);
-    CHECK (parse ("{\"format\":1,\"kind\":\"program\",\"name\":\"1e999999999 - .5\"}").ok);
+    // Inside text, the same characters are just text (up to the 4096-byte limit of one string).
+    CHECK (parse (programWith ("\"" + manyDigits.substr (0, 4000) + "\"")).ok);
+    CHECK_FALSE (parse (programWith ("\"" + manyDigits + "\"")).ok);
+    CHECK (parse ("{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"1e999999999 - .5\"}").ok);
 
     struct Good { const char* text; float expected; };
     const Good good[] = { { "-0", 0.0f }, { "0", 0.0f }, { "0.5", 0.5f }, { "5e-1", 0.5f }, { "5E-1", 0.5f }, { "0.25e+0", 0.25f },
-                          { "999999999", 1.0f }, { "1e999", 0.6f }, { "-1e999", 0.6f }, { "0.00000000000000000001", 0.0f } };
+                          { "999999999", 1.0f }, { "1e999", 0.6f }, { "-1e999", 0.6f },
+                          { "0.00000000000000000001", 1.0e-20f }, { "1e-999", 0.0f }, { "123456789.12345678901234567890e-9", 0.123456789f } };
     for (const auto& g : good)
     {
         INFO (g.text);
@@ -438,7 +441,7 @@ TEST_CASE ("Fuzzed files: never a crash; whatever is accepted is valid and stabl
             if (r.ok)
             {
                 ++accepted;
-                REQUIRE (r.value.programs.size() == static_cast<size_t> (kBankSize));
+                REQUIRE (r.value.programs.size() == static_cast<size_t> (kTestBankSize));
                 const auto again = parseBank (schema, toJson (schema, r.value));
                 REQUIRE (again.ok);
                 REQUIRE (toJson (schema, again.value) == toJson (schema, r.value));
@@ -477,18 +480,18 @@ TEST_CASE ("Fuzzed files: never a crash; whatever is accepted is valid and stabl
 
 TEST_CASE ("Factory file names map to slots", "[presets][format]")
 {
-    CHECK (slotFromFileName ("A1-init.json") == 0);
-    CHECK (slotFromFileName ("a8-x") == 7);
-    CHECK (slotFromFileName ("B1") == 8);
-    CHECK (slotFromFileName ("H8-last.json") == 63);
-    CHECK (slotFromFileName ("I1") == -1);
-    CHECK (slotFromFileName ("A9") == -1);
-    CHECK (slotFromFileName ("A0") == -1);
-    CHECK (slotFromFileName ("A") == -1);
-    CHECK (slotFromFileName ("init.json") == -1);
+    CHECK (smallSchema().instrument().slotFromFileName ("A1-init.json") == 0);
+    CHECK (smallSchema().instrument().slotFromFileName ("a8-x") == 7);
+    CHECK (smallSchema().instrument().slotFromFileName ("B1") == 8);
+    CHECK (smallSchema().instrument().slotFromFileName ("H8-last.json") == 63);
+    CHECK (smallSchema().instrument().slotFromFileName ("I1") == -1);
+    CHECK (smallSchema().instrument().slotFromFileName ("A9") == -1);
+    CHECK (smallSchema().instrument().slotFromFileName ("A0") == -1);
+    CHECK (smallSchema().instrument().slotFromFileName ("A") == -1);
+    CHECK (smallSchema().instrument().slotFromFileName ("init.json") == -1);
 
     const auto schema = smallSchema();
-    const std::string ok = "{\"format\":1,\"kind\":\"program\",\"name\":\"X\"}";
+    const std::string ok = "{\"format\":1,\"instrument\":\"test-synth\",\"kind\":\"program\",\"name\":\"X\"}";
     const std::string broken = "{\"format\":1,";
     juce::StringArray errors;
     const auto bank = makeBankFromFiles (schema, "F",
