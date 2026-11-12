@@ -54,3 +54,17 @@ add_test(NAME host_smoke
 
 # Golden-render regression harness (ctest label "render").
 add_subdirectory(render_regression)
+
+# Steinberg VST3 validator (optional). Pass the path of a built `validator` binary, e.g. from CI:
+#   cmake ... -DVS_VST3_VALIDATOR=/path/to/validator
+# Unset (the default): no test is added and nothing else changes.
+set(VS_VST3_VALIDATOR "" CACHE FILEPATH "Path to the VST3 SDK validator executable (optional)")
+if(VS_VST3_VALIDATOR)
+    if(NOT EXISTS "${VS_VST3_VALIDATOR}")
+        message(FATAL_ERROR "VS_VST3_VALIDATOR does not exist: ${VS_VST3_VALIDATOR}")
+    endif()
+    add_test(NAME vst3_validator
+             COMMAND "${VS_VST3_VALIDATOR}"
+                     "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+    set_tests_properties(vst3_validator PROPERTIES LABELS vst3)
+endif()
