@@ -24,6 +24,10 @@ add_executable(VintageSynthTests
     dsp_unit/PartTests.cpp
     dsp_unit/RenderDemo.cpp)
 
+# M5 effect blocks (header-only, source/fx/).
+target_sources(VintageSynthTests PRIVATE
+    fx_unit/ChorusTests.cpp)
+
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
     Catch2::Catch2WithMain)
