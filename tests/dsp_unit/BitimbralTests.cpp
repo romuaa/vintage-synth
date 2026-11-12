@@ -1069,7 +1069,7 @@ TEST_CASE ("M3 parameters: IDs, order, ranges, defaults and display text", "[m3]
     vs::VintageSynthProcessor proc;
     auto& state = proc.getState();
     const auto& params = proc.getParameters();
-    REQUIRE (params.size() == 101);
+    REQUIRE (params.size() == 170); // Wave 3 appended 69 after mix.balance
 
     auto idAt = [&] (int i) { return dynamic_cast<juce::AudioProcessorParameterWithID*> (params[i])->paramID; };
     auto indexOf = [&] (const juce::String& id) {
@@ -1084,7 +1084,7 @@ TEST_CASE ("M3 parameters: IDs, order, ranges, defaults and display text", "[m3]
     CHECK (indexOf (vs::ParamID::keyMode) == indexOf (vs::ParamID::vintage) + 1);
     CHECK (indexOf (vs::ParamID::keySplitPoint) == indexOf (vs::ParamID::vintage) + 2);
     CHECK (indexOf (vs::ParamID::mixBalance) == indexOf (vs::ParamID::vintage) + 3);
-    CHECK (indexOf (vs::ParamID::mixBalance) == params.size() - 1);
+    CHECK (indexOf (vs::ParamID::fxChorusMode) == indexOf (vs::ParamID::mixBalance) + 1); // Wave 3 appends after it
 
     for (const char* id : { "lower.mix.pan", "upper.mix.pan", vs::ParamID::mixBalance })
     {

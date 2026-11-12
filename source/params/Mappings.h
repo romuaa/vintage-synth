@@ -113,4 +113,42 @@ inline BalanceGains balanceGains (float balance) noexcept
     const auto g = panGains (balance);
     return { g.left, g.right };
 }
+
+// ---- Effects (Wave 3, docs/architecture.md 6a.2). Slider 0..1 -> the effect block's units. ----
+
+/** Delay time: 1 ms .. 2 s, exponential (2000:1 over the slider). */
+inline constexpr float kDelayMinSec = 0.001f, kDelayMaxSec = 2.0f;
+inline float delayTimeSec (float v) noexcept { return kDelayMinSec * std::pow (kDelayMaxSec / kDelayMinSec, v); }
+inline float delayTimeFromSec (float s) noexcept
+{
+    const float c = s < kDelayMinSec ? kDelayMinSec : (s > kDelayMaxSec ? kDelayMaxSec : s);
+    return std::log (c / kDelayMinSec) / std::log (kDelayMaxSec / kDelayMinSec);
+}
+
+/** Delay feedback: 0 .. 95 % gain per repeat. */
+inline constexpr float kDelayMaxFeedback = 0.95f;
+inline float delayFeedback (float v) noexcept { return kDelayMaxFeedback * v; }
+inline float delayFeedbackFromGain (float g) noexcept { return g / kDelayMaxFeedback; }
+
+/** Reverb decay (RT60 at 1 kHz): 0.3 .. 20 s, exponential. */
+inline constexpr float kReverbMinDecaySec = 0.3f, kReverbMaxDecaySec = 20.0f;
+inline float reverbDecaySec (float v) noexcept { return kReverbMinDecaySec * std::pow (kReverbMaxDecaySec / kReverbMinDecaySec, v); }
+inline float reverbDecayFromSec (float s) noexcept
+{
+    const float c = s < kReverbMinDecaySec ? kReverbMinDecaySec : (s > kReverbMaxDecaySec ? kReverbMaxDecaySec : s);
+    return std::log (c / kReverbMinDecaySec) / std::log (kReverbMaxDecaySec / kReverbMinDecaySec);
+}
+
+/** Reverb pre-delay: 0 .. 200 ms, linear. */
+inline constexpr float kReverbMaxPreDelaySec = 0.2f;
+inline float reverbPreDelaySec (float v) noexcept { return kReverbMaxPreDelaySec * v; }
+inline float reverbPreDelayFromSec (float s) noexcept { return s / kReverbMaxPreDelaySec; }
+
+// ---- Arpeggiator / sequencer (Wave 3). These parameters are in physical units already. ----
+
+/** Swing (50 .. 75 %) and gate (5 .. 100 %) parameters -> fraction for the module. */
+inline double percentToFraction (float percent) noexcept { return static_cast<double> (percent) / 100.0; }
+
+/** Sequencer step offset in semitones, -24 .. +24 (shown signed: "+3 st", "0 st", "-12 st"). */
+inline int clampStepSemitones (int st) noexcept { return st < -24 ? -24 : (st > 24 ? 24 : st); }
 } // namespace vs::map
