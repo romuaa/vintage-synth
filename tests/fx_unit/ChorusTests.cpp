@@ -11,31 +11,54 @@ const float kMixes[] { kDefaultMix, 1.0f };     // every behavioural test runs a
 
 ChorusParams cp (ChorusMode m, float mix = kDefaultMix) { return { m, mix }; }
 
-/** Wet-path artefact level for a 1 kHz sine: power outside 1 kHz +-100 Hz (the Doppler sidebands
-    of the modulation are within +-20 Hz) relative to the power inside, on (out - dry). */
-double chorusArtefactDb (ChorusMode mode, float mix, double fs, bool leftChannel)
+/**
+    Interpolation error of the wet taps for a 1 kHz sine, in dB relative to the tap signal.
+    Processed one sample at a time; before each sample the hooks give the exact fractional delays
+    d_A[n], d_B[n] that sample uses. The wet taps are recovered from the output at mix 0.3 (original
+    structure: L = dry + g A, R = dry - g B). The ideal tap is the filtered sine evaluated at
+    t = n - d[n]: C sin(w t) + S cos(w t), with C and S (the HPF and LPF gain and phase at 1 kHz)
+    fitted by least squares. The fit can only absorb a constant gain/phase; the interpolation error
+    varies with the fractional part of d[n] and stays in the residual (linear interpolation gives
+    about -54 dB here, 4-point Lagrange about -100 dB). It also pins the hooks: reading d[n] one
+    sample late (the previous bug) gives about -63 dB at 48 kHz and fails the gate.
+*/
+double tapInterpolationErrorDb (ChorusMode mode, double fs, bool leftTap)
 {
-    const int order = orderFor (static_cast<size_t> (2.5 * fs));
-    const auto nfft = static_cast<size_t> (1) << order;
-    const size_t skip = static_cast<size_t> (0.2 * fs);
-    Stereo io = sine (skip + nfft, 1000.0, fs, 0.5f);
-    const Stereo dry = io;
+    const double w = 2.0 * 3.14159265358979323846 * 1000.0 / fs;
+    const auto skip = static_cast<size_t> (0.2 * fs);
+    const auto n = skip + static_cast<size_t> (2.2 * fs); // > 1 LFO period of mode I
+    const float mix = 0.3f;
+    const float g = std::pow (mix, Chorus::kMixExponent);
     Chorus c;
     c.prepare (fs, kMaxBlock);
-    runConst (c, io, cp (mode, mix));
-
-    std::vector<float> wet (nfft);
-    for (size_t i = 0; i < nfft; ++i)
-        wet[i] = leftChannel ? io.l[skip + i] - dry.l[skip + i] : io.r[skip + i] - dry.r[skip + i];
-    const auto p = powerSpectrumBH (wet.data(), order);
-    const double binHz = fs / static_cast<double> (nfft);
-    double in = 0.0, out = 0.0;
-    for (size_t k = 1; k < p.size(); ++k)
+    std::vector<double> tap (n), t (n);
+    for (size_t i = 0; i < n; ++i)
     {
-        const double hz = static_cast<double> (k) * binHz;
-        (std::abs (hz - 1000.0) <= 100.0 ? in : out) += p[k];
+        c.setParams (cp (mode, mix));
+        const double d = leftTap ? c.delaySamplesA() : c.delaySamplesB();
+        const auto x = static_cast<float> (0.5 * std::sin (w * static_cast<double> (i)));
+        float l = x, r = x;
+        c.process (&l, &r, 1);
+        tap[i] = leftTap ? static_cast<double> (l - x) / g : -static_cast<double> (r - x) / g;
+        t[i] = static_cast<double> (i) - d;
     }
-    return 10.0 * std::log10 (std::max (out, 1.0e-30) / in);
+    // Least squares for tap ~ C sin(w t) + S cos(w t) over the settled part.
+    double ss = 0, sc = 0, cc = 0, ys = 0, yc = 0;
+    for (size_t i = skip; i < n; ++i)
+    {
+        const double si = std::sin (w * t[i]), co = std::cos (w * t[i]);
+        ss += si * si; sc += si * co; cc += co * co; ys += tap[i] * si; yc += tap[i] * co;
+    }
+    const double det = ss * cc - sc * sc;
+    const double C = (ys * cc - yc * sc) / det, S = (yc * ss - ys * sc) / det;
+    double err = 0, sig = 0;
+    for (size_t i = skip; i < n; ++i)
+    {
+        const double ideal = C * std::sin (w * t[i]) + S * std::cos (w * t[i]);
+        err += (tap[i] - ideal) * (tap[i] - ideal);
+        sig += ideal * ideal;
+    }
+    return 10.0 * std::log10 (std::max (err, 1.0e-30) / sig);
 }
 
 /** Worst (lowest) short-term level of the mono sum (L+R)/2 relative to the dry sine, in dB,
@@ -220,18 +243,17 @@ TEST_CASE ("Chorus: delay modulation stays inside the delay line", "[fx][chorus]
     }
 }
 
-TEST_CASE ("Chorus: interpolation artefacts <= -80 dB for a 1 kHz sine", "[fx][chorus]")
+TEST_CASE ("Chorus: tap interpolation error <= -80 dB for a 1 kHz sine (vs. the ideal delayed sine)", "[fx][chorus]")
 {
-    for (const float mix : kMixes)
-        for (const double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
-            for (const auto mode : { ChorusMode::I, ChorusMode::II })
-            {
-                const double l = chorusArtefactDb (mode, mix, fs, true);
-                const double r = chorusArtefactDb (mode, mix, fs, false);
-                WARN ("chorus mix " << mix << " fs " << fs << " mode " << static_cast<int> (mode) << ": artefacts L " << l << " dB, R " << r << " dB");
-                CHECK (l <= -80.0);
-                CHECK (r <= -80.0);
-            }
+    for (const double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+        for (const auto mode : { ChorusMode::I, ChorusMode::II })
+        {
+            const double a = tapInterpolationErrorDb (mode, fs, true);
+            const double b = tapInterpolationErrorDb (mode, fs, false);
+            WARN ("chorus fs " << fs << " mode " << static_cast<int> (mode) << ": tap interpolation error A " << a << " dB, B " << b << " dB");
+            CHECK (a <= -80.0);
+            CHECK (b <= -80.0);
+        }
 }
 
 TEST_CASE ("Chorus: all sample rates, bounded and finite", "[fx][chorus]")

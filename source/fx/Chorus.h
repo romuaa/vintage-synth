@@ -120,23 +120,17 @@ public:
             return; // bit-exact bypass: the audio is not touched
 
         const float centre = kCentreMs * msToSamples;
-        const double invFs = 1.0 / fs;
 
         for (int i = 0; i < numSamples; ++i)
         {
             const float f = fade.next();
             const float g = wet.next() * f;
 
-            rate += (rateTarget - rate) * paramCoef;
-            depth += (depthTarget - depth) * paramCoef;
-
-            // Rounded triangle LFO in [-1, 1].
-            phase += static_cast<double> (rate) * invFs;
-            if (phase >= 1.0)
-                phase -= 1.0;
-            const float p = static_cast<float> (phase);
-            const float tri = p < 0.5f ? 4.0f * p - 1.0f : 3.0f - 4.0f * p;
-            const float lfo = 1.5f * tri - 0.5f * tri * tri * tri;
+            const LfoStep st = nextLfo();
+            rate = st.rate;
+            depth = st.depth;
+            phase = st.phase;
+            const float lfo = st.value;
 
             const float dl = safeInput (left[i]), dr = safeInput (right[i]);
             const float mono = 0.5f * (dl + dr) * f;
@@ -169,9 +163,18 @@ public:
     double tailSeconds() const noexcept { return static_cast<double> (kMaxDelayMs) / 1000.0; }
 
     // ---- test hooks (cheap, read-only) ----
-    /** Current tap delays in samples (A = left tap, B = right tap), as used by the next sample. */
-    float delaySamplesA() const noexcept { return kCentreMs * msToSamples + depth * currentLfo(); }
-    float delaySamplesB() const noexcept { return kCentreMs * msToSamples - depth * currentLfo(); }
+    /** Tap delays in samples (A = left tap, B = right tap) that the next processed sample will use
+        (same computation as process(), so they match it exactly). */
+    float delaySamplesA() const noexcept
+    {
+        const LfoStep st = nextLfo();
+        return kCentreMs * msToSamples + st.depth * st.value;
+    }
+    float delaySamplesB() const noexcept
+    {
+        const LfoStep st = nextLfo();
+        return kCentreMs * msToSamples - st.depth * st.value;
+    }
     std::size_t lineCapacity() const noexcept { return line.capacity(); }
     bool isIdle() const noexcept { return idle; }
     std::uint64_t bufferWrites() const noexcept { return line.writes(); }
@@ -187,11 +190,24 @@ private:
     }
 
 
-    float currentLfo() const noexcept
+    struct LfoStep
     {
-        const float p = static_cast<float> (phase);
+        float rate, depth;
+        double phase;
+        float value; ///< rounded triangle in [-1, 1]
+    };
+
+    /** One sample of parameter smoothing and LFO advance (used by process() and the test hooks). */
+    LfoStep nextLfo() const noexcept
+    {
+        LfoStep st { rate + (rateTarget - rate) * paramCoef, depth + (depthTarget - depth) * paramCoef, phase, 0.0f };
+        st.phase += static_cast<double> (st.rate) / fs;
+        if (st.phase >= 1.0)
+            st.phase -= 1.0;
+        const float p = static_cast<float> (st.phase);
         const float tri = p < 0.5f ? 4.0f * p - 1.0f : 3.0f - 4.0f * p;
-        return 1.5f * tri - 0.5f * tri * tri * tri;
+        st.value = 1.5f * tri - 0.5f * tri * tri * tri;
+        return st;
     }
 
     double fs = 48000.0;
