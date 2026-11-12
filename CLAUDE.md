@@ -30,7 +30,13 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   the plugin by them.
 - **pluginval: Claude runs it itself** (official Tracktion release v1.0.4, unpacked in the session
   scratchpad). Don't hand it to the user unless the harness refuses the command. See skill `validate-plugin`.
-- **Repo:** GitHub `romuaa/vintage-synth` (private), branch `main`. Commit and push only when the user asks.
+- **Repo:** GitHub `romuaa/vintage-synth` (private), branch `main`.
+- **Workflow: orchestrated agents, branches + PR** (skill `orchestrate`). Agents commit on feature
+  branches; the orchestrator pushes them as PRs so CI validates Windows. **Merge to `main` only after
+  the owner approves that milestone.** Never commit to `main` directly, never force-push.
+  The owner auditions at the end of M2, M5 and M6 and sets the UI direction before M7.
+- **Contracts:** `docs/architecture.md` defines the interfaces agents build against (note events,
+  voice allocation, new parameters, effects, arp/seq). Change it only in its own commit.
 - **CI:** `.github/workflows/build.yml` builds, tests, and runs pluginval on macOS and Win x64.
   Win ARM64 runs build, unit tests and host_smoke (there's no ARM64 pluginval). Check results with
   `gh run list` / `gh run view <id> --log-failed` (gh is installed and authenticated). Never claim
@@ -42,6 +48,12 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Dependabot doesn't bump them, so check github.com/actions/runner-images when touching CI.
   Pushing to `main` cancels a running build of `main` (concurrency group): wait for a run you
   still need before pushing again.
+- **CI cost (while private):** docs-only changes don't build; draft PRs build Windows x64 only and
+  the full matrix runs when the PR is marked ready, on `main` and on manual dispatch; jobs time out
+  after 30 min; Dependabot is monthly. Push a branch once, after local tests and a sanitizer run.
+  The repo is planned to go public; then the draft tier can go.
+- **VST3 validator:** CI only (ctest `vst3_validator`, macOS and Windows x64), built from the SDK
+  pinned by tag and SHA in `build.yml`. Not built locally.
 - **Supply chain:** every third-party action is pinned by full commit SHA with a `# vX.Y.Z` comment.
   `.github/dependabot.yml` updates Actions and submodules weekly. Before merging a submodule PR,
   check it points at a release tag and update the versions named here and in README.
@@ -54,31 +66,42 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
+- **M2 polyphony: done** (16 voices, Poly/Unison/Solo, steal fade, pedal, portamento, velocity, bend
+  range, mod wheel; audition approved by ear; 32 voices = 5 % of a core at 48 kHz). Lower part only.
 - M0 skeleton: done. M1 single-part voice engine: done (mono, Lower part only; demo approved by ear;
   all panel interpretations confirmed by the owner).
 - CI: green on macOS universal, Windows x64 and Windows ARM64 (build, tests, host_smoke, pluginval
   where available); Trivy green; Dependabot active. History: `CHANGELOG.md`.
-- Open CI item: confirm the compiler cache pays off. The first (cold) run after enabling it took
-  macOS 14 / Win x64 21 / Win ARM64 15.5 min. On the next push, compare the times and the cache hit
-  rate. If the warm run isn't clearly faster, revisit (`docs/engineering-notes.md`, CI section).
-- **Next: M2 polyphony** — 16 voices per part, Poly/Unison/Solo assign modes, portamento, voice
-  stealing with a 2–5 ms fade, velocity, configurable bend range. Replaces the mono last-note logic
-  in `engine/Part`; keep `voice_bench` within the CPU budget (see skill `validate-plugin`).
-- Later: M3 Upper part + Whole/Dual/Split, M4 arpeggiator + 16-step sequencer, M5 chorus/delay/reverb,
-  M6 presets/banks + golden renders, M7 custom UI, M8 hardening/signing/release.
+- Compiler cache confirmed: a warm CI run takes macOS 3.5 / Win x64 6.7 / Win ARM64 5.9 min (98 % hits).
+- **Wave 0 (contracts): done** — `docs/architecture.md`; judgement calls in `docs/decisions.md`
+  are marked (review) until the owner confirms them.
+- **Wave 1: done, awaiting the owner's merge approval** (one PR). Contains M2, the M5 effect blocks
+  (`source/fx/`, standalone, not wired in; first listen approved), the golden-render harness, the
+  VST3 validator in CI, CI cost controls and the plugin-host script.
+- **After the merge:** public-release audit (the owner flips visibility), Linux x86_64 target with a
+  sanitizer CI job, then Wave 2. Open engine item for M3: 1× oversampling at host rates ≥ 88.2 kHz
+  (32 voices cost 18 % of a core at 192 kHz).
+- Then: Wave 2 = M3 Upper part + Whole/Dual/Split, with M4 arp/sequencer in parallel;
+  Wave 3 = integrate M4/M5 + M6 presets/banks/goldens; Wave 4 = M7 custom UI + M8 release.
 
 ## Layout
 
 ```
 source/dsp/      JUCE-free DSP blocks: Oscillator (+BlepTable), Filters, Envelope, Lfo, Drift
-source/engine/   Voice, Part (note handling, LFO, oversampling), Oversampler
+source/engine/   Voice, Part, VoiceAllocator (note -> voice logic), NoteEvent/EventParser (MIDI),
+                 Modulation (shared per-part modulation), Oversampler
+source/fx/       JUCE-free effect blocks: Chorus, Delay, Reverb (not wired in yet)
 source/params/   PartParamList.h (X-macro list of all per-part params), Mappings.h (value -> unit),
                  ParameterLayout (APVTS layout + binding), StateVersion.h
 source/          PluginProcessor.*   (later: fx/ presets/ ui/)
 tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
 tests/benchmarks/ voice_bench (CPU cost per voice)
 tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)
+tests/render_regression/ golden-render harness (ctest label "render"; scripts/ and golden/ feature references)
+docs/architecture.md  contracts between work streams (interfaces, behaviour, gates)
 docs/decisions.md  design decision log (what we chose and why)
+docs/ui-test-checklist.md  manual checks in the plugin host
+scripts/dev-host.sh  builds plugin + JUCE AudioPluginHost and opens the synth in it (-DVS_BUILD_DEV_HOST)
 docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
 README.md        public overview, build and test instructions
 CHANGELOG.md     what was done, per milestone (update it with every milestone/infra change)
@@ -123,6 +146,10 @@ must build for all three targets (mac universal, win x64, win ARM64).
 - JUCE's VST3 wrapper adds 2080 "MIDI CC" params + "Bypass"; exclude them when counting ours.
 - Wrap `JUCE_PLUGIN_ARTEFACT_FILE` in `$<GENEX_EVAL:…>`; tests take include dirs/defines from the plugin target.
 - Measure filters far below Nyquist and above the float floor; isolate a failing gate with a diagnostic test.
+- Run the tests under ASan/UBSan before pushing: MSVC's heap catches overruns macOS tolerates.
+- A new continuous parameter is not smoothed unless added to `PartModulator::next`.
+- Per-voice state inherited by a later note must be reset or computed from absolute time; a
+  block-size test only proves something if voices are reused.
 - Rosetta isn't installed: the x86_64 slice is checked with `lipo` only, never run locally.
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
@@ -149,6 +176,7 @@ Say plainly which of these steps you could not run locally (e.g. Windows ARM64 r
 | `add-parameter` | Adding or changing any parameter, preset field, or saved state |
 | `realtime-review` | Writing or reviewing any code reachable from `processBlock` |
 | `release` | Signing, notarization, installers, version bumps |
+| `orchestrate` | Starting or resuming milestone work with agents (`/orchestrate`) |
 
 ## Ending a turn — "What I need from you"
 

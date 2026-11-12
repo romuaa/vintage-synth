@@ -1,18 +1,26 @@
 #include "engine/Part.h"
 
-#include "dsp/Filters.h"
 #include "engine/Oversampler.h"
 #include "params/Mappings.h"
 
+#include <cmath>
+
 namespace vs
 {
-static_assert (kLfoWaveLabels.size() == dsp::kNumLfoWaves, "LFO wave labels must match dsp::LfoWave");
+namespace
+{
+AssignMode assignModeOf (const PartParams& p) noexcept
+{
+    return static_cast<AssignMode> (juce::jlimit (0, 2, p.assignMode));
+}
+} // namespace
 
 void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor, std::uint32_t seed)
 {
     maxBlock = juce::jmax (1, maxBlockSize);
     osFactor = oversamplingFactor;
     osRate = static_cast<float> (sampleRate) * static_cast<float> (osFactor);
+    stealFadeSamples = juce::jmax (1, juce::roundToInt (kStealFadeSeconds * osRate));
 
     oversampler = makeVoiceOversampler (osFactor);
     oversampler->initProcessing (static_cast<size_t> (maxBlock));
@@ -23,9 +31,13 @@ void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor,
     silence.setSize (1, maxBlock);
     silence.clear();
 
-    smoothCoef = dsp::onePoleCoef (0.005f, osRate);
-    lfo.prepare (osRate, seed ^ 0x5bd1e995u);
-    voice.prepare (osRate, seed);
+    partSeed = seed;
+    modulator.prepare (osRate, seed ^ 0x5bd1e995u);
+    for (size_t i = 0; i < voices.size(); ++i)
+    {
+        voices[i].prepare (osRate, seed + static_cast<std::uint32_t> (i));
+        voicePtrs[i] = &voices[i];
+    }
     reset();
 }
 
@@ -33,32 +45,60 @@ void Part::reset() noexcept
 {
     if (oversampler != nullptr)
         oversampler->reset();
-    lfo.reset();
-    voice.reset();
-    smoothed = target;
-    bend = bendTarget = 0.0f;
-    numHeld = 0;
+    modulator.reset (target);
+    for (auto& v : voices)
+        v.reset();
+    pending.fill (Pending {});
+    releaseCountdown.fill (-1);
+    late.fill (false);
+    unisonRng.setSeed (partSeed * 2654435761u + 0x7f4a7c15u);
+    allocator.reset();
+    allocator.initMode (assignModeOf (target), map::unisonVoices (target.unisonVoices));
+    allocator.setLegatoGlideOnly (target.portaMode == 1);
+    bendValue = 0.0f;
+    bendRangeIndex = target.bendRange;
+    bendRangeSemis = map::bendRangeSemis (bendRangeIndex);
+    modWheel = 0.0f;
+}
+
+int Part::numSoundingVoices() const noexcept
+{
+    int n = 0;
+    for (size_t i = 0; i < voices.size(); ++i)
+        n += (voices[i].isActive() || pending[i].active) ? 1 : 0;
+    return n;
 }
 
 void Part::applyBlockParams() noexcept
 {
     // Switches and envelope times apply immediately; continuous values are smoothed per sample.
-#define VS_COPY_CHOICE(member, ...) smoothed.member = target.member;
-    VS_PART_CHOICE_PARAMS (VS_COPY_CHOICE)
-#undef VS_COPY_CHOICE
+    modulator.setTarget (target);
+    modulator.setVintage (vintage);
+    for (auto& v : voices)
+        v.setBlockParams (target, vintage);
 
-    lfo.setWave (static_cast<dsp::LfoWave> (target.lfoWave));
-    lfo.setRate (map::lfoRateHz (target.lfoRate));
-    lfo.setDelay (map::lfoDelaySec (target.lfoDelay));
-    voice.setBlockParams (target, vintage);
+    allocator.setLegatoGlideOnly (target.portaMode == 1);
+    // A mode or unison-count change releases the sounding voices (envelope release, no reset).
+    allocator.setMode (assignModeOf (target), map::unisonVoices (target.unisonVoices), sink());
+
+    if (target.bendRange != bendRangeIndex)
+    {
+        bendRangeIndex = target.bendRange;
+        bendRangeSemis = map::bendRangeSemis (bendRangeIndex);
+        modulator.setBendTarget (bendValue * bendRangeSemis); // smoothed like any bend move
+    }
 }
 
-void Part::render (float* out, int numSamples, const juce::MidiBuffer& midi, int startSample) noexcept
+void Part::render (float* out, int numSamples, std::span<const NoteEvent> events) noexcept
 {
     jassert (numSamples <= maxBlock);
     numSamples = juce::jmin (numSamples, maxBlock);
     if (numSamples <= 0)
+    {
+        for (const auto& e : events)
+            handleEvent (e); // zero-length host block: state changes still count
         return;
+    }
 
     applyBlockParams();
 
@@ -69,22 +109,19 @@ void Part::render (float* out, int numSamples, const juce::MidiBuffer& midi, int
     float* os = osBlock.getChannelPointer (0);
 
     int pos = 0;
-    for (const auto meta : midi)
+    for (const auto& e : events)
     {
-        const int at = meta.samplePosition - startSample;
-        if (at < 0)
-            continue;
-        if (at >= numSamples)
-            break;
-
+        jassert (e.offset >= pos); // offsets must be ascending
+        const int at = juce::jlimit (pos, numSamples, e.offset);
         if (at > pos)
         {
             renderOversampled (os + pos * osFactor, (at - pos) * osFactor);
             pos = at;
         }
-        handleMidi (meta.data, meta.numBytes);
+        handleEvent (e);
     }
-    renderOversampled (os + pos * osFactor, (numSamples - pos) * osFactor);
+    if (numSamples > pos)
+        renderOversampled (os + pos * osFactor, (numSamples - pos) * osFactor);
 
     float* channels[] { out };
     juce::dsp::AudioBlock<float> outBlock (channels, 1, static_cast<size_t> (numSamples));
@@ -93,108 +130,230 @@ void Part::render (float* out, int numSamples, const juce::MidiBuffer& midi, int
 
 void Part::renderOversampled (float* os, int n) noexcept
 {
-    const float a = smoothCoef;
-    for (int i = 0; i < n; ++i)
+    for (int pos = 0; pos < n;)
     {
-#define VS_SMOOTH(member, ...) smoothed.member += (target.member - smoothed.member) * a;
-        VS_PART_FLOAT_PARAMS (VS_SMOOTH)
-#undef VS_SMOOTH
-        bend += (bendTarget - bend) * a;
+        int len = juce::jmin (maxSubBlock, n - pos);
+        // A stolen voice starts its new note exactly at the end of its fade, and a delayed
+        // release lands on its exact sample: split there.
+        for (size_t v = 0; v < voices.size(); ++v)
+        {
+            if (pending[v].active)
+                len = juce::jmin (len, juce::jmax (1, voices[v].getFadeRemaining()));
+            if (releaseCountdown[v] > 0)
+                len = juce::jmin (len, releaseCountdown[v]);
+        }
 
-        const float lfoValue = lfo.process();
-        const float tremolo = 1.0f - map::vcaLfoDepth (smoothed.vcaLfoMod) * 0.5f * (1.0f - lfoValue);
-
-        const ModFrame frame { smoothed,
-                               lfoValue,
-                               bend,
-                               dsp::tptG (map::hpfHz (smoothed.hpfCutoff), osRate),
-                               map::vcaGain (smoothed.vcaLevel) * tremolo,
-                               vintage };
-
-        os[i] = voice.process (frame);
+        modulator.next (len, modBlock);
+        Voice::renderBlock (voicePtrs.data(), kMaxVoices, modBlock, os + pos);
+        pos += len;
+        for (auto& c : releaseCountdown)
+            if (c > 0)
+                c -= len;
+        afterSubBlock();
     }
 }
 
-void Part::handleMidi (const juce::uint8* data, int numBytes) noexcept
+void Part::afterSubBlock() noexcept
 {
-    if (numBytes < 2 || data[0] < 0x80 || data[0] >= 0xF0)
-        return; // running status is resolved by the host; system messages are ignored
-
-    const int status = data[0] & 0xF0;
-    const int d1 = data[1] & 0x7F;
-    const int d2 = numBytes > 2 ? (data[2] & 0x7F) : 0;
-
-    switch (status)
+    int finished[kMaxVoices];
+    int numFinished = 0;
+    for (size_t i = 0; i < voices.size(); ++i)
     {
-        case 0x90:
-            if (d2 > 0)
-                noteOn (d1, static_cast<float> (d2) / 127.0f);
-            else
-                noteOff (d1);
+        auto& v = voices[i];
+        auto& p = pending[i];
+        if (p.active)
+        {
+            if (v.getFadeRemaining() > 0)
+                continue;
+            v.reset();
+            p.active = false;
+            startVoice (p.action);
+            late[i] = true;
+        }
+        if (releaseCountdown[i] == 0)
+        {
+            releaseCountdown[i] = -1;
+            v.noteOff();
+        }
+        if (! p.active && ! v.isActive() && allocator.isVoiceBusy (static_cast<int> (i)))
+            finished[numFinished++] = static_cast<int> (i);
+    }
+
+    // Report in the order the voices finished (exact sample inside the sub-block, then index):
+    // the allocator's "idle longest" choice must not depend on how the render is split.
+    for (int a = 1; a < numFinished; ++a)
+    {
+        const int v = finished[a];
+        int b = a;
+        for (; b > 0; --b)
+        {
+            const int u = finished[b - 1];
+            const int tu = voices[static_cast<size_t> (u)].getIdleAt(), tv = voices[static_cast<size_t> (v)].getIdleAt();
+            if (tu < tv || (tu == tv && u < v))
+                break;
+            finished[b] = u;
+        }
+        finished[b] = v;
+    }
+    for (int a = 0; a < numFinished; ++a)
+        allocator.voiceIdle (finished[a]);
+}
+
+void Part::handleEvent (const NoteEvent& e) noexcept
+{
+    switch (e.type)
+    {
+        case EventType::NoteOn:
+            // The LFO delay restarts when a note starts with no other note held (by a key or by
+            // the sustain pedal).
+            if (! allocator.anyNoteHeldExcept (e.note))
+                modulator.triggerLfo();
+            allocator.noteOn (e.note, e.value, sink());
             break;
 
-        case 0x80:
-            noteOff (d1);
+        case EventType::NoteOff:
+            allocator.noteOff (e.note, sink());
             break;
 
-        case 0xE0:
-            bendTarget = static_cast<float> ((d2 << 7 | d1) - 8192) / 8192.0f * bendRangeSemis;
+        case EventType::PitchBend:
+            bendValue = e.value;
+            modulator.setBendTarget (bendValue * bendRangeSemis);
             break;
 
-        case 0xB0:
-            if (d1 == 123) // all notes off
-                allNotesOff();
-            else if (d1 == 120) // all sound off
+        case EventType::ModWheel:
+            modWheel = e.value;
+            modulator.setModWheel (modWheel);
+            break;
+
+        case EventType::SustainPedal:
+            allocator.setSustain (e.value >= 0.5f, sink());
+            break;
+
+        case EventType::AllNotesOff:
+            allocator.allNotesOff (sink()); // also clears the pedal
+            break;
+
+        case EventType::AllSoundOff:
+            allSoundOff();
+            break;
+
+        case EventType::ResetControllers:
+            bendValue = 0.0f;
+            modulator.setBendTarget (0.0f);
+            modWheel = 0.0f;
+            modulator.setModWheel (0.0f);
+            allocator.setSustain (false, sink()); // releases the notes only the pedal was holding
+            break;
+    }
+}
+
+void Part::allSoundOff() noexcept
+{
+    allocator.killAll();
+    for (auto& v : voices)
+        v.reset();
+    pending.fill (Pending {});
+    releaseCountdown.fill (-1);
+    late.fill (false);
+}
+
+void Part::execute (const VoiceAction& a) noexcept
+{
+    const auto i = static_cast<size_t> (a.voice);
+    auto& v = voices[i];
+    auto& p = pending[i];
+
+    switch (a.type)
+    {
+        case VoiceAction::Type::Start:
+        case VoiceAction::Type::Steal:
+            releaseCountdown[i] = -1; // a new note cancels a delayed release of the old one
+            if (p.active)
             {
-                allNotesOff();
-                voice.reset();
+                // Still fading out for an earlier steal: the newest note starts when the fade ends.
+                p.action = a;
             }
-            else if (d1 == 121) // reset all controllers
-                bendTarget = 0.0f;
+            else if (a.type == VoiceAction::Type::Steal && v.isActive())
+            {
+                v.startFade (stealFadeSamples);
+                p = Pending { true, a };
+            }
+            else
+            {
+                if (a.type == VoiceAction::Type::Steal)
+                    v.reset(); // finished meanwhile: no fade needed
+                startVoice (a);
+                late[i] = false;
+            }
             break;
 
-        default:
+        case VoiceAction::Type::Retarget:
+            if (p.active)
+                p.action.note = a.note;
+            else
+                v.setNote (a.note, target.portaTime > 0.0f && a.glideFrom == VoiceAction::kGlideFromCurrent);
+            break;
+
+        case VoiceAction::Type::Release:
+            // A stolen note (fading in, or started late) is released as late as it started.
+            if (p.active || late[i])
+            {
+                if (releaseCountdown[i] < 0)
+                    releaseCountdown[i] = stealFadeSamples;
+            }
+            else
+            {
+                v.noteOff();
+            }
             break;
     }
 }
 
-void Part::noteOn (int note, float velocity) noexcept
+void Part::startVoice (const VoiceAction& a) noexcept
 {
-    noteOff (note); // re-pressed key moves to the top of the stack
+    auto& v = voices[static_cast<size_t> (a.voice)];
 
-    if (numHeld == 0)
-        lfo.trigger();
+    // Glide source: the sounding pitch (mono modes, retrigger) or the previously played note.
+    bool glide = false;
+    float from = 0.0f;
+    if (target.portaTime > 0.0f)
+    {
+        if (a.glideFrom == VoiceAction::kGlideFromCurrent && v.isActive())
+        {
+            glide = true;
+            from = v.getPitch();
+        }
+        else if (a.glideFrom >= 0)
+        {
+            glide = true;
+            from = static_cast<float> (a.glideFrom);
+        }
+    }
 
-    if (numHeld < static_cast<int> (held.size()))
-        held[static_cast<size_t> (numHeld++)] = note;
+    float level = 1.0f, pos = 0.0f;
+    if (allocator.getMode() == AssignMode::Unison)
+    {
+        const int n = allocator.getUnisonCount();
+        level = 1.0f / std::sqrt (static_cast<float> (n));
+        pos = static_cast<float> (a.voice) / static_cast<float> (n - 1) - 0.5f; // symmetric, -0.5 .. 0.5
 
-    voice.noteOn (note, velocity);
-}
+        // Voices starting from idle get a fixed phase pattern on a random base: quadratic phases
+        // k^2 / (2n) cycles have a phasor sum of magnitude exactly sqrt(n) for even n, so the
+        // 1/sqrt(n) level holds also at detune 0, the same on every note (random independent
+        // phases gave -4.8 .. -26.7 dB). The allocator starts the group with voice 0.
+        if (a.voice == 0)
+        {
+            unisonBase1 = unisonRng.unipolar();
+            unisonBase2 = unisonRng.unipolar();
+        }
+        const double k = static_cast<double> (a.voice);
+        const double offset = k * k / (2.0 * static_cast<double> (n));
+        auto wrap = [] (double x) { return static_cast<float> (x - std::floor (x)); };
+        v.setRestartPhases (wrap (unisonBase1 + offset), wrap (unisonBase2 + offset));
+    }
 
-void Part::noteOff (int note) noexcept
-{
-    int i = 0;
-    while (i < numHeld && held[static_cast<size_t> (i)] != note)
-        ++i;
-    if (i == numHeld)
-        return;
-
-    for (; i < numHeld - 1; ++i)
-        held[static_cast<size_t> (i)] = held[static_cast<size_t> (i + 1)];
-    --numHeld;
-
-    if (note != voice.getNote())
-        return;
-
-    if (numHeld > 0)
-        voice.setNote (held[static_cast<size_t> (numHeld - 1)]);
-    else
-        voice.noteOff();
-}
-
-void Part::allNotesOff() noexcept
-{
-    numHeld = 0;
-    voice.noteOff();
+    v.start (a.note, a.velocity, level, pos);
+    if (glide)
+        v.glideFrom (from);
 }
 } // namespace vs

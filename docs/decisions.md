@@ -3,6 +3,96 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Wave 1 — M2 polyphony, effect blocks, owner decisions (2026-11-12)
+
+### Owner decisions and approvals
+- **M2 audition approved by ear** (polyphonic demo: pads, steals, unison lead, pedal, velocity, solo bass).
+- **Effects, first listen on the standalone blocks:** chorus approved at the stronger maximum;
+  delay approved with a 700 ms default time and about 0.4 as a typical level; reverb liked. The
+  settings of all three get their final evaluation in the plugin (M5 audition).
+- **The repository goes public after Wave 1 is merged** (free CI runners, code scanning). Before the
+  flip: history scan for secrets and brand names, `SECURITY.md`, `CONTRIBUTING.md`, branch protection.
+- **Contributions are accepted under AGPLv3 only**, no contributor agreement.
+- **Commit author e-mail stays as it is** (no history rewrite).
+- **Linux x86_64 VST3 becomes a supported target**, built and validated in CI with a sanitizer job;
+  the owner can test manually in a DAW on Linux. Work starts after Wave 1 merges.
+- **Plugin host for hands-on testing: JUCE's AudioPluginHost**, built from the JUCE submodule
+  (`scripts/dev-host.sh`). No new dependency.
+
+### M2 behaviour (review unless marked)
+| Decision | Why |
+|---|---|
+| A voice that starts from idle gets fresh oscillator start phases and noise seeds from its own deterministic generator, and its filters and ENV-1 are reset. A re-played Solo note no longer continues the previous phase. | A voice that stops inside a sub-block keeps evolving to the sub-block's end, so anything inherited by the next note made renders depend on the host block size (up to −5.7 dB in Solo). Free-running oscillators behave this way on the analog original. |
+| Unison voices starting from idle share one base phase per note plus a fixed offset of k²/(2n) cycles for voice k. | With independent random phases, unison at detune 0 had a random level per note (−4.8 to −26.7 dB with 16 voices). This pattern sums to exactly √n, so the level equals one voice at any detune. At detune 0, even harmonics get a fixed colouring. |
+| Unison retriggers and returns legato exactly like Solo. | The contract only defined it for Solo; one rule for both mono modes. |
+| "A key held" means a physically held key for Legato portamento. For the LFO-delay restart, notes held by the sustain pedal also count. | Legato is a playing technique; but delayed vibrato must not drop out on ringing pedal notes when the next note is played. |
+| In Poly, every new note glides from the previously played note. | As specified; chords glide internally when portamento is on, as on the classic. |
+| A stolen note keeps its gate length: start and release are both delayed by the 3 ms fade. A steal of a voice whose envelope has already ended starts at once. | A stolen note shorter than 3 ms was silently dropped. |
+| Stealing: "oldest in release" is the voice that entered release first; pedal-held voices count as held. Re-pressing a key retriggers its releasing or pedal-held voice. | Simple, deterministic rules. |
+| A mode or unison-count change releases all voices and forgets held keys (they must be re-pressed). | Avoids stuck or orphaned notes across a mode change. |
+| Idle voices are reported in the order they finished (sample-exact). | "Idle longest" must not depend on block splitting; it changed which voice a note landed on. |
+| Envelope key follow follows a legato note change at the event. | Matches a keyboard CV; the times used to change one host block late. |
+| Mod wheel: wheel × depth is added to the VCO LFO mod slider before the taper, capped at the slider maximum; it is subject to the LFO delay. | Same control path as the slider. |
+| Portamento time applies per block; unison detune, velocity amounts, wheel depth and the wheel are smoothed. Retriggering a sounding voice smooths velocity and unison level over 5 ms. | No zipper noise or gain steps. |
+| Pitch glide and drift are computed from absolute time in double precision, rounded once. | Per-sub-block float rounding integrates into phase (−74 dB between block sizes for glide). Now −118 dB or better with 16 voices at full Vintage. |
+| Bend range labels are "0 st" … "12 st"; the velocity parameter names contain an arrow (UTF-8, guarded by a test). | Readability; "Velocity to VCA" is the fallback if a host shows it badly. |
+| **CPU at high session rates (open):** cost scales with the sample rate. 32 voices at 2× cost 5.0 % of a core at 48 kHz but 18.2 % at 192 kHz, above the 15 % budget, which is defined at 48 kHz. Planned for M3: 1× oversampling when the host rate is 88.2 kHz or higher. | The internal rate is then at least 88.2 kHz at every host rate, which is what the alias gate needs. |
+
+### Effect blocks (review unless marked)
+| Decision | Why |
+|---|---|
+| Chorus mix curve: wet gain = mix^1.152 (0.45 at the default mix 0.5, 1.0 at full mix). The part of the wet signal that differs between left and right is capped at 0.7, and above the default the output is level-compensated. (strength confirmed by owner) | Full mix would otherwise cancel completely in mono; the worst mono dip at full mix is −12.5 dB, and −5.1 dB at the default. |
+| A settled delay time is rounded to a whole sample (echo spacing within ±0.5 sample). | At fractional delays the interpolator darkened every repeat (0.5 dB per repeat at 10 kHz), depending on time × sample rate. |
+| Delay time changes glide like tape (pitch bends during the change). | Click-free and musical. |
+| Reverb high-frequency damping is limited at short decays (ratio not below about 0.37 at 1 s). | Heavier damping left a sparse, ringing tail above 15 kHz. |
+| Reverb gets louder with longer decay (wet −13 dB at 0.5 s, +5 dB at 20 s at level 1). | Natural behaviour of the network; to be judged at the M5 audition. |
+| Delay default time 700 ms, default level 0 (off). (confirmed by owner) | Owner's choice after listening. |
+
+## Wave 1 — M2a, test infrastructure, CI cost (2026-11-12)
+
+| Decision | Why |
+|---|---|
+| **Fast `exp2` / `tan` / `tanh` approximations in the voice path**, with tested bounds (relative error ≤ 2e-7 / 5e-7, absolute ≤ 2e-7; static pitch error ≤ 0.009 cent). They return NaN for NaN. | Profiling showed the voice is limited by its serial dependency chain per sample, where libm calls cost far more than in isolation. NaN must still reach the output guard. |
+| **Voices render sample by sample across all voices** (interleaved, groups of 32) after a vectorised per-voice block-prepare phase; shared modulation is computed once per part in sub-blocks of up to 32 oversampled samples. | Interleaving lets the CPU overlap the voices' serial chains: 32 voices went from 11.3 % to 4.7 % of one core. Fully voice-by-voice rendering measured several times slower. |
+| **Parameter smoothing stays per sample (closed form), not control rate.** | Linear control-rate ramps measured −55 dB of error on fast cutoff moves. |
+| **Smoothers and the drift walk are kept as target + deviation.** | A plain one-pole stalls short of its target by an amount that depends on the step size, which made renders depend on block splitting and left tiny permanent pitch/cutoff offsets. |
+| **Renders are independent of host block size and event positions at any Vintage amount** (tested: −110 dB between block sizes 512 and 500 at Vintage 1). | Offline bounces and golden renders must be reproducible. |
+| **All Notes Off (CC 123 and the overflow marker) also clears the sustain pedal;** Reset Controllers clears bend, mod wheel and pedal. | A held pedal must never be able to keep notes hanging after a panic or an event overflow. |
+| **Every MIDI event is applied exactly once:** before the block → offset 0, at or after its end → after the last sample, zero-length blocks still apply events. Malformed channel messages are dropped. | A note-off at the block boundary was being lost (possible hung note); masking bad data bytes could turn garbage into All Sound Off. |
+| **Golden renders compare third-octave band energy per 25 ms frame, level envelope and tail** (3 dB per cell with ≤ 1 % outliers, 0.4 dB mean, 2 dB level, −80 dB gate). References store features, not audio. | Verified in CI: a reference generated on arm64 matches on x64 and with MSVC. Detects a 3.5 % cutoff change, a missing note or a 25 ms timing change. |
+| **VST3 validator: built in CI only** from Steinberg's SDK at `v3.8.1_build_84` (pinned by commit SHA, MIT), cached, run as ctest `vst3_validator` on macOS and Windows x64. The test requires the validator's own "N tests passed, 0 tests failed" line. (owner decision) | JUCE does not bundle the validator; nothing is added to the repo or linked into the plugin. Exit code alone passed in 0.2 s and proved nothing. |
+| **CI cost control while the repo is private:** docs-only changes don't build; draft PRs build Windows x64 only, the full matrix runs when a PR is marked ready, on `main` and on manual dispatch; 30-minute job timeout; Dependabot monthly. (review) | macOS minutes are billed at a multiple; MSVC is the one thing that cannot be checked locally. To be relaxed when the repo goes public (free standard runners). |
+| **Push discipline:** one push per branch, after local tests, a local AddressSanitizer/UBSan run for engine changes, and the review fixes. Docs are batched with code. | 13 CI runs on the first orchestrated day, several of them avoidable. |
+| **Effects (owner feedback and review):** chorus full mix reaches wet ≈ dry, with the default at the earlier maximum; no bulk clearing on the audio thread; reported tail capped at 30 s; level 0 fades out in 20 ms and drops the tail (review). | See `docs/architecture.md` section 5. |
+
+## Wave 0 — contracts for M2–M5 (2026-11-12)
+
+The interfaces are in `docs/architecture.md`. These are the judgement calls behind them.
+All are marked **(review)**: the owner has not confirmed them yet.
+
+| Decision | Why |
+|---|---|
+| **Stolen voices fade out over 3 ms, then start the new note** (the note starts 3 ms late). No spare voices for the fade. (review) | Click-free with a fixed 16 voices and a predictable CPU cost. 3 ms is inside the 2–5 ms spec and below audible timing error. |
+| **Steal order:** oldest voice in release, else oldest held voice, never the newest. (review) | Releasing voices are the least audible to lose; protecting the newest note keeps the melody intact. |
+| **Unison:** 2/4/8/16 voices (default 4), total detune spread 0–50 ct, output scaled by 1/√n. (review) | A selectable count keeps CPU in the user's hands; 1/√n keeps loudness steady when the count changes. |
+| **Portamento is an RC glide in pitch**, time = 99 % of the interval, modes Always/Legato. (review) | Matches the analog behaviour and the envelope time definition already used. |
+| **Velocity:** two per-part amounts, to VCA gain (default 0.5) and to VCF envelope depth (default 0). (review) | The classic had no velocity; a modest VCA default suits modern keyboards, and amount 0 restores the original behaviour. |
+| **Sustain pedal (CC 64) and mod wheel vibrato (CC 1) are part of M2.** (review) | A polysynth without a sustain pedal is not playable; the wheel maps to the classic bender-section LFO vibrato. |
+| **Bend range per part, 0–12 semitones, default 2.** | Replaces the fixed ±2 from M1, as planned. |
+| **Parts are mono up to the mixer; stereo comes from pan and effects.** No per-voice unison stereo spread. (review) | One decimator per part instead of two: the decimator is a fixed per-part cost in a tight CPU budget. |
+| **Effects are global, in series on the stereo bus:** chorus → delay → reverb. Per-part sends are deferred. (review) | Simplest structure that gives the classic sound; per-part sends can be appended later without breaking IDs. |
+| **Whole mode plays the Lower part only** (16 voices). (review) | Simple and predictable; a 32-voice single patch is not needed for the CPU target. |
+| **MIDI is parsed once into plain `NoteEvent`s**; parts and the arpeggiator work on those. Fixed buffer; overflow drops the rest of the block and sends All Notes Off. | Lets the arp/sequencer be a pure, testable event transformer, and keeps `juce::MidiMessage` off the audio thread. Overflow can never hang a note. |
+| **CPU optimisation is part of M2**, target ≤ 0.30 % of a core per voice. | The extended benchmark measures 0.35 % per voice, so 32 voices ≈ 11.5 % of the 15 % budget. M2 adds per-voice work and the effects need about 1.5 %, so some margin has to be won back. (The earlier 0.47 % figure was a single unrepeated run and was not reproduced.) |
+| **Golden renders compare perceptual features, not samples.** | arm64/x64 and clang/MSVC math libraries differ in the last bits; a self-oscillating filter amplifies that. |
+
+### Process (owner decisions, 2026-11-12)
+- **Orchestrated development:** work is done by agents briefed against `docs/architecture.md`; the
+  orchestrator plans, verifies and merges (skill `orchestrate`).
+- **Git:** agents commit on feature branches, pushed as PRs so CI validates Windows. Merging to
+  `main` needs the owner's approval per milestone.
+- **Audition gates:** the owner listens at the end of M2, M5 and M6, and sets the UI direction before M7.
+
 ## CI and infrastructure (2026-11-12)
 
 | Decision | Why |

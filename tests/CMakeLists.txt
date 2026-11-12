@@ -22,7 +22,18 @@ add_executable(VintageSynthTests
     dsp_unit/FilterTests.cpp
     dsp_unit/EnvelopeLfoTests.cpp
     dsp_unit/PartTests.cpp
+    dsp_unit/EventTests.cpp
+    dsp_unit/FastMathTests.cpp
+    dsp_unit/VoiceAllocatorTests.cpp
+    dsp_unit/PolyphonySpecTests.cpp
     dsp_unit/RenderDemo.cpp)
+
+# M5 effect blocks (header-only, source/fx/).
+target_sources(VintageSynthTests PRIVATE
+    fx_unit/ChorusTests.cpp
+    fx_unit/DelayTests.cpp
+    fx_unit/ReverbTests.cpp
+    fx_unit/FxRenderDemo.cpp)
 
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
@@ -34,6 +45,10 @@ catch_discover_tests(VintageSynthTests)
 # CPU benchmark (not a test; run manually or from the validate-plugin skill).
 add_executable(voice_bench benchmarks/VoiceBench.cpp)
 target_link_libraries(voice_bench PRIVATE vs_test_core)
+
+# Effect CPU benchmark: chorus, delay, reverb and all three in series (stereo, 48 kHz).
+add_executable(fx_bench benchmarks/FxBench.cpp)
+target_link_libraries(fx_bench PRIVATE vs_test_core)
 
 # Host smoke test: loads the real VST3 bundle through JUCE's VST3 hosting.
 juce_add_console_app(host_smoke PRODUCT_NAME "host_smoke")
@@ -51,3 +66,24 @@ target_link_libraries(host_smoke PRIVATE
 add_dependencies(host_smoke VintageSynth_VST3)
 add_test(NAME host_smoke
          COMMAND host_smoke "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+
+# Golden-render regression harness (ctest label "render").
+add_subdirectory(render_regression)
+
+# Steinberg VST3 validator (optional). Pass the path of a built `validator` binary, e.g. from CI:
+#   cmake ... -DVS_VST3_VALIDATOR=/path/to/validator
+# Unset (the default): no test is added and nothing else changes.
+set(VS_VST3_VALIDATOR "" CACHE FILEPATH "Path to the VST3 SDK validator executable (optional)")
+if(VS_VST3_VALIDATOR)
+    if(NOT EXISTS "${VS_VST3_VALIDATOR}")
+        message(FATAL_ERROR "VS_VST3_VALIDATOR does not exist: ${VS_VST3_VALIDATOR}")
+    endif()
+    add_test(NAME vst3_validator
+             COMMAND "${VS_VST3_VALIDATOR}"
+                     "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+    # Exit code alone is not enough: require the validator's own summary with at least one test
+    # run and none failed, so a validator that loads nothing cannot pass silently.
+    set_tests_properties(vst3_validator PROPERTIES
+        LABELS vst3
+        PASS_REGULAR_EXPRESSION "Result: [1-9][0-9]* tests passed, 0 tests failed")
+endif()

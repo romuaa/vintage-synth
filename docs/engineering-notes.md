@@ -3,6 +3,33 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Wave 1: M2b polyphony (2026-11-12)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Notes on a reused voice differed with the host block size (up to −5.7 dB in Solo); a reused Poly voice started its filter envelope part-way open. | A voice that stops inside a sub-block keeps evolving to the sub-block's end. Oscillator phase, noise seeds, ENV-1, filters and drift were inherited by the next note. | **Every piece of per-voice state a later note inherits must be reset at restart or computed from absolute time.** |
+| A new note landed on a different voice depending on block size. | Idle voices were reported in loop-index order when two finished in the same sub-block. | Order-dependent bookkeeping follows sample time, never loop index. |
+| Glide and drift left −74 to −93 dB between block sizes. | A pitch value stepped per sub-block turns float rounding into a lasting phase difference. | Evaluate pitch terms from absolute time in double precision and round once. |
+| Envelope times changed one host block after a legato note change. | The times were only re-applied at block start. | A state change caused by an event is applied at the event. |
+| Unison at detune 0 had a random level on every note. | Independent random start phases sum coherently. | Give unison voices a fixed phase pattern whose sum is √n. |
+| The block-size tests passed while all of the above existed. | No test reused a voice: Poly took a fresh voice per note. | **A block-size test only proves something if voices are reused** (Solo/Unison, or Poly after idle), with envelopes of different lengths. |
+| Black-box tests written from the spec found nothing, but the code review found five defects. | Spec tests check stated behaviour; the defects were in properties the spec only states globally (block-size independence) or not at all (unison at detune 0). | Keep both: spec-first tests *and* an adversarial review with a fuzzer. |
+
+## Wave 1: M2a, effects, test infrastructure (2026-11-12)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Windows CI crashed in one new test (`0xc0000374` heap corruption on x64, `0xc0000409` on ARM64); macOS passed. | The test rendered a full 256-sample block past the end of a 24000-sample vector. The MSVC heap detects that; macOS without a sanitizer does not. | **Run the test binary under AddressSanitizer + UBSan before pushing engine or test changes** (`-fsanitize=address,undefined` in a second build dir). Test renders go through a helper that checks bounds. |
+| 32 voices cost 11.3 % although each math call is cheap in isolation. | The voice is one long serial dependency chain per sample; `exp2`/`tan`/`tanh` cost 3–4× more inside it than alone. | Interleave voices sample by sample, vectorise the coefficient work per block. **Profile by stubbing stages out, not by timing functions alone.** (`sample`/Instruments don't work in the sandbox.) |
+| Tiny permanent pitch and cutoff offsets; renders depended on block size with Vintage on. | `s += (t − s)·a` stops moving once the step is below half an ulp, up to hundreds of ulps short, and the stall point depends on the step size. | Keep one-pole smoothers as target + decaying deviation. |
+| `alignas` members made MSVC warn C4324 (padding) at `/W4`, an error in CI. | Warnings are errors. | Avoid `alignas` on struct members; MSVC-only warnings show up in CI only. |
+| The VST3 validator test "passed" in 0.2 s. | ctest only looked at the exit code and hid the output. | Require the tool's own summary line with `PASS_REGULAR_EXPRESSION`. **Check that a new CI check can fail.** |
+| Four effect tests could not fail for what they claimed (e.g. an interpolation test that linear interpolation would pass; a decay test that only used whole-sample delays). | Tests were written by the implementer against the implementation. | An independent reviewer asks of every test: "what wrong implementation would still pass?" |
+| Waking an idle delay/reverb could clear megabytes in one audio block. | "Clear in slices while idle" was finished at once on wake. | No bulk clearing on the audio thread: hide stale content by gating reads; `reset()` must be O(1). |
+| Counting allocations by replacing global `operator new` misses `malloc` (JUCE `HeapBlock`). | JUCE containers call `std::malloc` directly. | On macOS use libmalloc's `malloc_logger` hook, filtered to the test thread. The check is skipped on Windows and under ASan. |
+| Agent worktrees started from `main`, not from the wave branch, and lacked the contract file. | The worktree tool branches from the default branch. | Name the base branch in every brief. |
+| Submodules are empty in agent worktrees and the sandbox refuses `git config submodule.*`. | Sandbox. | Symlink `external/JUCE` and `external/Catch2` to the main checkout; commit with explicit paths (plain `git commit` may refuse; `commit-tree` works). |
+
 ## M0–M1 and CI hardening (2026-11-12)
 
 ### DSP
@@ -47,7 +74,7 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | First CI run: both Windows jobs failed at configure: "Visual Studio 17 2022 could not find any instance of Visual Studio". macOS passed. | The runner images no longer ship VS 2022. Don't hardcode `-G "Visual Studio …"`; pass only `-A x64` / `-A ARM64` and let CMake pick the newest VS. |
 | Actions were three majors behind (`checkout@v4`, `upload-artifact@v4`, `download-artifact@v4`) and referenced by mutable tags. | Updated to checkout v7.0.1, upload-artifact v7.0.2, download-artifact v8.0.2, pinned by commit SHA. Dependabot keeps them current. Mutable tags are a supply-chain risk: `aquasecurity/trivy-action` tags were hijacked in early 2026. Resolve SHAs with `gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`. |
 | Windows x64 CI took ~18 min (build 15 min). | LTO flags were PUBLIC on the plugin's shared code, so the plugin, `voice_bench` and the unit tests each ran a full MSVC link-time code generation (4.5 + 1 + 4 min). Fix: LTO PRIVATE on the plugin targets only; tests link `vs_test_core` (same sources, no LTO). Plus Ninja and a compiler cache (ccache/sccache) on every CI job. |
-| First run after the speed-up was *slower* (macOS 14 min vs 7, Win x64 21 vs 20, Win ARM64 15.5 vs 16). | Cold compiler cache (0 hits of ~250 compiles; ~100 MB stored), plus `vs_test_core` compiles JUCE a second time. Judge cache changes on the **second** run; check `--show-stats` hit rate in the "Compiler cache statistics" step. Warm-run timing: not measured yet. |
+| First run after the speed-up was *slower* (macOS 14 min vs 7, Win x64 21 vs 20, Win ARM64 15.5 vs 16). | Cold compiler cache (0 hits of ~250 compiles; ~100 MB stored), plus `vs_test_core` compiles JUCE a second time. Judge cache changes on the **second** run; check `--show-stats` hit rate in the "Compiler cache statistics" step. Warm run (2026-11-12, docs-only commit): macOS 3.5 min, Win x64 6.7 min, Win ARM64 5.9 min at 98.4 % hits, so the cache pays off. |
 | pluginval finishes in ~1–5 s in CI. | Not a bug: it ends with SUCCESS. The plugin has no GUI tests (`--skip-gui-tests`) and no inputs, so strictness 10 is quick. |
 | Code scanning upload returns 403 on this private repo. | No GitHub Advanced Security. Trivy results go to the log and a SARIF artifact; upload is behind `vars.CODE_SCANNING`. |
 

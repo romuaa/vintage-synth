@@ -6,6 +6,10 @@
 // The X-macros generate the PartParams snapshot struct, the APVTS layout,
 // and the APVTS -> snapshot binding, so the three can never diverge.
 //
+// Names are UTF-8 (the velocity amounts use an arrow, written as an escape so every compiler
+// reads the same bytes). ALWAYS convert a name with juce::String::fromUTF8 (name): building a
+// juce::String from it directly asserts in debug builds (non-ASCII char*) and mangles the arrow.
+// Guarded by the ProcessorTests "parameter names" test.
 // Float params are normalised slider values (0..1, or -1..1 for fine tune).
 // Physical mappings live in params/Mappings.h, shared by DSP and display text.
 
@@ -26,6 +30,11 @@ inline constexpr std::array<const char*, 2> kSlopeLabels { "-12 dB", "-24 dB" };
 inline constexpr std::array<const char*, 2> kEnvSourceLabels { "ENV-1", "ENV-2" };
 inline constexpr std::array<const char*, 4> kVcaLfoLabels { "0", "1", "2", "3" };
 inline constexpr std::array<const char*, 2> kPolarityLabels { "Normal", "Inverted" };
+inline constexpr std::array<const char*, 3> kAssignModeLabels { "Poly", "Unison", "Solo" };
+inline constexpr std::array<const char*, 4> kUnisonVoicesLabels { "2", "4", "8", "16" };
+inline constexpr std::array<const char*, 2> kPortaModeLabels { "Always", "Legato" };
+inline constexpr std::array<const char*, 13> kBendRangeLabels { "0 st", "1 st", "2 st", "3 st", "4 st", "5 st", "6 st",
+                                                                "7 st", "8 st", "9 st", "10 st", "11 st", "12 st" };
 
 // Octave offset of the "8'" position in each range list.
 inline constexpr int kVco1RangeIndexOf8ft = 2;
@@ -55,7 +64,12 @@ inline constexpr int kVco2RangeIndexOf8ft = 1;
     X (env2Attack,    "env2.attack",       "ENV-2 Attack",       0.0f, 1.0f, 0.05f, EnvTime)   \
     X (env2Decay,     "env2.decay",        "ENV-2 Decay",        0.0f, 1.0f, 0.5f,  EnvTime)   \
     X (env2Sustain,   "env2.sustain",      "ENV-2 Sustain",      0.0f, 1.0f, 0.8f,  Panel10)   \
-    X (env2Release,   "env2.release",      "ENV-2 Release",      0.0f, 1.0f, 0.45f, EnvTime)
+    X (env2Release,   "env2.release",      "ENV-2 Release",      0.0f, 1.0f, 0.45f, EnvTime)   \
+    X (portaTime,     "porta.time",        "Portamento Time",    0.0f, 1.0f, 0.0f,  PortaTime) \
+    X (unisonDetune,  "unison.detune",     "Unison Detune",      0.0f, 1.0f, 0.3f,  DetuneCents) \
+    X (velToVca,      "vel.vca",           "Velocity \xe2\x86\x92 VCA", 0.0f, 1.0f, 0.5f, Percent) \
+    X (velToVcf,      "vel.vcf",           "Velocity \xe2\x86\x92 VCF", 0.0f, 1.0f, 0.0f, Percent) \
+    X (modWheelDepth, "mod.wheel_vco",     "Mod Wheel Vibrato",  0.0f, 1.0f, 0.3f,  Panel10)
 
 // X(member, idSuffix, name, labels, defaultIndex)
 #define VS_PART_CHOICE_PARAMS(X)                                                              \
@@ -73,7 +87,11 @@ inline constexpr int kVco2RangeIndexOf8ft = 1;
     X (vcaLfoMod,     "vca.lfo_mod",       "VCA LFO Mod",        kVcaLfoLabels,       0)       \
     X (env1KeyFollow, "env1.key_follow",   "ENV-1 Key Follow",   kOffOnLabels,        0)       \
     X (env1Polarity,  "env1.polarity",     "ENV-1 Polarity",     kPolarityLabels,     0)       \
-    X (env2KeyFollow, "env2.key_follow",   "ENV-2 Key Follow",   kOffOnLabels,        0)
+    X (env2KeyFollow, "env2.key_follow",   "ENV-2 Key Follow",   kOffOnLabels,        0)       \
+    X (assignMode,    "assign.mode",       "Assign Mode",        kAssignModeLabels,   0)       \
+    X (unisonVoices,  "assign.unison_voices", "Unison Voices",   kUnisonVoicesLabels, 1)       \
+    X (portaMode,     "porta.mode",        "Portamento Mode",    kPortaModeLabels,    0)       \
+    X (bendRange,     "bend.range",        "Bend Range",         kBendRangeLabels,    2)
 
 /** Plain snapshot of one part's parameters. Defaults equal the host defaults. */
 struct PartParams

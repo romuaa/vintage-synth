@@ -1,10 +1,17 @@
 #include "engine/Voice.h"
 
+#include "dsp/FastMath.h"
 #include "params/Mappings.h"
+
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstdint>
 
 namespace vs
 {
 static_assert (kVcoWaveLabels.size() == dsp::kNumWaves, "VCO wave labels must match dsp::Wave");
+static_assert (kMaxSubBlock <= dsp::Drift::kMaxAdvance, "a sub-block must fit in one Drift::advance()");
 
 namespace
 {
@@ -34,12 +41,16 @@ void Voice::prepare (float oversampledRate, std::uint32_t seed) noexcept
     env1.setSampleRate (fs);
     env2.setSampleRate (fs);
     drift.prepare (fs, seed);
+    driftWalk = drift.current();
+    driftValid = false;
     vco1.setSeed (seed * 2654435761u + 1u);
     vco2.setSeed (seed * 2246822519u + 7u);
     // Free-running oscillators: start each voice at a different phase.
     dsp::Random r (seed ^ 0xA5A5A5A5u);
     vco1.reset (r.unipolar());
     vco2.reset (r.unipolar());
+    restartRng.setSeed (seed * 747796405u + 2891336453u);
+    freshPhases = true;
     reset();
 }
 
@@ -49,6 +60,12 @@ void Voice::reset() noexcept
     env2.reset();
     hpf.reset();
     vcf.reset();
+    glideDev = 0.0f;
+    glideCur = 0.0;
+    glideAnchored = false;
+    velDev = scaleDev = 0.0f;
+    fadeRemaining = 0;
+    restartPhasesSet = false;
 }
 
 void Voice::setBlockParams (const PartParams& p, float vintage) noexcept
@@ -90,10 +107,68 @@ void Voice::applyEnvTimes() noexcept
     env2.setTimes (env2Times[0] * s2, env2Times[1] * s2, env2Times[2] * s2);
 }
 
-void Voice::noteOn (int note, float vel) noexcept
+void Voice::setNote (int note, bool glide) noexcept
 {
+    const float from = getPitch();
     currentNote = note;
-    velocity = vel;
+    if (glide)
+        glideFrom (from);
+    else
+    {
+        glideDev = 0.0f;
+        glideCur = 0.0;
+    }
+    // Key follow tracks the keyboard at the event, not at the next host block (block-size
+    // independence; a legato line upwards gets the shorter times of the higher note at once).
+    applyEnvTimes();
+}
+
+void Voice::restartFromIdle() noexcept
+{
+    // The voice is silent here (ENV-2 idle), so none of this is audible. ENV-1 may still have
+    // been releasing when ENV-2 finished; it froze at a level that depends on where the
+    // sub-block ended, and a new note must not start its filter/pitch envelope part-way open.
+    env1.reset();
+    hpf.reset();
+    vcf.reset();
+
+    const bool forced = restartPhasesSet;
+    restartPhasesSet = false;
+    if (freshPhases && ! forced)
+    {
+        freshPhases = false; // the first note keeps the prepare-time phases
+        return;
+    }
+    freshPhases = false;
+    const std::uint32_t s = restartRng.nextUInt();
+    vco1.setSeed (s * 2654435761u + 1u);
+    vco2.setSeed (s * 2246822519u + 7u);
+    const float p1 = restartRng.unipolar(), p2 = restartRng.unipolar();
+    vco1.reset (forced ? restartPhase1 : p1);
+    vco2.reset (forced ? restartPhase2 : p2);
+}
+
+void Voice::start (int note, float vel, float levelScale, float pos) noexcept
+{
+    if (! env2.isActive())
+        restartFromIdle();
+
+    if (env2.isActive())
+    {
+        // Retrigger: move velocity and level smoothly (a step in gain would click).
+        velDev = (velTgt + velDev) - vel;
+        scaleDev = (scaleTgt + scaleDev) - levelScale;
+    }
+    else
+    {
+        velDev = scaleDev = 0.0f;
+    }
+    velTgt = vel;
+    scaleTgt = levelScale;
+    unisonPos = pos;
+    glideDev = 0.0f;
+    glideCur = 0.0;
+    currentNote = note;
     applyEnvTimes();
     env1.noteOn();
     env2.noteOn();
@@ -105,67 +180,225 @@ void Voice::noteOff() noexcept
     env2.noteOff();
 }
 
-float Voice::process (const ModFrame& f) noexcept
+bool Voice::beginBlock (const ModBlock& m) noexcept
 {
+    const int n = m.numSamples;
     if (! env2.isActive())
-        return 0.0f;
+    {
+        // A steal fade keeps counting even if the old note has finished meanwhile.
+        fadeRemaining = fadeRemaining > n ? fadeRemaining - n : 0;
+        idleAt = 0;
+        return false;
+    }
 
-    const auto& p = f.p;
+    const float invN = 1.0f / static_cast<float> (n);
+    const float* lfo = m.lfo;
 
-    const float e1 = env1.process (p.env1Sustain);
-    const float e2 = env2.process (p.env2Sustain);
-    const float e1Mod = env1Inverted ? -e1 : e1;
+    // ---- Envelopes (serial, short dependency chain) ----
+    float e1[kN], e1Mod[kN], e2[kN];
+    {
+        const float* sus1 = m.ctl[ModBlock::Env1Sustain];
+        const float* sus2 = m.ctl[ModBlock::Env2Sustain];
+        const float polarity = env1Inverted ? -1.0f : 1.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            e1[i] = env1.process (sus1[i]);
+            e1Mod[i] = polarity * e1[i];
+            e2[i] = env2.process (sus2[i]);
+        }
+    }
 
-    // ---- Pitch (log2 Hz domain: one exp2 per oscillator) ----
-    const float dynCents = drift.process() * dsp::Drift::kDynamicCents * f.vintage;
-    const float pitchModOct = f.lfo * map::vcoLfoModOct (p.vcoModLfo) + e1Mod * map::vcoEnvModOct (p.vcoModEnv);
-    const float keySemis = static_cast<float> (currentNote) + f.bendSemis;
+    // ---- Pitch and pulse width (log2 Hz domain; vectorisable) ----
+    const float vintage = m.vintage;
+    const float note = static_cast<float> (currentNote);
+    const float static1 = drift.vco1Cents * dsp::Drift::kStaticCents * vintage / 1200.0f;
+    const float static2 = drift.vco2Cents * dsp::Drift::kStaticCents * vintage / 1200.0f;
+    const float base1 = kLog2A4 + (note - 69.0f + 12.0f * static_cast<float> (vco1RangeOct)) / 12.0f + static1;
+    const float base2 = vco2LoFreq ? kLog2LoFreqBase + static_cast<float> (vco2RangeOct) + static2
+                                   : kLog2A4 + (note - 69.0f + 12.0f * static_cast<float> (vco2RangeOct)) / 12.0f + static2;
+    const float bend2 = vco2LoFreq ? 0.0f : 1.0f; // Lo Freq ignores the keyboard and the bender
+    const float mod1 = vcoModTarget != kTargetVco2 ? 1.0f : 0.0f;
+    const float mod2 = vcoModTarget != kTargetVco1 ? 1.0f : 0.0f;
 
-    float log2F2 = 0.0f;
-    const float vco2Cents = drift.vco2Cents * dsp::Drift::kStaticCents * f.vintage + dynCents;
-    if (vco2LoFreq)
-        log2F2 = kLog2LoFreqBase + static_cast<float> (vco2RangeOct) + (map::fineTuneSemis (p.vco2FineTune) + vco2Cents * 0.01f) / 12.0f;
-    else
-        log2F2 = kLog2A4 + (keySemis - 69.0f + 12.0f * static_cast<float> (vco2RangeOct) + map::fineTuneSemis (p.vco2FineTune) + vco2Cents * 0.01f) / 12.0f;
-    if (vcoModTarget != kTargetVco1)
-        log2F2 += pitchModOct;
+    // Dynamic drift (1.2 s time constant) is advanced once per sub-block and ramped linearly.
+    // It advances only while the voice sounds: if ENV-2 finished inside this sub-block, only up
+    // to that sample (where it finished must not depend on how the render is split).
+    int activeN = n;
+    if (! env2.isActive())
+    {
+        activeN = 0;
+        for (int i = n - 1; i >= 0; --i)
+            if (e2[i] > 0.0f)
+            {
+                activeN = i + 1;
+                break;
+            }
+    }
+    idleAt = activeN;
+    // The walk itself (an exp) is only evaluated when Vintage can make it audible.
+    float walk0 = 0.0f;
+    if (vintage > 0.0f)
+        walk0 = driftValid ? driftWalk : drift.current();
+    drift.advance (activeN);
+    if (vintage > 0.0f)
+        driftWalk = drift.current();
+    driftValid = vintage > 0.0f;
+    const float dynScale = dsp::Drift::kDynamicCents * vintage / 1200.0f;
+    const float dyn0 = walk0 * dynScale;
+    const float dynStep = (driftWalk - walk0) * dynScale * invN;
 
-    float log2F1 = kLog2A4 + (keySemis - 69.0f + 12.0f * static_cast<float> (vco1RangeOct)
-                              + (drift.vco1Cents * dsp::Drift::kStaticCents * f.vintage + dynCents) * 0.01f) / 12.0f;
-    if (vcoModTarget != kTargetVco2)
-        log2F1 += pitchModOct;
-
-    // ---- Pulse width ----
-    float pwmAmount = 1.0f;
+    // PWM amount = a + b * lfo + c * env1, clamped to 0..1.
+    float pwA = 1.0f, pwLfo = 0.0f, pwEnv = 0.0f;
     if (pwmSource == kPwmLfo)
-        pwmAmount = 0.5f + 0.5f * f.lfo;
+    {
+        pwA = 0.5f;
+        pwLfo = 0.5f;
+    }
     else if (pwmSource == kPwmEnv1)
-        pwmAmount = env1Inverted ? 1.0f - e1 : e1;
-    const float width = 0.5f - 0.45f * p.pwmDepth * dsp::clamp (pwmAmount, 0.0f, 1.0f);
+    {
+        pwA = env1Inverted ? 1.0f : 0.0f;
+        pwEnv = env1Inverted ? -1.0f : 1.0f;
+    }
 
-    // ---- Oscillators: VCO-2 (master) first, then VCO-1 with cross-mod and sync ----
-    constexpr float kMinDt = 1.0e-7f, kMaxDt = 0.45f;
-    float wrap2 = -1.0f, unused = -1.0f;
-    const float dt2 = dsp::clamp (std::exp2 (log2F2) * invFs, kMinDt, kMaxDt);
-    const float o2 = vco2.process (dt2, width, -1.0f, wrap2);
+    // Portamento (semitones above the note, closed-form RC) and velocity (smoothed per voice).
+    float glideSemis[kN], vel[kN], levelScale[kN];
+    {
+        if (glideDev != 0.0f)
+        {
+            if (! glideAnchored || std::bit_cast<std::uint64_t> (m.glideLog) != std::bit_cast<std::uint64_t> (glideLog))
+            {
+                // New glide, or the portamento time changed: continue from the current deviation.
+                glideStart = glideCur;
+                glideLog = m.glideLog;
+                glideK = 0;
+                glideAnchored = true;
+            }
+            // Per sample in double, rounded to float once: the values are then the same however
+            // the render is split (a float base rounded per sub-block left -91 dB at 1-sample blocks).
+            const double g0 = glideCur; // = glideStart * g^glideK
+            const double* gd = m.glideDecayD;
+            for (int i = 0; i < n; ++i)
+                glideSemis[i] = static_cast<float> (g0 * gd[i + 1]);
+            glideK += n;
+            const double next = glideStart * std::exp (glideLog * static_cast<double> (glideK));
+            // 1e-9 semitone: what is left can no longer shift the phase measurably.
+            glideCur = std::abs (next) < 1.0e-9 ? 0.0 : next;
+            glideDev = static_cast<float> (glideCur);
+        }
+        else
+        {
+            for (int i = 0; i < n; ++i)
+                glideSemis[i] = 0.0f;
+        }
 
-    log2F1 += map::crossModOct (p.vco1CrossMod) * o2;
-    const float dt1 = dsp::clamp (std::exp2 (log2F1) * invFs, kMinDt, kMaxDt);
-    const float o1 = vco1.process (dt1, width, sync ? wrap2 : -1.0f, unused);
+        const float* sd = m.smoothDecay;
+        const float v0 = velTgt, vd = velDev, s0 = scaleTgt, sdv = scaleDev;
+        for (int i = 0; i < n; ++i)
+        {
+            vel[i] = v0 + vd * sd[i + 1];
+            levelScale[i] = s0 + sdv * sd[i + 1];
+        }
+        velDev = std::abs (vd) < 1.0e-20f ? 0.0f : vd * sd[n];
+        scaleDev = std::abs (sdv) < 1.0e-20f ? 0.0f : sdv * sd[n];
+    }
 
-    // ---- Mixer -> HPF -> VCF -> VCA ----
-    const float mixed = o1 + (o2 - o1) * p.sourceMix;
-    const float hp = hpf.process (mixed, f.hpfG);
+    {
+        const float* bendOct = m.ctl[ModBlock::BendOct];
+        const float* lfoOct = m.ctl[ModBlock::VcoLfoOct];
+        const float* envOct = m.ctl[ModBlock::VcoEnvOct];
+        const float* fineOct = m.ctl[ModBlock::Vco2FineOct];
+        const float* pwmDepth = m.ctl[ModBlock::PwmDepth];
+        const float* spread = m.ctl[ModBlock::UnisonSpreadOct];
+        const float pos = unisonPos;
+        for (int i = 0; i < n; ++i)
+        {
+            const float dyn = dyn0 + dynStep * static_cast<float> (i + 1);
+            const float pitchMod = lfo[i] * lfoOct[i] + e1Mod[i] * envOct[i];
+            // Keyboard-related offsets (glide, unison detune); Lo Freq VCO-2 ignores them like the bender.
+            const float keyOct = glideSemis[i] * (1.0f / 12.0f) + pos * spread[i];
+            const float log2F2 = base2 + dyn + fineOct[i] + bend2 * (bendOct[i] + keyOct) + mod2 * pitchMod;
+            const float log2F1 = base1 + dyn + bendOct[i] + keyOct + mod1 * pitchMod;
+            dt2[i] = dsp::clamp (dsp::fast::exp2 (log2F2) * invFs, kMinDt, kMaxDt);
+            dt1Raw[i] = dsp::fast::exp2 (log2F1) * invFs; // clamped after cross-mod
 
-    const float envForVcf = vcfEnvSource == 0 ? e1Mod : e2;
-    const float log2Fc = map::cutoffLog2Hz (p.vcfCutoff)
-                         + envForVcf * map::vcfEnvModOct (p.vcfEnvMod)
-                         + f.lfo * map::vcfLfoModOct (p.vcfLfoMod)
-                         + p.vcfKeyFollow * static_cast<float> (currentNote - 60) / 12.0f
-                         + drift.cutoffOct * dsp::Drift::kCutoffOct * f.vintage;
-    const float fc = std::exp2 (dsp::clamp (log2Fc, 3.0f, maxLog2Cutoff));
-    const float y = vcf.process (hp, dsp::tptG (fc, fs), map::resonanceK (p.vcfResonance), slope24);
+            const float amount = dsp::clamp (pwA + pwLfo * lfo[i] + pwEnv * e1[i], 0.0f, 1.0f);
+            width[i] = 0.5f - 0.45f * pwmDepth[i] * amount;
+        }
+    }
 
-    return y * e2 * f.vcaGain;
+    crossModOn = m.crossModActive;
+
+    // ---- VCF coefficients and VCA gain (vectorisable). The oscillators run in renderSample(). ----
+    {
+        const float* env = vcfEnvSource == 0 ? e1Mod : e2;
+        const float* cutoff = m.ctl[ModBlock::CutoffLog2];
+        const float* envOct = m.ctl[ModBlock::VcfEnvOct];
+        const float* lfoOct = m.ctl[ModBlock::VcfLfoOct];
+        const float* keyOct = m.ctl[ModBlock::VcfKeyOct];
+        const float* resK = m.ctl[ModBlock::ResonanceK];
+        const float* velVca = m.ctl[ModBlock::VelToVca];
+        const float* velVcf = m.ctl[ModBlock::VelToVcf];
+        const float keyDist = note - 60.0f;
+        const float driftOct = drift.cutoffOct * dsp::Drift::kCutoffOct * vintage;
+        const float piOverFs = dsp::kPi * invFs;
+        const float maxLog2 = maxLog2Cutoff;
+        for (int i = 0; i < n; ++i)
+        {
+            const float envDepth = envOct[i] * map::velocityScale (velVcf[i], vel[i]);
+            const float log2Fc = cutoff[i] + env[i] * envDepth + lfo[i] * lfoOct[i] + keyOct[i] * (keyDist + glideSemis[i]) + driftOct;
+            const float fc = dsp::fast::exp2 (dsp::clamp (log2Fc, 3.0f, maxLog2));
+            const auto c = dsp::OtaLadder::makeCoefs (dsp::fast::tanPrewarp (fc * piOverFs), resK[i]);
+            cG[i] = c.G;
+            c1[i] = c.c1;
+            c2[i] = c.c2;
+            c3[i] = c.c3;
+            c4[i] = c.c4;
+            cK[i] = c.k;
+            cInv[i] = c.inv;
+            gain[i] = e2[i] * m.vcaGain[i] * c.comp * map::velocityScale (velVca[i], vel[i]) * levelScale[i];
+        }
+    }
+
+    // Steal fade: linear to 0 at the fade's last sample. The Part never renders past it.
+    if (fadeRemaining > 0)
+    {
+        const float invLen = 1.0f / static_cast<float> (fadeLength);
+        const float rem = static_cast<float> (fadeRemaining);
+        for (int i = 0; i < n; ++i)
+            gain[i] *= std::max (0.0f, (rem - static_cast<float> (i + 1)) * invLen);
+        fadeRemaining = fadeRemaining > n ? fadeRemaining - n : 0;
+    }
+    return true;
+}
+
+void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m, float* out) noexcept
+{
+    const int n = m.numSamples;
+    for (int i = 0; i < n; ++i)
+        out[i] = 0.0f;
+
+    const float* hpfG = m.ctl[ModBlock::HpfG];
+    const float* crossOct = m.ctl[ModBlock::CrossModOct];
+    const float* mix = m.ctl[ModBlock::SourceMix];
+
+    // Voices are interleaved in groups of kVoiceGroup (fixed-size list on the stack); any number
+    // of voices is rendered, a part's 16 in one group.
+    for (int first = 0; first < numVoices; first += kVoiceGroup)
+    {
+        Voice* active[kVoiceGroup];
+        int numActive = 0;
+        const int last = std::min (numVoices, first + kVoiceGroup);
+        for (int v = first; v < last; ++v)
+            if (voices[v]->beginBlock (m))
+                active[numActive++] = voices[v];
+
+        for (int i = 0; i < n; ++i)
+        {
+            float sum = 0.0f;
+            for (int a = 0; a < numActive; ++a)
+                sum += active[a]->renderSample (i, hpfG[i], crossOct[i], mix[i]);
+            out[i] += sum;
+        }
+    }
 }
 } // namespace vs

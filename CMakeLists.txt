@@ -37,6 +37,7 @@ juce_add_plugin(VintageSynth
 set(VS_PLUGIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/params/ParameterLayout.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Modulation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Voice.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Part.cpp)
 
@@ -70,4 +71,21 @@ if(VS_BUILD_TESTS)
     enable_testing()
     add_subdirectory(external/Catch2)
     add_subdirectory(tests)
+endif()
+
+# Optional developer convenience: JUCE's own AudioPluginHost, built from the submodule, for hands-on
+# UI testing (see scripts/dev-host.sh). Off by default; CI and normal builds are unaffected.
+option(VS_BUILD_DEV_HOST "Also build JUCE's AudioPluginHost (dev tool, not shipped)" OFF)
+
+if(VS_BUILD_DEV_HOST)
+    add_subdirectory(external/JUCE/extras/AudioPluginHost
+                     ${CMAKE_CURRENT_BINARY_DIR}/dev-host-build)
+    # The host is JUCE's code: never apply our warnings-as-errors policy to it, even when
+    # -DCMAKE_COMPILE_WARNING_AS_ERROR=ON is passed globally.
+    set_target_properties(AudioPluginHost PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+    if(TARGET AudioPluginHostData)
+        set_target_properties(AudioPluginHostData PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+    endif()
+    # Make sure the plugin bundle is built whenever the host is.
+    add_dependencies(AudioPluginHost VintageSynth_VST3)
 endif()

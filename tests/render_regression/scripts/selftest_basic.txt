@@ -1,0 +1,20 @@
+# Self-test script for the render-regression mechanism (not a sound design reference).
+# Resonant filter, two notes, mod wheel, pitch bend, a cutoff change and a release tail.
+rate 48000
+length 3.0
+
+param lower.vcf.cutoff 0.5
+param lower.vcf.resonance 0.6
+param lower.vcf.env_mod 0.4
+param lower.env1.decay 0.5
+param lower.env1.sustain 0.4
+param lower.env2.release 0.5
+
+0.00 on 48 100
+0.60 off 48
+0.80 on 60 90
+1.00 cc 1 64
+1.20 bend 12000
+1.60 bend 8192
+1.80 param lower.vcf.cutoff 0.75
+2.00 off 60
