@@ -3,6 +3,29 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Local-first verification; CI offline (owner decision, 2026-11-12)
+
+- **Everything that can be verified on the development Mac is verified there; GitHub Actions is a
+  rare, deliberate confirmation step, permanently** (also after the repository is public). Reason:
+  the account's included Actions minutes ran out after 31 build runs in one day.
+- **CI is offline until the owner makes the repository public for a release** (up to a month).
+  Until then: no workflow runs; branches are pushed for backup only.
+- **Verified locally:** macOS universal (build, all tests, pluginval, and the VST3 validator built
+  from the pinned SDK commit — the owner now allows building it locally), Linux ARM64 with GCC in a
+  container, sanitizers on both, the security scan.
+- **Not verified until CI returns: Windows x64, Windows ARM64, Linux x86_64.** No Windows virtual
+  machine and no emulated x86_64 Linux builds (owner decision). Every merge made in this period is
+  listed in `CLAUDE.md` under "Merged without Windows / Linux x86_64 verification", so the first
+  CI run can be read against it.
+- **Merges while CI is offline:** infrastructure-only changes (build, test, CI, scripts, docs) may
+  be merged to `main` after the local gate passes (owner pre-approval); product milestones still
+  wait for the owner's audition and approval.
+- **pluginval exit crash on Linux x86_64** (SUCCESS, then a segmentation fault at exit): the
+  investigation points to a known use-after-free in the JUCE host code inside pluginval 1.0.4's
+  own build, fixed in later JUCE versions; not in our plugin. Not proven for our runs (no backtrace
+  could be taken under emulation). To do when CI is back: confirm on real x86_64 hardware, then
+  treat exactly that signature as a tracked warning until a fixed pluginval release is used.
+
 ## Cross Mod aliasing (owner decision after the study, 2026-11-12)
 
 - **The current Cross Mod sound stays as the instrument's sound ("Classic").** The owner compared

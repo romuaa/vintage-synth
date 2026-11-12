@@ -81,6 +81,12 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
   in `source/seq/`, not wired in. Awaiting the owner's audition (`m3_demo`) and merge approval.
+- **CI is offline** (no Actions minutes) until the owner makes the repo public for a release.
+  **Local-first verification is the permanent policy** (see decisions): run the local gates before
+  any push; never trigger workflows; agents get no CI budget.
+- **Merged without Windows / Linux x86_64 verification** (check these first when CI is back):
+  1. Linux ARM64 target, distro load tests, `scripts/linux-check.sh`, a GCC/ARM64 warning setting
+     in `CMakeLists.txt`, a float-comparison rewrite in `source/fx/FxCommon.h` (2026-11-12).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
