@@ -66,5 +66,9 @@ if(VS_VST3_VALIDATOR)
     add_test(NAME vst3_validator
              COMMAND "${VS_VST3_VALIDATOR}"
                      "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
-    set_tests_properties(vst3_validator PROPERTIES LABELS vst3)
+    # Exit code alone is not enough: require the validator's own summary with at least one test
+    # run and none failed, so a validator that loads nothing cannot pass silently.
+    set_tests_properties(vst3_validator PROPERTIES
+        LABELS vst3
+        PASS_REGULAR_EXPRESSION "Result: [1-9][0-9]* tests passed, 0 tests failed")
 endif()
