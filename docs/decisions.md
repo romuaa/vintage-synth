@@ -3,6 +3,16 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Product names (owner decision, 2026-11-12)
+
+- **Every product name carries the company prefix: "Exitium Vintage Synth" and "Exitium B-Side".**
+  This is the name shown in hosts, the bundle file name, the README and any site. Plugin codes and
+  bundle identifiers do not change.
+- The names are considered good enough for an open-source project and **can still be changed
+  before the first release** if a conflict turns up. An official trademark search is optional, not
+  a gate. After the first release the host-visible name stays.
+- The rename of Vintage Synth is done at the start of M3 (it touches CMake, CI, tests and scripts).
+
 ## Wave 2 contracts (2026-11-12)
 
 All (review).
