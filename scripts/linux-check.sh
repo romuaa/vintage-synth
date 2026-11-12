@@ -84,9 +84,23 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
   echo "linux-check: image built in $(( $(date +%s) - t ))s"
 fi
 
+# One run at a time per build volume: several worktrees (or agents) share the volume, and a second
+# snapshot landing in the middle of a build or test run mixes two checkouts (seen as bogus failures).
+# The lock is a directory in the temp dir holding the owner's pid; a dead owner's lock is taken over.
+lock=${TMPDIR:-/tmp}/$VOLUME.lock
+waited=0
+until mkdir "$lock" 2>/dev/null; do
+  owner=$(cat "$lock/pid" 2>/dev/null || true)
+  if [[ -n $owner ]] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$lock"; continue; fi
+  [[ $waited -eq 0 ]] && echo "linux-check: another run (pid ${owner:-?}) is using the build volume; waiting for it to finish"
+  waited=1; sleep 5
+done
+echo $$ > "$lock/pid"
+release_lock() { rm -rf "$lock"; }
+
 # File list to snapshot: tracked + untracked-not-ignored, minus the submodules and files that vanished.
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/vs-linux-check.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp"; release_lock' EXIT
 (cd "$repo" && git ls-files -z --cached --others --exclude-standard) \
   | while IFS= read -r -d '' f; do
       case $f in external/*) continue ;; esac

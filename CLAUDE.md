@@ -60,12 +60,17 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Dependabot doesn't bump them, so check github.com/actions/runner-images when touching CI.
   Pushing to `main` cancels a running build of `main` (concurrency group): wait for a run you
   still need before pushing again.
-- **CI cost (while private):** docs-only changes don't build; draft PRs build Windows x64 only and
-  the full matrix runs when the PR is marked ready, on `main` and on manual dispatch; jobs time out
-  after 30 min; Dependabot is monthly. Push a branch once, after local tests and a sanitizer run.
-  The repo is planned to go public; then the draft tier can go.
-- **VST3 validator:** CI only (ctest `vst3_validator`, macOS and Windows x64), built from the SDK
-  pinned by tag and SHA in `build.yml`. Not built locally.
+- **Verification is local-first (owner decision).** Everything this Mac can check is checked here by
+  `scripts/preflight.sh`: macOS universal build + tests + pluginval, the VST3 validator (built once
+  from the pinned SDK commit into `~/Library/Caches/vs-preflight/`), ASan/UBSan, the Linux ARM64
+  container, the security scan, repository hygiene (incl. a hashed brand-name check and "no session
+  link in commits"). `--quick` while iterating, the default set before handing over.
+- **CI never runs by itself** (no PR, branch or `main` triggers on `build`). The orchestrator
+  dispatches it by hand, once per merge-ready branch, when Actions minutes are available:
+  `gh workflow run build.yml --ref <branch> -f targets=no-macos` (`all` before a release; also
+  `windows`, `linux`, `linux-x64`). Agents never trigger CI. **Windows and Linux x86_64 are
+  confirmed by CI only**: never claim them green without a passing dispatched run. A dispatch only
+  works for refs once the workflow file is on the default branch.
 - **Supply chain:** every third-party action is pinned by full commit SHA with a `# vX.Y.Z` comment.
   `.github/dependabot.yml` updates Actions and submodules weekly. Before merging a submodule PR,
   check it points at a release tag and update the versions named here and in README.
@@ -87,6 +92,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - **Merged without Windows / Linux x86_64 verification** (check these first when CI is back):
   1. Linux ARM64 target, distro load tests, `scripts/linux-check.sh`, a GCC/ARM64 warning setting
      in `CMakeLists.txt`, a float-comparison rewrite in `source/fx/FxCommon.h` (2026-11-12).
+  2. `scripts/preflight.sh` and the manual-only CI workflow (the reworked `build.yml` itself has
+     never run on GitHub: its first dispatch is also its first test) (2026-11-12).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -131,7 +138,8 @@ docs/architecture.md  contracts between work streams (interfaces, behaviour, gat
 docs/decisions.md  design decision log (what we chose and why)
 docs/ui-test-checklist.md  manual checks in the plugin host
 scripts/dev-host.sh  builds plugin + JUCE AudioPluginHost and opens the synth in it (-DVS_BUILD_DEV_HOST)
-scripts/linux-check.sh  GCC build + tests (or sanitizers) in a Linux ARM64 container; run before pushing
+scripts/preflight.sh  the local gate: every check this Mac can run (see "Verification is local-first")
+scripts/linux-check.sh  GCC build + tests (or sanitizers) in a Linux ARM64 container (a preflight step)
 docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
 README.md        public overview, build and test instructions
 CHANGELOG.md     what was done, per milestone (update it with every milestone/infra change)
@@ -189,8 +197,11 @@ When something new bites, add a row to `docs/engineering-notes.md` and, if it's 
 
 ## Definition of done (per change)
 
-1. Builds clean (warnings as errors) on all targets → skill `build`.
-2. Unit + render-regression tests pass; pluginval strictness 10 passes → skill `validate-plugin`.
+1. `scripts/preflight.sh` passes (`--quick` while iterating; the full default set before handing
+   over): universal build with warnings as errors, all tests incl. render regression, pluginval
+   strictness 10, VST3 validator, sanitizers, Linux ARM64 container, security scan, hygiene.
+2. Windows and Linux x86_64: one dispatched `no-macos` CI run per merge-ready branch when CI is
+   available; otherwise add the change to "Merged without Windows / Linux x86_64 verification".
 3. Audio-thread code was checked → skill `realtime-review`.
 4. Any parameter or state change followed skill `add-parameter`.
 5. Docs updated: `CHANGELOG.md`, the Status section here, README (features/roadmap), new judgement

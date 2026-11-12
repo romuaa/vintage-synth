@@ -40,9 +40,9 @@ what you built and tested, and CI covers the rest.
 ## Pull requests
 
 - Keep each pull request focused and say what and why; the template has a short checklist.
-- Open it as a draft while you iterate. Draft pull requests build Windows x64 only; marking it
-  ready runs the full matrix (macOS universal, Windows x64, Windows ARM64). A security scan runs
-  on every pull request. Docs-only changes do not trigger a build.
+- CI does not build pull requests automatically. Run `scripts/preflight.sh` locally (macOS; see the
+  README); a maintainer then starts the GitHub Actions confirmation run for Windows and Linux
+  x86_64 by hand. The security scan still runs on every pull request.
 - A maintainer may need to approve the workflow run for a first-time contributor.
 - Dependency upgrades (JUCE, Catch2) are deliberate and happen in their own commit.
 

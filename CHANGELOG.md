@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### Local-first verification (2026-11-12)
+- `scripts/preflight.sh`: one local gate for everything a Mac can check, including the VST3
+  validator built from the pinned SDK commit, the security scan and repository hygiene checks.
+- CI no longer runs automatically; it is started by hand as a confirmation for Windows and Linux x86_64.
+
 ### Linux ARM64, distro load tests, local Linux check (2026-11-12)
 - Linux ARM64 is a supported, CI-validated target; x86_64 and ARM64 ship in one Linux bundle.
 - CI load-tests the Linux x86_64 build with pluginval in containers of Ubuntu 22.04 and 26.04,

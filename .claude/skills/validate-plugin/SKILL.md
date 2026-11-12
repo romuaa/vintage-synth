@@ -5,6 +5,13 @@ description: Run unit tests, golden-render regression tests, CPU benchmarks, plu
 
 # Validate
 
+**Run `scripts/preflight.sh` instead of the individual commands below** (they remain as reference):
+`--quick` (hygiene, macOS build + tests + pluginval, Linux container) while iterating; the default set
+(adds the security scan, the VST3 validator, and both sanitizer builds) before handing over; `--only <step>`
+for one step, `--list` for the steps, `--clean` to remove its caches. The VST3 validator is built once from
+the pinned SDK commit into `~/Library/Caches/vs-preflight/` and passes on `Result: N tests passed, 0 tests
+failed`. Windows and Linux x86_64 are CI only, by a manual dispatch; agents never trigger CI.
+
 Run these in order and stop at the first failure. Report each step as pass, fail, or not run, with the reason.
 
 1. **Unit tests + host smoke:** `ctest --test-dir build/mac --output-on-failure`. This includes
