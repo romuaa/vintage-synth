@@ -54,6 +54,11 @@ target_sources(VintageSynthTests PRIVATE
     seq_unit/MusicalTimeTests.cpp
     seq_unit/FuzzTests.cpp)
 
+# Wave 3 integration: effects and arpeggiator/sequencer in the processor (docs/architecture.md 6a).
+target_sources(VintageSynthTests PRIVATE
+    integration/FxIntegrationTests.cpp
+    integration/ArpIntegrationTests.cpp)
+
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
     Catch2::Catch2WithMain)
