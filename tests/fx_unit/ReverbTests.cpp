@@ -383,3 +383,8 @@ TEST_CASE ("Reverb: waking up after idle never replays stale content", "[fx][rev
 {
     checkNoStaleContentAfterWake<Reverb> (rp (4.0f, 0.3f, 0.1f, 1.0f), rp (4.0f, 0.3f, 0.1f, 0.0f));
 }
+
+TEST_CASE ("Reverb: no bulk buffer work on the audio thread (writes only in process, bounded per sample)", "[fx][reverb]")
+{
+    checkBufferWritesBounded<Reverb> (rp (4.0f, 0.3f, 0.1f, 1.0f), rp (4.0f, 0.3f, 0.1f, 0.0f));
+}

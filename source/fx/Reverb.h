@@ -110,7 +110,6 @@ public:
         fade.snap (0.0f);
         level.snap (0.0f);
         idle = true;
-        cleared = true;
         snapNext = true;
     }
 
@@ -132,12 +131,6 @@ public:
 
         if (active && idle)
         {
-            if (! cleared)
-            {
-                std::size_t budget = static_cast<std::size_t> (-1); // woken before the idle clearing finished
-                clearStep (budget);
-                cleared = true;
-            }
             idle = false;
             snapNext = true;
         }
@@ -155,14 +148,7 @@ public:
     void process (float* left, float* right, int numSamples) noexcept
     {
         if (idle)
-        {
-            if (! cleared) // zero the stale lines a slice at a time while idle
-            {
-                std::size_t budget = kClearBudget;
-                cleared = clearStep (budget);
-            }
             return; // bit-exact bypass: the audio is not touched
-        }
 
         constexpr float apG = 0.62f;
         constexpr float inScale = 0.35355339f; // 1 / sqrt(8): each side feeds 8 lines
@@ -240,8 +226,7 @@ public:
             if (f <= 0.0f && fade.isSettled())
             {
                 idle = true;
-                cleared = false;
-                startClear();
+                clearState(); // O(1) per line
                 break;
             }
         }
@@ -255,6 +240,16 @@ public:
 
     // ---- test hooks ----
     bool isIdle() const noexcept { return idle; }
+    std::uint64_t bufferWrites() const noexcept
+    {
+        std::uint64_t n = 0;
+        for (const auto& l : lines)
+            n += l.writes();
+        for (std::size_t k = 0; k < 4; ++k)
+            n += apL[k].writes() + apR[k].writes();
+        return n + preL.writes() + preR.writes();
+    }
+    static constexpr int kLinesWritten = kLines + 8 + 2; ///< buffer writes per processed sample, at most
     int lineLength (int i) const noexcept { return length[static_cast<std::size_t> (i)]; }
 
 private:
@@ -334,23 +329,11 @@ private:
         }
     }
 
+    /** O(1) per line: the lines forget their content (reads of older samples return 0). */
     void clearState() noexcept
     {
         forEachLine ([] (DelayLine& l) { l.clear(); });
         resetSmallState();
-    }
-
-    void startClear() noexcept
-    {
-        forEachLine ([] (DelayLine& l) { l.startClear(); });
-        resetSmallState();
-    }
-
-    bool clearStep (std::size_t& budget) noexcept
-    {
-        bool done = true;
-        forEachLine ([&budget, &done] (DelayLine& l) { done = l.clearSome (budget) && done; });
-        return done;
     }
 
     double fs = 48000.0;
@@ -366,6 +349,6 @@ private:
     double lowFreqRatio = 1.0;
     float lastDecay = -1.0f, lastDamping = -1.0f, tailDecay = ReverbParams {}.decaySeconds;
     LinearRamp fade, level;
-    bool idle = true, cleared = true, snapNext = true;
+    bool idle = true, snapNext = true;
 };
 } // namespace vs::fx

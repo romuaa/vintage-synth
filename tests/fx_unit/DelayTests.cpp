@@ -282,3 +282,8 @@ TEST_CASE ("Delay: waking up after idle never replays stale content", "[fx][dela
 {
     checkNoStaleContentAfterWake<Delay> (dp (0.4f, 0.8f, 0.2f, true, 1.0f), dp (0.4f, 0.8f, 0.2f, true, 0.0f));
 }
+
+TEST_CASE ("Delay: no bulk buffer work on the audio thread (writes only in process, bounded per sample)", "[fx][delay]")
+{
+    checkBufferWritesBounded<Delay> (dp (0.4f, 0.8f, 0.2f, true, 1.0f), dp (0.4f, 0.8f, 0.2f, true, 0.0f));
+}

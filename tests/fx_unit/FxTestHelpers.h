@@ -287,7 +287,7 @@ void checkNoStaleContentAfterWake (const Params& on, const Params& off, double f
         runConst (fx, quiet, off, 256); // fade out -> idle
         CHECK (fx.isIdle());
         float buf[2 * 256] {};
-        for (int b = 0; b < idleBlocks; ++b) // idle blocks (incremental clearing happens here)
+        for (int b = 0; b < idleBlocks; ++b) // idle blocks
         {
             fx.setParams (off);
             fx.process (buf, buf + 256, 256);
@@ -299,6 +299,65 @@ void checkNoStaleContentAfterWake (const Params& on, const Params& off, double f
         INFO ("idle blocks " << idleBlocks << ": peak after waking " << peak);
         CHECK (peak <= 0.0f);
     }
+    { // reset() while active: nothing from before the reset may come back
+        Fx fx;
+        fx.prepare (fs, kMaxBlock);
+        Stereo burst = noise (static_cast<size_t> (0.3 * fs), 0.8f, 10u);
+        runConst (fx, burst, on, 256);
+        fx.reset();
+        Stereo after (static_cast<size_t> (2.5 * fs));
+        runConst (fx, after, on, 256);
+        float peak = 0.0f;
+        allFinite (after, 1.0e9f, &peak);
+        INFO ("peak after reset() " << peak);
+        CHECK (peak <= 0.0f);
+    }
+}
+
+/**
+    Structural real-time cost: the only buffer writes are DelayLine::push calls inside process(),
+    at most Fx::kLinesWritten per processed sample. setParams() (including waking up) and reset()
+    write nothing, i.e. there is no bulk clearing anywhere on the audio thread. Exercised with
+    random block sizes (1..512), random on/off toggles (including waking during the fade-out and
+    right after going idle) and random resets.
+*/
+template <typename Fx, typename Params>
+void checkBufferWritesBounded (const Params& on, const Params& off, double fs = 48000.0)
+{
+    Fx fx;
+    fx.prepare (fs, kMaxBlock);
+    std::uint32_t st = 555u;
+    auto rnd = [&st] { st = st * 1664525u + 1013904223u; return static_cast<float> (st >> 8) / 16777216.0f; };
+    std::vector<float> l (kMaxBlock), r (kMaxBlock);
+    std::uint64_t setParamsWrites = 0, resetWrites = 0;
+    double maxRatio = 0.0;
+    for (int b = 0; b < 4000; ++b)
+    {
+        const int n = 1 + static_cast<int> (rnd() * (kMaxBlock - 1));
+        for (int i = 0; i < n; ++i)
+        {
+            l[static_cast<size_t> (i)] = rnd() - 0.5f;
+            r[static_cast<size_t> (i)] = rnd() - 0.5f;
+        }
+        auto w0 = fx.bufferWrites();
+        fx.setParams (rnd() < 0.7f ? on : off);
+        setParamsWrites += fx.bufferWrites() - w0;
+        if (rnd() < 0.01f)
+        {
+            w0 = fx.bufferWrites();
+            fx.reset();
+            resetWrites += fx.bufferWrites() - w0;
+        }
+        w0 = fx.bufferWrites();
+        fx.process (l.data(), r.data(), n);
+        const auto d = fx.bufferWrites() - w0;
+        maxRatio = std::max (maxRatio, static_cast<double> (d) / static_cast<double> (n));
+    }
+    INFO ("max buffer writes per processed sample " << maxRatio << " (limit " << Fx::kLinesWritten << "), in setParams "
+                                                     << setParamsWrites << ", in reset " << resetWrites);
+    CHECK (maxRatio <= static_cast<double> (Fx::kLinesWritten));
+    CHECK (setParamsWrites == 0u);
+    CHECK (resetWrites == 0u);
 }
 
 /** Pick a "wild" value: in range, slightly out of range, far out of range, NaN or +-Inf. */

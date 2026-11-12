@@ -31,9 +31,6 @@ inline float sanitize (float v, float lo, float hi) noexcept
     return v;
 }
 
-/** Samples of stale delay-line content zeroed per idle process() call (128 kB, a few microseconds). */
-inline constexpr std::size_t kClearBudget = 32768;
-
 inline std::size_t nextPow2 (std::size_t n) noexcept
 {
     std::size_t p = 1;
@@ -113,6 +110,10 @@ inline float lagrange4 (float y0, float y1, float y2, float y3, float t) noexcep
     (read(0) = the sample just pushed). Fractional reads use 4-point Lagrange and need
     1 <= d <= capacity() - 3 when called after push(). Callers that read *before* pushing the
     current sample (feedback loops) pass d - 1.
+
+    clear() is O(1): it does not touch the buffer. The line counts the samples pushed since the
+    last clear (saturating at the capacity) and every read of an older position returns 0, so
+    stale content is never heard and nothing is ever wiped in bulk on the audio thread.
 */
 class DelayLine
 {
@@ -123,33 +124,11 @@ public:
         buffer.assign (nextPow2 (minSamples + 4), 0.0f);
         mask = buffer.size() - 1;
         writeIndex = 0;
-        clearPos = buffer.size();
+        written = 0;
     }
 
-    void clear() noexcept
-    {
-        std::fill (buffer.begin(), buffer.end(), 0.0f);
-        writeIndex = 0;
-        clearPos = buffer.size();
-    }
-
-    /** Incremental clearing, so a long line (4 MB at 192 kHz) is never wiped in one audio block:
-        startClear() marks the content stale, clearSome() zeroes up to `budget` samples per call
-        (and subtracts what it used), isCleared() tells when it is done. */
-    void startClear() noexcept { clearPos = 0; }
-
-    bool clearSome (std::size_t& budget) noexcept
-    {
-        const std::size_t n = std::min (budget, buffer.size() - std::min (clearPos, buffer.size()));
-        std::fill_n (buffer.begin() + static_cast<std::ptrdiff_t> (clearPos), n, 0.0f);
-        clearPos += n;
-        budget -= n;
-        if (isCleared())
-            writeIndex = 0;
-        return isCleared();
-    }
-
-    bool isCleared() const noexcept { return clearPos >= buffer.size(); }
+    /** O(1): forget the content (reads of anything pushed before now return 0). */
+    void clear() noexcept { written = 0; }
 
     std::size_t capacity() const noexcept { return buffer.size(); }
 
@@ -157,30 +136,42 @@ public:
     {
         writeIndex = (writeIndex + 1) & mask;
         buffer[writeIndex] = x;
+        if (written < buffer.size())
+            ++written;
+        ++pushCount;
     }
 
-    float readInt (std::size_t d) const noexcept { return buffer[(writeIndex - d) & mask]; }
+    float readInt (std::size_t d) const noexcept { return d < written ? buffer[(writeIndex - d) & mask] : 0.0f; }
 
     /** Double-precision position for long lines (float has a 0.03-sample ulp at 384000). */
     float read (double d) const noexcept
     {
         const auto n = static_cast<std::size_t> (d);
-        const auto t = static_cast<float> (d - static_cast<double> (n));
-        const std::size_t base = writeIndex - n;
-        return lagrange4 (buffer[(base + 1) & mask], buffer[base & mask], buffer[(base - 1) & mask], buffer[(base - 2) & mask], t);
+        return readAt (n, static_cast<float> (d - static_cast<double> (n)));
     }
 
     float read (float d) const noexcept
     {
         const auto n = static_cast<std::size_t> (d);
-        const float t = d - static_cast<float> (n);
-        const std::size_t base = writeIndex - n;
-        return lagrange4 (buffer[(base + 1) & mask], buffer[base & mask], buffer[(base - 1) & mask], buffer[(base - 2) & mask], t);
+        return readAt (n, d - static_cast<float> (n));
     }
 
+    /** Test hook: total number of samples ever written into the buffer (push is the only write). */
+    std::uint64_t writes() const noexcept { return pushCount; }
+
 private:
+    float readAt (std::size_t n, float t) const noexcept
+    {
+        // Taps are n-1, n, n+1, n+2 pushes old.
+        const std::size_t base = writeIndex - n;
+        if (n + 2 < written) // fast path: all four taps written since the last clear
+            return lagrange4 (buffer[(base + 1) & mask], buffer[base & mask], buffer[(base - 1) & mask], buffer[(base - 2) & mask], t);
+        return lagrange4 (readInt (n - 1), readInt (n), readInt (n + 1), readInt (n + 2), t);
+    }
+
     std::vector<float> buffer;
-    std::size_t mask = 0, writeIndex = 0, clearPos = 0;
+    std::size_t mask = 0, writeIndex = 0, written = 0;
+    std::uint64_t pushCount = 0;
 };
 
 /** Prewarped TPT integrator coefficient G = g / (1 + g), g = tan(pi fc / fs). Clamped below Nyquist. */

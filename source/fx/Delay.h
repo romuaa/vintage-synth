@@ -15,9 +15,10 @@
 //   loop is exactly flat) down to 1.5 kHz (damping 1).
 // - Normal <-> ping-pong is a 20 ms crossfade of the loop routing; the routing matrix
 //   [[1-w, w], [w, 1-w]] * fb has eigenvalues fb and fb (1 - 2w), so the loop stays stable.
-// - Level 0 fades out over 20 ms, then the delay goes idle (bit-exact bypass). Its lines are
-//   zeroed a 32k-sample slice per idle block (never 4 MB in one block); waking up earlier finishes
-//   the clearing. Waking up fades the line input in as well, so the first echo has no hard onset.
+// - Level 0 fades out over 20 ms, then the delay goes idle (bit-exact bypass). Going idle and
+//   reset() are O(1): the lines only forget their content (DelayLine::clear gates reads of
+//   anything older), so no buffer is ever wiped on the audio thread. Waking up fades the line
+//   input in as well, so the first echo has no hard onset.
 
 #include "fx/FxCommon.h"
 
@@ -61,7 +62,6 @@ public:
         fade.snap (0.0f);
         level.snap (0.0f);
         idle = true;
-        cleared = true;
         snapNext = true;
     }
 
@@ -81,12 +81,6 @@ public:
 
         if (active && idle)
         {
-            if (! cleared)
-            {
-                std::size_t budget = 2 * lineL.capacity(); // woken before the idle clearing finished
-                clearStep (budget);
-                cleared = true;
-            }
             idle = false;
             snapNext = true;
         }
@@ -107,14 +101,7 @@ public:
     void process (float* left, float* right, int numSamples) noexcept
     {
         if (idle)
-        {
-            if (! cleared) // zero the stale lines a slice at a time while idle
-            {
-                std::size_t budget = kClearBudget;
-                cleared = clearStep (budget);
-            }
             return; // bit-exact bypass: the audio is not touched
-        }
 
         for (int i = 0; i < numSamples; ++i)
         {
@@ -159,9 +146,8 @@ public:
             if (f <= 0.0f && fade.isSettled())
             {
                 idle = true;
-                cleared = false;
-                lineL.startClear();
-                lineR.startClear();
+                lineL.clear(); // O(1)
+                lineR.clear();
                 dampL.reset();
                 dampR.reset();
                 break;
@@ -180,15 +166,10 @@ public:
     // ---- test hooks ----
     double currentDelaySamples() const noexcept { return time; }
     bool isIdle() const noexcept { return idle; }
+    std::uint64_t bufferWrites() const noexcept { return lineL.writes() + lineR.writes(); }
+    static constexpr int kLinesWritten = 2; ///< buffer writes per processed sample, at most
 
 private:
-    bool clearStep (std::size_t& budget) noexcept
-    {
-        const bool l = lineL.clearSome (budget);
-        const bool r = lineR.clearSome (budget);
-        return l && r;
-    }
-
     double fs = 48000.0;
     DelayLine lineL, lineR;
     OnePole dampL, dampR;
@@ -196,6 +177,6 @@ private:
     float paramCoef = 1.0f, fb = 0.0f, fbTarget = 0.0f;
     float dampG = 0.0f, dampGTarget = 0.0f, dampMix = 0.0f, dampMixTarget = 0.0f;
     LinearRamp fade, level, pingPong;
-    bool idle = true, cleared = true, snapNext = true;
+    bool idle = true, snapNext = true;
 };
 } // namespace vs::fx

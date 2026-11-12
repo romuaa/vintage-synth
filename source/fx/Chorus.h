@@ -82,7 +82,6 @@ public:
         fade.snap (0.0f);
         wet.snap (0.0f);
         idle = true;
-        cleared = true;
         snapNext = true;
     }
 
@@ -101,7 +100,6 @@ public:
         if (active && idle)
         {
             // Waking up: start from a clean state at the target settings (no glide from stale values).
-            finishClear();
             phase = 0.0;
             snapNext = true;
             idle = false;
@@ -119,14 +117,7 @@ public:
     void process (float* left, float* right, int numSamples) noexcept
     {
         if (idle)
-        {
-            if (! cleared) // zero the stale line a slice at a time while idle
-            {
-                std::size_t budget = kClearBudget;
-                cleared = line.clearSome (budget);
-            }
             return; // bit-exact bypass: the audio is not touched
-        }
 
         const float centre = kCentreMs * msToSamples;
         const double invFs = 1.0 / fs;
@@ -183,26 +174,18 @@ public:
     float delaySamplesB() const noexcept { return kCentreMs * msToSamples - depth * currentLfo(); }
     std::size_t lineCapacity() const noexcept { return line.capacity(); }
     bool isIdle() const noexcept { return idle; }
+    std::uint64_t bufferWrites() const noexcept { return line.writes(); }
+    static constexpr int kLinesWritten = 1; ///< buffer writes per processed sample, at most
 
 private:
     void goIdle() noexcept
     {
         idle = true;
-        cleared = false;
-        line.startClear();
+        line.clear(); // O(1)
         hpf.reset();
         lpf.reset();
     }
 
-    void finishClear() noexcept
-    {
-        if (! cleared)
-        {
-            std::size_t budget = line.capacity();
-            line.clearSome (budget);
-            cleared = true;
-        }
-    }
 
     float currentLfo() const noexcept
     {
@@ -220,6 +203,6 @@ private:
     float rate = 0.0f, rateTarget = 0.5f, depth = 0.0f, depthTarget = 0.0f;
     double phase = 0.0;
     LinearRamp fade, wet;
-    bool idle = true, cleared = true, snapNext = true;
+    bool idle = true, snapNext = true;
 };
 } // namespace vs::fx

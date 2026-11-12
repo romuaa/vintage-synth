@@ -271,3 +271,8 @@ TEST_CASE ("Chorus: waking up after idle never replays stale content", "[fx][cho
     for (const float mix : kMixes)
         checkNoStaleContentAfterWake<Chorus> (cp (ChorusMode::I, mix), cp (ChorusMode::Off, mix));
 }
+
+TEST_CASE ("Chorus: no bulk buffer work on the audio thread (writes only in process, bounded per sample)", "[fx][chorus]")
+{
+    checkBufferWritesBounded<Chorus> (cp (ChorusMode::I, 1.0f), cp (ChorusMode::Off, 1.0f));
+}
