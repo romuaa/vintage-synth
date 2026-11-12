@@ -316,11 +316,13 @@ inline double diffDb (const Stereo& a, const Stereo& b)
     return 10.0 * std::log10 (std::max (num, 1.0e-30) / std::max (den, 1.0e-30));
 }
 
-inline bool bitIdentical (const Stereo& a, const Stereo& b)
+inline bool sameBits (const std::vector<float>& a, const std::vector<float>& b)
 {
-    return a.l.size() == b.l.size() && std::memcmp (a.l.data(), b.l.data(), a.l.size() * sizeof (float)) == 0
-           && std::memcmp (a.r.data(), b.r.data(), a.r.size() * sizeof (float)) == 0;
+    // memcmp of an empty vector would pass a null pointer (undefined behaviour, UBSan reports it).
+    return a.size() == b.size() && (a.empty() || std::memcmp (a.data(), b.data(), a.size() * sizeof (float)) == 0);
 }
+
+inline bool bitIdentical (const Stereo& a, const Stereo& b) { return sameBits (a.l, b.l) && sameBits (a.r, b.r); }
 
 inline double peakAbs (const std::vector<float>& x, size_t from, size_t to)
 {

@@ -614,7 +614,7 @@ TEST_CASE ("Each effect is audible and stereo when on; the dry synth is mono at 
     INFO ("rate " << fs);
     const auto s = [fs] (double t) { return static_cast<size_t> (t * fs); };
     const auto dry = renderNote ([] (Rig&) {}, 2.0, fs);
-    CHECK (bitIdentical ({ dry.l, {} }, { dry.r, {} })); // centre pan, no effect: L == R exactly
+    CHECK (sameBits (dry.l, dry.r)); // centre pan, no effect: L == R exactly
     const double dryTail = rms (dry.l, s (0.8), s (2.0));
     CHECK (dryTail < 1.0e-6); // the note has died away by 0.8 s
 
