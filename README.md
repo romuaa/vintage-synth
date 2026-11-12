@@ -4,14 +4,18 @@ A bi-timbral, analog-style polyphonic synthesizer instrument in VST3 format, by 
 It's a two-oscillator subtractive synth in the style of the classic 80s flagship polys, with our own
 naming and design.
 
-> **Status: in development (pre-release).** Milestone M1 is done: one part (Lower) plays as a mono
-> synth with the complete voice. Polyphony, Upper part, arpeggiator, sequencer, effects, presets and
-> the custom UI come in later milestones (see [Roadmap](#roadmap)). The plugin currently shows JUCE's
-> generic parameter editor.
+> **Status: in development (pre-release).** Milestone M2 is done: one part (Lower) plays as a
+> 16-voice polyphonic synth with the complete voice. Upper part, arpeggiator, sequencer, effects in
+> the plugin, presets and the custom UI come in later milestones (see [Roadmap](#roadmap)). The
+> plugin currently shows JUCE's generic parameter editor.
 
 ## Features
 
-Working now (M1):
+Working now (M2):
+
+- **16 voices** with Poly, Unison (2–16 voices with detune) and Solo modes, click-free voice stealing,
+  sustain pedal, portamento (always or legato), velocity to level and filter, bend range up to an
+  octave, mod wheel vibrato. 32 voices use about 5 % of one CPU core at 48 kHz.
 
 - **Two VCOs:** sine, triangle, saw, square, pulse and noise on both. VCO-1 range 32'–1', VCO-2 16'–2'.
   Hard sync (VCO-1 to VCO-2) and exponential cross-mod at audio rate. VCO-2 Lo Freq mode turns it into a
@@ -26,8 +30,9 @@ Working now (M1):
 - **Sound quality:** anti-aliased oscillators (aliasing ≤ −113 dB up to a 5 kHz fundamental),
   2× oversampling in real time and 4× when rendering offline. Latency (about 7 samples) is reported to the host.
 
-Planned: 16 voices per part, Poly/Unison/Solo, portamento, Whole/Dual/Split, arpeggiator, 16-step sequencer,
-patch banks, and chorus, delay and reverb.
+Planned: the Upper part with Whole/Dual/Split, arpeggiator, 16-step sequencer, patch banks, and
+chorus, delay and reverb (the effect blocks exist and are tested, but are not connected yet).
+Linux (x86_64) is a planned target.
 
 ## Platforms
 
@@ -66,6 +71,22 @@ cmake --build build/win-x64 --config Release --parallel
 
 Use `-A ARM64` for Windows on ARM. Run the tests with `ctest --test-dir build/win-x64 -C Release`.
 Copy the `.vst3` to `C:\Program Files\Common Files\VST3\`. CI builds both and merges them into one bundle.
+
+## Try it in a plugin host
+
+`scripts/dev-host.sh` builds the plugin and JUCE's AudioPluginHost (about 2 minutes the first time on
+Apple silicon) and opens the host with MIDI Input → Vintage Synth → Audio Output already wired.
+
+- Open the editor: double-click the "Vintage Synth" node.
+- Play without a MIDI keyboard: the on-screen piano at the bottom of the host window (mouse, or the
+  computer keys A W S E D F T G Y H U J K; Z and X shift the octave). A hardware keyboard also works.
+- Audio device and buffer size: Options > Audio Settings. macOS may ask for microphone permission
+  because the host opens the default input; denying is fine.
+- Flags: `--build-only`, `--no-build`, `--debug`, and `--install` (also copies the plugin to
+  `~/Library/Audio/Plug-Ins/VST3/`; the only option that writes outside the repository).
+- The host keeps its settings in `~/Library/Preferences/Juce Audio Plugin Host.settings`.
+
+What to check by hand: [docs/ui-test-checklist.md](docs/ui-test-checklist.md).
 
 ## Testing
 
@@ -112,10 +133,10 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 |---|---|---|
 | M0 | Project skeleton, CI, build for all targets | Done |
 | M1 | Single-part voice engine | Done |
-| M2 | Polyphony: 16 voices, Poly/Unison/Solo, portamento, voice stealing, velocity, bend range | Next |
-| M3 | Bi-timbral: Upper part, Whole/Dual/Split | |
+| M2 | Polyphony: 16 voices, Poly/Unison/Solo, portamento, voice stealing, velocity, bend range | Done |
+| M3 | Bi-timbral: Upper part, Whole/Dual/Split | Next |
 | M4 | Arpeggiator and 16-step sequencer | |
-| M5 | Chorus, delay and reverb | |
+| M5 | Chorus, delay and reverb | Blocks done, not connected |
 | M6 | Presets, patch banks, golden-render regression tests | |
 | M7 | Custom UI | |
 | M8 | Hardening, signing, installers, release | |

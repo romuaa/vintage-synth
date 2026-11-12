@@ -94,7 +94,14 @@ the oldest held voice, but never the most recently started one. The stolen voice
 No extra voices are allocated for the fade.
 
 **Sustain pedal (CC 64):** key releases are deferred while the pedal is down and applied when it
-comes up. In Solo/Unison the pedal holds the sounding note.
+comes up. In Solo/Unison the pedal holds the sounding note. Notes held only by the pedal count as
+"a key held" for the LFO-delay restart, but not for Legato portamento.
+
+**Unison** follows the Solo rules for retrigger and legato return. Its voices sit evenly across the
+detune spread and start with a fixed phase pattern, so the level is the same on every note and
+equal to one voice at any detune.
+
+**Parameter names** in the host carry the part prefix ("Lower Portamento Time").
 
 **Portamento** (per part): RC glide of the pitch (in semitones); `porta time` is the time to cover
 99 % of the interval, 0 = off. Mode `Always` or `Legato` (glide only when a key is already held).

@@ -36,8 +36,11 @@ Run these in order and stop at the first failure. Report each step as pass, fail
 5. **CPU benchmark:** `build/mac/tests/voice_bench` (best of 3; run it with no build or other heavy
    job running). It prints one Part with one voice, then 1/16/32 voices driven directly, the
    per-part overhead and a projection against the budget. Baseline on an Apple M5 Pro, non-LTO
-   `vs_test_core`, 2026-11-12: Part with one voice 0.33–0.36 % at 2× and 0.72–0.74 % at 4×;
-   **32 voices at 2× = 11.1–11.5 % (0.35 % per voice)**; per-part overhead about 0.04 %.
+   `vs_test_core`, after M2 (2026-11-12): Part with one voice 0.32–0.36 % at 2×;
+   **two Parts with 32 held voices at 2× = 4.9–5.1 % (0.157 % per voice)**, 9.7 % at 4×; the same
+   with a steal every 20 ms and glide. (M1 was 11.3 % for 32 voices.) `voice_bench [base rate]
+   [vintage]` measures other session rates: at 192 kHz, 2× costs 18.2 % (see decisions).
+   `fx_bench`: chorus + delay + reverb about 0.55 % at 48 kHz (budget 1.5 %).
    This is slightly pessimistic for the shipped (LTO) plugin.
    Budget: 32 voices at 2× oversampling (Dual mode) under 15 % of one core at 48 kHz, effects
    included. 4× is offline only and has no real-time budget. Flag any regression above 5 %.
@@ -67,6 +70,6 @@ or say it is pending. The `security` workflow (Trivy) must also be green.
 ```bash
 VS_RENDER_DIR=<scratchpad>/renders build/mac/tests/VintageSynthTests "[.render]"
 ```
-This writes `m1_demo.wav` and `m1_demo_spectrogram.png`. Never read renders under `build/`, because it's
+This writes `m1_demo.wav`, `m2_demo.wav` (polyphony) and `m5_fx_demo.wav` (effects), with spectrograms. Never read renders under `build/`, because it's
 gitignored. Point `VS_RENDER_DIR` at the scratchpad instead. Look at the spectrogram for aliasing (lines
 folding downward), clicks (vertical lines), and noise floor problems.

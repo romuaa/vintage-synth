@@ -66,6 +66,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
+- **M2 polyphony: done** (16 voices, Poly/Unison/Solo, steal fade, pedal, portamento, velocity, bend
+  range, mod wheel; audition approved by ear; 32 voices = 5 % of a core at 48 kHz). Lower part only.
 - M0 skeleton: done. M1 single-part voice engine: done (mono, Lower part only; demo approved by ear;
   all panel interpretations confirmed by the owner).
 - CI: green on macOS universal, Windows x64 and Windows ARM64 (build, tests, host_smoke, pluginval
@@ -73,10 +75,12 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - Compiler cache confirmed: a warm CI run takes macOS 3.5 / Win x64 6.7 / Win ARM64 5.9 min (98 % hits).
 - **Wave 0 (contracts): done** — `docs/architecture.md`; judgement calls in `docs/decisions.md`
   are marked (review) until the owner confirms them.
-- **Wave 1, in progress.** Done: golden-render harness and VST3 validator (CI green).
-  In review: **M2a** (note events + CPU optimisation, 32 voices = 4.7 % of a core) and the
-  **M5 effect blocks** (`source/fx/`, not wired in). Next: **M2b** polyphony (allocator, 16 voices,
-  Poly/Unison/Solo, portamento, 3 ms steal fade, velocity, bend range, sustain pedal, mod wheel).
+- **Wave 1: done, awaiting the owner's merge approval** (one PR). Contains M2, the M5 effect blocks
+  (`source/fx/`, standalone, not wired in; first listen approved), the golden-render harness, the
+  VST3 validator in CI, CI cost controls and the plugin-host script.
+- **After the merge:** public-release audit (the owner flips visibility), Linux x86_64 target with a
+  sanitizer CI job, then Wave 2. Open engine item for M3: 1× oversampling at host rates ≥ 88.2 kHz
+  (32 voices cost 18 % of a core at 192 kHz).
 - Then: Wave 2 = M3 Upper part + Whole/Dual/Split, with M4 arp/sequencer in parallel;
   Wave 3 = integrate M4/M5 + M6 presets/banks/goldens; Wave 4 = M7 custom UI + M8 release.
 
@@ -84,7 +88,9 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ```
 source/dsp/      JUCE-free DSP blocks: Oscillator (+BlepTable), Filters, Envelope, Lfo, Drift
-source/engine/   Voice, Part (note handling, LFO, oversampling), Oversampler
+source/engine/   Voice, Part, VoiceAllocator (note -> voice logic), NoteEvent/EventParser (MIDI),
+                 Modulation (shared per-part modulation), Oversampler
+source/fx/       JUCE-free effect blocks: Chorus, Delay, Reverb (not wired in yet)
 source/params/   PartParamList.h (X-macro list of all per-part params), Mappings.h (value -> unit),
                  ParameterLayout (APVTS layout + binding), StateVersion.h
 source/          PluginProcessor.*   (later: fx/ presets/ ui/)
@@ -94,6 +100,8 @@ tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_sm
 tests/render_regression/ golden-render harness (ctest label "render"; scripts/ and golden/ feature references)
 docs/architecture.md  contracts between work streams (interfaces, behaviour, gates)
 docs/decisions.md  design decision log (what we chose and why)
+docs/ui-test-checklist.md  manual checks in the plugin host
+scripts/dev-host.sh  builds plugin + JUCE AudioPluginHost and opens the synth in it (-DVS_BUILD_DEV_HOST)
 docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
 README.md        public overview, build and test instructions
 CHANGELOG.md     what was done, per milestone (update it with every milestone/infra change)
@@ -140,6 +148,8 @@ must build for all three targets (mac universal, win x64, win ARM64).
 - Measure filters far below Nyquist and above the float floor; isolate a failing gate with a diagnostic test.
 - Run the tests under ASan/UBSan before pushing: MSVC's heap catches overruns macOS tolerates.
 - A new continuous parameter is not smoothed unless added to `PartModulator::next`.
+- Per-voice state inherited by a later note must be reset or computed from absolute time; a
+  block-size test only proves something if voices are reused.
 - Rosetta isn't installed: the x86_64 slice is checked with `lipo` only, never run locally.
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.

@@ -3,6 +3,18 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Wave 1: M2b polyphony (2026-11-12)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Notes on a reused voice differed with the host block size (up to −5.7 dB in Solo); a reused Poly voice started its filter envelope part-way open. | A voice that stops inside a sub-block keeps evolving to the sub-block's end. Oscillator phase, noise seeds, ENV-1, filters and drift were inherited by the next note. | **Every piece of per-voice state a later note inherits must be reset at restart or computed from absolute time.** |
+| A new note landed on a different voice depending on block size. | Idle voices were reported in loop-index order when two finished in the same sub-block. | Order-dependent bookkeeping follows sample time, never loop index. |
+| Glide and drift left −74 to −93 dB between block sizes. | A pitch value stepped per sub-block turns float rounding into a lasting phase difference. | Evaluate pitch terms from absolute time in double precision and round once. |
+| Envelope times changed one host block after a legato note change. | The times were only re-applied at block start. | A state change caused by an event is applied at the event. |
+| Unison at detune 0 had a random level on every note. | Independent random start phases sum coherently. | Give unison voices a fixed phase pattern whose sum is √n. |
+| The block-size tests passed while all of the above existed. | No test reused a voice: Poly took a fresh voice per note. | **A block-size test only proves something if voices are reused** (Solo/Unison, or Poly after idle), with envelopes of different lengths. |
+| Black-box tests written from the spec found nothing, but the code review found five defects. | Spec tests check stated behaviour; the defects were in properties the spec only states globally (block-size independence) or not at all (unison at detune 0). | Keep both: spec-first tests *and* an adversarial review with a fuzzer. |
+
 ## Wave 1: M2a, effects, test infrastructure (2026-11-12)
 
 | Problem | Cause | Fix / rule |
