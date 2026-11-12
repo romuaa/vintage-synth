@@ -247,7 +247,7 @@ TEST_CASE ("Delay: tailSeconds covers the decay to -120 dBFS", "[fx][delay]")
     Delay d;
     d.prepare (fs, kMaxBlock);
     d.setParams (p);
-    const double tail = d.tailSeconds();
+    const double tail = Delay::tailSecondsUncapped (p);
     const auto nb = static_cast<size_t> (0.5 * fs);
     const auto n = nb + static_cast<size_t> (tail * fs);
     Stereo io (n);
@@ -344,4 +344,16 @@ TEST_CASE ("Delay: fractional time settles on a whole sample, repeats stay flat 
 TEST_CASE ("Delay: click-free when re-enabled during the fade-out and on level steps (lines full)", "[fx][delay]")
 {
     checkClickFreeWithContent<Delay> (dp (0.1f, 0.5f, 0.3f, false, 0.9f), dp (0.1f, 0.5f, 0.3f, false, 0.0f), dp (0.1f, 0.5f, 0.3f, false, 0.3f));
+}
+
+TEST_CASE ("Delay: tailSeconds is a pure function of the params, includes build-up, capped at 30 s", "[fx][delay]")
+{
+    const auto longest = dp (2.0f, 0.95f, 0.0f, false, 1.0f);
+    const double unc = Delay::tailSecondsUncapped (longest);
+    WARN ("delay 2 s / fb 0.95: uncapped tail " << unc << " s, reported " << Delay::tailSeconds (longest) << " s");
+    CHECK (std::abs (unc - 747.6) < 1.0); // 2 * (1 + (140 + 26.02) / 0.4455) + 0.05
+    CHECK (Delay::tailSeconds (longest) <= 30.0);
+    const auto shortOne = dp (0.05f, 0.3f, 0.0f, false, 1.0f);
+    CHECK (std::abs (Delay::tailSeconds (shortOne) - Delay::tailSecondsUncapped (shortOne)) < 1.0e-12);
+    CHECK (std::isfinite (Delay::tailSeconds (dp (std::numeric_limits<float>::quiet_NaN(), 2.0f, 0.0f, false, 1.0f))));
 }

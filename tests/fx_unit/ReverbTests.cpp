@@ -210,7 +210,7 @@ TEST_CASE ("Reverb: tail falls below -120 dBFS within tailSeconds", "[fx][reverb
         Reverb r;
         r.prepare (fs, kMaxBlock);
         r.setParams (p);
-        const double tail = r.tailSeconds();
+        const double tail = Reverb::tailSecondsUncapped (p);
         const auto nb = static_cast<size_t> (1.0 * fs);
         const auto n = nb + static_cast<size_t> (tail * fs);
         Stereo io (n);
@@ -470,4 +470,27 @@ TEST_CASE ("Reverb: NaN/Inf input never poisons the state (output finite, recove
 TEST_CASE ("Reverb: click-free when re-enabled during the fade-out and on level steps (lines full)", "[fx][reverb]")
 {
     checkClickFreeWithContent<Reverb> (rp (2.5f, 0.5f, 0.0f, 1.0f), rp (2.5f, 0.5f, 0.0f, 0.0f), rp (2.5f, 0.5f, 0.0f, 0.3f));
+}
+
+TEST_CASE ("Reverb: tailSeconds is a pure function of the params, bounds the real decay, capped at 30 s", "[fx][reverb]")
+{
+    // The static low-frequency ratio bound must never be below the exact per-line value.
+    double worstMargin = 1.0e9;
+    for (const double fs : kRates)
+        for (const float decay : { 0.3f, 1.0f, 2.5f, 8.0f, 20.0f })
+            for (const float damping : { 0.0f, 0.5f, 1.0f })
+            {
+                const auto p = rp (decay, damping, 0.0f, 1.0f);
+                Reverb r;
+                r.prepare (fs, kMaxBlock);
+                r.setParams (p);
+                worstMargin = std::min (worstMargin, Reverb::lowFrequencyRatioBound (p) - r.lowFrequencyRatio());
+            }
+    WARN ("reverb: static LF ratio bound minus exact ratio, worst case " << worstMargin);
+    CHECK (worstMargin >= -1.0e-9); // equal (to rounding) at damping 0, where both are exactly 1
+    const auto big = rp (20.0f, 1.0f, 0.2f, 1.0f);
+    WARN ("reverb 20 s, damping 1, pre 0.2: uncapped tail " << Reverb::tailSecondsUncapped (big) << " s, reported " << Reverb::tailSeconds (big) << " s");
+    CHECK (Reverb::tailSeconds (big) <= 30.0);
+    const auto small = rp (2.0f, 0.5f, 0.02f, 1.0f);
+    CHECK (std::abs (Reverb::tailSeconds (small) - Reverb::tailSecondsUncapped (small)) < 1.0e-12);
 }

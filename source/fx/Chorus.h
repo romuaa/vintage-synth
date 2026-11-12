@@ -160,7 +160,9 @@ public:
         }
     }
 
-    double tailSeconds() const noexcept { return static_cast<double> (kMaxDelayMs) / 1000.0; }
+    /** Tail length for the host: a pure function of the params (no object state), so it can be
+        computed on any thread from the parameter values. */
+    static double tailSeconds (const ChorusParams&) noexcept { return static_cast<double> (kMaxDelayMs) / 1000.0; }
 
     // ---- test hooks (cheap, read-only) ----
     /** Tap delays in samples (A = left tap, B = right tap) that the next processed sample will use

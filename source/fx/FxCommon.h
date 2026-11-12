@@ -18,6 +18,9 @@ inline constexpr float kTwoPi = 6.28318530717958647692f;
     reach the subnormal range (no denormal stalls on CPUs without flush-to-zero). -300 dBFS. */
 inline constexpr float kFlushThreshold = 1.0e-15f;
 
+/** Cap for the tail length reported to the host (hosts render the reported tail on bounce). */
+inline constexpr double kMaxReportedTailSeconds = 30.0;
+
 /** Exact equality without -Wfloat-equal (false if either is NaN). */
 inline bool sameValue (float a, float b) noexcept { return ! (a < b) && ! (a > b) && a == a && b == b; }
 

@@ -159,13 +159,23 @@ public:
         }
     }
 
-    /** Time for the echoes to fall 140 dB below a sustained full-scale input (feedback build-up included). */
-    double tailSeconds() const noexcept
+    /**
+        Time for the echoes to fall 140 dB below a sustained full-scale input, including the
+        feedback build-up of a sustained input (up to 20 log10 (1 / (1 - fb)) above it; +26 dB at
+        0.95). Pure function of the params (no object state, any thread). Example: 2 s at feedback
+        0.95 needs 747 s.
+    */
+    static double tailSecondsUncapped (const DelayParams& p) noexcept
     {
-        const double t = timeTarget / fs;
-        const double perRepeatDb = -20.0 * std::log10 (std::max (1.0e-6, static_cast<double> (fbTarget)));
-        return t * (1.0 + 140.0 / std::max (perRepeatDb, 1.0e-3)) + 0.05;
+        const double t = static_cast<double> (sanitize (p.timeSeconds, kMinTime, kMaxTime));
+        const double fb = static_cast<double> (sanitize (p.feedback, 0.0f, kMaxFeedback));
+        const double perRepeatDb = -20.0 * std::log10 (std::max (1.0e-6, fb));
+        const double buildUpDb = 20.0 * std::log10 (1.0 / (1.0 - fb));
+        return t * (1.0 + (140.0 + buildUpDb) / std::max (perRepeatDb, 1.0e-3)) + 0.05;
     }
+
+    /** Tail length reported to the host: the above, capped at kMaxReportedTailSeconds (30 s). */
+    static double tailSeconds (const DelayParams& p) noexcept { return std::min (kMaxReportedTailSeconds, tailSecondsUncapped (p)); }
 
     // ---- test hooks ----
     double currentDelaySamples() const noexcept { return time; }

@@ -132,7 +132,6 @@ public:
             lastDamping = damp;
             computeAbsorption (decay, damp);
         }
-        tailDecay = decay;
 
         if (active && idle)
         {
@@ -237,16 +236,37 @@ public:
         }
     }
 
-    /** Time for the tail to fall about 150 dB (2.5 x the longest RT60, which is at low frequencies). */
-    double tailSeconds() const noexcept
+    /**
+        Upper bound of (longest RT60 over frequency) / (RT60 at 1 kHz). The longest RT60 is at low
+        frequencies: with Ghi set for the HF ratio q, |H(DC)| = Glo and per pass
+        Glo^2 = g1^2 (1 + x^2) - Ghi^2 x^2, x = tan(pi 1 kHz/fs) / tan(pi 5 kHz/fs) <= 0.2 at any
+        rate, which gives a ratio of about 1 / (1 - x^2 (1/q - 1)). The requested q is used (the
+        HF limit only raises q, which lowers the ratio). Checked against the exact per-line value.
+    */
+    static double lowFrequencyRatioBound (const ReverbParams& p) noexcept
     {
-        return preTarget / fs + 2.5 * static_cast<double> (tailDecay) * lowFreqRatio + 0.1;
+        const double q = 1.0 - 0.85 * static_cast<double> (sanitize (p.damping, 0.0f, 1.0f));
+        return 1.0 / (1.0 - 0.04 * (1.0 / q - 1.0));
     }
+
+    /** Time for the tail to fall about 150 dB (2.5 x the longest RT60, which is at low frequencies).
+        Pure function of the params (no object state, any thread). */
+    static double tailSecondsUncapped (const ReverbParams& p) noexcept
+    {
+        const double decay = static_cast<double> (sanitize (p.decaySeconds, kMinDecay, kMaxDecay));
+        const double pre = static_cast<double> (sanitize (p.preDelaySeconds, 0.0f, kMaxPreDelay));
+        return pre + 2.5 * decay * lowFrequencyRatioBound (p) + 0.1;
+    }
+
+    /** Tail length reported to the host: the above, capped at kMaxReportedTailSeconds (30 s). */
+    static double tailSeconds (const ReverbParams& p) noexcept { return std::min (kMaxReportedTailSeconds, tailSecondsUncapped (p)); }
 
     // ---- test hooks ----
     bool isIdle() const noexcept { return idle; }
     /** HF/1 kHz RT60 ratio actually used (the requested one, limited for uniform HF decay). */
     double hfRatio() const noexcept { return effectiveQ; }
+    /** Exact (longest RT60) / (RT60 at 1 kHz) over the lines for the current settings. */
+    double lowFrequencyRatio() const noexcept { return lowFreqRatio; }
     std::uint64_t bufferWrites() const noexcept
     {
         std::uint64_t n = 0;
@@ -368,7 +388,7 @@ private:
     double shelfX2 = 0.0, lp16Db = 0.0, effectiveQ = 1.0, preCoef = 1.0, pre = 1.0, preTarget = 1.0;
     int maxLength = 1;
     double lowFreqRatio = 1.0;
-    float lastDecay = -1.0f, lastDamping = -1.0f, tailDecay = ReverbParams {}.decaySeconds;
+    float lastDecay = -1.0f, lastDamping = -1.0f;
     LinearRamp fade, level;
     bool idle = true, snapNext = true;
 };
