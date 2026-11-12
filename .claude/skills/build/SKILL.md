@@ -37,7 +37,10 @@ cmake -S . -B build/win-x64   -A x64
 cmake -S . -B build/win-arm64 -A ARM64
 cmake --build build/win-x64   --config Release --parallel
 cmake --build build/win-arm64 --config Release --parallel
+ctest --test-dir build/win-x64 -C Release --output-on-failure
 ```
+
+CI instead runs Ninja inside the VS developer environment with sccache (see `.github/workflows/build.yml`).
 
 The release job merges both builds into one bundle: `Contents/x86_64-win/` and `Contents/arm64-win/`.
 Check the machine type with `dumpbin /headers <file>.vst3 | findstr machine` (x64 = 8664, ARM64 = AA64).
@@ -46,8 +49,10 @@ This Mac has no Rosetta, so the x86_64 slice can only be checked with `lipo`, no
 
 ## CMake traps (JUCE 9.0.5)
 
-- Test/benchmark targets compile plugin sources: give them
-  `$<TARGET_PROPERTY:VintageSynth,INCLUDE_DIRECTORIES>` and `…,COMPILE_DEFINITIONS>`.
+- `vs_test_core` (tests/CMakeLists.txt) recompiles `VS_PLUGIN_SOURCES` + JUCE modules without LTO.
+  It takes `$<TARGET_PROPERTY:VintageSynth,INCLUDE_DIRECTORIES>` and `…,COMPILE_DEFINITIONS>` so the
+  `JucePlugin_*` config matches the plugin. Link JUCE modules PRIVATE (they are source-carrying
+  interface libraries; PUBLIC would compile them twice into the test executable).
 - `JUCE_PLUGIN_ARTEFACT_FILE` contains genexes; pass it as `$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>`.
 - Don't define `JUCE_DISPLAY_SPLASH_SCREEN` (JUCE 9 warns → error).
 - Use `AudioFormatWriterOptions` with `createWriterFor`; the old overload is deprecated (→ error).

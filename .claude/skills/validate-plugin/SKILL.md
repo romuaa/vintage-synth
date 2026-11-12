@@ -9,8 +9,7 @@ Run these in order and stop at the first failure. Report each step as pass, fail
 
 1. **Unit tests + host smoke:** `ctest --test-dir build/mac --output-on-failure`. This includes
    `host_smoke`, which loads the real `.vst3` through JUCE's VST3 host (identity, parameter count,
-   rendering at 44.1/48/96 kHz, silence after release, state round-trip). Claude can run it even
-   when pluginval is blocked. It doesn't replace pluginval.
+   rendering at 44.1/48/96 kHz, silence after release, state round-trip). It doesn't replace pluginval.
 2. **Golden renders** (from M6, when factory presets exist; not set up yet): `ctest --test-dir build/mac -L render`.
    Each factory preset renders a fixed MIDI file, and the output is compared against
    `tests/render_regression/golden/`.
@@ -45,12 +44,12 @@ Windows CI: after a push, check with `gh run list --limit 3` and `gh run view <i
   stepped params by step index, not normalised value.
 - New delay in the signal path breaks the sample-accurate note-on test until latency is updated.
 
-DSP tests must cover: alias floor (below −90 dB up to a 5 kHz fundamental), VCF cutoff/Q accuracy,
+DSP tests must cover: alias floor (≤ −100 dB up to a 5 kHz fundamental), VCF cutoff/Q accuracy,
 ENV segment timing, sync/cross-mod continuity, sample-accurate note timing, and a
 state save → load round-trip.
 
 Windows x64 and ARM64 validation runs in CI (`.github/workflows/build.yml`). Report the CI result
-or say it is pending.
+or say it is pending. The `security` workflow (Trivy) must also be green.
 
 ## Audition render (manual listening and visual check)
 

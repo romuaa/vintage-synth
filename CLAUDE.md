@@ -37,9 +37,11 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Windows is green without a passing run. CI builds every target with Ninja and a compiler cache
   (ccache on macOS, sccache on Windows) inside the newest Visual Studio found by `vswhere`; never
   hardcode a VS version. LTO applies to the shipped plugin only; tests and `voice_bench` link
-  `vs_test_core` (same sources, no LTO), so add new source files to `VS_PLUGIN_SOURCES`. Runner images are pinned (`macos-26`,
-  `windows-2025`, `windows-11-arm`, `ubuntu-26.04`); Dependabot doesn't bump them, so check
-  github.com/actions/runner-images when touching CI.
+  `vs_test_core` (same sources, no LTO), so add new source files to `VS_PLUGIN_SOURCES`.
+  Runner images are pinned (`macos-26`, `windows-2025`, `windows-11-arm`, `ubuntu-26.04`);
+  Dependabot doesn't bump them, so check github.com/actions/runner-images when touching CI.
+  Pushing to `main` cancels a running build of `main` (concurrency group): wait for a run you
+  still need before pushing again.
 - **Supply chain:** every third-party action is pinned by full commit SHA with a `# vX.Y.Z` comment.
   `.github/dependabot.yml` updates Actions and submodules weekly. Before merging a submodule PR,
   check it points at a release tag and update the versions named here and in README.
@@ -52,9 +54,18 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
-- M0 skeleton: done. M1 single-part voice engine: done (mono, Lower part only; demo approved by ear,
-  pluginval SUCCESS on macOS).
-- Next: M2 polyphony (16 voices, Poly/Unison/Solo, portamento, voice stealing, velocity, bend range).
+- M0 skeleton: done. M1 single-part voice engine: done (mono, Lower part only; demo approved by ear;
+  all panel interpretations confirmed by the owner).
+- CI: green on macOS universal, Windows x64 and Windows ARM64 (build, tests, host_smoke, pluginval
+  where available); Trivy green; Dependabot active. History: `CHANGELOG.md`.
+- Open CI item: confirm the compiler cache pays off. The first (cold) run after enabling it took
+  macOS 14 / Win x64 21 / Win ARM64 15.5 min. On the next push, compare the times and the cache hit
+  rate. If the warm run isn't clearly faster, revisit (`docs/engineering-notes.md`, CI section).
+- **Next: M2 polyphony** — 16 voices per part, Poly/Unison/Solo assign modes, portamento, voice
+  stealing with a 2–5 ms fade, velocity, configurable bend range. Replaces the mono last-note logic
+  in `engine/Part`; keep `voice_bench` within the CPU budget (see skill `validate-plugin`).
+- Later: M3 Upper part + Whole/Dual/Split, M4 arpeggiator + 16-step sequencer, M5 chorus/delay/reverb,
+  M6 presets/banks + golden renders, M7 custom UI, M8 hardening/signing/release.
 
 ## Layout
 
@@ -70,6 +81,8 @@ tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_sm
 docs/decisions.md  design decision log (what we chose and why)
 docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
 README.md        public overview, build and test instructions
+CHANGELOG.md     what was done, per milestone (update it with every milestone/infra change)
+.github/         workflows/build.yml (build+test+pluginval), workflows/security.yml (Trivy), dependabot.yml
 external/        JUCE, Catch2 (submodules)
 ```
 
@@ -122,6 +135,8 @@ When something new bites, add a row to `docs/engineering-notes.md` and, if it's 
 2. Unit + render-regression tests pass; pluginval strictness 10 passes → skill `validate-plugin`.
 3. Audio-thread code was checked → skill `realtime-review`.
 4. Any parameter or state change followed skill `add-parameter`.
+5. Docs updated: `CHANGELOG.md`, the Status section here, README (features/roadmap), new judgement
+   calls in `docs/decisions.md`, new traps in `docs/engineering-notes.md`.
 
 Say plainly which of these steps you could not run locally (e.g. Windows ARM64 runs in CI only).
 

@@ -3,7 +3,7 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
-## M1 (2026-11-12)
+## M0–M1 and CI hardening (2026-11-12)
 
 ### DSP
 
@@ -45,9 +45,10 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | Problem | Fix / rule |
 |---|---|
 | First CI run: both Windows jobs failed at configure: "Visual Studio 17 2022 could not find any instance of Visual Studio". macOS passed. | The runner images no longer ship VS 2022. Don't hardcode `-G "Visual Studio …"`; pass only `-A x64` / `-A ARM64` and let CMake pick the newest VS. |
-
 | Actions were three majors behind (`checkout@v4`, `upload-artifact@v4`, `download-artifact@v4`) and referenced by mutable tags. | Updated to checkout v7.0.1, upload-artifact v7.0.2, download-artifact v8.0.2, pinned by commit SHA. Dependabot keeps them current. Mutable tags are a supply-chain risk: `aquasecurity/trivy-action` tags were hijacked in early 2026. Resolve SHAs with `gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`. |
 | Windows x64 CI took ~18 min (build 15 min). | LTO flags were PUBLIC on the plugin's shared code, so the plugin, `voice_bench` and the unit tests each ran a full MSVC link-time code generation (4.5 + 1 + 4 min). Fix: LTO PRIVATE on the plugin targets only; tests link `vs_test_core` (same sources, no LTO). Plus Ninja and a compiler cache (ccache/sccache) on every CI job. |
+| First run after the speed-up was *slower* (macOS 14 min vs 7, Win x64 21 vs 20, Win ARM64 15.5 vs 16). | Cold compiler cache (0 hits of ~250 compiles; ~100 MB stored), plus `vs_test_core` compiles JUCE a second time. Judge cache changes on the **second** run; check `--show-stats` hit rate in the "Compiler cache statistics" step. Warm-run timing: not measured yet. |
+| pluginval finishes in ~1–5 s in CI. | Not a bug: it ends with SUCCESS. The plugin has no GUI tests (`--skip-gui-tests`) and no inputs, so strictness 10 is quick. |
 | Code scanning upload returns 403 on this private repo. | No GitHub Advanced Security. Trivy results go to the log and a SARIF artifact; upload is behind `vars.CODE_SCANNING`. |
 
 ### Environment and tooling (this Mac)

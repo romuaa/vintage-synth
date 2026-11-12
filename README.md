@@ -64,8 +64,8 @@ cmake -S . -B build/win-x64 -A x64
 cmake --build build/win-x64 --config Release --parallel
 ```
 
-Use `-A ARM64` for Windows on ARM. Copy the `.vst3` to `C:\Program Files\Common Files\VST3\`.
-CI builds both and merges them into one bundle.
+Use `-A ARM64` for Windows on ARM. Run the tests with `ctest --test-dir build/win-x64 -C Release`.
+Copy the `.vst3` to `C:\Program Files\Common Files\VST3\`. CI builds both and merges them into one bundle.
 
 ## Testing
 
@@ -84,8 +84,9 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
 
 ## CI and security
 
-- `build` workflow: macOS universal, Windows x64 and Windows ARM64 builds with tests; pluginval on
-  macOS and Windows x64; merged Windows bundle.
+- `build` workflow: macOS universal, Windows x64 and Windows ARM64 builds with unit tests and the VST3
+  host smoke test; pluginval on macOS and Windows x64; merged Windows bundle. Ninja and a compiler
+  cache keep it fast.
 - `security` workflow: [Trivy](https://trivy.dev) scans the repository for vulnerable dependencies,
   committed secrets and misconfigurations on every push, pull request and weekly.
 - Dependabot keeps GitHub Actions (pinned by commit SHA) and the JUCE and Catch2 submodules up to date.
@@ -103,7 +104,7 @@ external/          JUCE and Catch2 (git submodules, pinned)
 ```
 
 Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); lessons learned are in
-[docs/engineering-notes.md](docs/engineering-notes.md).
+[docs/engineering-notes.md](docs/engineering-notes.md); the history of changes is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Roadmap
 
