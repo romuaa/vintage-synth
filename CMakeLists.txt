@@ -37,6 +37,7 @@ juce_add_plugin(VintageSynth
 set(VS_PLUGIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/params/ParameterLayout.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Modulation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Voice.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/engine/Part.cpp)
 

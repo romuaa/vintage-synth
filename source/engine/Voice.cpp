@@ -1,5 +1,6 @@
 #include "engine/Voice.h"
 
+#include "dsp/FastMath.h"
 #include "params/Mappings.h"
 
 namespace vs
@@ -34,6 +35,7 @@ void Voice::prepare (float oversampledRate, std::uint32_t seed) noexcept
     env1.setSampleRate (fs);
     env2.setSampleRate (fs);
     drift.prepare (fs, seed);
+    driftWalk = drift.current();
     vco1.setSeed (seed * 2654435761u + 1u);
     vco2.setSeed (seed * 2246822519u + 7u);
     // Free-running oscillators: start each voice at a different phase.
@@ -105,67 +107,138 @@ void Voice::noteOff() noexcept
     env2.noteOff();
 }
 
-float Voice::process (const ModFrame& f) noexcept
+bool Voice::beginBlock (const ModBlock& m) noexcept
 {
     if (! env2.isActive())
-        return 0.0f;
+        return false;
 
-    const auto& p = f.p;
+    const int n = m.numSamples;
+    const float invN = 1.0f / static_cast<float> (n);
+    const float* lfo = m.lfo;
 
-    const float e1 = env1.process (p.env1Sustain);
-    const float e2 = env2.process (p.env2Sustain);
-    const float e1Mod = env1Inverted ? -e1 : e1;
+    // ---- Envelopes (serial, short dependency chain) ----
+    float e1[kN], e1Mod[kN], e2[kN];
+    {
+        const float* sus1 = m.ctl[ModBlock::Env1Sustain];
+        const float* sus2 = m.ctl[ModBlock::Env2Sustain];
+        const float polarity = env1Inverted ? -1.0f : 1.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            e1[i] = env1.process (sus1[i]);
+            e1Mod[i] = polarity * e1[i];
+            e2[i] = env2.process (sus2[i]);
+        }
+    }
 
-    // ---- Pitch (log2 Hz domain: one exp2 per oscillator) ----
-    const float dynCents = drift.process() * dsp::Drift::kDynamicCents * f.vintage;
-    const float pitchModOct = f.lfo * map::vcoLfoModOct (p.vcoModLfo) + e1Mod * map::vcoEnvModOct (p.vcoModEnv);
-    const float keySemis = static_cast<float> (currentNote) + f.bendSemis;
+    // ---- Pitch and pulse width (log2 Hz domain; vectorisable) ----
+    const float vintage = m.vintage;
+    const float note = static_cast<float> (currentNote);
+    const float static1 = drift.vco1Cents * dsp::Drift::kStaticCents * vintage / 1200.0f;
+    const float static2 = drift.vco2Cents * dsp::Drift::kStaticCents * vintage / 1200.0f;
+    const float base1 = kLog2A4 + (note - 69.0f + 12.0f * static_cast<float> (vco1RangeOct)) / 12.0f + static1;
+    const float base2 = vco2LoFreq ? kLog2LoFreqBase + static_cast<float> (vco2RangeOct) + static2
+                                   : kLog2A4 + (note - 69.0f + 12.0f * static_cast<float> (vco2RangeOct)) / 12.0f + static2;
+    const float bend2 = vco2LoFreq ? 0.0f : 1.0f; // Lo Freq ignores the keyboard and the bender
+    const float mod1 = vcoModTarget != kTargetVco2 ? 1.0f : 0.0f;
+    const float mod2 = vcoModTarget != kTargetVco1 ? 1.0f : 0.0f;
 
-    float log2F2 = 0.0f;
-    const float vco2Cents = drift.vco2Cents * dsp::Drift::kStaticCents * f.vintage + dynCents;
-    if (vco2LoFreq)
-        log2F2 = kLog2LoFreqBase + static_cast<float> (vco2RangeOct) + (map::fineTuneSemis (p.vco2FineTune) + vco2Cents * 0.01f) / 12.0f;
-    else
-        log2F2 = kLog2A4 + (keySemis - 69.0f + 12.0f * static_cast<float> (vco2RangeOct) + map::fineTuneSemis (p.vco2FineTune) + vco2Cents * 0.01f) / 12.0f;
-    if (vcoModTarget != kTargetVco1)
-        log2F2 += pitchModOct;
+    // Dynamic drift (1.2 s time constant) is advanced once per sub-block and ramped linearly.
+    const float walk0 = driftWalk;
+    driftWalk = drift.advance (n);
+    const float dynScale = dsp::Drift::kDynamicCents * vintage / 1200.0f;
+    const float dyn0 = walk0 * dynScale;
+    const float dynStep = (driftWalk - walk0) * dynScale * invN;
 
-    float log2F1 = kLog2A4 + (keySemis - 69.0f + 12.0f * static_cast<float> (vco1RangeOct)
-                              + (drift.vco1Cents * dsp::Drift::kStaticCents * f.vintage + dynCents) * 0.01f) / 12.0f;
-    if (vcoModTarget != kTargetVco2)
-        log2F1 += pitchModOct;
-
-    // ---- Pulse width ----
-    float pwmAmount = 1.0f;
+    // PWM amount = a + b * lfo + c * env1, clamped to 0..1.
+    float pwA = 1.0f, pwLfo = 0.0f, pwEnv = 0.0f;
     if (pwmSource == kPwmLfo)
-        pwmAmount = 0.5f + 0.5f * f.lfo;
+    {
+        pwA = 0.5f;
+        pwLfo = 0.5f;
+    }
     else if (pwmSource == kPwmEnv1)
-        pwmAmount = env1Inverted ? 1.0f - e1 : e1;
-    const float width = 0.5f - 0.45f * p.pwmDepth * dsp::clamp (pwmAmount, 0.0f, 1.0f);
+    {
+        pwA = env1Inverted ? 1.0f : 0.0f;
+        pwEnv = env1Inverted ? -1.0f : 1.0f;
+    }
 
-    // ---- Oscillators: VCO-2 (master) first, then VCO-1 with cross-mod and sync ----
-    constexpr float kMinDt = 1.0e-7f, kMaxDt = 0.45f;
-    float wrap2 = -1.0f, unused = -1.0f;
-    const float dt2 = dsp::clamp (std::exp2 (log2F2) * invFs, kMinDt, kMaxDt);
-    const float o2 = vco2.process (dt2, width, -1.0f, wrap2);
+    {
+        const float* bendOct = m.ctl[ModBlock::BendOct];
+        const float* lfoOct = m.ctl[ModBlock::VcoLfoOct];
+        const float* envOct = m.ctl[ModBlock::VcoEnvOct];
+        const float* fineOct = m.ctl[ModBlock::Vco2FineOct];
+        const float* pwmDepth = m.ctl[ModBlock::PwmDepth];
+        for (int i = 0; i < n; ++i)
+        {
+            const float dyn = dyn0 + dynStep * static_cast<float> (i + 1);
+            const float pitchMod = lfo[i] * lfoOct[i] + e1Mod[i] * envOct[i];
+            const float log2F2 = base2 + dyn + fineOct[i] + bend2 * bendOct[i] + mod2 * pitchMod;
+            const float log2F1 = base1 + dyn + bendOct[i] + mod1 * pitchMod;
+            dt2[i] = dsp::clamp (dsp::fast::exp2 (log2F2) * invFs, kMinDt, kMaxDt);
+            dt1Raw[i] = dsp::fast::exp2 (log2F1) * invFs; // clamped after cross-mod
 
-    log2F1 += map::crossModOct (p.vco1CrossMod) * o2;
-    const float dt1 = dsp::clamp (std::exp2 (log2F1) * invFs, kMinDt, kMaxDt);
-    const float o1 = vco1.process (dt1, width, sync ? wrap2 : -1.0f, unused);
+            const float amount = dsp::clamp (pwA + pwLfo * lfo[i] + pwEnv * e1[i], 0.0f, 1.0f);
+            width[i] = 0.5f - 0.45f * pwmDepth[i] * amount;
+        }
+    }
 
-    // ---- Mixer -> HPF -> VCF -> VCA ----
-    const float mixed = o1 + (o2 - o1) * p.sourceMix;
-    const float hp = hpf.process (mixed, f.hpfG);
+    crossModOn = m.crossModActive;
 
-    const float envForVcf = vcfEnvSource == 0 ? e1Mod : e2;
-    const float log2Fc = map::cutoffLog2Hz (p.vcfCutoff)
-                         + envForVcf * map::vcfEnvModOct (p.vcfEnvMod)
-                         + f.lfo * map::vcfLfoModOct (p.vcfLfoMod)
-                         + p.vcfKeyFollow * static_cast<float> (currentNote - 60) / 12.0f
-                         + drift.cutoffOct * dsp::Drift::kCutoffOct * f.vintage;
-    const float fc = std::exp2 (dsp::clamp (log2Fc, 3.0f, maxLog2Cutoff));
-    const float y = vcf.process (hp, dsp::tptG (fc, fs), map::resonanceK (p.vcfResonance), slope24);
+    // ---- VCF coefficients and VCA gain (vectorisable). The oscillators run in renderSample(). ----
+    {
+        const float* env = vcfEnvSource == 0 ? e1Mod : e2;
+        const float* cutoff = m.ctl[ModBlock::CutoffLog2];
+        const float* envOct = m.ctl[ModBlock::VcfEnvOct];
+        const float* lfoOct = m.ctl[ModBlock::VcfLfoOct];
+        const float* keyOct = m.ctl[ModBlock::VcfKeyOct];
+        const float* resK = m.ctl[ModBlock::ResonanceK];
+        const float keyDist = note - 60.0f;
+        const float driftOct = drift.cutoffOct * dsp::Drift::kCutoffOct * vintage;
+        const float piOverFs = dsp::kPi * invFs;
+        const float maxLog2 = maxLog2Cutoff;
+        for (int i = 0; i < n; ++i)
+        {
+            const float log2Fc = cutoff[i] + env[i] * envOct[i] + lfo[i] * lfoOct[i] + keyOct[i] * keyDist + driftOct;
+            const float fc = dsp::fast::exp2 (dsp::clamp (log2Fc, 3.0f, maxLog2));
+            const auto c = dsp::OtaLadder::makeCoefs (dsp::fast::tanPrewarp (fc * piOverFs), resK[i]);
+            cG[i] = c.G;
+            c1[i] = c.c1;
+            c2[i] = c.c2;
+            c3[i] = c.c3;
+            c4[i] = c.c4;
+            cK[i] = c.k;
+            cInv[i] = c.inv;
+            gain[i] = e2[i] * m.vcaGain[i] * c.comp;
+        }
+    }
+    return true;
+}
 
-    return y * e2 * f.vcaGain;
+void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m, float* out) noexcept
+{
+    Voice* active[kMaxVoicesPerBlock];
+    int numActive = 0;
+    for (int v = 0; v < numVoices && numActive < kMaxVoicesPerBlock; ++v)
+        if (voices[v]->beginBlock (m))
+            active[numActive++] = voices[v];
+
+    const int n = m.numSamples;
+    if (numActive == 0)
+    {
+        for (int i = 0; i < n; ++i)
+            out[i] = 0.0f;
+        return;
+    }
+
+    const float* hpfG = m.ctl[ModBlock::HpfG];
+    const float* crossOct = m.ctl[ModBlock::CrossModOct];
+    const float* mix = m.ctl[ModBlock::SourceMix];
+    for (int i = 0; i < n; ++i)
+    {
+        float sum = 0.0f;
+        for (int a = 0; a < numActive; ++a)
+            sum += active[a]->renderSample (i, hpfG[i], crossOct[i], mix[i]);
+        out[i] = sum;
+    }
 }
 } // namespace vs

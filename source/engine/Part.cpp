@@ -1,13 +1,9 @@
 #include "engine/Part.h"
 
-#include "dsp/Filters.h"
 #include "engine/Oversampler.h"
-#include "params/Mappings.h"
 
 namespace vs
 {
-static_assert (kLfoWaveLabels.size() == dsp::kNumLfoWaves, "LFO wave labels must match dsp::LfoWave");
-
 void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor, std::uint32_t seed)
 {
     maxBlock = juce::jmax (1, maxBlockSize);
@@ -23,8 +19,7 @@ void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor,
     silence.setSize (1, maxBlock);
     silence.clear();
 
-    smoothCoef = dsp::onePoleCoef (0.005f, osRate);
-    lfo.prepare (osRate, seed ^ 0x5bd1e995u);
+    modulator.prepare (osRate, seed ^ 0x5bd1e995u);
     voice.prepare (osRate, seed);
     reset();
 }
@@ -33,23 +28,16 @@ void Part::reset() noexcept
 {
     if (oversampler != nullptr)
         oversampler->reset();
-    lfo.reset();
+    modulator.reset (target);
     voice.reset();
-    smoothed = target;
-    bend = bendTarget = 0.0f;
     numHeld = 0;
 }
 
 void Part::applyBlockParams() noexcept
 {
     // Switches and envelope times apply immediately; continuous values are smoothed per sample.
-#define VS_COPY_CHOICE(member, ...) smoothed.member = target.member;
-    VS_PART_CHOICE_PARAMS (VS_COPY_CHOICE)
-#undef VS_COPY_CHOICE
-
-    lfo.setWave (static_cast<dsp::LfoWave> (target.lfoWave));
-    lfo.setRate (map::lfoRateHz (target.lfoRate));
-    lfo.setDelay (map::lfoDelaySec (target.lfoDelay));
+    modulator.setTarget (target);
+    modulator.setVintage (vintage);
     voice.setBlockParams (target, vintage);
 }
 
@@ -90,25 +78,13 @@ void Part::render (float* out, int numSamples, std::span<const NoteEvent> events
 
 void Part::renderOversampled (float* os, int n) noexcept
 {
-    const float a = smoothCoef;
-    for (int i = 0; i < n; ++i)
+    Voice* voices[] { &voice };
+    for (int pos = 0; pos < n;)
     {
-#define VS_SMOOTH(member, ...) smoothed.member += (target.member - smoothed.member) * a;
-        VS_PART_FLOAT_PARAMS (VS_SMOOTH)
-#undef VS_SMOOTH
-        bend += (bendTarget - bend) * a;
-
-        const float lfoValue = lfo.process();
-        const float tremolo = 1.0f - map::vcaLfoDepth (smoothed.vcaLfoMod) * 0.5f * (1.0f - lfoValue);
-
-        const ModFrame frame { smoothed,
-                               lfoValue,
-                               bend,
-                               dsp::tptG (map::hpfHz (smoothed.hpfCutoff), osRate),
-                               map::vcaGain (smoothed.vcaLevel) * tremolo,
-                               vintage };
-
-        os[i] = voice.process (frame);
+        const int len = juce::jmin (maxSubBlock, n - pos);
+        modulator.next (len, modBlock);
+        Voice::renderBlock (voices, 1, modBlock, os + pos);
+        pos += len;
     }
 }
 
@@ -118,10 +94,10 @@ void Part::handleEvent (const NoteEvent& e) noexcept
     {
         case EventType::NoteOn:           noteOn (e.note, e.value); break;
         case EventType::NoteOff:          noteOff (e.note); break;
-        case EventType::PitchBend:        bendTarget = e.value * bendRangeSemis; break;
+        case EventType::PitchBend:        modulator.setBendTarget (e.value * bendRangeSemis); break;
         case EventType::AllNotesOff:      allNotesOff(); break;
         case EventType::AllSoundOff:      allNotesOff(); voice.reset(); break;
-        case EventType::ResetControllers: bendTarget = 0.0f; break;
+        case EventType::ResetControllers: modulator.setBendTarget (0.0f); break;
         case EventType::ModWheel:         // M2b: vibrato
         case EventType::SustainPedal:     // M2b: deferred releases
             break;
@@ -133,7 +109,7 @@ void Part::noteOn (int note, float velocity) noexcept
     noteOff (note); // re-pressed key moves to the top of the stack
 
     if (numHeld == 0)
-        lfo.trigger();
+        modulator.triggerLfo();
 
     if (numHeld < static_cast<int> (held.size()))
         held[static_cast<size_t> (numHeld++)] = note;

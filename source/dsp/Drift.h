@@ -2,6 +2,9 @@
 
 #include "dsp/DspUtil.h"
 
+#include <array>
+#include <cstddef>
+
 namespace vs::dsp
 {
 /**
@@ -22,22 +25,35 @@ public:
         cutoffOct = rng.bipolar();
         envScale = rng.bipolar();
         walkCoef = onePoleCoef (1.2f, sampleRate);
+        for (int n = 0; n <= kMaxAdvance; ++n)
+            walkCoefN[static_cast<size_t> (n)] = static_cast<float> (1.0 - std::pow (1.0 - static_cast<double> (walkCoef), n));
         retargetSamples = static_cast<int> (0.25f * sampleRate);
         counter = 0;
         walk = target = 0.0f;
     }
 
-    /** Advance the slow drift; returns dynamic drift in cents at full amount. */
-    float process() noexcept
+    static constexpr int kMaxAdvance = 64;
+
+    /**
+        Advance the slow drift by n (<= kMaxAdvance) samples at once (control rate); returns the
+        dynamic drift at the end, in units of kDynamicCents at full amount. Equivalent to n per-sample
+        one-pole steps, except that a retarget due inside the n samples takes effect at their start
+        (at most n samples early, against a 0.25 s retarget period).
+    */
+    float advance (int n) noexcept
     {
-        if (--counter <= 0)
+        n = clamp (n, 0, kMaxAdvance);
+        counter -= n;
+        if (counter <= 0)
         {
-            counter = retargetSamples;
+            counter += retargetSamples;
             target = rng.bipolar();
         }
-        walk += (target - walk) * walkCoef;
+        walk += (target - walk) * walkCoefN[static_cast<size_t> (n)];
         return walk;
     }
+
+    float current() const noexcept { return walk; }
 
     // Full-scale ranges at Vintage = 1.
     static constexpr float kStaticCents = 6.0f;
@@ -51,5 +67,6 @@ private:
     Random rng;
     float walk = 0.0f, target = 0.0f, walkCoef = 0.0f;
     int retargetSamples = 1, counter = 0;
+    std::array<float, kMaxAdvance + 1> walkCoefN {};
 };
 } // namespace vs::dsp

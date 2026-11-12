@@ -1,16 +1,17 @@
 // CPU benchmark (polyphony baseline). Reports cost as % of one core in real time for:
 //   1. one Part with one held voice (2x / 4x oversampling; the original measurement),
-//   2. N vs::Voice objects driven directly at the oversampled rate (no Part),
+//   2. N vs::Voice objects driven directly at the oversampled rate (no Part, but the same
+//      PartModulator + Voice::renderBlock path a Part uses),
 //   3. the derived per-part overhead and a projection against the 15 % budget.
 // Run: build/mac-arm64/tests/voice_bench
-#include "dsp/Lfo.h"
+#include "engine/Modulation.h"
 #include "engine/Part.h"
 #include "engine/Voice.h"
-#include "params/Mappings.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <memory>
 #include <vector>
 
 namespace
@@ -71,50 +72,43 @@ double benchPart (int factor)
     });
 }
 
-// N voices driven directly at the oversampled rate. The ModFrame is built per sample like
-// Part::renderOversampled (parameters are constant, so no smoothing cost is included).
+// N voices driven directly at the oversampled rate, the way a Part drives them: one shared
+// PartModulator (parameter smoothing, LFO) per sub-block, then Voice::renderBlock over all
+// voices. Parameters are constant. No events, no decimator.
 double benchVoices (int factor, int n)
 {
     return bestOf ([factor, n] {
         juce::ScopedNoDenormals noDenormals;
         const float osRate = static_cast<float> (fs) * static_cast<float> (factor);
         const vs::PartParams p = benchParams();
-        const float vintage = 0.5f;
 
-        vs::dsp::Lfo lfo;
-        lfo.prepare (osRate, 1u ^ 0x5bd1e995u);
-        lfo.setWave (static_cast<vs::dsp::LfoWave> (p.lfoWave));
-        lfo.setRate (vs::map::lfoRateHz (p.lfoRate));
-        lfo.setDelay (vs::map::lfoDelaySec (p.lfoDelay));
-        lfo.trigger();
+        vs::PartModulator modulator;
+        modulator.prepare (osRate, 1u ^ 0x5bd1e995u);
+        modulator.reset (p);
+        modulator.setVintage (0.5f);
+        modulator.triggerLfo();
 
         std::vector<vs::Voice> voices (static_cast<size_t> (n));
+        std::vector<vs::Voice*> pointers;
         for (int v = 0; v < n; ++v)
         {
             auto& voice = voices[static_cast<size_t> (v)];
             voice.prepare (osRate, 1u + static_cast<std::uint32_t> (v) * 7919u);
-            voice.setBlockParams (p, vintage);
+            voice.setBlockParams (p, 0.5f);
             const int note = n == 1 ? 48 : 36 + (v * 48) / (n - 1);
             voice.noteOn (note, 0.8f);
+            pointers.push_back (&voice);
         }
 
-        const float vcaLevel = vs::map::vcaGain (p.vcaLevel);
+        auto modBlock = std::make_unique<vs::ModBlock>();
+        float out[vs::kMaxSubBlock] {};
         double sum = 0.0;
         const long total = static_cast<long> (fs) * seconds * factor;
-        for (long i = 0; i < total; ++i)
+        for (long i = 0; i < total; i += vs::kMaxSubBlock)
         {
-            const float lfoValue = lfo.process();
-            const float tremolo = 1.0f - vs::map::vcaLfoDepth (p.vcaLfoMod) * 0.5f * (1.0f - lfoValue);
-            const vs::ModFrame frame { p,
-                                       lfoValue,
-                                       0.0f,
-                                       vs::dsp::tptG (vs::map::hpfHz (p.hpfCutoff), osRate),
-                                       vcaLevel * tremolo,
-                                       vintage };
-            float mix = 0.0f;
-            for (auto& voice : voices)
-                mix += voice.process (frame);
-            sum += static_cast<double> (mix);
+            modulator.next (vs::kMaxSubBlock, *modBlock);
+            vs::Voice::renderBlock (pointers.data(), n, *modBlock, out);
+            sum += static_cast<double> (out[0]);
         }
         gSink = static_cast<float> (sum);
     });
@@ -134,7 +128,8 @@ int main()
     }
 
     // 2. Voices only.
-    std::printf ("\nVoices only (no Part: shared ModFrame + LFO per sample, no param smoothing, no decimator)\n");
+    std::printf ("\nVoices only (no Part: shared PartModulator per %d-sample sub-block + Voice::renderBlock, no events, no decimator)\n",
+                 vs::kMaxSubBlock);
     constexpr int counts[3] { 1, 16, 32 };
     double v[2][3] {};
     for (int k = 0; k < 2; ++k)
@@ -151,7 +146,7 @@ int main()
     }
 
     // 3. Overhead and projection.
-    std::printf ("\nPer-part overhead = (Part with 1 voice) - (1 voice only) = param smoothing + decimator + MIDI/block handling\n");
+    std::printf ("\nPer-part overhead = (Part with 1 voice) - (1 voice only) = decimator + event/block handling (smoothing and LFO are in both)\n");
     constexpr double budget = 15.0;
     for (int k = 0; k < 2; ++k)
     {

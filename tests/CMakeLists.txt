@@ -23,6 +23,7 @@ add_executable(VintageSynthTests
     dsp_unit/EnvelopeLfoTests.cpp
     dsp_unit/PartTests.cpp
     dsp_unit/EventTests.cpp
+    dsp_unit/FastMathTests.cpp
     dsp_unit/RenderDemo.cpp)
 
 target_link_libraries(VintageSynthTests PRIVATE

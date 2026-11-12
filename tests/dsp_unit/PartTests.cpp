@@ -228,3 +228,97 @@ TEST_CASE ("MIDI parsing: pitch bend, note-on velocity 0, all-notes-off, SysEx i
     rig.render (9600, parse (panic));
     CHECK_FALSE (rig.part.isSounding());
 }
+
+TEST_CASE ("Static pitch error <= 0.1 cent across the keyboard", "[part][pitch]")
+{
+    for (const int osFactor : { 2, 4 })
+        for (const int note : { 33, 57, 69, 93, 105 })
+        {
+            Rig rig (osFactor);
+            rig.params.vco1Wave = 0; // sine
+            rig.params.sourceMix = 0.0f;
+            rig.params.vcfCutoff = 1.0f;
+            rig.params.vcfEnvMod = 0.0f;
+            rig.params.vcfResonance = 0.0f;
+            rig.params.env2Sustain = 1.0f;
+            const auto out = rig.render (48000 * 2, notes ({ { 0, note, true } }));
+            const double hz = vs::test::measureFrequency (std::vector<float> (out.begin() + 24000, out.end()), kFs);
+            const double expected = 440.0 * std::pow (2.0, (note - 69) / 12.0);
+            const double cents = 1200.0 * std::log2 (hz / expected);
+            INFO ("os " << osFactor << " note " << note << ": " << hz << " Hz, error " << cents << " cent");
+            CHECK (std::abs (cents) <= 0.1);
+        }
+}
+
+namespace
+{
+/**
+    A patch with every control-rate path moving fast: cutoff target jumping 0.25 <-> 0.85 every
+    block, pitch bend jumping between -1 and +1 every 384 samples, fast LFO on pitch, cutoff and
+    PWM, 1 ms ENV-1 attack on pitch, resonance, cross-mod and sync.
+*/
+std::vector<float> renderFastModulation (int maxSubBlock)
+{
+    Rig rig;
+    rig.part.setMaxSubBlock (maxSubBlock);
+    auto& p = rig.params;
+    p.vcfResonance = 0.7f;
+    p.vcoSync = 1;
+    p.vco1CrossMod = 0.5f;
+    p.vco1Wave = 4; // pulse
+    p.pwmDepth = 0.8f;
+    p.vcoModEnv = 0.3f;
+    p.env1Attack = 0.0f;
+    p.env1Decay = 0.3f;
+    p.vcoModLfo = 0.15f;
+    p.lfoRate = 0.9f;
+    p.vcfLfoMod = 0.3f;
+    p.hpfCutoff = 0.4f;
+    p.env2Sustain = 1.0f;
+
+    constexpr int total = 24000;
+    std::vector<vs::NoteEvent> events { { 0, vs::EventType::NoteOn, 45, 0.8f } };
+    for (int pos = 384, sign = 1; pos < total; pos += 384, sign = -sign)
+        events.push_back ({ pos, vs::EventType::PitchBend, 0, static_cast<float> (sign) });
+
+    std::vector<float> out (static_cast<size_t> (total));
+    std::vector<vs::NoteEvent> chunk;
+    for (int start = 0, b = 0; start < total; start += kBlock, ++b)
+    {
+        p.vcfCutoff = b % 2 == 0 ? 0.25f : 0.85f;
+        chunk.clear();
+        for (auto e : events)
+            if (e.offset >= start && e.offset < start + kBlock)
+            {
+                e.offset -= start;
+                chunk.push_back (e);
+            }
+        rig.part.setParams (p);
+        rig.part.render (out.data() + start, kBlock, chunk);
+    }
+    return out;
+}
+} // namespace
+
+TEST_CASE ("Sub-block rendering equals per-sample rendering within -90 dB (no control-rate steps)", "[part][control]")
+{
+    // Sub-block 1 runs every stage (smoothing, LFO, coefficients, oscillators, filter) one
+    // oversampled sample at a time, like the M1 engine. Any control-rate shortcut (stepped or
+    // ramped parameters, zipper sidebands) would show up as a difference; only float rounding
+    // is allowed (measured about -105 dB on arm64).
+    const auto reference = renderFastModulation (1);
+    const auto control = renderFastModulation (vs::kMaxSubBlock);
+
+    double signal = 0.0, diff = 0.0;
+    for (size_t i = 0; i < reference.size(); ++i)
+    {
+        signal += static_cast<double> (reference[i]) * static_cast<double> (reference[i]);
+        const double d = static_cast<double> (control[i]) - static_cast<double> (reference[i]);
+        diff += d * d;
+    }
+    const double ratioDb = 10.0 * std::log10 (diff / signal);
+    INFO ("difference relative to the signal: " << ratioDb << " dB");
+    CHECK (signal > 1.0); // the patch is audible
+    CHECK (ratioDb < -90.0);
+}
+

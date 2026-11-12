@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dsp/Lfo.h"
+#include "engine/Modulation.h"
 #include "engine/NoteEvent.h"
 #include "engine/Voice.h"
 #include "params/PartParamList.h"
@@ -19,6 +19,9 @@ namespace vs
 
     The whole voice path runs at the oversampled rate and is decimated once per part.
     Events are applied sample-accurately: the block is split at each event's offset.
+    Between events, voices render in sub-blocks of up to kMaxSubBlock oversampled samples;
+    parameter smoothing, the LFO and other shared modulation are computed once per sub-block
+    for all voices (PartModulator).
 
     M1: a single voice, last-note priority (legato pitch change, envelopes retrigger
     on every new note). M2 adds polyphony, unison and portamento.
@@ -40,6 +43,9 @@ public:
     */
     void render (float* out, int numSamples, std::span<const NoteEvent> events) noexcept;
 
+    /** Longest sub-block in oversampled samples, 1..kMaxSubBlock (default kMaxSubBlock). For tests. */
+    void setMaxSubBlock (int n) noexcept { maxSubBlock = juce::jlimit (1, kMaxSubBlock, n); }
+
     int getLatencySamples() const noexcept { return latencySamples; }
     int getOversamplingFactor() const noexcept { return osFactor; }
     bool isSounding() const noexcept { return voice.isActive(); }
@@ -59,13 +65,13 @@ private:
     int latencySamples = 0;
     float osRate = 96000.0f;
 
-    PartParams target, smoothed;
-    float smoothCoef = 1.0f;
+    PartParams target;
     float vintage = 0.0f;
-    float bendTarget = 0.0f, bend = 0.0f;
     float bendRangeSemis = 2.0f;
 
-    dsp::Lfo lfo;
+    int maxSubBlock = kMaxSubBlock;
+    PartModulator modulator;
+    ModBlock modBlock;
     Voice voice;
 
     std::array<int, 128> held {};
