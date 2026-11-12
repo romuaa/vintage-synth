@@ -8,7 +8,9 @@
 #   3. Every workflow YAML parses; the JSON row strings inside build.yml are valid JSON; and the
 #      "plan" step of build.yml, run for every `targets` value, selects exactly the documented
 #      rows and jobs (the table below), so the `if:` conditions and the docs cannot drift apart.
-#   4. Shell scripts pass `bash -n` (and shellcheck at error severity, when it is installed).
+#   4. Source layout: source/common includes nothing from an instrument directory; the JUCE-free
+#      directories include no JUCE header; no two files differ only by case.
+#   5. Shell scripts pass `bash -n` (and shellcheck at error severity, when it is installed).
 set -uo pipefail
 
 here=$(cd -P "$(dirname "$0")" && pwd)
@@ -107,7 +109,33 @@ TABLE
   fi
 fi
 
-# 4. Shell scripts -----------------------------------------------------------------------------
+# 4. Source layout -----------------------------------------------------------------------------
+# source/common/ is shared by every instrument and must not depend on one: no include of
+# "vintage/..." (or any other instrument directory) from it. The directories that are JUCE-free
+# today stay so (common/engine too, except Oversampler.h, which wraps juce::dsp). No two tracked
+# files may differ only by case (macOS is case-insensitive, Linux is not).
+bad=$(git grep -n --untracked -E '#[[:space:]]*include[[:space:]]*[<"](vintage|chip)/' -- 'source/common/*' || true)
+if [[ -n $bad ]]; then
+  fail "source/common includes an instrument directory:"; echo "$bad" >&2
+else
+  ok "source/common does not include anything from an instrument directory"
+fi
+bad=$(git grep -n --untracked -iE '#[[:space:]]*include[[:space:]]*[<"]juce' -- \
+        'source/common/dsp/*' 'source/common/fx/*' 'source/common/seq/*' 'source/vintage/dsp/*' \
+        'source/common/engine/*' ':!source/common/engine/Oversampler.h' || true)
+if [[ -n $bad ]]; then
+  fail "JUCE include in a directory that is JUCE-free by design:"; echo "$bad" >&2
+else
+  ok "the JUCE-free directories (common dsp/fx/seq/engine, vintage dsp) include no JUCE header"
+fi
+dups=$(tr '\0' '\n' < "$tmp/files" | tr 'A-Z' 'a-z' | sort | uniq -d)
+if [[ -n $dups ]]; then
+  fail "file names that differ only by case: $(echo "$dups" | tr '\n' ' ')"
+else
+  ok "no two files differ only by case"
+fi
+
+# 5. Shell scripts -----------------------------------------------------------------------------
 sh_n=0
 while IFS= read -r -d '' f; do
   case $f in *.sh) ;; *) continue ;; esac
