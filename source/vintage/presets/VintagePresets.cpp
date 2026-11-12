@@ -5,9 +5,21 @@
 
 namespace vs
 {
+presets::Instrument vintageInstrument()
+{
+    presets::Instrument i;
+    i.id = kPresetInstrumentId;
+    i.groups = 8;
+    i.slotsPerGroup = 8;
+    i.programExtension = ".vsprog";
+    i.toneExtension = ".vstone";
+    i.bankExtension = ".vsbank";
+    return i;
+}
+
 presets::Schema makeVintageSchema (const juce::AudioProcessor& processor)
 {
-    return presets::Schema::fromProcessor (processor, { kLowerPrefix, kUpperPrefix }, { ParamID::masterVolume });
+    return presets::Schema::fromProcessor (processor, { kLowerPrefix, kUpperPrefix }, { ParamID::masterVolume }, vintageInstrument());
 }
 
 presets::Bank makeVintageFactoryBank (const presets::Schema& schema, juce::StringArray* errors)

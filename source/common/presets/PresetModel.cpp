@@ -2,11 +2,37 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 
 namespace vs::presets
 {
-Schema::Schema (std::vector<ParamSpec> allParams, std::vector<juce::String> prefixes, std::vector<juce::String> excludedIds)
-    : specs (std::move (allParams)), tonePrefixes (std::move (prefixes))
+bool Instrument::isValid() const noexcept
+{
+    return id.isNotEmpty() && groups >= 1 && groups <= 26 && slotsPerGroup >= 1 && slotsPerGroup <= 9 && programExtension.startsWithChar ('.')
+           && toneExtension.startsWithChar ('.') && bankExtension.startsWithChar ('.');
+}
+
+juce::String Instrument::positionName (int i) const
+{
+    const int per = std::max (1, slotsPerGroup);
+    const int c = std::clamp (i, 0, std::max (0, bankSize() - 1));
+    return juce::String::charToString (static_cast<juce::juce_wchar> ('A' + c / per)) + juce::String (c % per + 1);
+}
+
+int Instrument::slotFromFileName (const juce::String& fileName) const
+{
+    if (fileName.length() < 2)
+        return -1;
+    const auto group = static_cast<int> (juce::CharacterFunctions::toUpperCase (fileName[0])) - 'A';
+    const auto slot = static_cast<int> (fileName[1]) - '1';
+    if (group < 0 || group >= groups || slot < 0 || slot >= slotsPerGroup)
+        return -1;
+    return group * slotsPerGroup + slot;
+}
+
+Schema::Schema (std::vector<ParamSpec> allParams, std::vector<juce::String> prefixes, std::vector<juce::String> excludedIds, Instrument instrument)
+    : specs (std::move (allParams)), tonePrefixes (std::move (prefixes)), inst (std::move (instrument))
 {
     excluded.assign (specs.size(), false);
     for (const auto& id : excludedIds)
@@ -21,7 +47,7 @@ Schema::Schema (std::vector<ParamSpec> allParams, std::vector<juce::String> pref
 
     // The tone's parameters, in the order of the first part's; every other part must match.
     toneIndex.assign (tonePrefixes.size(), {});
-    valid = ! tonePrefixes.empty();
+    valid = ! tonePrefixes.empty() && inst.isValid();
     std::vector<bool> inTone (specs.size(), false);
     if (valid)
     {
@@ -40,6 +66,17 @@ Schema::Schema (std::vector<ParamSpec> allParams, std::vector<juce::String> pref
                     inTone[static_cast<size_t> (i)] = true;
                 }
             }
+        // A tone file has no part: it is read and clamped with the first part's specs, so every
+        // part must have the same range, default and step for the same suffix.
+        for (size_t t = 1; t < tonePrefixes.size() && valid; ++t)
+            for (size_t k = 0; k < toneSuffixes.size(); ++k)
+            {
+                const auto& a = specs[static_cast<size_t> (toneIndex[0][k])];
+                const auto& b = specs[static_cast<size_t> (toneIndex[t][k])];
+                const auto same = [] (float x, float y) { return std::memcmp (&x, &y, sizeof (float)) == 0; };
+                if (! same (a.lo, b.lo) || ! same (a.hi, b.hi) || ! same (a.def, b.def) || a.discrete != b.discrete)
+                    valid = false;
+            }
         for (int i = 0; i < numParams(); ++i) // a prefixed parameter outside the common set
             for (const auto& p : tonePrefixes)
                 if (specs[static_cast<size_t> (i)].id.startsWith (p) && ! inTone[static_cast<size_t> (i)])
@@ -51,7 +88,7 @@ Schema::Schema (std::vector<ParamSpec> allParams, std::vector<juce::String> pref
 }
 
 Schema Schema::fromProcessor (const juce::AudioProcessor& processor, std::vector<juce::String> tonePrefixes,
-                              std::vector<juce::String> excludedIds)
+                              std::vector<juce::String> excludedIds, Instrument instrument)
 {
     // The defaults are the parameters' values as they are now: build the schema before anything
     // changes them (a processor that has just been constructed).
@@ -77,7 +114,7 @@ Schema Schema::fromProcessor (const juce::AudioProcessor& processor, std::vector
             s.def = range.convertFrom0to1 (ranged->getDefaultValue());
         all.push_back (std::move (s));
     }
-    return Schema (std::move (all), std::move (tonePrefixes), std::move (excludedIds));
+    return Schema (std::move (all), std::move (tonePrefixes), std::move (excludedIds), std::move (instrument));
 }
 
 int Schema::indexOf (const juce::String& id) const
@@ -109,11 +146,41 @@ std::vector<float> Schema::defaults() const
     return v;
 }
 
+bool isControlCharacter (juce::juce_wchar c) noexcept
+{
+    const auto u = static_cast<std::uint32_t> (c);
+    return u < 0x20u || (u >= 0x7Fu && u <= 0x9Fu) || u == 0x2028u || u == 0x2029u;
+}
+
+bool isFormatCharacter (juce::juce_wchar c) noexcept
+{
+    const auto u = static_cast<std::uint32_t> (c);
+    return u == 0x00ADu                       // soft hyphen
+           || u == 0x034Fu                    // combining grapheme joiner
+           || u == 0x061Cu                    // Arabic letter mark
+           || u == 0x115Fu || u == 0x1160u    // Hangul fillers
+           || u == 0x17B4u || u == 0x17B5u    // Khmer inherent vowels (invisible)
+           || u == 0x180Eu                    // Mongolian vowel separator
+           || (u >= 0x200Bu && u <= 0x200Fu)  // zero-width space, joiners, LRM, RLM
+           || (u >= 0x202Au && u <= 0x202Eu)  // LRE, RLE, PDF, LRO, RLO
+           || (u >= 0x2060u && u <= 0x206Fu)  // word joiner, invisible operators, LRI, RLI, FSI, PDI, deprecated
+           || u == 0x3164u                    // Hangul filler
+           || u == 0xFEFFu                    // byte order mark / zero-width no-break space
+           || u == 0xFFA0u                    // half-width Hangul filler
+           || (u >= 0xFFF9u && u <= 0xFFFBu)  // interlinear annotation
+           || (u >= 0x1D173u && u <= 0x1D17Au) // musical symbol format characters
+           || (u >= 0xE0000u && u <= 0xE007Fu); // tag characters
+}
+
 juce::String sanitiseText (const juce::String& s, int maxChars)
 {
     juce::String cleaned;
     for (auto c : s)
-        cleaned += (c < 32 || c == 127) ? juce::juce_wchar (' ') : c;
+    {
+        if (isFormatCharacter (c))
+            continue;
+        cleaned += isControlCharacter (c) ? juce::juce_wchar (' ') : c;
+    }
     return cleaned.trim().substring (0, maxChars).trim();
 }
 
@@ -135,7 +202,7 @@ Bank makeInitBank (const Schema& schema)
 {
     Bank b;
     b.name = "Untitled";
-    b.programs.assign (static_cast<size_t> (kBankSize), makeInitProgram (schema));
+    b.programs.assign (static_cast<size_t> (schema.bankSize()), makeInitProgram (schema));
     return b;
 }
 

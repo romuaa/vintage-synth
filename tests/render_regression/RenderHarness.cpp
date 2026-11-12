@@ -274,11 +274,11 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
 
     const auto applyProgram = [&] (const Event& e) {
         auto& presets = proc.getPresets();
-        int slot = vs::presets::slotFromFileName (juce::String (e.id));
+        int slot = presets.getSchema().instrument().slotFromFileName (juce::String (e.id));
         if (slot < 0 || e.id.size() != 2)
         {
             slot = -1;
-            for (int k = 0; k < vs::presets::kBankSize && slot < 0; ++k)
+            for (int k = 0; k < presets.bankSize() && slot < 0; ++k)
                 if (presets.programName (k) == juce::String (e.id))
                     slot = k;
         }

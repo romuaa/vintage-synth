@@ -2,31 +2,20 @@
 
 namespace vs::presets
 {
-int slotFromFileName (const juce::String& fileName)
-{
-    if (fileName.length() < 2)
-        return -1;
-    const auto group = static_cast<int> (juce::CharacterFunctions::toUpperCase (fileName[0])) - 'A';
-    const auto slot = static_cast<int> (fileName[1]) - '1';
-    if (group < 0 || group >= kBankSize / 8 || slot < 0 || slot >= 8)
-        return -1;
-    return group * 8 + slot;
-}
-
 Bank makeBankFromFiles (const Schema& schema, const juce::String& bankName, const std::vector<FactoryFile>& files,
                         juce::StringArray* errors)
 {
     Bank bank = makeInitBank (schema);
     bank.name = bankName;
     bank.author = "Exitium";
-    std::vector<bool> filled (static_cast<size_t> (kBankSize), false);
+    std::vector<bool> filled (static_cast<size_t> (schema.bankSize()), false);
     for (const auto& f : files)
     {
-        const int slot = slotFromFileName (f.fileName);
+        const int slot = schema.instrument().slotFromFileName (f.fileName);
         if (slot < 0)
         {
             if (errors != nullptr)
-                errors->add (f.fileName + ": the name does not start with a slot (A1 ... H8)");
+                errors->add (f.fileName + ": the name does not start with a slot (A1 ... " + schema.instrument().positionName (schema.bankSize() - 1) + ")");
             continue;
         }
         if (filled[static_cast<size_t> (slot)])
