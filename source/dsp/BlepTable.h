@@ -39,6 +39,24 @@ public:
     /** Ramp residual at t = j + d for a unit slope change (per sample). */
     float ramp (int j, float d) const noexcept { return lookup (rampCells, j, d); }
 
+    /**
+        The band-limiting kernel itself (the windowed sinc whose integrals are the step and ramp
+        residuals, with the same normalisation), at any t in [-Z, Z]; zero outside. Linear
+        interpolation in a table of kKernelResolution points per sample (error below 1e-7).
+        Used to band-limit corrections that are not polynomial (the sine's hard-sync reset).
+    */
+    float kernelAt (float t) const noexcept
+    {
+        const float pos = std::abs (t) * static_cast<float> (kKernelResolution);
+        const int k = static_cast<int> (pos);
+        if (k >= kZeroCrossings * kKernelResolution)
+            return 0.0f;
+        const float frac = pos - static_cast<float> (k);
+        const float* c = kernelCells.data() + k;
+        return c[0] + (c[1] - c[0]) * frac;
+    }
+    static constexpr int kKernelResolution = 4096;
+
 private:
     static constexpr int kCells = 2 * kZeroCrossings;
     static constexpr int kCellSize = kResolution + 1;
@@ -75,6 +93,11 @@ private:
             blep[i] /= norm;
             blep2[i] /= norm;
         }
+
+        // The kernel (even), normalised like the residuals: kernelCells[k] = h (k / kKernelResolution) / norm.
+        kernelCells.resize (static_cast<size_t> (kZeroCrossings * kKernelResolution + 1));
+        for (size_t k = 0; k < kernelCells.size(); ++k)
+            kernelCells[k] = static_cast<float> (kernel (static_cast<double> (k) / kKernelResolution) / norm);
 
         for (int j = -kZeroCrossings; j < kZeroCrossings; ++j)
             for (int k = 0; k <= kResolution; ++k)
@@ -121,6 +144,6 @@ private:
         return c[0] + (c[1] - c[0]) * frac;
     }
 
-    std::vector<float> stepCells, rampCells;
+    std::vector<float> stepCells, rampCells, kernelCells;
 };
 } // namespace vs::dsp

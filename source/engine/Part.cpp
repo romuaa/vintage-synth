@@ -15,7 +15,7 @@ AssignMode assignModeOf (const PartParams& p) noexcept
 }
 } // namespace
 
-void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor, std::uint32_t seed)
+void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor, std::uint32_t seed, int realTimeFactor)
 {
     maxBlock = juce::jmax (1, maxBlockSize);
     osFactor = oversamplingFactor;
@@ -31,9 +31,15 @@ void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor,
         oversampler->initProcessing (static_cast<size_t> (maxBlock));
         decimatorLatency = measureDecimatorDelay (osFactor);
     }
+    // Offline at twice the real-time rate, notes that start with Cross Mod up render at the
+    // real-time rate (Voice::setRealTimePairRatio) and sound Voice::kRtPathExtraDelay samples
+    // later; the other notes are delayed by as much, so all stay aligned (and it is latency).
+    rtPathOn = realTimeFactor > 0 && oversamplingFactor == 2 * realTimeFactor;
+    const int alignDelay = rtPathOn ? Voice::kRtPathExtraDelay : 0;
+
     // Decimator delay (low-frequency phase delay of the down path only) + oscillator BLEP
-    // look-ahead (kLatency oversampled samples), rounded to the nearest host sample.
-    exactLatency = decimatorLatency + static_cast<double> (dsp::Oscillator::kLatency) / static_cast<double> (osFactor);
+    // look-ahead (kLatency oversampled samples) + that alignment, rounded to the nearest host sample.
+    exactLatency = decimatorLatency + static_cast<double> (dsp::Oscillator::kLatency + alignDelay) / static_cast<double> (osFactor);
     latencySamples = juce::roundToInt (exactLatency);
     renderedSamples = 0;
 
@@ -45,6 +51,7 @@ void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor,
     for (size_t i = 0; i < voices.size(); ++i)
     {
         voices[i].prepare (osRate, seed + static_cast<std::uint32_t> (i));
+        voices[i].setRealTimePairRatio (rtPathOn ? 2 : 1);
         voicePtrs[i] = &voices[i];
     }
     reset();
@@ -54,6 +61,7 @@ void Part::reset() noexcept
 {
     if (oversampler != nullptr)
         oversampler->reset();
+    alignRing.fill (0.0f);
     modulator.reset (target);
     for (auto& v : voices)
         v.reset();
@@ -79,6 +87,7 @@ void Part::resume() noexcept
 {
     if (oversampler != nullptr)
         oversampler->reset();
+    alignRing.fill (0.0f);
     modulator.reset (target); // parameters jump to the targets, LFO restarts
     bendRangeIndex = target.bendRange;
     bendRangeSemis = map::bendRangeSemis (bendRangeIndex);
@@ -180,7 +189,23 @@ void Part::renderOversampled (float* os, int n) noexcept
         }
 
         modulator.next (len, modBlock);
-        Voice::renderBlock (voicePtrs.data(), kMaxVoices, modBlock, os + pos);
+        if (rtPathOn)
+        {
+            // Offline: ordinary notes are delayed to meet the real-time-rate ones (see prepare).
+            float* y = os + pos;
+            Voice::renderBlock (voicePtrs.data(), kMaxVoices, modBlock, y, rtPathOut.data());
+            constexpr unsigned mask = static_cast<unsigned> (kAlignRingSize - 1);
+            for (int i = 0; i < len; ++i)
+            {
+                alignRing[alignPos & mask] = y[i];
+                y[i] = alignRing[(alignPos - static_cast<unsigned> (Voice::kRtPathExtraDelay)) & mask] + rtPathOut[static_cast<size_t> (i)];
+                ++alignPos;
+            }
+        }
+        else
+        {
+            Voice::renderBlock (voicePtrs.data(), kMaxVoices, modBlock, os + pos);
+        }
         pos += len;
         for (auto& c : releaseCountdown)
             if (c > 0)

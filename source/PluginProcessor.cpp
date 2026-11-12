@@ -88,8 +88,8 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     upperBinding.read (upperParams);
     lowerPart.setParams (lowerParams);
     upperPart.setParams (upperParams);
-    lowerPart.prepare (sampleRate, preparedBlockSize, osFactor, kLowerSeed);
-    upperPart.prepare (sampleRate, preparedBlockSize, osFactor, kUpperSeed);
+    lowerPart.prepare (sampleRate, preparedBlockSize, osFactor, kLowerSeed, voiceOversamplingFactor (sampleRate, false));
+    upperPart.prepare (sampleRate, preparedBlockSize, osFactor, kUpperSeed, voiceOversamplingFactor (sampleRate, false));
 
     const auto mode = keyModeOf (keyMode);
     router.setMode (mode);
