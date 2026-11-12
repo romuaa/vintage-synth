@@ -3,6 +3,16 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## M7 UI direction (owner decision, 2026-11-12)
+
+- **The custom UI does not reproduce the reference panel's layout.** It gets its own arrangement,
+  designed for plugin use (screen proportions, mouse and trackpad, resizing, clear signal flow,
+  controls that are inactive in the current mode shown as inactive), with our own look and naming.
+  The reference panel only defined *which functions exist*.
+- Consequence for M7: the first deliverable is a layout proposal for the owner to choose from,
+  before any UI code. The visual style is still to be decided with the owner.
+- Noted from hands-on testing: Unison Detune and Unison Voices must look inactive outside Unison mode.
+
 ## Second instrument: chip synth (owner decision, 2026-11-12)
 
 | Decision | Why |
