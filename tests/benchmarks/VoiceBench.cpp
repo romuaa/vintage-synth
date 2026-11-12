@@ -2,11 +2,13 @@
 //   1. one Part with one held voice (2x / 4x oversampling; the original measurement),
 //   2. N vs::Voice objects driven directly at the oversampled rate (no Part, but the same
 //      PartModulator + Voice::renderBlock path a Part uses),
-//   3. the derived per-part overhead and a projection against the 15 % budget.
+//   3. the derived per-part overhead and a projection against the 15 % budget,
+//   4. real Parts with 16 voices each driven through the allocator (M2b), 1 and 2 Parts.
 // Run: build/mac-arm64/tests/voice_bench
 #include "engine/Modulation.h"
 #include "engine/Part.h"
 #include "engine/Voice.h"
+#include "params/Mappings.h"
 
 #include <algorithm>
 #include <chrono>
@@ -113,6 +115,63 @@ double benchVoices (int factor, int n)
         gSink = static_cast<float> (sum);
     });
 }
+enum class PolyLoad
+{
+    HeldChord,   // 16 notes held (M2b path: allocator, velocity, unison/glide terms, no glides)
+    GlideSteal   // 16 held + a new note every 20 ms (steal + 3 ms fade each) with 1 s portamento (always gliding)
+};
+
+// numParts real Parts, each with 16 voices sounding, driven by note events through the allocator.
+double benchPolyParts (int factor, int numParts, PolyLoad load)
+{
+    return bestOf ([=] {
+        juce::ScopedNoDenormals noDenormals;
+        vs::PartParams p = benchParams();
+        if (load == PolyLoad::GlideSteal)
+            p.portaTime = vs::map::portaFromSec (1.0f);
+
+        std::vector<std::unique_ptr<vs::Part>> parts;
+        for (int k = 0; k < numParts; ++k)
+        {
+            parts.push_back (std::make_unique<vs::Part>());
+            parts.back()->setParams (p);
+            parts.back()->prepare (fs, block, factor, 0x1001u + static_cast<std::uint32_t> (k) * 0x100u);
+            parts.back()->setVintage (0.5f);
+        }
+
+        std::vector<vs::NoteEvent> chord;
+        for (int v = 0; v < vs::kMaxVoices; ++v)
+            chord.push_back ({ 0, vs::EventType::NoteOn, static_cast<std::uint8_t> (36 + 3 * v), 0.5f + 0.03f * static_cast<float> (v) });
+        chord.push_back ({ 1, vs::EventType::SustainPedal, 0, 1.0f });
+
+        std::vector<float> out (block);
+        double sum = 0.0;
+        const int blocks = static_cast<int> (fs) * seconds / block;
+        const int stealEvery = static_cast<int> (0.02 * fs);
+        int nextSteal = stealEvery, stealNote = 40;
+        for (int b = 0; b < blocks; ++b)
+        {
+            vs::NoteEvent ev[1];
+            std::span<const vs::NoteEvent> events;
+            if (b == 0)
+                events = chord;
+            else if (load == PolyLoad::GlideSteal && nextSteal < (b + 1) * block)
+            {
+                // Pedal down, no note-offs: every new note steals a held voice.
+                ev[0] = { nextSteal - b * block, vs::EventType::NoteOn, static_cast<std::uint8_t> (stealNote), 0.7f };
+                stealNote = 40 + (stealNote - 40 + 7) % 40;
+                nextSteal += stealEvery;
+                events = ev;
+            }
+            for (auto& part : parts)
+            {
+                part->render (out.data(), block, events);
+                sum += static_cast<double> (out[0]);
+            }
+        }
+        gSink = static_cast<float> (sum);
+    });
+}
 } // namespace
 
 int main()
@@ -163,6 +222,27 @@ int main()
                      "16 voices/1 Part = %.2f%% (%s), 32 voices/1 Part = %.2f%% (%s), 32 voices/2 Parts = %.2f%% (%s)\n",
                      factor, budget, c16, c16 <= budget ? "ok" : "OVER",
                      c32one, c32one <= budget ? "ok" : "OVER", c32two, c32two <= budget ? "ok" : "OVER");
+    }
+
+    // 4. M2b: real Parts with 16 voices each, notes through the allocator (velocity, pedal).
+    constexpr double fxShare = 1.5; // effects budget (docs/architecture.md section 5)
+    std::printf ("\nPolyphonic Parts (M2b: allocator + Part::render, 16 voices sounding per Part, decimator included)\n");
+    for (int k = 0; k < 2; ++k)
+    {
+        const int factor = k == 0 ? 2 : 4;
+        const double held16 = benchPolyParts (factor, 1, PolyLoad::HeldChord);
+        const double held32 = benchPolyParts (factor, 2, PolyLoad::HeldChord);
+        const double steal16 = benchPolyParts (factor, 1, PolyLoad::GlideSteal);
+        const double steal32 = benchPolyParts (factor, 2, PolyLoad::GlideSteal);
+        std::printf ("%dx, 1 Part,  16 voices held:                      %.3f%% (%.3f%% per voice)\n", factor, held16, held16 / 16.0);
+        std::printf ("%dx, 2 Parts, 32 voices held:                      %.3f%% (%.3f%% per voice)\n", factor, held32, held32 / 32.0);
+        std::printf ("%dx, 1 Part,  16 voices, steal/20 ms + 1 s glide: %.3f%%\n", factor, steal16);
+        std::printf ("%dx, 2 Parts, 32 voices, steal/20 ms + 1 s glide: %.3f%%\n", factor, steal32);
+        std::printf ("%dx: M2b Parts vs %d voices driven directly (section 2): held %+.3f%%, glide+steal %+.3f%%\n",
+                     factor, 32, held32 - v[k][2], steal32 - v[k][2]);
+        if (factor == 2)
+            std::printf ("2x budget: 32 voices in 2 Parts (worst case, glide+steal) %.2f%% + effects %.1f%% = %.2f%% of %.0f%% (%s)\n",
+                         steal32, fxShare, steal32 + fxShare, budget, steal32 + fxShare <= budget ? "ok" : "OVER");
     }
     return 0;
 }
