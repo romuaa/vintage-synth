@@ -10,9 +10,13 @@
 //   so the read speed itself changes smoothly (no kinks), slew-limited to 0.75 samples per
 //   sample, so the read head never stops or reverses (pitch stays within 0.25x..1.75x during a
 //   glide). No zipper steps, no clicks.
-// - Reads use 4-point Lagrange interpolation; at an integer delay this is exact.
+// - Reads use 4-point Lagrange interpolation. The time target is rounded to a whole number of
+//   samples (echo spacing within +-0.5 sample of the setting), so once a glide has settled the read
+//   sits exactly on a sample, where Lagrange is exact (weights 0, 1, 0, 0). A static delay is
+//   therefore exactly flat and repeats never darken depending on time x sample rate. Only while
+//   gliding are reads fractional (a half-sample read loses about 0.5 dB at 10 kHz at 48 kHz per pass).
 // - Damping is a 1-pole low-pass in the feedback path, 20 kHz (damping 0, blended out so the
-//   loop is exactly flat) down to 1.5 kHz (damping 1).
+//   loop is exactly flat once the time has settled) down to 1.5 kHz (damping 1).
 // - Normal <-> ping-pong is a 20 ms crossfade of the loop routing; the routing matrix
 //   [[1-w, w], [w, 1-w]] * fb has eigenvalues fb and fb (1 - 2w), so the loop stays stable.
 // - Level 0 fades out over 20 ms, then the delay goes idle (bit-exact bypass). Going idle and
@@ -71,9 +75,9 @@ public:
         const bool active = lvl > 0.0f;
 
         // Delay in samples measured from the current output sample (>= 2 so a read-before-write
-        // Lagrange read has all four taps in the past).
+        // Lagrange read has all four taps in the past), rounded to a whole sample (see above).
         const double t = static_cast<double> (sanitize (p.timeSeconds, kMinTime, kMaxTime));
-        timeTarget = std::max (2.0, t * fs);
+        timeTarget = std::max (2.0, std::round (t * fs));
         fbTarget = sanitize (p.feedback, 0.0f, kMaxFeedback);
         const float damp = sanitize (p.damping, 0.0f, 1.0f);
         dampGTarget = tptCoef (20000.0 * std::pow (1500.0 / 20000.0, static_cast<double> (damp)), fs);

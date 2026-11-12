@@ -217,7 +217,7 @@ TEST_CASE ("Delay: time sweeps and jumps glide without discontinuities", "[fx][d
     CHECK (finite);
     if (fb <= 0.0f)
         CHECK (worst <= bound);
-    CHECK (std::abs (d.currentDelaySamples() - 1.5 * fs) < 1.0e-9); // arrived exactly
+    CHECK (std::abs (d.currentDelaySamples() - std::round (1.5 * fs)) < 1.0e-9); // arrived exactly
     }
 }
 
@@ -291,4 +291,52 @@ TEST_CASE ("Delay: no bulk buffer work on the audio thread (writes only in proce
 TEST_CASE ("Delay: NaN/Inf input never poisons the state (output finite, recovers exactly)", "[fx][delay]")
 {
     checkNonFiniteInputRecovers<Delay> (dp (0.13f, 0.9f, 0.3f, true, 1.0f));
+}
+
+TEST_CASE ("Delay: fractional time settles on a whole sample, repeats stay flat at 1 kHz and 10 kHz", "[fx][delay]")
+{
+    // 44.1 kHz with times that are not whole samples (458.64 and 10341.45 samples). With the read
+    // left at the fractional position, 4-point Lagrange would darken every repeat (about -0.5 dB per
+    // pass at 10 kHz for a half-sample position). The settled read sits on a whole sample, so each
+    // repeat must decay by exactly the feedback in both bands (+-0.5 dB gate).
+    const double fs = 44100.0;
+    for (const float t : { 0.0104f, 0.2345f })
+        for (const bool pp : { false, true })
+        {
+            const float fb = 0.7f;
+            const double D = std::round (static_cast<double> (t) * fs);
+            const size_t at = 1000; // after the 20 ms (882-sample) wake fade
+            const auto n = at + static_cast<size_t> (6.5 * D) + 512;
+            Stereo io (n);
+            io.l[at] = io.r[at] = 1.0f;
+            Delay d;
+            d.prepare (fs, kMaxBlock);
+            runConst (d, io, dp (t, fb, 0.0f, pp, 1.0f));
+            io.l[at] = io.r[at] = 0.0f;
+            CHECK (std::abs (d.currentDelaySamples() - D) < 1.0e-9);
+
+            // Band magnitude of echo k: Hann-windowed 256-sample segment around k*D, DFT at f.
+            auto band = [&] (int k, double f) {
+                const auto c = at + static_cast<size_t> (static_cast<double> (k) * D);
+                double re = 0, im = 0;
+                for (size_t i = 0; i < 256; ++i)
+                {
+                    const size_t idx = c - 128 + i;
+                    const double win = 0.5 - 0.5 * std::cos (2.0 * 3.14159265358979 * static_cast<double> (i) / 256.0);
+                    const double x = win * (static_cast<double> (io.l[idx]) + static_cast<double> (io.r[idx]));
+                    re += x * std::cos (2.0 * 3.14159265358979 * f * static_cast<double> (idx) / fs);
+                    im -= x * std::sin (2.0 * 3.14159265358979 * f * static_cast<double> (idx) / fs);
+                }
+                return std::sqrt (re * re + im * im);
+            };
+            for (const double f : { 1000.0, 10000.0 })
+            {
+                double worst = 0.0;
+                for (int k = 1; k < 6; ++k)
+                    worst = std::max (worst, std::abs (vs::test::toDb (band (k + 1, f) / band (k, f)) - vs::test::toDb (fb)));
+                WARN ("delay 44.1 kHz time " << t << " s (" << static_cast<double> (t) * fs << " samples) pp " << pp << ": worst per-repeat error at "
+                                              << f << " Hz " << worst << " dB");
+                CHECK (worst <= 0.5);
+            }
+        }
 }
