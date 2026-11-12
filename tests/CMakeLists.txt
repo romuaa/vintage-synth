@@ -28,6 +28,13 @@ add_executable(VintageSynthTests
     dsp_unit/PolyphonySpecTests.cpp
     dsp_unit/RenderDemo.cpp)
 
+# M5 effect blocks (header-only, source/fx/).
+target_sources(VintageSynthTests PRIVATE
+    fx_unit/ChorusTests.cpp
+    fx_unit/DelayTests.cpp
+    fx_unit/ReverbTests.cpp
+    fx_unit/FxRenderDemo.cpp)
+
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
     Catch2::Catch2WithMain)
@@ -38,6 +45,10 @@ catch_discover_tests(VintageSynthTests)
 # CPU benchmark (not a test; run manually or from the validate-plugin skill).
 add_executable(voice_bench benchmarks/VoiceBench.cpp)
 target_link_libraries(voice_bench PRIVATE vs_test_core)
+
+# Effect CPU benchmark: chorus, delay, reverb and all three in series (stereo, 48 kHz).
+add_executable(fx_bench benchmarks/FxBench.cpp)
+target_link_libraries(fx_bench PRIVATE vs_test_core)
 
 # Host smoke test: loads the real VST3 bundle through JUCE's VST3 hosting.
 juce_add_console_app(host_smoke PRODUCT_NAME "host_smoke")
