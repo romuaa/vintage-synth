@@ -269,3 +269,60 @@ transport stop), and is tested purely on event lists.
   the processor and compares against a stored reference. The comparison must tolerate cross-platform
   float differences (arm64 / x64, clang / MSVC math libraries): compare perceptual features
   (band energies and envelope over time), not samples. Goldens themselves are created in M6.
+
+## 8. Second instrument: chip synth (outline; refined before its first milestone)
+
+A second plugin in this repository: a polyphonic synthesizer modelled on a classic 3-voice sound
+chip from early-1980s home computers. It has its own name, panel, plugin identity and parameter
+list. **No third-party brand names, part numbers or nicknames anywhere in the repository**; the two
+chip revisions are called **Model A** (early: warm, distorting filter) and **Model B** (later: clean
+filter).
+
+### 8.1 Structure
+- **Separate plugin target, shared code.** Not a second engine inside Vintage Synth: hosts identify a
+  plugin by its codes and parameter list, and the two instruments share neither parameters nor presets.
+- **Step S0 extracts a common library** (`source/common/`) from Vintage Synth, with no behaviour
+  change: note events and MIDI parsing, voice allocator, parameter plumbing and smoothing, fast math,
+  BLEP table, oversampler, effect blocks, test helpers, render-regression harness, benchmarks.
+  S0 runs only when no other agent is editing the engine (after M3 is merged).
+- Each plugin then has its own directory (`source/vintage/`, `source/chip/`), CMake target, identity,
+  parameter list and voice code. CI builds and validates both.
+
+### 8.2 Sound engine: own model, not an embedded emulator
+- **One note = one chip voice:** three oscillators with the chip's sync and ring-modulation routing,
+  three envelopes, one filter with per-oscillator routing, and the output stage. 16 voices per part.
+  An optional paraphonic mode (three notes share one filter, as on the hardware) is a later decision.
+- **Digital parts are reproduced bit-exactly** (phase accumulators, noise shift register, envelope
+  counters with their stepped exponential curve, sync, ring modulation), computed per output sample
+  in closed form rather than per chip clock cycle.
+- **Waveforms are band-limited** at our oversampled rate, with the chip's waveform shapes
+  (12-bit steps, combined waveforms from a parametric model, Model A converter kinks).
+- **Filter:** a non-linear two-pole state-variable model per voice, with Model A and Model B curves
+  and a "chip variation" control. Cutoff, pitch and pulse width are continuous; an optional
+  "register resolution" switch restores the original stepping.
+- **Quirks that hurt playing are options, not defaults** (for example the envelope retrigger delay:
+  "Authentic" or "Clean").
+- CPU target: 16 voices ≤ 5 % of one core at 48 kHz; 32 voices within the shared 15 % budget.
+
+### 8.3 Proving authenticity
+- **Reference oracle, offline only:** an established cycle-accurate emulator (GPL v2-or-later) is
+  built and run in a separate CI workflow, never vendored, never shipped and never linked. It
+  produces reference data (envelope and oscillator sequences, waveform periods, filter responses and
+  distortion curves) that is committed under neutral names; the product's tests compare against it.
+- Gates: digital sequences bit-exact; waveform periods within ±1 step; filter cutoff within ±5 % and
+  resonance peak within ±1 dB of the oracle per revision; spectral distance on scripted patches;
+  determinism and block-size independence as for Vintage Synth.
+- **The alias gate is redefined for chip waveforms:** components folding at our internal rate stay
+  ≤ −100 dB; harmonics that belong to the chip's waveform shape are exempt.
+- **By ear:** the owner compares audition renders with public recordings of the original hardware.
+  Recordings are never downloaded into the repository or used as test data.
+
+### 8.4 Milestones
+| Step | Scope |
+|---|---|
+| S0 | Extract the common library (no behaviour change; all existing gates stay green) |
+| S1 | Contract, plugin shell, parameter list, oracle workflow and reference data |
+| S2 | Oscillators, noise, envelopes: bit-exact against the oracle |
+| S3 | Model B filter, then Model A filter with chip variation; output stage |
+| S4 | Polyphony, modulation, effects from the common library; audition by the owner |
+| S5 | Presets, custom UI and release together with Vintage Synth's M6–M8 |

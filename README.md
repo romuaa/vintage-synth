@@ -159,6 +159,9 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 | M7 | Custom UI | |
 | M8 | Hardening, signing, installers, release | |
 
+A second instrument is planned in this repository: a polyphonic synth modelled on a classic 3-voice
+sound chip from early-1980s home computers, as its own plugin sharing the common engine code.
+
 ## License
 
 Copyright © Exitium. Licensed under the **GNU Affero General Public License v3.0**; see [LICENSE](LICENSE).

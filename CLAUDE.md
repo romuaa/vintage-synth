@@ -83,6 +83,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - **Wave 1: done, awaiting the owner's merge approval** (one PR). Contains M2, the M5 effect blocks
   (`source/fx/`, standalone, not wired in; first listen approved), the golden-render harness, the
   VST3 validator in CI, CI cost controls and the plugin-host script.
+- **Planned second instrument:** a chip synth as a separate plugin in this repository
+  (`docs/architecture.md` section 8); starts with extracting a common library after M3.
 - **Done after Wave 1:** Linux x86_64 target with a sanitizer CI job; public-release audit
   (`SECURITY.md`, `CONTRIBUTING.md`). The owner flips visibility; then one follow-up change removes
   the draft-PR cost tier and the "private repo" wording. **Next: Wave 2** (M3 + M4). Open engine item for M3: 1× oversampling at host rates ≥ 88.2 kHz

@@ -44,6 +44,12 @@ feature code yourself; implementation and testing are done by agents you spawn.
 | 3 | Integrate M4 and M5; **M6** presets, banks, state, goldens | Factory preset drafts for audition |
 | 4 | **M7** custom UI | **M8** signing, installers, release pipeline |
 
+**Second instrument (chip synth, `docs/architecture.md` section 8):** S0 (extract the common
+library) is a serial step right after M3 merges, with no other engine work in flight. S1–S4 then
+run as a parallel track next to Waves 3–4, because they live in their own directory. Never write
+third-party brand names, part numbers or nicknames into the repository, briefs included: describe
+the chip generically and call the revisions Model A and Model B.
+
 Constraints behind this plan:
 
 - Only one agent at a time may edit `engine/Part.*`, `engine/Voice.*` or `PluginProcessor.*`.
