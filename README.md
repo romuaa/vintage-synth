@@ -32,7 +32,6 @@ Working now (M2):
 
 Planned: the Upper part with Whole/Dual/Split, arpeggiator, 16-step sequencer, patch banks, and
 chorus, delay and reverb (the effect blocks exist and are tested, but are not connected yet).
-Linux (x86_64) is a planned target.
 
 ## Platforms
 
@@ -40,6 +39,7 @@ Linux (x86_64) is a planned target.
 |---|---|---|
 | macOS 11+ | Universal (Apple silicon + Intel) | VST3 |
 | Windows 10/11 | x64 and ARM64 in one bundle | VST3 |
+| Linux | x86_64 (glibc 2.35 or newer) | VST3 |
 
 There are no binary releases yet: build from source. Until v1.0 the parameter set may still change.
 
@@ -74,17 +74,32 @@ cmake --build build/win-x64 --config Release --parallel
 Use `-A ARM64` for Windows on ARM. Run the tests with `ctest --test-dir build/win-x64 -C Release`.
 Copy the `.vst3` to `C:\Program Files\Common Files\VST3\`. CI builds both and merges them into one bundle.
 
+**Linux (x86_64):**
+
+```bash
+sudo apt install build-essential cmake ninja-build libasound2-dev libjack-jackd2-dev ladspa-sdk \
+  libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+  libxinerama-dev libxrandr-dev libxrender-dev libxi-dev
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+mkdir -p ~/.vst3 && cp -r "build/VintageSynth_artefacts/Release/VST3/Vintage Synth.vst3" ~/.vst3/
+```
+
+The Linux build links the C++ runtime statically; at run time it needs glibc 2.35 or newer,
+libfontconfig and libfreetype. CI builds it on Ubuntu 22.04. So far Linux is validated by CI only
+(tests, pluginval, the VST3 validator); a check in a DAW on a real machine is pending.
+
 ## Try it in a plugin host
 
-`scripts/dev-host.sh` builds the plugin and JUCE's AudioPluginHost (about 2 minutes the first time on
-Apple silicon) and opens the host with MIDI Input → Vintage Synth → Audio Output already wired.
+`scripts/dev-host.sh` (macOS) builds the plugin and JUCE's AudioPluginHost (about 2 minutes the first
+time on Apple silicon) and opens the host with MIDI Input → Vintage Synth → Audio Output already wired.
 
 - Open the editor: double-click the "Vintage Synth" node.
 - Play without a MIDI keyboard: the on-screen piano at the bottom of the host window (mouse, or the
   computer keys A W S E D F T G Y H U J K; Z and X shift the octave). A hardware keyboard also works.
 - Audio device and buffer size: Options > Audio Settings. macOS may ask for microphone permission
   because the host opens the default input; denying is fine.
-- Flags: `--build-only`, `--no-build`, `--debug`, and `--install` (also copies the plugin to
+- Flags: `--build-only`, `--no-build`, `--debug`, `--wait` (stay attached to the host), and `--install` (also copies the plugin to
   `~/Library/Audio/Plug-Ins/VST3/`; the only option that writes outside the repository).
 - The host keeps its settings in `~/Library/Preferences/Juce Audio Plugin Host.settings`.
 
@@ -107,8 +122,9 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
 
 ## CI and security
 
-- `build` workflow: macOS universal, Windows x64 and Windows ARM64 builds with unit tests and the VST3
-  host smoke test; pluginval on macOS and Windows x64; merged Windows bundle. Ninja and a compiler
+- `build` workflow: macOS universal, Windows x64, Windows ARM64 and Linux x86_64 builds with unit
+  tests and the VST3 host smoke test; pluginval and the VST3 validator on macOS, Windows x64 and
+  Linux; merged Windows bundle; a Linux job that runs the tests under AddressSanitizer and UBSan. Ninja and a compiler
   cache keep it fast.
 - `security` workflow: [Trivy](https://trivy.dev) scans the repository for vulnerable dependencies,
   committed secrets and misconfigurations on every push, pull request and weekly.

@@ -3,6 +3,17 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Linux target and public-release prep (2026-11-12)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The first Linux build failed on `x != 0.0f`. | GCC's `-Wfloat-equal` is in JUCE's recommended warnings and is an error; Clang and MSVC accept the comparison. | Use `std::fpclassify` (or compare bit patterns). GCC-only warnings show up in the Linux CI row only. |
+| A CI round trip showed only one compile error. | Ninja stops at the first error. | CI builds with `-- -k 0`, so one run reports every error. |
+| Where to put the static C++ runtime flags. | Tests link `vs_test_core`, not the plugin. | `-static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL` on `VintageSynth_VST3` only; the bundle check fails if `ldd` shows libstdc++ or a missing library. |
+| A plugin built on a new distribution doesn't load on older ones. | glibc symbol versions. | Build releases on the oldest runner image offered (ubuntu-22.04 → glibc 2.35). |
+| pluginval was downloaded in CI without a checksum. | Release assets can be replaced. | SHA-256 check before unzip on all platforms; bump version and hashes together. |
+| A link to the agent session appeared in commit messages. | Default attribution setting. | Owner decision: commit messages end with the Co-Authored-By line only. |
+
 ## Wave 1: M2b polyphony (2026-11-12)
 
 | Problem | Cause | Fix / rule |

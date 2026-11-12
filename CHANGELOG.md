@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### Linux target and public-release preparation (2026-11-12)
+- Linux x86_64 VST3 is a supported target: built in CI on Ubuntu 22.04 (glibc 2.35 or newer, static
+  C++ runtime) with the unit tests, host smoke test, render tests, VST3 validator and pluginval.
+- A CI job runs the tests under AddressSanitizer and UBSan on every push.
+- pluginval downloads are verified by SHA-256; CI artifacts are kept for 7 days.
+- `SECURITY.md`, `CONTRIBUTING.md` (contributions under AGPLv3 only) and a pull request template.
+- `scripts/dev-host.sh` returns to the terminal after launching the host.
+
 ### M2 — polyphony (2026-11-12)
 - 16 voices per part with Poly, Unison (2/4/8/16 voices, detune) and Solo assign modes; voice
   stealing with a 3 ms fade; sustain pedal; portamento (Always/Legato); velocity to VCA and VCF;
