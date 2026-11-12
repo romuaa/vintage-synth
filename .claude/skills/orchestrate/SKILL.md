@@ -59,7 +59,10 @@ Constraints behind this plan:
   `external/Catch2` directories with symlinks to the main checkout's copies. `git status` then
   errors in that worktree, so the agent must commit with explicit paths (`git add <file>`, never
   `git add -A`) and you take the commit by branch name. Agent worktrees live in
-  `.claude/worktrees/` (excluded locally); never stage that directory. The universal
+  `.claude/worktrees/` (excluded locally); never stage that directory. **Worktrees start from
+  `main`, not from your current branch:** name the base branch in every brief and have the agent
+  create its branch from it. When an agent is finished and its branch is pushed, remove its
+  worktree (`git worktree remove --force`) so the branch can be checked out elsewhere. The universal
   build, pluginval and `voice_bench` run at the gate, one at a time, with no other build running,
   or the benchmark numbers are meaningless.
 
@@ -87,6 +90,10 @@ Constraints behind this plan:
 - **Escalation:** an agent that fails the same gate twice is not retried. Have a diagnostic test
   written that isolates the stage, then hand the item one tier up.
 - Don't spawn an agent for something that is a handful of commands; do those checks yourself.
+- Rerun the agent's tests and benchmark yourself before accepting, and check that a passing CI test
+  really ran (a validator that "passes" in 0.2 s proves nothing until its output is checked).
+- The independent review pays off: brief the reviewer with the code and the contract, never with
+  the author's conclusions, and ask whether each test can actually fail.
 
 ## Reporting
 

@@ -195,13 +195,20 @@ public:
     void reset() noexcept;                                // clear all state, no allocation
     void setParams (const XParams&) noexcept;             // once per block; the block smooths internally
     void process (float* left, float* right, int numSamples) noexcept;  // in place, dry + wet
-    double tailSeconds() const noexcept;                  // for getTailLengthSeconds()
+    static double tailSeconds (const XParams&) noexcept;  // pure function, callable from any thread
 };
 ```
 
 - Sample rates 44.1–192 kHz; `numSamples` from 1 to `maxBlockSize`; results must not depend on
   the block size (same output for 1-sample and 512-sample blocks, within float tolerance).
 - No latency. No allocation, locks or exceptions after `prepare`. No denormal stalls with silent input.
+- **Bounded work per call:** `process`, `setParams` and `reset` never clear or touch more memory
+  than a small multiple of `numSamples` (no bulk clearing of delay lines on the audio thread; stale
+  content is hidden by gating reads). `reset()` is therefore safe on the audio thread.
+- A non-finite or absurdly large input sample is replaced by 0 at the effect's input, so one bad
+  sample cannot poison a feedback path.
+- `tailSeconds` is computed from the parameters only (no object state), so the processor can call
+  it on the message thread. The reported tail is capped at 30 s.
 - With the effect at level/mix 0 or mode Off the output equals the input **bit-exactly**, and
   switching it on or off never clicks (short crossfade).
 - Own implementations only (AGPLv3). Published algorithms are fine; copied code needs a compatible
@@ -213,9 +220,9 @@ public:
 
 | Effect | Character and parameters | Must-pass tests |
 |---|---|---|
-| **Chorus** | Classic bucket-brigade style stereo chorus: mono sum in, L/R modulated in anti-phase, band-limited wet path, clean (no added noise). Params: `mode` (Off, I, II; I slow and deep, II faster), `mix`. | Mono-compatible (L+R has no deep notches at 1 kHz sine), delay modulation stays inside the delay line, interpolation alias/THD ≤ −80 dB for a 1 kHz sine, mode switch click-free. |
-| **Delay** | Stereo delay, `time` 1 ms–2 s, `feedback` 0–95 %, `damping` (low-pass in the feedback path), `pingPong` on/off, `level`. Time changes glide (no zipper, no clicks). | Echo spacing exact to ±1 sample, feedback decay per repeat matches the setting ±0.5 dB, stable at max feedback for 60 s of noise, time sweep without discontinuities. |
-| **Reverb** | Algorithmic hall/plate (FDN or plate topology), lush and smooth to suit pads. Params: `decay` 0.3–20 s (RT60), `damping`, `preDelay` 0–200 ms, `level`. | RT60 at 1 kHz within ±15 % of the setting and independent of sample rate, bounded energy for any parameter combination, L/R tail correlation < 0.5, tail falls below −120 dBFS after silence, no metallic ringing peaks > 6 dB above the mean tail spectrum. |
+| **Chorus** | Classic bucket-brigade style stereo chorus: mono sum in, L/R modulated in anti-phase, band-limited wet path, clean (no added noise). Params: `mode` (Off, I, II; I slow and deep, II faster), `mix` (full mix = wet about as loud as dry). | Mono-compatible at the default mix (worst dip of L+R below dry ≤ 6 dB for sines across 900–1100 Hz) and never a full cancellation at maximum mix, delay modulation stays inside the delay line, interpolation error ≤ −80 dB against the ideal delayed sine, mode switch click-free. |
+| **Delay** | Stereo delay, `time` 1 ms–2 s, `feedback` 0–95 %, `damping` (low-pass in the feedback path), `pingPong` on/off, `level`. Time changes glide (no zipper, no clicks). | Echo spacing exact to ±1 sample, feedback decay per repeat matches the setting ±0.5 dB (also at fractional delay times), stable at max feedback for 60 s of noise, time sweep without discontinuities (tested at feedback 0, because repeats re-pitch during a glide). |
+| **Reverb** | Algorithmic hall/plate (FDN or plate topology), lush and smooth to suit pads. Params: `decay` 0.3–20 s (RT60), `damping`, `preDelay` 0–200 ms, `level`. | RT60 at 1 kHz within ±15 % of the setting and independent of sample rate, bounded energy for any parameter combination, L/R tail correlation < 0.5, tail falls below −120 dBFS after silence, no metallic ringing: with impulse excitation, no tail-spectrum peak > 6 dB above the third-octave mean, 150 Hz–16 kHz, across decay, damping and sample-rate extremes. |
 
 ### 5.3 Gates for M5 blocks
 
