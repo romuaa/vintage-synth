@@ -60,6 +60,12 @@ if [[ $DO_INSTALL -eq 1 ]]; then
   DEST="$HOME/Library/Audio/Plug-Ins/VST3"
   mkdir -p "$DEST"
   rm -rf "$DEST/Exitium Vintage Synth.vst3"
+  # The bundle was called "Vintage Synth.vst3" before the rename. It has the same class ID, so a
+  # host would see two copies of one plugin: remove the old one.
+  if [[ -d "$DEST/Vintage Synth.vst3" ]]; then
+    rm -rf "$DEST/Vintage Synth.vst3"
+    info "removed the old bundle $DEST/Vintage Synth.vst3 (renamed to Exitium Vintage Synth, same plugin ID)"
+  fi
   cp -R "$PLUGIN" "$DEST/"
   info "installed to $DEST/Exitium Vintage Synth.vst3"
 fi

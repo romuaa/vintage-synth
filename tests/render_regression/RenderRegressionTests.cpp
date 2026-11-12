@@ -71,37 +71,73 @@ TEST_CASE ("Render regression: every script matches its golden reference", "[ren
     const auto files = scriptDir().findChildFiles (juce::File::findFiles, false, "*.txt");
     REQUIRE (files.size() > 0);
 
+    const auto featuresOfChannels = [] (const std::vector<std::vector<float>>& chans, double rate) {
+        std::vector<Features> f;
+        for (const auto& c : chans)
+            f.push_back (extractFeatures (c, rate));
+        return f;
+    };
+
     for (const auto& file : files)
     {
         const auto name = file.getFileNameWithoutExtension();
         INFO ("script: " << name);
         const auto script = parseScript (readFile (file));
-        const auto mono = renderScript (script, kGoldenBlock);
-        maybeWriteWav (mono, script.sampleRate, name.toStdString());
-        const auto feat = extractFeatures (mono, script.sampleRate);
+        const auto chans = renderScriptChannels (script, kGoldenBlock);
+        maybeWriteWav (chans, script.sampleRate, name.toStdString());
+        const auto feat = featuresOfChannels (chans, script.sampleRate);
         const auto goldenFile = goldenDir().getChildFile (name + ".vsgolden");
 
         if (updateMode())
         {
             goldenDir().createDirectory();
-            REQUIRE (goldenFile.replaceWithText (juce::String (featuresToText (feat)), false, false, "\n"));
+            REQUIRE (goldenFile.replaceWithText (juce::String (channelFeaturesToText (feat)), false, false, "\n"));
             std::printf ("updated golden: %s\n", goldenFile.getFullPathName().toRawUTF8());
             continue;
         }
 
         INFO ("missing reference " << goldenFile.getFullPathName() << " (create it with VS_UPDATE_GOLDENS=1)");
         REQUIRE (goldenFile.existsAsFile());
-        const auto golden = featuresFromText (readFile (goldenFile));
+        const auto golden = channelFeaturesFromText (readFile (goldenFile));
+        REQUIRE (static_cast<int> (golden.size()) == script.channels); // a stereo script needs a stereo reference
 
-        const auto c = compare (golden, feat);
-        INFO (c.report);
-        CHECK (c.pass);
+        const auto odd = featuresOfChannels (renderScriptChannels (script, 97), script.sampleRate);
+        for (size_t ch = 0; ch < golden.size(); ++ch)
+        {
+            INFO ("channel " << (ch == 0 ? "left" : "right"));
+            const auto c = compare (golden[ch], feat[ch]);
+            INFO (c.report);
+            CHECK (c.pass);
+            std::printf ("%-18s %s: cells>3dB %.3f %%, mean %.3f dB, worst %.2f dB, level %.2f dB, tail %d\n",
+                         name.toRawUTF8(), ch == 0 ? "L" : "R", 100.0 * c.cellFraction, c.meanCell,
+                         static_cast<double> (c.maxCell), static_cast<double> (c.maxLevel), c.tailShift);
 
-        // The host may use any block size: the reference must hold for an odd, small one too.
-        const auto c2 = compare (golden, featuresOf (script, 97));
-        INFO ("block size 97: " << c2.report);
-        CHECK (c2.pass);
+            // The host may use any block size: the reference must hold for an odd, small one too.
+            const auto c2 = compare (golden[ch], odd[ch]);
+            INFO ("block size 97: " << c2.report);
+            CHECK (c2.pass);
+        }
     }
+}
+
+TEST_CASE ("Render regression: stereo golden format round-trips and keeps version 1 for one channel", "[render]")
+{
+    const auto s = parseScript ("channels 2\nlength 0.5\n0 on 60 100\n");
+    CHECK (s.channels == 2);
+    const auto chans = renderScriptChannels (s, kGoldenBlock);
+    REQUIRE (chans.size() == 2);
+    std::vector<Features> f { extractFeatures (chans[0], s.sampleRate), extractFeatures (chans[1], s.sampleRate) };
+    const auto text = channelFeaturesToText (f);
+    CHECK (text.rfind ("vsgolden 2\nchannels 2\n", 0) == 0);
+    const auto back = channelFeaturesFromText (text);
+    REQUIRE (back.size() == 2);
+    CHECK (back[1].bandDb == f[1].bandDb);
+    CHECK (back[0].levelDb == f[0].levelDb);
+    // One channel: byte-identical to the version-1 writer.
+    CHECK (channelFeaturesToText ({ f[0] }) == featuresToText (f[0]));
+    CHECK (channelFeaturesFromText (featuresToText (f[0])).size() == 1);
+    CHECK_THROWS (parseScript ("channels 3\nlength 1\n"));
+    CHECK_THROWS (channelFeaturesFromText ("vsgolden 2\nchannels 2\n" + featuresToText (f[0])));
 }
 
 TEST_CASE ("Render regression: golden text format round-trips", "[render]")

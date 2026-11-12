@@ -1,7 +1,8 @@
 # Dual layer (M3): every note plays both parts. Lower a slow resonant saw pad, Upper a square lead
 # an octave up (Solo, vibrato). Off-centre pans and balance, so the mixer is in the reference
-# (the reference is the left channel); a balance move at 1.5 s is smoothed.
+# (both channels are analysed); a balance move at 1.5 s is smoothed.
 rate 48000
+channels 2
 length 3.5
 
 param key.mode 1
