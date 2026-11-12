@@ -3,6 +3,16 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Wave 3 integration contract (2026-11-12)
+
+All (review).
+
+| Decision | Why |
+|---|---|
+| Effects stay global and in series (chorus → delay → reverb) on the stereo bus; 11 parameters. Delay time is free (1 ms–2 s, default 700 ms, ping-pong on by default as in the approved demo); tempo-synced delay can be appended later. | Matches what the owner approved by ear; per-part sends and delay sync are additive later. |
+| One arpeggiator/sequencer settings set with a part selector (Lower, Upper, Both); the sequencer's 16 steps are host parameters (48 of them). | One set is easy to understand and automate; step parameters make the sequencer usable and testable before the custom UI exists and are saved with the state. Parameter count becomes 170. |
+| With no usable host transport the arp/seq runs on its internal tempo parameter. | Works in simple hosts and when just playing. |
+
 ## Linux ARM64 and container checks (owner decision, 2026-11-12)
 
 - **Linux ARM64 (aarch64) is a supported target,** built and validated in CI only; the owner has no
