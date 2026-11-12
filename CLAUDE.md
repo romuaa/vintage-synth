@@ -35,7 +35,16 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Win ARM64 runs build, unit tests and host_smoke (there's no ARM64 pluginval). Check results with
   `gh run list` / `gh run view <id> --log-failed` (gh is installed and authenticated). Never claim
   Windows is green without a passing run. CI uses CMake's default Windows generator (newest Visual
-  Studio on the runner); don't hardcode a VS version.
+  Studio on the runner); don't hardcode a VS version. Runner images are pinned (`macos-26`,
+  `windows-2025`, `windows-11-arm`, `ubuntu-26.04`); Dependabot doesn't bump them, so check
+  github.com/actions/runner-images when touching CI.
+- **Supply chain:** every third-party action is pinned by full commit SHA with a `# vX.Y.Z` comment.
+  `.github/dependabot.yml` updates Actions and submodules weekly. Before merging a submodule PR,
+  check it points at a release tag and update the versions named here and in README.
+- **Security scan:** `.github/workflows/security.yml` runs Trivy (vuln, secret, misconfig) on push,
+  PR and weekly; HIGH/CRITICAL fixable findings fail it. The repo is private without code
+  scanning, so results are in the job log and the `trivy-results` SARIF artifact. Setting the repo
+  variable `CODE_SCANNING=true` turns on the SARIF upload once code scanning is available.
 - **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new
   judgement call there (with the reason), and mark the ones the user should review.
 

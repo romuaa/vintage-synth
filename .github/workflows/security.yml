@@ -1,0 +1,78 @@
+name: security
+
+# Trivy repository scan: vulnerable dependencies, committed secrets, and misconfigurations
+# (GitHub Actions workflows, CMake/IaC files). Fails on HIGH or CRITICAL findings that have a fix.
+#
+# The SARIF report is always uploaded as a workflow artifact. Upload to GitHub code scanning only
+# works when code scanning is enabled (private repos need GitHub Advanced Security); set the
+# repository variable CODE_SCANNING=true to turn that step on.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1" # weekly, Monday 04:17 UTC: catches new CVEs without code changes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TRIVY_VERSION: v0.76.2
+
+jobs:
+  trivy:
+    name: trivy-repo-scan
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      security-events: write # only used by the optional code-scanning upload
+    steps:
+      # Submodules (JUCE, Catch2) are not checked out: they are pinned upstream sources, and
+      # their updates come from Dependabot.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Trivy scan (table, gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+
+      - name: Trivy scan (SARIF, all severities)
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          skip-setup-trivy: true
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: "0"
+
+      - name: Upload SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trivy-results
+          path: trivy-results.sarif
+          if-no-files-found: ignore
+
+      - name: Upload to GitHub code scanning
+        if: always() && vars.CODE_SCANNING == 'true'
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy

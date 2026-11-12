@@ -1,0 +1,26 @@
+# Dependabot: keeps GitHub Actions (pinned by commit SHA) and the git submodules up to date.
+#
+# Submodule PRs (JUCE, Catch2) move the submodule to the newest upstream commit/tag. Per CLAUDE.md,
+# dependency upgrades are deliberate: review the upstream release notes, make sure the PR points
+# at a release tag (not a random main commit), and merge only when CI is green. Update the
+# versions named in CLAUDE.md / README.md in the same PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "deps"

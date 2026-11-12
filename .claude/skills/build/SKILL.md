@@ -55,7 +55,7 @@ This Mac has no Rosetta, so the x86_64 slice can only be checked with `lipo`, no
 
 ## Rules
 
-- Never commit `build/`. Dependency versions are pinned in CMake; never float to `main`.
+- Never commit `build/`. Dependencies are submodules pinned to release tags; never float to `main`. Actions are pinned by SHA; Dependabot proposes updates.
 - An x86-only intrinsic or a missing NEON path is a build bug, even if the mac build passes.
 - Windows can't be built locally on this Mac. Say that it was verified "via CI only".
 - CI runs on push to `main` at GitHub `romuaa/vintage-synth` (private). Check it with `gh run list` and

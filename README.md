@@ -82,6 +82,14 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
 - **pluginval** at strictness 10 runs in CI on macOS and Windows x64:
   `pluginval --strictness-level 10 --validate-in-process --skip-gui-tests "<path>/Vintage Synth.vst3"`.
 
+## CI and security
+
+- `build` workflow: macOS universal, Windows x64 and Windows ARM64 builds with tests; pluginval on
+  macOS and Windows x64; merged Windows bundle.
+- `security` workflow: [Trivy](https://trivy.dev) scans the repository for vulnerable dependencies,
+  committed secrets and misconfigurations on every push, pull request and weekly.
+- Dependabot keeps GitHub Actions (pinned by commit SHA) and the JUCE and Catch2 submodules up to date.
+
 ## Project layout
 
 ```
