@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 
+#include "engine/Oversampler.h"
+
 #include "params/ParameterLayout.h"
 #include "params/StateVersion.h"
 
@@ -39,8 +41,8 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
 {
     preparedBlockSize = juce::jmax (1, maximumExpectedSamplesPerBlock);
 
-    // Offline renders get 4x oversampling, real-time 2x.
-    const int osFactor = isNonRealtime() ? 4 : 2;
+    // Oversampling by host rate (docs/architecture.md 4.4): the internal rate stays >= 88.2 kHz.
+    const int osFactor = voiceOversamplingFactor (sampleRate, isNonRealtime());
 
     lowerBinding.read (lowerParams);
     upperBinding.read (upperParams);
