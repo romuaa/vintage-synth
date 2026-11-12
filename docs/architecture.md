@@ -397,25 +397,69 @@ filter).
   "Authentic" or "Clean").
 - CPU target: 16 voices ≤ 5 % of one core at 48 kHz; 32 voices within the shared 15 % budget.
 
-### 8.3 Proving authenticity
+### 8.3 Patch programs: how the classic sounds are made
+Most of the chip's signature sounds came from the player software rewriting its registers about
+fifty times a second: a noise burst then a pulse wave for a snare, notes cycled so fast they read
+as a chord, pulse width and cutoff moved in audible steps, and a deliberate envelope reset before
+each note. B-Side therefore has a **program sequencer in every patch**, at the core of the voice,
+not in the modulation section.
+
+- **Tick clock:** a "frame rate" in Hz (presets 50.12 and 59.83, or free), a multiplier 1–8, and
+  optional tempo sync. It starts on the note-on sample and is derived from the sample counter, so
+  output never depends on the host block size; blocks are split at ticks exactly as at MIDI events.
+- **Lanes,** each a short table (up to 32–64 steps) with delay counts, jump, end, loop and a
+  release entry point:
+  - *wave/note lane* per oscillator: waveform, gate, sync, ring and test bits, and a pitch that is
+    relative (arpeggio), absolute (drums), unchanged, or a held-key index;
+  - *pulse lane:* set, sweep, ping-pong between limits;
+  - *filter lane:* set cutoff, sweep, switch mode, resonance and oscillator routing.
+- **Program-driven values change in steps at the tick, unsmoothed,** and at register resolution in
+  Authentic mode. The stepped vibrato, the per-tick cutoff steps and the attack snap are part of
+  the sound. Host automation and ordinary modulation stay smooth. Band-limiting must keep the
+  discontinuities a program creates (a waveform switch or phase reset mid-cycle is real content,
+  placed at its exact sub-sample position).
+- **Hard restart is a patch feature:** mode (off, classic, phase-reset), its envelope values, lead
+  time in ticks, first-tick waveform, gate-off timer. Live playing gives no warning of the next
+  note, so there are policies: idle voices are pre-conditioned (default, no latency); a stolen
+  voice is reset directly in Clean mode; an optional look-ahead mode delays notes and reports the
+  latency; Authentic does nothing and lets the envelope quirk happen.
+- **Chip arpeggio is not the shared arpeggiator.** It cycles pitch inside one voice at tick rate
+  with the gate held. A "chord into one voice" assign mode feeds the held keys to the note lane.
+- **Filter topology per part:** per note (default), or shared (one filter for the whole part, as on
+  the hardware; needed for paraphonic patches and for the early revision's overdrive when several
+  notes are summed into it). The filter is a part-owned resource from the first milestone on.
+- **Tables are patch data, not host parameters.** They live in the plugin state and preset format
+  and are handed to the audio thread as immutable, preallocated objects. Host parameters are the
+  macros (tick rate, multiplier, lane offsets and depths, restart mode). Until the table editor UI
+  exists, patches are written in a **human-readable text format** kept in the repository.
+- Drums are ordinary patches with absolute-note programs first; a kit mode (key ranges mapped to
+  sub-patches) comes later.
+
+### 8.4 Proving authenticity
 - **Reference oracle, offline only:** an established cycle-accurate emulator (GPL v2-or-later) is
-  built and run in a separate CI workflow, never vendored, never shipped and never linked. It
-  produces reference data (envelope and oscillator sequences, waveform periods, filter responses and
-  distortion curves) that is committed under neutral names; the product's tests compare against it.
-- Gates: digital sequences bit-exact; waveform periods within ±1 step; filter cutoff within ±5 % and
-  resonance peak within ±1 dB of the oracle per revision; spectral distance on scripted patches;
-  determinism and block-size independence as for Vintage Synth.
+  built and run in a separate CI workflow, never vendored, never shipped and never linked. Reference
+  data is committed under neutral names.
+- **Register-trace replay is the main test:** the program engine emits time-stamped register
+  writes; the same trace drives the oracle and our chip model (shared-filter, three-voice mode).
+  Digital state must match bit for bit, including the envelope-quirk cases, phase resets, the noise
+  generator's lock-up and recovery, sync and ring per step. Analog output is compared within
+  tolerances (filter cutoff ±5 %, resonance peak ±1 dB, spectral distance on scripted patches).
+- Golden traces for canonical tables (snare, kick, three-note arpeggio, ping-pong pulse sweep,
+  filter sweep, each restart mode) at several tick multipliers.
+- Block-size independence including tick positions; determinism; restart-policy tests.
 - **The alias gate is redefined for chip waveforms:** components folding at our internal rate stay
-  ≤ −100 dB; harmonics that belong to the chip's waveform shape are exempt.
+  ≤ −100 dB; harmonics and steps that belong to the chip's waveform shape or to a program are
+  exempt. Noise and combined waveforms get their own, documented budget.
 - **By ear:** the owner compares audition renders with public recordings of the original hardware.
   Recordings are never downloaded into the repository or used as test data.
 
-### 8.4 Milestones
+### 8.5 Milestones
 | Step | Scope |
 |---|---|
 | S0 | Extract the common library (no behaviour change; all existing gates stay green) |
-| S1 | Contract, plugin shell, parameter list, oracle workflow and reference data |
-| S2 | Oscillators, noise, envelopes: bit-exact against the oracle |
-| S3 | Model B filter, then Model A filter with chip variation; output stage |
-| S4 | Polyphony, modulation, effects from the common library; audition by the owner |
-| S5 | Presets, custom UI and release together with Vintage Synth's M6–M8 |
+| S1 | Contract, plugin shell, oracle workflow, register-trace harness, text table format |
+| S2 | Chip voice digital parts (bit-exact), tick clock, program engine (wave/note, pulse, filter lanes), restart modes and policies, stepped register-resolution path |
+| S3 | Model B filter, then Model A filter with chip variation; output stage; filter as a part-owned resource |
+| S4 | Polyphony, macros, effects from the common library; 10–20 reference patches (drums, arpeggio chord, pulse lead, filter bass); audition by the owner |
+| S5 | Chord-into-one-voice mode, shared-filter mode, look-ahead restart, kit mode |
+| S6 | Table editor UI, presets and release together with Vintage Synth's M6–M8 |
