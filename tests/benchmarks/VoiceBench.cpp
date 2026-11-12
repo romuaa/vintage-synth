@@ -4,7 +4,7 @@
 //      PartModulator + Voice::renderBlock path a Part uses),
 //   3. the derived per-part overhead and a projection against the 15 % budget,
 //   4. real Parts with 16 voices each driven through the allocator (M2b), 1 and 2 Parts.
-// Run: build/mac-arm64/tests/voice_bench
+// Run: build/mac-arm64/tests/voice_bench [base sample rate, default 48000] [Vintage, default 0.5]
 #include "engine/Modulation.h"
 #include "engine/Part.h"
 #include "engine/Voice.h"
@@ -12,13 +12,15 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <memory>
 #include <vector>
 
 namespace
 {
-constexpr double fs = 48000.0;
+double fs = 48000.0;      // base (host) rate; argv[1]
+float gVintage = 0.5f;    // Vintage amount; argv[2]
 constexpr int block = 256;
 constexpr int seconds = 5; // audio per timed run
 constexpr int repeats = 3; // best of
@@ -58,7 +60,7 @@ double benchPart (int factor)
         vs::Part part;
         part.setParams (benchParams());
         part.prepare (fs, block, factor, 1u);
-        part.setVintage (0.5f);
+        part.setVintage (gVintage);
 
         const vs::NoteEvent on[] { { 0, vs::EventType::NoteOn, 48, 0.8f } };
         std::vector<float> out (block);
@@ -87,7 +89,7 @@ double benchVoices (int factor, int n)
         vs::PartModulator modulator;
         modulator.prepare (osRate, 1u ^ 0x5bd1e995u);
         modulator.reset (p);
-        modulator.setVintage (0.5f);
+        modulator.setVintage (gVintage);
         modulator.triggerLfo();
 
         std::vector<vs::Voice> voices (static_cast<size_t> (n));
@@ -96,7 +98,7 @@ double benchVoices (int factor, int n)
         {
             auto& voice = voices[static_cast<size_t> (v)];
             voice.prepare (osRate, 1u + static_cast<std::uint32_t> (v) * 7919u);
-            voice.setBlockParams (p, 0.5f);
+            voice.setBlockParams (p, gVintage);
             const int note = n == 1 ? 48 : 36 + (v * 48) / (n - 1);
             voice.noteOn (note, 0.8f);
             pointers.push_back (&voice);
@@ -136,7 +138,7 @@ double benchPolyParts (int factor, int numParts, PolyLoad load)
             parts.push_back (std::make_unique<vs::Part>());
             parts.back()->setParams (p);
             parts.back()->prepare (fs, block, factor, 0x1001u + static_cast<std::uint32_t> (k) * 0x100u);
-            parts.back()->setVintage (0.5f);
+            parts.back()->setVintage (gVintage);
         }
 
         std::vector<vs::NoteEvent> chord;
@@ -174,8 +176,15 @@ double benchPolyParts (int factor, int numParts, PolyLoad load)
 }
 } // namespace
 
-int main()
+int main (int argc, char** argv)
 {
+    // Optional: voice_bench [base sample rate] [vintage], defaults 48000 and 0.5.
+    if (argc > 1)
+        fs = std::atof (argv[1]);
+    if (argc > 2)
+        gVintage = static_cast<float> (std::atof (argv[2]));
+    std::printf ("base rate %.0f Hz, Vintage %.2f\n\n", fs, static_cast<double> (gVintage));
+
     // 1. Original measurement (output line format unchanged).
     double part1[2] {};
     for (int k = 0; k < 2; ++k)

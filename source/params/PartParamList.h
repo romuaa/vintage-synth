@@ -7,7 +7,9 @@
 // and the APVTS -> snapshot binding, so the three can never diverge.
 //
 // Names are UTF-8 (the velocity amounts use an arrow, written as an escape so every compiler
-// reads the same bytes).
+// reads the same bytes). ALWAYS convert a name with juce::String::fromUTF8 (name): building a
+// juce::String from it directly asserts in debug builds (non-ASCII char*) and mangles the arrow.
+// Guarded by the ProcessorTests "parameter names" test.
 // Float params are normalised slider values (0..1, or -1..1 for fine tune).
 // Physical mappings live in params/Mappings.h, shared by DSP and display text.
 

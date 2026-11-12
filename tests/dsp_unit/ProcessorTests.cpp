@@ -5,6 +5,8 @@
 #include "params/ParameterLayout.h"
 
 #include <cmath>
+#include <cstring>
+#include <utility>
 
 namespace
 {
@@ -67,6 +69,41 @@ TEST_CASE ("Garbage state is ignored", "[state]")
     const char junk[] = "not a valid state";
     proc.setStateInformation (junk, (int) sizeof (junk));
     SUCCEED();
+}
+
+TEST_CASE ("Parameter names: every per-part name reaches the host as the UTF-8 text of the list", "[processor][state]")
+{
+    // The velocity names contain an arrow (non-ASCII). Any code path that builds the name without
+    // juce::String::fromUTF8 would mangle it (and assert in debug builds); this catches it.
+    JuceEnv env;
+    vs::VintageSynthProcessor proc;
+    auto& state = proc.getState();
+    int checked = 0, nonAscii = 0;
+    auto check = [&] (const juce::String& prefix, const juce::String& namePrefix, const char* id, const char* name) {
+        auto* p = state.getParameter (prefix + id);
+        REQUIRE (p != nullptr);
+        const auto expected = namePrefix + juce::String::fromUTF8 (name);
+        INFO (prefix << id);
+        CHECK (p->getName (128) == expected);
+        CHECK (juce::CharPointer_UTF8::isValidString (name, static_cast<int> (std::strlen (name))));
+        for (const char* c = name; *c != 0; ++c)
+            if (static_cast<unsigned char> (*c) > 127)
+            {
+                ++nonAscii;
+                break;
+            }
+        ++checked;
+    };
+    for (const auto& [prefix, namePrefix] : { std::pair<const char*, const char*> { vs::kLowerPrefix, "Lower " },
+                                              std::pair<const char*, const char*> { vs::kUpperPrefix, "Upper " } })
+    {
+#define VS_CHECK_NAME(member, id, name, ...) check (prefix, namePrefix, id, name);
+        VS_PART_FLOAT_PARAMS (VS_CHECK_NAME)
+        VS_PART_CHOICE_PARAMS (VS_CHECK_NAME)
+#undef VS_CHECK_NAME
+    }
+    CHECK (checked == 2 * 47);
+    CHECK (nonAscii == 4); // Velocity -> VCA / VCF, both parts
 }
 
 TEST_CASE ("Parameter layout: 96 parameters, the M2 parameters appended with their defaults", "[processor][state]")
