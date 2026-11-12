@@ -43,7 +43,7 @@ tested, but are not connected to the plugin yet), and patch banks.
 |---|---|---|
 | macOS 11+ | Universal (Apple silicon + Intel) | VST3 |
 | Windows 10/11 | x64 and ARM64 in one bundle | VST3 |
-| Linux | x86_64 (glibc 2.35 or newer) | VST3 |
+| Linux | x86_64 and ARM64 in one bundle (glibc 2.35 or newer) | VST3 |
 
 There are no binary releases yet: build from source. Until v1.0 the parameter set may still change.
 
@@ -91,7 +91,12 @@ mkdir -p ~/.vst3 && cp -r "build/VintageSynth_artefacts/Release/VST3/Exitium Vin
 
 The Linux build links the C++ runtime statically; at run time it needs glibc 2.35 or newer,
 libfontconfig and libfreetype. CI builds it on Ubuntu 22.04. So far Linux is validated by CI only
-(tests, pluginval, the VST3 validator); a check in a DAW on a real machine is pending.
+(tests, pluginval on x86_64, the VST3 validator); the x86_64 build is also load-tested in containers
+of several distributions (Ubuntu, Debian, Fedora, Arch). ARM64 is CI-validated and not
+performance-tuned for small boards. A check in a DAW on a real machine is pending.
+
+Developers on a Mac with Docker can run `scripts/linux-check.sh` before pushing: it builds and tests
+with GCC in a native Linux ARM64 container (`--sanitize` for the AddressSanitizer/UBSan run).
 
 ## Try it in a plugin host
 

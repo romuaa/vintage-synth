@@ -13,8 +13,14 @@ Anything marked **(review)** is a judgement call that the product owner may want
   builds and tests the real binary on real hardware.
 - **CI runs the Linux bundle in containers of several distributions** to prove it loads above the
   glibc floor, not only on the image it was built on.
-- A headless render through a real DAW in CI is being studied; no proprietary software is
-  downloaded or run for that without the owner's approval.
+- **Headless DAW render: studied, not built.** An open-source Python host library loaded the
+  plugin headless in a container and rendered a MIDI note deterministically, but it uses the same
+  JUCE hosting layer as `host_smoke`, so it adds little host diversity and no project save/reload.
+  A real open-source DAW would need a spike to prove headless VST3 rendering. The proprietary DAW
+  the owner uses has an evaluation licence that does not mention automated use; nothing proprietary
+  was downloaded or run. **Open for the owner:** add the Python host render to CI, spike the
+  open-source DAW, or leave it.
+- The draft-PR tier builds Windows x64 and Linux x86_64; Linux ARM64 is in the full tier only.
 
 ## Wave 2 results: M3 and M4 (2026-11-12)
 

@@ -28,10 +28,15 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Upgrade them deliberately, in their own commit. C++20, CMake ≥ 3.28, Ninja on macOS.
 - **Targets:** macOS universal (`arm64;x86_64`, min macOS 11, the default in `CMakeLists.txt`); Windows
   x64 + ARM64 merged into one `.vst3` bundle (`Contents/x86_64-win`, `Contents/arm64-win`) by CI.
-  MSVC static runtime. **Linux x86_64** (owner decision): built on `ubuntu-22.04` for a glibc 2.35
-  floor, GCC, static libstdc++/libgcc, bundle `Contents/x86_64-linux`. Never raise that runner image
-  above the oldest one offered without a decision. Linux can't be built on this Mac: use
-  `gh workflow run build.yml --ref <branch> -f targets=linux` (Linux row + sanitizer job only).
+  MSVC static runtime. **Linux x86_64 and ARM64** (owner decisions): built on `ubuntu-22.04` /
+  `ubuntu-22.04-arm` for a glibc 2.35 floor, GCC, static libstdc++/libgcc, merged into one bundle
+  (`Contents/x86_64-linux`, `Contents/aarch64-linux`). ARM64 is CI-validated only (no pluginval
+  build exists for it) and not performance-tuned for small boards. Never raise that runner image
+  above the oldest one offered without a decision. **Before pushing engine or test changes run
+  `scripts/linux-check.sh`** (Docker; native Linux ARM64 container; GCC build + all tests, about
+  1 min warm; `--sanitize` for ASan/UBSan): it catches GCC-only errors without a CI round trip.
+  The x86_64 Linux binary is proven in CI only: `gh workflow run build.yml --ref <branch> -f targets=linux`
+  runs the Linux rows, the sanitizer job and the distro load tests.
 - **Identity:** company "Exitium", bundle ID `com.exitium.vintagesynth`, manufacturer code
   `Exit`, plugin code `Vsy1`. **Never change these after the first release**, because hosts identify
   the plugin by them.
@@ -119,6 +124,7 @@ docs/architecture.md  contracts between work streams (interfaces, behaviour, gat
 docs/decisions.md  design decision log (what we chose and why)
 docs/ui-test-checklist.md  manual checks in the plugin host
 scripts/dev-host.sh  builds plugin + JUCE AudioPluginHost and opens the synth in it (-DVS_BUILD_DEV_HOST)
+scripts/linux-check.sh  GCC build + tests (or sanitizers) in a Linux ARM64 container; run before pushing
 docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
 README.md        public overview, build and test instructions
 CHANGELOG.md     what was done, per milestone (update it with every milestone/infra change)
@@ -154,7 +160,7 @@ Put any physical mapping in `Mappings.h` so the display text and the DSP agree.
 - Analog drift is seeded per voice, so renders are deterministic.
 
 **Portability:** no x86-only intrinsics without a NEON path and runtime dispatch. Every change
-must build for all four targets (mac universal, win x64, win ARM64, Linux x86_64 with GCC).
+must build for all five targets (mac universal, win x64, win ARM64, Linux x86_64 and ARM64 with GCC).
 
 ## Known traps (details in `docs/engineering-notes.md`)
 
