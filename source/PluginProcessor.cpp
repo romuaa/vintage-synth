@@ -33,6 +33,7 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     lowerPart.setParams (lowerParams);
     lowerPart.prepare (sampleRate, preparedBlockSize, osFactor, 0x1001u);
 
+    events.prepare (EventParser::kDefaultCapacity);
     partBuffer.setSize (1, preparedBlockSize);
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterVolume->load()));
@@ -66,11 +67,37 @@ void VintageSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
 
     float* mono = partBuffer.getWritePointer (0);
 
+    // Every event in the buffer is applied exactly once, whatever its position: negative
+    // positions count as 0, positions at or past the end apply after the last sample, and a
+    // zero-length block still applies its events (a lost note-off would hang a note).
+    auto next = midi.cbegin();
+    auto parseChunk = [&] (int start, int len, bool lastChunk) {
+        // Raw bytes only: building a juce::MidiMessage could allocate (SysEx).
+        events.clear();
+        for (; next != midi.cend(); ++next)
+        {
+            const auto meta = *next;
+            if (! lastChunk && meta.samplePosition >= start + len)
+                break;
+            events.add (meta.data, meta.numBytes, juce::jlimit (0, len, meta.samplePosition - start));
+        }
+        events.finish();
+    };
+
+    if (numSamples <= 0)
+    {
+        parseChunk (0, 0, true);
+        lowerPart.render (mono, 0, events.events());
+        return;
+    }
+
     // Hosts may exceed the announced block size: render in prepared-size chunks.
     for (int start = 0; start < numSamples; start += preparedBlockSize)
     {
         const int len = juce::jmin (preparedBlockSize, numSamples - start);
-        lowerPart.render (mono, len, midi, start);
+        parseChunk (start, len, start + len >= numSamples);
+
+        lowerPart.render (mono, len, events.events());
 
         bool nonFinite = false;
         for (int i = 0; i < len; ++i)

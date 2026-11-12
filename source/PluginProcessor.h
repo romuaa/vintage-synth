@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "engine/EventParser.h"
 #include "engine/Part.h"
 #include "params/ParameterLayout.h"
 
@@ -55,6 +56,7 @@ private:
     std::atomic<float>* vintage = nullptr;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
 
+    EventParser events; // parsed once per render chunk, preallocated in prepareToPlay
     juce::AudioBuffer<float> partBuffer;
     int preparedBlockSize = 0;
 

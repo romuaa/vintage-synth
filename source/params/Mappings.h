@@ -53,4 +53,27 @@ inline float vcoEnvModOct (float v) noexcept { return 4.0f * v * v; }
 inline float crossModOct (float v) noexcept { return 4.0f * v * v; }
 inline float vcfEnvModOct (float v) noexcept { return 7.0f * v; }
 inline float vcfLfoModOct (float v) noexcept { return 4.0f * v * v; }
+
+/** Portamento: time to cover 99 % of the interval, 0 = off, else 5 s x v^2. */
+inline float portaTimeSec (float v) noexcept { return 5.0f * v * v; }
+inline float portaFromSec (float s) noexcept { return std::sqrt ((s < 0.0f ? 0.0f : s) / 5.0f); }
+
+/** Unison detune: total spread in cents (outermost voices are +-half of it). */
+inline float unisonDetuneCents (float v) noexcept { return 50.0f * v; }
+
+/** Velocity amount: gain (or VCF ENV depth) = 1 - amount x (1 - velocity). */
+inline float velocityScale (float amount, float velocity) noexcept { return 1.0f - amount * (1.0f - velocity); }
+
+/** VCO LFO-mod slider plus the mod wheel's share (wheel 0..1 x depth), capped at the panel maximum. */
+inline float vcoLfoModWithWheel (float slider, float wheel, float depth) noexcept
+{
+    const float v = slider + wheel * depth;
+    return v < 1.0f ? v : 1.0f;
+}
+
+/** Choice index -> unison voice count (2, 4, 8, 16). */
+inline int unisonVoices (int index) noexcept { return 2 << (index < 0 ? 0 : (index > 3 ? 3 : index)); }
+
+/** Choice index -> pitch-bend range in semitones (0..12). */
+inline float bendRangeSemis (int index) noexcept { return static_cast<float> (index < 0 ? 0 : (index > 12 ? 12 : index)); }
 } // namespace vs::map

@@ -1,0 +1,64 @@
+# Polyphony regression (M2b): a 16-note held chord at mixed velocities, a 17th note that steals
+# the oldest voice (3 ms fade, Poly glide from the previous note), sustain pedal holding released
+# keys, then a Unison lead (4 voices, detuned) with portamento and a legato return.
+rate 48000
+length 4.2
+
+param lower.vcf.cutoff 0.55
+param lower.vcf.resonance 0.3
+param lower.env1.decay 0.5
+param lower.env1.sustain 0.4
+param lower.env2.release 0.55
+param lower.vel.vca 0.6
+param lower.vel.vcf 0.4
+param lower.porta.time 0.25
+
+# Chord: 16 notes, the oldest (36) is pressed first.
+0.000 on 36 60
+0.010 on 40 64
+0.020 on 43 68
+0.030 on 47 72
+0.040 on 48 76
+0.050 on 52 80
+0.060 on 55 84
+0.070 on 59 88
+0.080 on 60 92
+0.090 on 64 96
+0.100 on 67 100
+0.110 on 71 104
+0.120 on 72 108
+0.130 on 76 112
+0.140 on 79 116
+0.150 on 83 120
+
+# 17th note: steals the voice of 36 and glides from 83.
+0.800 on 88 110
+
+# Pedal down, every key up: the pedal holds the chord until 1.8 s.
+1.000 cc 64 127
+1.100 off 36
+1.100 off 40
+1.100 off 43
+1.100 off 47
+1.100 off 48
+1.100 off 52
+1.100 off 55
+1.100 off 59
+1.100 off 60
+1.100 off 64
+1.100 off 67
+1.100 off 71
+1.100 off 72
+1.100 off 76
+1.100 off 79
+1.100 off 83
+1.100 off 88
+1.800 cc 64 0
+
+# Unison lead with portamento (the mode change releases nothing here: all voices are idle).
+2.300 param lower.assign.mode 1
+2.300 param lower.unison.detune 0.5
+2.400 on 57 110
+2.900 on 64 100
+3.300 off 64
+3.700 off 57

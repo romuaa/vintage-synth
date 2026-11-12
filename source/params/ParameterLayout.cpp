@@ -14,7 +14,10 @@ enum class Display
     LfoRate,
     LfoDelay,
     EnvTime,
-    Cents
+    Cents,
+    PortaTime,
+    DetuneCents,
+    Percent
 };
 
 juce::String formatHz (float hz)
@@ -45,6 +48,9 @@ juce::String toText (Display d, float v)
         case Display::LfoDelay: return formatSeconds (map::lfoDelaySec (v));
         case Display::EnvTime:  return formatSeconds (map::envTimeSec (v));
         case Display::Cents:    return (v > 0.0f ? "+" : "") + juce::String (juce::roundToInt (map::fineTuneSemis (v) * 100.0f)) + " ct";
+        case Display::PortaTime: return v <= 0.0f ? juce::String ("Off") : formatSeconds (map::portaTimeSec (v));
+        case Display::DetuneCents: return juce::String (map::unisonDetuneCents (v), 1) + " ct";
+        case Display::Percent:  return juce::String (juce::roundToInt (v * 100.0f)) + " %";
     }
     return {};
 }
@@ -60,6 +66,12 @@ float fromText (Display d, const juce::String& t)
         case Display::LfoDelay: return map::lfoDelayFromSec (juce::jmax (0.0f, t.containsIgnoreCase ("ms") ? t.getFloatValue() / 1000.0f : t.getFloatValue()));
         case Display::EnvTime:  return map::envTimeFromSec (juce::jmax (0.0001f, t.containsIgnoreCase ("ms") ? t.getFloatValue() / 1000.0f : t.getFloatValue()));
         case Display::Cents:    return t.getFloatValue() / 100.0f;
+        case Display::PortaTime:
+            if (t.trim().equalsIgnoreCase ("off"))
+                return 0.0f;
+            return map::portaFromSec (t.containsIgnoreCase ("ms") ? t.getFloatValue() / 1000.0f : t.getFloatValue());
+        case Display::DetuneCents: return t.getFloatValue() / map::unisonDetuneCents (1.0f);
+        case Display::Percent:  return t.getFloatValue() / 100.0f;
     }
     return 0.0f;
 }
@@ -95,9 +107,9 @@ void addPart (juce::AudioProcessorValueTreeState::ParameterLayout& layout, const
 {
     // Order is part of the host-facing contract: never reorder, only append.
 #define VS_ADD_FLOAT(member, id, name, mn, mx, def, kind) \
-    layout.add (makeFloat (prefix + id, namePrefix + name, mn, mx, def, Display::kind));
+    layout.add (makeFloat (prefix + id, namePrefix + juce::String::fromUTF8 (name), mn, mx, def, Display::kind));
 #define VS_ADD_CHOICE(member, id, name, labels, def) \
-    layout.add (makeChoice (prefix + id, namePrefix + name, labels, def));
+    layout.add (makeChoice (prefix + id, namePrefix + juce::String::fromUTF8 (name), labels, def));
     VS_PART_FLOAT_PARAMS (VS_ADD_FLOAT)
     VS_PART_CHOICE_PARAMS (VS_ADD_CHOICE)
 #undef VS_ADD_FLOAT
