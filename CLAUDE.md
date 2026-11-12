@@ -48,6 +48,12 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Dependabot doesn't bump them, so check github.com/actions/runner-images when touching CI.
   Pushing to `main` cancels a running build of `main` (concurrency group): wait for a run you
   still need before pushing again.
+- **CI cost (while private):** docs-only changes don't build; draft PRs build Windows x64 only and
+  the full matrix runs when the PR is marked ready, on `main` and on manual dispatch; jobs time out
+  after 30 min; Dependabot is monthly. Push a branch once, after local tests and a sanitizer run.
+  The repo is planned to go public; then the draft tier can go.
+- **VST3 validator:** CI only (ctest `vst3_validator`, macOS and Windows x64), built from the SDK
+  pinned by tag and SHA in `build.yml`. Not built locally.
 - **Supply chain:** every third-party action is pinned by full commit SHA with a `# vX.Y.Z` comment.
   `.github/dependabot.yml` updates Actions and submodules weekly. Before merging a submodule PR,
   check it points at a release tag and update the versions named here and in README.
@@ -67,9 +73,10 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - Compiler cache confirmed: a warm CI run takes macOS 3.5 / Win x64 6.7 / Win ARM64 5.9 min (98 % hits).
 - **Wave 0 (contracts): done** — `docs/architecture.md`; judgement calls in `docs/decisions.md`
   are marked (review) until the owner confirms them.
-- **Next: Wave 1** — serial: **M2 polyphony** (16 voices, Poly/Unison/Solo, portamento, 3 ms steal
-  fade, velocity, bend range, sustain pedal, mod wheel) including the per-voice CPU optimisation;
-  parallel: **M5 effect blocks** (JUCE-free, `source/fx/`), VST3 validator, golden-render harness.
+- **Wave 1, in progress.** Done: golden-render harness and VST3 validator (CI green).
+  In review: **M2a** (note events + CPU optimisation, 32 voices = 4.7 % of a core) and the
+  **M5 effect blocks** (`source/fx/`, not wired in). Next: **M2b** polyphony (allocator, 16 voices,
+  Poly/Unison/Solo, portamento, 3 ms steal fade, velocity, bend range, sustain pedal, mod wheel).
 - Then: Wave 2 = M3 Upper part + Whole/Dual/Split, with M4 arp/sequencer in parallel;
   Wave 3 = integrate M4/M5 + M6 presets/banks/goldens; Wave 4 = M7 custom UI + M8 release.
 
@@ -84,6 +91,7 @@ source/          PluginProcessor.*   (later: fx/ presets/ ui/)
 tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
 tests/benchmarks/ voice_bench (CPU cost per voice)
 tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)
+tests/render_regression/ golden-render harness (ctest label "render"; scripts/ and golden/ feature references)
 docs/architecture.md  contracts between work streams (interfaces, behaviour, gates)
 docs/decisions.md  design decision log (what we chose and why)
 docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
@@ -130,6 +138,8 @@ must build for all three targets (mac universal, win x64, win ARM64).
 - JUCE's VST3 wrapper adds 2080 "MIDI CC" params + "Bypass"; exclude them when counting ours.
 - Wrap `JUCE_PLUGIN_ARTEFACT_FILE` in `$<GENEX_EVAL:…>`; tests take include dirs/defines from the plugin target.
 - Measure filters far below Nyquist and above the float floor; isolate a failing gate with a diagnostic test.
+- Run the tests under ASan/UBSan before pushing: MSVC's heap catches overruns macOS tolerates.
+- A new continuous parameter is not smoothed unless added to `PartModulator::next`.
 - Rosetta isn't installed: the x86_64 slice is checked with `lipo` only, never run locally.
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.

@@ -78,6 +78,10 @@ Constraints behind this plan:
 6. You accept or reject. Then push the PR and confirm macOS, Win x64 and Win ARM64 are green in CI
    before calling it done. Never claim Windows is green without a passing run.
 
+**CI minutes are billed while the repo is private.** Push each branch once, after steps 2–5 and a
+local sanitizer run; batch docs with code; never push docs-only commits to a code PR. Open PRs as
+drafts (Windows x64 only) and mark them ready for the full matrix once, at the end.
+
 ## Model routing
 
 | Model | Used for |

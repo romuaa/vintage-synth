@@ -9,8 +9,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly # each PR costs a full CI run; weekly again once the repo is public
     groups:
       actions:
         patterns: ["*"]
@@ -20,7 +19,6 @@ updates:
   - package-ecosystem: gitsubmodule
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly # each PR costs a full CI run; weekly again once the repo is public
     commit-message:
       prefix: "deps"

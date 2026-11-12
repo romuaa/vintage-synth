@@ -24,8 +24,15 @@ Run these in order and stop at the first failure. Report each step as pass, fail
    ```
    Pass = the output ends with `SUCCESS` and the exit code is 0. Only if the tool harness still
    refuses the command, ask the user under "What I need from you" to run it with `! `.
-4. **VST3 validator** (not wired up yet; it gets built from the VST3 SDK once added):
-   `validator "<path>.vst3"`
+4. **VST3 validator:** runs in CI only (macOS and Windows x64) as ctest `vst3_validator`, built from
+   Steinberg's SDK pinned in `.github/workflows/build.yml` (`VST3_SDK_TAG` / `VST3_SDK_SHA`). It is
+   not built on this Mac (owner decision: CI only). Locally the test is absent unless
+   `-DVS_VST3_VALIDATOR=<path>` is given. Report it from the CI run.
+4b. **Sanitizers (before pushing engine or test changes):** configure a second build dir with
+   `-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_OSX_ARCHITECTURES=arm64
+   -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+   -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"` and run the whole `VintageSynthTests`
+   binary. MSVC's heap catches overruns that macOS silently tolerates.
 5. **CPU benchmark:** `build/mac/tests/voice_bench` (best of 3; run it with no build or other heavy
    job running). It prints one Part with one voice, then 1/16/32 voices driven directly, the
    per-part overhead and a projection against the budget. Baseline on an Apple M5 Pro, non-LTO
@@ -36,6 +43,8 @@ Run these in order and stop at the first failure. Report each step as pass, fail
    included. 4× is offline only and has no real-time budget. Flag any regression above 5 %.
 
 Windows CI: after a push, check with `gh run list --limit 3` and `gh run view <id> --log-failed`.
+CI minutes cost money while the repo is private: push a branch once, when everything above is green.
+Draft PRs build Windows x64 only; mark the PR ready (`gh pr ready <n>`) for the full matrix.
 
 ## Writing tests: traps we hit
 - When a quality gate fails, write a hidden `[.diag]` test that isolates the stage before tuning anything.
