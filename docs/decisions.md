@@ -3,6 +3,28 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Cross Mod aliasing (owner decision after the study, 2026-11-12)
+
+- **The current Cross Mod sound stays as the instrument's sound ("Classic").** The owner compared
+  it by ear with a corrected version at musically typical settings: the difference was almost
+  inaudible, and where audible the corrected version "takes the edge off"; it also costs about
+  40 % more CPU for voices using cross-mod.
+- **Quality rule, refined:** the −100 dB alias gate applies to all waveforms and to hard sync.
+  **Cross Mod in Classic mode is exempt** and documented: about −36 to −80 dB at one octave with a
+  saw, square or pulse modulator, worse at higher depths and modulator pitches; sine and triangle
+  modulators measure about −87 dB at one octave.
+- **A "Clean" option will be added later** (low priority, after Wave 3): a switch, default Classic,
+  that corrects VCO-1 at the modulator's edges and tracks the pitch change inside each sample
+  (study: −104 dB or better for VCO-2 up to 1 kHz and up to one octave; no cost when off).
+- **Two defects found by the study are fixed now, independent of that choice:** hard sync with a
+  sine VCO-1 aliases at −77 dB without any cross-mod (a missing slope correction; the sync gate only
+  tested a saw); and the sync + cross-mod sound differs between real-time and offline rendering by
+  up to 29 dB on single partials, so a bounce does not sound like playback.
+- Study findings worth keeping: pure FM bandwidth is negligible at musical settings (sine into sine
+  at one octave: about −225 dB); the aliasing comes from the modulator's edges passing through the
+  exponential pitch mapping and from assuming a constant pitch within a sample; extra oversampling
+  is a poor fix (twice the CPU for −53 to −68 dB); low-passing the modulator dulls the sound.
+
 ## Linux ARM64 and container checks (owner decision, 2026-11-12)
 
 - **Linux ARM64 (aarch64) is a supported target,** built and validated in CI only; the owner has no

@@ -14,9 +14,14 @@ RUN apt-get update \
       xvfb xauth $(grep -v '^#' /tmp/packages.txt | tr '\n' ' ') \
  && rm -rf /var/lib/apt/lists/* /tmp/packages.txt
 
-# Clang WITH recommends: that pulls in the sanitizer runtime (libclang-rt-*-dev), which the
-# sanitizer mode needs.
-RUN apt-get update && apt-get install -y clang clang-tools && rm -rf /var/lib/apt/lists/*
+# Clang for the sanitizer mode, plus the sanitizer runtime of the same major version (it is only a
+# "recommended" package of clang, so name it explicitly).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends clang clang-tools \
+ && v="$(clang --version | sed -n 's/.*version \([0-9][0-9]*\).*/\1/p' | head -n 1)" \
+ && ( apt-get install -y --no-install-recommends "libclang-rt-${v}-dev" \
+      || apt-get install -y --no-install-recommends "libclang-common-${v}-dev" ) \
+ && rm -rf /var/lib/apt/lists/*
 
 # CMake >= 3.28 is required by the project; Ubuntu 22.04 ships 3.22. Kitware's tarball, SHA-256 checked.
 ARG CMAKE_VERSION=3.31.9
@@ -29,5 +34,9 @@ RUN set -eu; arch=$(uname -m); \
     echo "$sha  /tmp/$f" | sha256sum -c -; \
     tar -xzf "/tmp/$f" -C /opt && ln -s "/opt/cmake-${CMAKE_VERSION}-linux-${arch}/bin/"* /usr/local/bin/ && rm "/tmp/$f"
 
+# Build as an unprivileged user. /work is the mount point of the build volume: creating it here,
+# owned by that user, makes a fresh named volume writable for it.
+RUN useradd --create-home --uid 4242 builder && mkdir -p /work && chown builder:builder /work
 LABEL vs.linux-check=1
 WORKDIR /work
+USER builder

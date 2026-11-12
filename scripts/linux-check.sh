@@ -18,7 +18,7 @@
 # the memory Docker reports (the default 8 GB Docker Desktop VM works).
 #
 # How it works: the repository and both submodules are mounted read-only; a snapshot of the tracked
-# and untracked-not-ignored files is rsynced into the named volume "vs-linux-check-work" together
+# and untracked-not-ignored files is rsynced into the named volume "vs-linux-check-build" together
 # with the build trees and a ccache, so a second run only recompiles what changed. Nothing is
 # written into the repository tree. The image (Dockerfile in scripts/linux-check/, base images
 # pinned by digest below) is built once and cached; it is rebuilt when the Dockerfile or
@@ -31,7 +31,7 @@ set -euo pipefail
 # Bump deliberately, like the runner images in CI.
 UBUNTU_2204=ubuntu:22.04@sha256:74b12b11ffa550fba1929ad4d8d16533c34f6612728469671afba1b03b66881c
 UBUNTU_2404=ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
-VOLUME=vs-linux-check-work
+VOLUME=vs-linux-check-build   # owned by the image's unprivileged build user
 
 die() { echo "linux-check: $*" >&2; exit 1; }
 
@@ -53,7 +53,7 @@ command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH
 docker info >/dev/null 2>&1 || die "the Docker daemon is not running (start Docker Desktop or the engine and retry)."
 
 if [[ $mode == clean ]]; then
-  docker volume rm -f "$VOLUME" >/dev/null
+  docker volume rm -f "$VOLUME" vs-linux-check-work >/dev/null   # (second name: older versions of this script)
   ids=$(docker images -q --filter label=vs.linux-check=1 | sort -u)
   [[ -z $ids ]] || docker rmi -f $ids >/dev/null
   echo "linux-check: removed volume $VOLUME and the cached images."

@@ -81,8 +81,9 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
   in `source/seq/`, not wired in. Awaiting the owner's audition (`m3_demo`) and merge approval.
-- **Open engine item:** hard sync + audio-rate cross-mod aliases at −44 to −71 dB (see decisions);
-  study and owner decision pending. The check is tagged as an expected failure.
+- **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
+  alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
+  from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
 - **M2 polyphony: done** (16 voices, Poly/Unison/Solo, steal fade, pedal, portamento, velocity, bend
   range, mod wheel; audition approved by ear; 32 voices = 5 % of a core at 48 kHz). Lower part only.
 - M0 skeleton: done. M1 single-part voice engine: done (mono, Lower part only; demo approved by ear;
