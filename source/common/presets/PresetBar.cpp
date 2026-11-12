@@ -19,6 +19,8 @@ PresetBar::PresetBar (PresetManager& manager) : presets (manager)
     positionLabel.setJustificationType (juce::Justification::centred);
     nameLabel.setFont (juce::FontOptions (16.0f, juce::Font::bold));
 
+    // Button callbacks run synchronously on a click, while the bar exists: `this` is safe there.
+    // Everything asynchronous (menus, file choosers) holds a SafePointer and checks it first.
     previous.onClick = [this] { presets.selectPrevious(); };
     next.onClick = [this] { presets.selectNext(); };
     init.onClick = [this] { presets.initialise(); };
@@ -39,17 +41,33 @@ PresetBar::~PresetBar()
     presets.changes().removeChangeListener (this);
 }
 
+juce::String PresetBar::bankText() const
+{
+    switch (presets.bankStatus())
+    {
+        case BankStatus::Missing: return "bank not found: " + presets.bankName();
+        case BankStatus::Pending: return presets.bankName() + " (loading)";
+        case BankStatus::Factory:
+        case BankStatus::User: break;
+    }
+    return presets.bankName();
+}
+
+juce::String PresetBar::positionText() const
+{
+    return presets.isDetached() ? juce::String ("--") : presets.positionName (presets.currentIndex());
+}
+
 juce::String PresetBar::describe() const
 {
-    return presets.bankName() + "  " + PresetManager::positionName (presets.currentIndex()) + "  " + presets.currentName()
-           + (presets.isModified() ? " *" : "");
+    return bankText() + "  " + positionText() + "  " + presets.currentName() + (presets.isModified() ? " *" : "");
 }
 
 void PresetBar::refresh()
 {
     // Label::setText only repaints when the text changed, so calling this often is cheap.
-    bankLabel.setText (presets.bankName() + (presets.isFactoryBank() ? " (factory)" : ""), juce::dontSendNotification);
-    positionLabel.setText (PresetManager::positionName (presets.currentIndex()), juce::dontSendNotification);
+    bankLabel.setText (bankText() + (presets.isFactoryBank() ? " (factory)" : ""), juce::dontSendNotification);
+    positionLabel.setText (positionText(), juce::dontSendNotification);
     nameLabel.setText (presets.currentName() + (presets.isModified() ? " *" : ""), juce::dontSendNotification);
 }
 
@@ -93,10 +111,11 @@ void PresetBar::chooseAndLoad (const juce::String& title, const juce::File& fold
 {
     chooser = std::make_unique<juce::FileChooser> (title, folder.isDirectory() ? folder : juce::File(), pattern);
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                          [this, run = std::move (action)] (const juce::FileChooser& fc) {
+                          [safe = juce::Component::SafePointer<PresetBar> (this), run = std::move (action)] (const juce::FileChooser& fc) {
                               const auto f = fc.getResult();
-                              if (f != juce::File())
-                                  report (run (f));
+                              if (safe == nullptr || f == juce::File())
+                                  return; // the bar (and the editor) closed while the dialog was open, or cancelled
+                              safe->report (run (f));
                           });
 }
 
@@ -108,13 +127,13 @@ void PresetBar::chooseAndSave (const juce::String& title, const juce::File& fold
     chooser = std::make_unique<juce::FileChooser> (title, suggestion, "*" + extension);
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::warnAboutOverwriting,
-                          [this, extension, run = std::move (action)] (const juce::FileChooser& fc) {
+                          [safe = juce::Component::SafePointer<PresetBar> (this), extension, run = std::move (action)] (const juce::FileChooser& fc) {
                               auto f = fc.getResult();
-                              if (f == juce::File())
+                              if (safe == nullptr || f == juce::File())
                                   return;
                               if (! f.hasFileExtension (extension))
                                   f = f.withFileExtension (extension);
-                              report (run (f));
+                              safe->report (run (f));
                           });
 }
 
@@ -128,18 +147,8 @@ void PresetBar::showLoadMenu()
     for (int t = 0; t < schema.numTones(); ++t)
         menu.addItem (10 + t, "Tone into " + capitalised (schema.toneKey (t)) + "...");
 
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (load), [this] (int choice) {
-        const auto where = presets.getLocations();
-        if (choice == 1)
-            chooseAndLoad ("Load program", where.programs(), "*" + juce::String (kProgramExtension),
-                           [this] (const juce::File& f) { return presets.loadProgramFile (f); });
-        else if (choice == 2)
-            chooseAndLoad ("Load bank", where.banks(), "*" + juce::String (kBankExtension),
-                           [this] (const juce::File& f) { return presets.loadBankFile (f); });
-        else if (choice >= 10)
-            chooseAndLoad ("Load tone", where.tones(), "*" + juce::String (kToneExtension),
-                           [this, part = choice - 10] (const juce::File& f) { return presets.loadToneFile (f, part); });
-    });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (load),
+                        [safe = juce::Component::SafePointer<PresetBar> (this)] (int choice) { handleLoadMenuResult (safe, choice); });
 }
 
 void PresetBar::showSaveMenu()
@@ -147,27 +156,64 @@ void PresetBar::showSaveMenu()
     juce::PopupMenu menu;
     menu.addItem (1, "Program as...");
     menu.addItem (2, "Bank as...");
-    menu.addItem (3, "Store in this slot (user banks)", ! presets.isFactoryBank(), false);
+    menu.addItem (3, "Store in this slot (user banks)", presets.bankStatus() == BankStatus::User && ! presets.isDetached(), false);
     menu.addSeparator();
     const auto& schema = presets.getSchema();
     for (int t = 0; t < schema.numTones(); ++t)
         menu.addItem (10 + t, capitalised (schema.toneKey (t)) + " tone as...");
 
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (save), [this] (int choice) {
-        const auto where = presets.getLocations();
-        if (choice == 1)
-            chooseAndSave ("Save program", where.programs(), kProgramExtension,
-                           [this] (const juce::File& f) { return presets.saveProgramFile (f, f.getFileNameWithoutExtension()); });
-        else if (choice == 2)
-            chooseAndSave ("Save bank", where.banks(), kBankExtension,
-                           [this] (const juce::File& f) { return presets.saveBankFile (f, f.getFileNameWithoutExtension()); });
-        else if (choice == 3)
-            report (presets.storeInBank (presets.currentIndex()));
-        else if (choice >= 10)
-            chooseAndSave ("Save tone", where.tones(), kToneExtension,
-                           [this, part = choice - 10] (const juce::File& f) {
-                               return presets.saveToneFile (f, part, f.getFileNameWithoutExtension());
-                           });
-    });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (save),
+                        [safe = juce::Component::SafePointer<PresetBar> (this)] (int choice) { handleSaveMenuResult (safe, choice); });
+}
+
+void PresetBar::handleLoadMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice)
+{
+    // JUCE calls a menu's callback with 0 when it is dismissed, also when the bar (with its
+    // editor) was deleted while the menu was open: nothing of the bar may be touched then.
+    if (choice == 0 || bar == nullptr)
+        return;
+    bar->loadChosen (choice);
+}
+
+void PresetBar::handleSaveMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice)
+{
+    if (choice == 0 || bar == nullptr)
+        return;
+    bar->saveChosen (choice);
+}
+
+// The file actions below run later, from a file chooser's callback that has checked the bar still
+// exists; they reach the manager through a plain reference: the processor (which owns it) outlives
+// every editor.
+void PresetBar::loadChosen (int choice)
+{
+    const auto where = presets.getLocations();
+    const auto& inst = presets.getSchema().instrument();
+    auto& pm = presets;
+    if (choice == 1)
+        chooseAndLoad ("Load program", where.programs(), "*" + inst.programExtension, [&pm] (const juce::File& f) { return pm.loadProgramFile (f); });
+    else if (choice == 2)
+        chooseAndLoad ("Load bank", where.banks(), "*" + inst.bankExtension, [&pm] (const juce::File& f) { return pm.loadBankFile (f); });
+    else if (choice >= 10)
+        chooseAndLoad ("Load tone", where.tones(), "*" + inst.toneExtension,
+                       [&pm, part = choice - 10] (const juce::File& f) { return pm.loadToneFile (f, part); });
+}
+
+void PresetBar::saveChosen (int choice)
+{
+    const auto where = presets.getLocations();
+    const auto& inst = presets.getSchema().instrument();
+    auto& pm = presets;
+    if (choice == 1)
+        chooseAndSave ("Save program", where.programs(), inst.programExtension,
+                       [&pm] (const juce::File& f) { return pm.saveProgramFile (f, f.getFileNameWithoutExtension()); });
+    else if (choice == 2)
+        chooseAndSave ("Save bank", where.banks(), inst.bankExtension,
+                       [&pm] (const juce::File& f) { return pm.saveBankFile (f, f.getFileNameWithoutExtension()); });
+    else if (choice == 3)
+        report (presets.storeInBank (presets.currentIndex()));
+    else if (choice >= 10)
+        chooseAndSave ("Save tone", where.tones(), inst.toneExtension,
+                       [&pm, part = choice - 10] (const juce::File& f) { return pm.saveToneFile (f, part, f.getFileNameWithoutExtension()); });
 }
 } // namespace vs::presets
