@@ -29,11 +29,31 @@ constexpr int block = 256;
 constexpr int seconds = 5; // audio per timed run
 constexpr int repeats = 3; // best of
 
+// The patch: sync + Cross Mod 0.3 by default. Environment overrides (to compare voice types):
+// VS_BENCH_SYNC (0/1), VS_BENCH_XMOD (Cross Mod slider 0..1), VS_BENCH_WAVE1 (VCO-1 waveform index,
+// 0 sine .. 4 pulse).
+int benchSync()
+{
+    const char* e = std::getenv ("VS_BENCH_SYNC");
+    return e != nullptr ? std::atoi (e) : 1;
+}
+float benchCrossMod()
+{
+    const char* e = std::getenv ("VS_BENCH_XMOD");
+    return e != nullptr ? static_cast<float> (std::atof (e)) : 0.3f;
+}
+int benchWave1()
+{
+    const char* e = std::getenv ("VS_BENCH_WAVE1");
+    return e != nullptr ? std::atoi (e) : 2;
+}
+
 vs::PartParams benchParams()
 {
     vs::PartParams p;
-    p.vcoSync = 1;
-    p.vco1CrossMod = 0.3f;
+    p.vcoSync = benchSync();
+    p.vco1CrossMod = benchCrossMod();
+    p.vco1Wave = benchWave1();
     p.vcfResonance = 0.6f;
     p.vcoModLfo = 0.1f;
     p.env2Sustain = 1.0f;
@@ -201,8 +221,9 @@ ProcessorResult benchProcessor (PolyLoad load)
         set ("global.vintage", gVintage);
         for (const juce::String prefix : { "lower.", "upper." })
         {
-            set (prefix + "vco2.sync", 1.0f);
-            set (prefix + "vco1.cross_mod", 0.3f);
+            set (prefix + "vco2.sync", static_cast<float> (benchSync()));
+            set (prefix + "vco1.cross_mod", benchCrossMod());
+            set (prefix + "vco1.waveform", static_cast<float> (benchWave1()));
             set (prefix + "vcf.resonance", 0.6f);
             set (prefix + "vcomod.lfo_mod", 0.1f);
             set (prefix + "env2.sustain", 1.0f);
@@ -254,7 +275,8 @@ int main (int argc, char** argv)
         fs = std::atof (argv[1]);
     if (argc > 2)
         gVintage = static_cast<float> (std::atof (argv[2]));
-    std::printf ("base rate %.0f Hz, Vintage %.2f\n", fs, static_cast<double> (gVintage));
+    std::printf ("base rate %.0f Hz, Vintage %.2f; patch: sync %d, Cross Mod %.2f, VCO-1 waveform %d\n", fs, static_cast<double> (gVintage),
+                 benchSync(), static_cast<double> (benchCrossMod()), benchWave1());
     std::printf ("Sections 1-4 use fixed 2x/4x factors. At this rate the plugin uses %dx real time and %dx offline\n"
                  "(docs/architecture.md 4.4); section 5 measures the processor with the real-time factor.\n\n",
                  vs::voiceOversamplingFactor (fs, false), vs::voiceOversamplingFactor (fs, true));
