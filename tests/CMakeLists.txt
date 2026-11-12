@@ -30,7 +30,8 @@ add_executable(VintageSynthTests
     dsp_unit/BitimbralTests.cpp
     dsp_unit/OversamplingTests.cpp
     dsp_unit/RenderDemo.cpp
-    dsp_unit/RenderDemoM3.cpp)
+    dsp_unit/RenderDemoM3.cpp
+    dsp_unit/StudyCrossModRender.cpp)
 
 # M5 effect blocks (header-only, source/fx/).
 target_sources(VintageSynthTests PRIVATE

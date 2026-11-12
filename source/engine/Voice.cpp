@@ -131,6 +131,7 @@ void Voice::restartFromIdle() noexcept
     env1.reset();
     hpf.reset();
     vcf.reset();
+    fmState.primed = false; // STUDY
 
     const bool forced = restartPhasesSet;
     restartPhasesSet = false;
@@ -327,6 +328,9 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
     }
 
     crossModOn = m.crossModActive;
+    studyMode = study::crossModMode; // STUDY (cross-mod aliasing): experimental path selector
+    if (! crossModOn)
+        fmState.primed = false;
 
     // ---- VCF coefficients and VCA gain (vectorisable). The oscillators run in renderSample(). ----
     {

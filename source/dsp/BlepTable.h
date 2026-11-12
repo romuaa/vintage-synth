@@ -39,6 +39,12 @@ public:
     /** Ramp residual at t = j + d for a unit slope change (per sample). */
     float ramp (int j, float d) const noexcept { return lookup (rampCells, j, d); }
 
+    /**
+        STUDY (cross-mod aliasing, experimental): curvature residual at t = j + d for a unit jump
+        of the second derivative (per sample^2), the third integral of the same kernel.
+    */
+    float curve (int j, float d) const noexcept { return lookup (curveCells, j, d); }
+
 private:
     static constexpr int kCells = 2 * kZeroCrossings;
     static constexpr int kCellSize = kResolution + 1;
@@ -47,6 +53,7 @@ private:
     {
         stepCells.resize (static_cast<size_t> (kCells * kCellSize));
         rampCells.resize (static_cast<size_t> (kCells * kCellSize));
+        curveCells.resize (static_cast<size_t> (kCells * kCellSize));
 
         // Integrate the windowed sinc on a fine grid: BLEP(t) = int h, BLEP2(t) = int BLEP.
         constexpr int fine = 8;
@@ -54,10 +61,10 @@ private:
         constexpr int total = 2 * kZeroCrossings * perSample;
         const double dt = 1.0 / perSample;
 
-        std::vector<double> blep (static_cast<size_t> (total + 1)), blep2 (static_cast<size_t> (total + 1));
-        double acc = 0.0, acc2 = 0.0;
-        double prevH = kernel (-kZeroCrossings), prevB = 0.0;
-        blep[0] = blep2[0] = 0.0;
+        std::vector<double> blep (static_cast<size_t> (total + 1)), blep2 (static_cast<size_t> (total + 1)), blep3 (static_cast<size_t> (total + 1));
+        double acc = 0.0, acc2 = 0.0, acc3 = 0.0;
+        double prevH = kernel (-kZeroCrossings), prevB = 0.0, prevB2 = 0.0;
+        blep[0] = blep2[0] = blep3[0] = 0.0;
         for (int i = 1; i <= total; ++i)
         {
             const double t = -kZeroCrossings + i * dt;
@@ -66,14 +73,18 @@ private:
             blep[static_cast<size_t> (i)] = acc;
             acc2 += 0.5 * (acc + prevB) * dt;
             blep2[static_cast<size_t> (i)] = acc2;
+            acc3 += 0.5 * (acc2 + prevB2) * dt;
+            blep3[static_cast<size_t> (i)] = acc3;
             prevH = h;
             prevB = acc;
+            prevB2 = acc2;
         }
         const double norm = acc; // make BLEP(Z) exactly 1
         for (size_t i = 0; i <= static_cast<size_t> (total); ++i)
         {
             blep[i] /= norm;
             blep2[i] /= norm;
+            blep3[i] /= norm;
         }
 
         for (int j = -kZeroCrossings; j < kZeroCrossings; ++j)
@@ -86,6 +97,7 @@ private:
                 const auto cell = static_cast<size_t> ((j + kZeroCrossings) * kCellSize + k);
                 stepCells[cell] = static_cast<float> (blep[idx] - (afterEdge ? 1.0 : 0.0));
                 rampCells[cell] = static_cast<float> (blep2[idx] - (t > 0.0 ? t : 0.0));
+                curveCells[cell] = static_cast<float> (blep3[idx] - (t > 0.0 ? 0.5 * t * t : 0.0));
             }
     }
 
@@ -121,6 +133,6 @@ private:
         return c[0] + (c[1] - c[0]) * frac;
     }
 
-    std::vector<float> stepCells, rampCells;
+    std::vector<float> stepCells, rampCells, curveCells;
 };
 } // namespace vs::dsp

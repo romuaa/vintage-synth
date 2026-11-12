@@ -3,6 +3,7 @@
 #include "dsp/BlepTable.h"
 #include "dsp/DspUtil.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 
@@ -93,7 +94,183 @@ public:
 
     float getPhase() const noexcept { return phase; }
 
+    // ==== STUDY (cross-mod aliasing, experimental, not production; branch study/crossmod-aliasing) ====
+
+    /**
+        Phase increment inside one sample, s = 0..1 from the previous sample point: a1 + b1 s on
+        [0, se), a2 + b2 s on [se, 1]. se > 1: one piece. A modulator edge at se may make the
+        increment jump; it is corrected on this oscillator's output (BLAMP + curvature).
+    */
+    struct FmSeg
+    {
+        float a1 = 0.0f, b1 = 0.0f, se = 2.0f, a2 = 0.0f, b2 = 0.0f;
+    };
+
+    /** The naive waveform value at phase p (no band-limiting); used as the FM modulator. */
+    float naiveAt (float p, float width) const noexcept { return naive (p, wave == Wave::Pulse ? width : 0.5f); }
+
+    /**
+        Like process(), but the phase increment varies inside the sample (FmSeg) and every crossing
+        is placed by solving the quadratic phase exactly. Sync adds the slope (and curvature)
+        change for every waveform, not only the triangle's.
+    */
+    float processFm (const FmSeg& g, float width, float syncD, float& wrapD) noexcept
+    {
+        const float w = wave == Wave::Pulse ? width : 0.5f;
+        wrapD = -1.0f;
+        const bool hasEdge = g.se <= 1.0f;
+        float syncS = syncD >= 0.0f ? 1.0f - syncD : 2.0f;
+        const bool coincident = hasEdge && syncD >= 0.0f && std::abs (syncS - g.se) < 1.0e-4f;
+        if (coincident)
+            syncS = g.se; // the master's wrap is the modulator's edge: same instant
+
+        float p = phase, cur = 0.0f;
+        auto runTo = [&] (float end) {
+            if (end > cur)
+            {
+                const bool second = hasEdge && cur >= g.se;
+                p = advanceFm (p, cur, end, second ? g.a2 : g.a1, second ? g.b2 : g.b1, w, wrapD);
+                cur = end;
+            }
+        };
+        auto onEdge = [&] {
+            const float before = g.a1 + g.b1 * g.se, after = g.a2 + g.b2 * g.se;
+            const float d = 1.0f - g.se;
+            addKink (dWdp (p) * (after - before), d);
+            addCurve (d2Wdp2 (p) * (after * after - before * before) + dWdp (p) * (g.b2 - g.b1), d);
+        };
+        auto onSync = [&] (float s, bool edgeHere) {
+            const bool afterIn2 = hasEdge && s >= g.se;
+            const bool beforeIn2 = hasEdge && s > g.se && ! edgeHere;
+            const float before = beforeIn2 ? g.a2 + g.b2 * s : g.a1 + g.b1 * s;
+            const float cb = beforeIn2 ? g.b2 : g.b1;
+            const float after = afterIn2 ? g.a2 + g.b2 * s : g.a1 + g.b1 * s;
+            const float ca = afterIn2 ? g.b2 : g.b1;
+            const float d = 1.0f - s;
+            const float jump = naive (0.0f, w) - naive (p, w);
+            if (std::abs (jump) > 1.0e-9f)
+                addStep (jump, d);
+            addKink (dWdp (0.0f) * after - dWdp (p) * before, d);
+            addCurve (d2Wdp2 (0.0f) * after * after + dWdp (0.0f) * ca - d2Wdp2 (p) * before * before - dWdp (p) * cb, d);
+            p = 0.0f;
+        };
+
+        const bool syncFirst = syncS < g.se;
+        if (hasEdge && ! syncFirst)
+        {
+            runTo (g.se);
+            if (coincident)
+                onSync (g.se, true);
+            else
+                onEdge();
+        }
+        if (syncS <= 1.0f && ! coincident)
+        {
+            runTo (syncS);
+            onSync (syncS, false);
+        }
+        if (hasEdge && syncFirst)
+        {
+            runTo (g.se);
+            onEdge();
+        }
+        runTo (1.0f);
+        phase = p;
+
+        ring[n & kMask] += wave == Wave::Noise ? noise.bipolar() : naive (phase, w);
+        auto& slot = ring[(n - static_cast<unsigned> (kLatency)) & kMask];
+        const float out = slot;
+        slot = 0.0f;
+        ++n;
+        return out;
+    }
+
 private:
+    float dWdp (float p) const noexcept
+    {
+        switch (wave)
+        {
+            case Wave::Sine:     return 2.0f * kPi * std::cos (2.0f * kPi * p);
+            case Wave::Triangle: return p < 0.5f ? 4.0f : -4.0f;
+            case Wave::Saw:      return 2.0f;
+            case Wave::Square:
+            case Wave::Pulse:
+            case Wave::Noise:    return 0.0f;
+        }
+        return 0.0f;
+    }
+    float d2Wdp2 (float p) const noexcept { return wave == Wave::Sine ? -4.0f * kPi * kPi * std::sin (2.0f * kPi * p) : 0.0f; }
+
+    void addCurve (float c, float d) noexcept
+    {
+        if (std::abs (c) < 1.0e-12f)
+            return;
+        d = clamp (d, 0.0f, 1.0f);
+        for (int j = -kLatency; j < kLatency; ++j)
+            ring[(n + static_cast<unsigned> (j)) & kMask] += c * table->curve (j, d);
+    }
+
+    /** advance() with a linearly varying increment a + b s over [s0, s1]; d is measured from s to the sample point. */
+    float advanceFm (float p, float s0, float s1, float a, float b, float w, float& wrapD) noexcept
+    {
+        const bool pulseLike = wave == Wave::Square || wave == Wave::Pulse;
+        float remaining = a * (s1 - s0) + 0.5f * b * (s1 * s1 - s0 * s0);
+        float s = s0;
+        for (int guard = 0; guard < 4; ++guard)
+        {
+            float th = 1.0f;
+            int kind = 2; // 0 pulse fall, 1 triangle peak, 2 wrap
+            if (pulseLike && p < w)
+            {
+                th = w;
+                kind = 0;
+            }
+            else if (wave == Wave::Triangle && p < 0.5f)
+            {
+                th = 0.5f;
+                kind = 1;
+            }
+            if (p + remaining < th)
+            {
+                p += remaining;
+                break;
+            }
+            const float need = th - p;
+            // a (x - s) + b/2 (x^2 - s^2) = need, solved stably for x
+            const float B = a + b * s;
+            const float disc = std::max (0.0f, B * B + 2.0f * b * need);
+            const float sc = std::min (s1, s + 2.0f * need / (B + std::sqrt (disc)));
+            const float d = 1.0f - sc;
+            const float v = a + b * sc;
+            if (kind == 0)
+                addStep (-2.0f, d);
+            else if (kind == 1)
+            {
+                addKink (-8.0f * v, d);
+                addCurve (-8.0f * b, d);
+            }
+            else
+            {
+                switch (wave)
+                {
+                    case Wave::Saw:      addStep (-2.0f, d); break;
+                    case Wave::Square:
+                    case Wave::Pulse:    addStep (2.0f, d); break;
+                    case Wave::Triangle: addKink (8.0f * v, d); addCurve (8.0f * b, d); break;
+                    case Wave::Sine:
+                    case Wave::Noise:    break;
+                }
+                if (wrapD < 0.0f)
+                    wrapD = d;
+            }
+            remaining -= need;
+            p = kind == 2 ? 0.0f : th;
+            s = sc;
+        }
+        return p;
+    }
+    // ==== end STUDY ====
+
     float naive (float p, float w) const noexcept
     {
         switch (wave)

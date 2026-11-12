@@ -34,6 +34,11 @@ vs::PartParams benchParams()
     vs::PartParams p;
     p.vcoSync = 1;
     p.vco1CrossMod = 0.3f;
+    // STUDY (cross-mod aliasing): VS_BENCH_XMOD / VS_BENCH_SYNC override the patch.
+    if (const char* e = std::getenv ("VS_BENCH_XMOD"))
+        p.vco1CrossMod = static_cast<float> (std::atof (e));
+    if (const char* e = std::getenv ("VS_BENCH_SYNC"))
+        p.vcoSync = std::atoi (e);
     p.vcfResonance = 0.6f;
     p.vcoModLfo = 0.1f;
     p.env2Sustain = 1.0f;
@@ -254,7 +259,11 @@ int main (int argc, char** argv)
         fs = std::atof (argv[1]);
     if (argc > 2)
         gVintage = static_cast<float> (std::atof (argv[2]));
-    std::printf ("base rate %.0f Hz, Vintage %.2f\n", fs, static_cast<double> (gVintage));
+    // STUDY (cross-mod aliasing): VS_STUDY_XMOD selects the experimental cross-mod path (see Voice.h).
+    if (const char* e = std::getenv ("VS_STUDY_XMOD"))
+        vs::study::crossModMode = std::atoi (e);
+    std::printf ("base rate %.0f Hz, Vintage %.2f, study cross-mod mode %d, cross-mod %.2f, sync %d\n", fs, static_cast<double> (gVintage),
+                 vs::study::crossModMode, static_cast<double> (benchParams().vco1CrossMod), benchParams().vcoSync);
     std::printf ("Sections 1-4 use fixed 2x/4x factors. At this rate the plugin uses %dx real time and %dx offline\n"
                  "(docs/architecture.md 4.4); section 5 measures the processor with the real-time factor.\n\n",
                  vs::voiceOversamplingFactor (fs, false), vs::voiceOversamplingFactor (fs, true));

@@ -5,11 +5,26 @@
 #include "dsp/FastMath.h"
 #include "dsp/Filters.h"
 #include "dsp/Oscillator.h"
+#include "dsp/StudyCrossModPair.h"
 #include "engine/Modulation.h"
 #include "params/PartParamList.h"
 
 namespace vs
 {
+namespace study
+{
+/**
+    STUDY (cross-mod aliasing, experimental; branch study/crossmod-aliasing). Selects the VCO
+    path of voices with cross-mod active. Set before rendering (tests/benchmarks only).
+    0 = production. 1 = recommended fix: naive saw/square/pulse modulator with exact edges,
+    piecewise-linear increment, carrier BLAMP + curvature corrections (sine/triangle modulators:
+    band-limited output, piecewise-linear increment). 2 = CPU proxy for "VCO pair at 2x with a
+    per-voice half-band decimator" (latency not compensated). 4 = CPU proxy for a pitch-tracking
+    one-pole low-pass on the modulator (4 x f2).
+*/
+inline int crossModMode = 0;
+} // namespace study
+
 /**
     One synth voice: VCO-1, VCO-2, mixer, HPF, VCF, VCA, ENV-1, ENV-2.
 
@@ -120,12 +135,18 @@ public:
     {
         const auto k = static_cast<size_t> (i);
 
+        float o1, o2;
+        if (crossModOn && studyMode != 0)
+            renderVcosStudy (k, crossModOct, o1, o2);
+        else
+        {
         // VCO-2 (master) first, then VCO-1 with audio-rate cross-mod and sync.
         float wrap2 = -1.0f, unused = -1.0f;
-        const float o2 = vco2.process (dt2[k], width[k], -1.0f, wrap2);
+        o2 = vco2.process (dt2[k], width[k], -1.0f, wrap2);
         // Exponential FM: 2^(log2F1 + depth * o2) = 2^log2F1 * 2^(depth * o2).
         const float dt1 = dsp::clamp (crossModOn ? dt1Raw[k] * dsp::fast::exp2 (crossModOct * o2) : dt1Raw[k], kMinDt, kMaxDt);
-        const float o1 = vco1.process (dt1, width[k], sync ? wrap2 : -1.0f, unused);
+        o1 = vco1.process (dt1, width[k], sync ? wrap2 : -1.0f, unused);
+        }
 
         const float mixed = o1 + (o2 - o1) * sourceMix;
         const float hp = hpf.processG (mixed, hpfG);
@@ -142,6 +163,59 @@ public:
 private:
     void applyEnvTimes() noexcept;
     void restartFromIdle() noexcept;
+
+    // ==== STUDY (cross-mod aliasing, experimental) ====
+    void renderVcosStudy (size_t k, float oct, float& o1, float& o2) noexcept
+    {
+        const float d2 = dt2[k], wd = width[k], raw = dt1Raw[k];
+        float unused = -1.0f;
+        if (studyMode == 1)
+            o1 = dsp::study::crossModPairSample (vco1, vco2, fmState, d2, raw, wd, oct, sync, kMinDt, kMaxDt, o2);
+        else if (studyMode == 2)
+        {
+            // CPU proxy: VCO pair at 2x, 27-tap half-band decimator per voice on both outputs.
+            static constexpr float c[7] = { 8.69598769e-06f, -0.000376179402f, 0.00258704593f, -0.0102971588f,
+                                            0.0307396651f, -0.0821519894f, 0.309489295f };
+            for (int h = 0; h < 2; ++h)
+            {
+                float wrap2 = -1.0f;
+                const float a2 = vco2.process (0.5f * d2, wd, -1.0f, wrap2);
+                const float dt1 = dsp::clamp (0.5f * raw * dsp::fast::exp2 (oct * a2), kMinDt, kMaxDt);
+                const float a1 = vco1.process (dt1, wd, sync ? wrap2 : -1.0f, unused);
+                hist1[histPos] = hist1[histPos + 32] = a1;
+                hist2[histPos] = hist2[histPos + 32] = a2;
+                histPos = (histPos + 1) & 31;
+            }
+            const float* x1 = hist1 + histPos + 5; // the 27 newest samples: x[0..26]
+            const float* x2 = hist2 + histPos + 5;
+            float y1 = 0.5f * x1[13], y2 = 0.5f * x2[13];
+            for (int t = 0; t < 7; ++t)
+            {
+                y1 += c[t] * (x1[2 * t] + x1[26 - 2 * t]);
+                y2 += c[t] * (x2[2 * t] + x2[26 - 2 * t]);
+            }
+            o1 = y1;
+            o2 = y2;
+        }
+        else
+        {
+            // CPU proxy: one-pole TPT low-pass on the modulator at 4 x f2 (clamped to 0.4 fs).
+            float wrap2 = -1.0f;
+            o2 = vco2.process (d2, wd, -1.0f, wrap2);
+            const float gl = dsp::fast::tanPrewarp (dsp::kPi * std::min (4.0f * d2, 0.4f));
+            const float v = gl / (1.0f + gl) * (o2 - lpState);
+            const float y = v + lpState;
+            lpState = y + v;
+            const float dt1 = dsp::clamp (raw * dsp::fast::exp2 (oct * y), kMinDt, kMaxDt);
+            o1 = vco1.process (dt1, wd, sync ? wrap2 : -1.0f, unused);
+        }
+    }
+    int studyMode = 0;
+    dsp::study::FmState fmState;
+    float lpState = 0.0f;
+    float hist1[64] {}, hist2[64] {};
+    int histPos = 0;
+    // ==== end STUDY ====
 
     static constexpr float kMinDt = 1.0e-7f, kMaxDt = 0.45f; // phase increment limits (cycles/sample)
 
