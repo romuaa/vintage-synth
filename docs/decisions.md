@@ -13,6 +13,19 @@ All (review).
 | One arpeggiator/sequencer settings set with a part selector (Lower, Upper, Both); the sequencer's 16 steps are host parameters (48 of them). | One set is easy to understand and automate; step parameters make the sequencer usable and testable before the custom UI exists and are saved with the state. Parameter count becomes 170. |
 | With no usable host transport the arp/seq runs on its internal tempo parameter. | Works in simple hosts and when just playing. |
 
+## M6 contract: presets and banks (2026-11-12)
+
+All (review).
+
+| Decision | Why |
+|---|---|
+| Three levels: tone (one part), program (whole instrument without master volume), bank (64 programs, 8 × 8). One read-only factory bank compiled in; user banks are files. | Mirrors how a bi-timbral instrument is used: sounds per part, combinations as programs. |
+| Presets are JSON text, parameters by ID with plain values, tolerant loading, malformed files rejected whole. | Human-readable and diffable; survives added parameters in both directions. |
+| Applying a program releases all notes first and sets parameters through the host-notifying API on the message thread. | Meets the real-time rule and keeps hosts and automation in step. |
+| Factory programs are trimmed to a level rule (a full-velocity eight-note chord below 0 dBFS at the default master volume). | Answers part of the open output-level question at the preset level, whatever is decided for the output stage. |
+| A minimal preset bar above the generic editor until the custom UI exists. | Makes presets usable and testable before M7. |
+| Factory sounds are drafted by an agent from a written specification and auditioned by the owner. | Agents cannot hear. |
+
 ## Wave 3 results: effects and arp/sequencer in the plugin; oscillator fixes (2026-11-12)
 
 All (review) unless marked.

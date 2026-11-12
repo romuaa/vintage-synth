@@ -452,6 +452,65 @@ its events unchanged. The random seed is fixed, so renders are reproducible.
    a lead with the 700 ms ping-pong delay, the hall reverb at several decays, all three together,
    an arpeggiated chord over a Split bass, and a short step-sequencer line.
 
+## 6b. M6 — presets and banks (after S0)
+
+### 6b.1 Terms
+- **Tone:** the sound of one part: all of that part's parameters (the `lower.*` or `upper.*` set).
+- **Program:** the whole instrument: Lower tone, Upper tone and the global parameters (key mode,
+  split point, balance, arp/seq incl. the 16 steps, effects, Vintage). Master volume is not part of
+  a program. A program has a name, a category and an author.
+- **Bank:** 64 programs in 8 groups of 8 (A1 … H8). One **factory bank** is compiled into the
+  plugin and is read-only; **user banks** are files.
+
+### 6b.2 File format
+- One text file per program and one per bank, JSON, UTF-8, with a `format` version number.
+  Parameters are stored **by ID with their plain value** (the value the parameter's range uses);
+  a tone inside a program is stored without the part prefix, so a tone can be loaded into either part.
+- Loading is tolerant: unknown IDs are ignored, missing IDs take the parameter's default, values
+  are clamped to the range, non-finite values become the default. A malformed file is rejected as
+  a whole with an error message; it never crashes and never half-applies.
+- User files live in the platform's user documents area under `Exitium/Vintage Synth/`
+  (`Programs/`, `Tones/`, `Banks/`). The plugin never writes anywhere else.
+- Factory programs are authored as the same JSON files under `presets/factory/` in the repository
+  and embedded at build time.
+
+### 6b.3 Behaviour
+- **Applying a program or tone** happens on the message thread: all sounding notes are released
+  first (as a key-mode change does), then the parameters are set through the host-notifying API so
+  hosts, automation and the editor follow. Nothing in the audio thread allocates, locks or parses.
+- **MIDI Program Change** selects a program of the current bank: the audio thread only stores the
+  requested index; the message thread applies it.
+- **Host program list:** the 64 programs of the current bank, with their names.
+- **Plugin state** (host session): all parameters as today, plus the current bank reference, the
+  current program index and name, and a "modified" flag. Loading a session restores exactly the
+  saved sound, whether or not the bank it came from still exists.
+- `stateVersion` stays 1 before the first release; the migration hook and a test that loads a
+  state saved by the previous milestone are part of M6.
+- **Until the custom UI (M7):** a minimal preset bar above the generic editor (previous / next,
+  program name, bank, load, save as, initialise) so presets are usable now.
+
+### 6b.4 Factory bank
+- 64 programs covering what this kind of instrument is known for: brass, strings and pads, basses,
+  leads (incl. sync and unison leads), bells and plucks (cross-mod), organ and keys, effects and
+  noises, arpeggiated and sequenced programs, Dual layers and Splits. Own names; no third-party
+  names of any kind (the hygiene check covers `presets/`).
+- **Level:** every program is trimmed so that a full-velocity eight-note chord stays below 0 dBFS
+  at the default master volume, and single notes sit at a comparable loudness across programs
+  (measured, tolerance stated). This is tested for every program.
+- Programs are drafted by an agent from a written sound specification and **auditioned by the
+  owner** (the M6 audition gate): one short rendered phrase per program, with a contact sheet
+  (name, category, what to listen for).
+
+### 6b.5 Gates
+1. Tests: save → load round-trips of tones, programs and banks; tolerant loading (unknown,
+   missing, out-of-range, non-finite, malformed, truncated, wrong `format`); a tone loaded into
+   the other part sounds the same; every factory program loads, sounds, is finite, meets the level
+   rule and survives a state round-trip; applying a program releases notes without a click and
+   without audio-thread allocation; MIDI Program Change; host program list; a session saved by the
+   previous milestone loads unchanged.
+2. Golden renders: one fixed phrase per factory program (`ctest -L render`).
+3. `scripts/preflight.sh` passes; independent review; the owner's audition.
+
 ## 7. Test and validation infrastructure (parallel track in Wave 1)
 
 - **VST3 validator** wired into `ctest` and CI (macOS and Windows x64) next to pluginval.
