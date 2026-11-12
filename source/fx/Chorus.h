@@ -138,7 +138,7 @@ public:
             const float tri = p < 0.5f ? 4.0f * p - 1.0f : 3.0f - 4.0f * p;
             const float lfo = 1.5f * tri - 0.5f * tri * tri * tri;
 
-            const float dl = left[i], dr = right[i];
+            const float dl = safeInput (left[i]), dr = safeInput (right[i]);
             const float mono = 0.5f * (dl + dr) * f;
             line.push (lpf.process (hpf.highPass (mono, hpfG)));
 

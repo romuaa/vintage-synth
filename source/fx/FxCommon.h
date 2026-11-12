@@ -21,6 +21,11 @@ inline constexpr float kFlushThreshold = 1.0e-15f;
 /** Exact equality without -Wfloat-equal (false if either is NaN). */
 inline bool sameValue (float a, float b) noexcept { return ! (a < b) && ! (a > b) && a == a && b == b; }
 
+/** Input guard, applied once per input sample by every active effect: a non-finite or absurd
+    (> 1e4, +80 dBFS) sample becomes 0, so one bad sample can never poison feedback or filter
+    state. NaN fails the comparison and maps to 0 as well. */
+inline float safeInput (float x) noexcept { return std::abs (x) <= 1.0e4f ? x : 0.0f; }
+
 inline float flushTiny (float v) noexcept { return std::abs (v) < kFlushThreshold ? 0.0f : v; }
 
 /** NaN-safe clamp: NaN (and anything not inside [lo, hi]) ends up at a bound. */

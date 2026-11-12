@@ -133,7 +133,7 @@ public:
             const float fbL = fb * (yL + dampMix * (lpL - yL));
             const float fbR = fb * (yR + dampMix * (lpR - yR));
 
-            const float dl = left[i], dr = right[i];
+            const float dl = safeInput (left[i]), dr = safeInput (right[i]);
             const float inL = dl * f, inR = dr * f;
             const float mono = 0.5f * (inL + inR);
             const float w1 = 1.0f - w;

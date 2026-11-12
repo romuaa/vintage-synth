@@ -170,7 +170,7 @@ public:
             else
                 pre += std::clamp (diff * preCoef, -0.5, 0.5);
 
-            const float dl = left[n], dr = right[n];
+            const float dl = safeInput (left[n]), dr = safeInput (right[n]);
             preL.push (dl * f);
             preR.push (dr * f);
             float xl = preL.read (pre), xr = preR.read (pre);

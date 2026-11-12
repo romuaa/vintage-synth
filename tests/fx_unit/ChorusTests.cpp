@@ -276,3 +276,8 @@ TEST_CASE ("Chorus: no bulk buffer work on the audio thread (writes only in proc
 {
     checkBufferWritesBounded<Chorus> (cp (ChorusMode::I, 1.0f), cp (ChorusMode::Off, 1.0f));
 }
+
+TEST_CASE ("Chorus: NaN/Inf input never poisons the state (output finite, recovers exactly)", "[fx][chorus]")
+{
+    checkNonFiniteInputRecovers<Chorus> (cp (ChorusMode::I, 1.0f));
+}

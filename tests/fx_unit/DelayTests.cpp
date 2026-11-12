@@ -287,3 +287,8 @@ TEST_CASE ("Delay: no bulk buffer work on the audio thread (writes only in proce
 {
     checkBufferWritesBounded<Delay> (dp (0.4f, 0.8f, 0.2f, true, 1.0f), dp (0.4f, 0.8f, 0.2f, true, 0.0f));
 }
+
+TEST_CASE ("Delay: NaN/Inf input never poisons the state (output finite, recovers exactly)", "[fx][delay]")
+{
+    checkNonFiniteInputRecovers<Delay> (dp (0.13f, 0.9f, 0.3f, true, 1.0f));
+}

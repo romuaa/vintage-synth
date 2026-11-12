@@ -360,6 +360,41 @@ void checkBufferWritesBounded (const Params& on, const Params& off, double fs = 
     CHECK (resetWrites == 0u);
 }
 
+/**
+    Non-finite input while active (NaN, +Inf, -Inf, 1e30 within one block, on both channels) must
+    not poison the effect: the output stays finite and is bit-identical to the output for the same
+    input with zeros in place of the bad samples, i.e. it recovers to the normal response without
+    the effect being toggled.
+*/
+template <typename Fx, typename Params>
+void checkNonFiniteInputRecovers (const Params& on, double fs = 48000.0)
+{
+    const auto n = static_cast<size_t> (3.0 * fs);
+    Stereo clean = sine (n, 220.0, fs, 0.5f);
+    for (size_t i = 0; i < n; ++i)
+        clean.r[i] *= 0.8f;
+    Stereo bad = clean;
+    const size_t at = static_cast<size_t> (0.5 * fs) + 7;
+    const float poison[] { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                           -std::numeric_limits<float>::infinity(), 1.0e30f };
+    for (size_t k = 0; k < 4; ++k)
+    {
+        bad.l[at + 3 * k] = poison[k];
+        bad.r[at + 3 * k + 1] = poison[(k + 1) % 4];
+        clean.l[at + 3 * k] = 0.0f;
+        clean.r[at + 3 * k + 1] = 0.0f;
+    }
+    Fx a, b;
+    a.prepare (fs, kMaxBlock);
+    b.prepare (fs, kMaxBlock);
+    runConst (a, bad, on, 256);
+    runConst (b, clean, on, 256);
+    float peak = 0.0f;
+    CHECK (allFinite (bad, 1.0e3f, &peak));
+    CHECK (std::memcmp (bad.l.data(), clean.l.data(), n * sizeof (float)) == 0);
+    CHECK (std::memcmp (bad.r.data(), clean.r.data(), n * sizeof (float)) == 0);
+}
+
 /** Pick a "wild" value: in range, slightly out of range, far out of range, NaN or +-Inf. */
 template <typename Rnd>
 float wild (Rnd& rnd, float lo, float hi)

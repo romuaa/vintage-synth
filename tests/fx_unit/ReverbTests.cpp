@@ -388,3 +388,8 @@ TEST_CASE ("Reverb: no bulk buffer work on the audio thread (writes only in proc
 {
     checkBufferWritesBounded<Reverb> (rp (4.0f, 0.3f, 0.1f, 1.0f), rp (4.0f, 0.3f, 0.1f, 0.0f));
 }
+
+TEST_CASE ("Reverb: NaN/Inf input never poisons the state (output finite, recovers exactly)", "[fx][reverb]")
+{
+    checkNonFiniteInputRecovers<Reverb> (rp (8.0f, 0.3f, 0.05f, 1.0f));
+}
