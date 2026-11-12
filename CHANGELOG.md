@@ -5,6 +5,22 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M3 — bi-timbral (2026-11-12)
+- The product is now called **Exitium Vintage Synth** (name in hosts and bundle file name;
+  plugin codes and identifiers unchanged).
+- Upper part with Whole, Dual and Split key modes; a key router that can never hang a note when the
+  split point or mode changes; part balance and per-part pan; true stereo output. 101 parameters.
+- Oversampling follows the host rate (4× below 44.1 kHz, 2× up to 88.2 kHz, 1× above): 32 voices
+  cost about 5 % of a core at 48 kHz and about 10 % at 192 kHz.
+- Exact reported latency (6, 5 or 8 samples by configuration); accurate long envelopes and LFO
+  timing at high sample rates.
+- Known issue: hard sync combined with audio-rate cross-mod aliases above the −100 dB gate.
+
+### M4 — arpeggiator and step sequencer module, not wired in yet (2026-11-12)
+- Arpeggiator (Up, Down, Up & Down, Random, As Played; 1–4 octaves; hold; swing; gate length) and a
+  16-step sequencer (offset, Note/Rest/Tie, velocity), locked sample-accurately to the host tempo
+  or an internal clock. Standalone module in `source/seq/` with tests; connected in a later step.
+
 ### Linux target and public-release preparation (2026-11-12)
 - Linux x86_64 VST3 is a supported target: built in CI on Ubuntu 22.04 (glibc 2.35 or newer, static
   C++ runtime) with the unit tests, host smoke test, render tests, VST3 validator and pluginval.

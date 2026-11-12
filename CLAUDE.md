@@ -1,4 +1,4 @@
-# CLAUDE.md — Vintage Synth (VST3 instrument)
+# CLAUDE.md — Exitium Vintage Synth (VST3 instrument)
 
 This file instructs AI coding agents working on this repository. Humans: start with `README.md`.
 
@@ -73,6 +73,11 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
+- **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
+  host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
+  in `source/seq/`, not wired in. Awaiting the owner's audition (`m3_demo`) and merge approval.
+- **Open engine item:** hard sync + audio-rate cross-mod aliases at −44 to −71 dB (see decisions);
+  study and owner decision pending. The check is tagged as an expected failure.
 - **M2 polyphony: done** (16 voices, Poly/Unison/Solo, steal fade, pedal, portamento, velocity, bend
   range, mod wheel; audition approved by ear; 32 voices = 5 % of a core at 48 kHz). Lower part only.
 - M0 skeleton: done. M1 single-part voice engine: done (mono, Lower part only; demo approved by ear;
@@ -99,8 +104,10 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 ```
 source/dsp/      JUCE-free DSP blocks: Oscillator (+BlepTable), Filters, Envelope, Lfo, Drift
 source/engine/   Voice, Part, VoiceAllocator (note -> voice logic), NoteEvent/EventParser (MIDI),
+                 KeyRouter (Whole/Dual/Split), PartMixer (balance, pan, stereo),
                  Modulation (shared per-part modulation), Oversampler
 source/fx/       JUCE-free effect blocks: Chorus, Delay, Reverb (not wired in yet)
+source/seq/      JUCE-free arpeggiator and step sequencer (ArpSeq; not wired in yet)
 source/params/   PartParamList.h (X-macro list of all per-part params), Mappings.h (value -> unit),
                  ParameterLayout (APVTS layout + binding), StateVersion.h
 source/          PluginProcessor.*   (later: fx/ presets/ ui/)

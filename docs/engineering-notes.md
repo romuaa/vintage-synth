@@ -3,6 +3,21 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Wave 2: M3 bi-timbral and M4 arpeggiator/sequencer (2026-11-12)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Reported latency was 2–3 samples too high. | `juce::dsp::Oversampling::getLatencyInSamples()` is the round-trip latency including the upsampler; the voice path only decimates. | Measure the decimator's own delay at prepare time. **Verify latency with a phase measurement, not an onset threshold.** |
+| Long envelopes were wrong at 192–384 kHz internal rates. | `1 − exp(−x)` in float, and float accumulators for level, phase and seconds, stall or drift at high rates. | Double precision for slow per-sample state; `expm1` for coefficients. |
+| Block-size dependence grew with the sample rate. | Smoothers decayed per sub-block in a chain accumulate rounding with the number of sub-blocks. | Compute from the absolute time since the last retarget. |
+| A block-size test passed at 48 kHz only by luck. | It fed events out of time order; the part applies an out-of-order event at the previous position. | Test rigs sort events. Run behaviour tests at every rate configuration. |
+| Sync + cross-mod made equivalence measures jump by 30 dB. | The patch is chaotic. | Gate control-rate paths with a smooth patch; bound chaotic patches separately. |
+| The alias gate had never measured cross-mod. | The original test covered plain waveforms and sync. | **A quality gate only covers what it measures: list the configurations a gate has not seen.** |
+| Arpeggiated notes piled up while the sustain pedal was down. | The module used the pedal and also passed it to the part, which then deferred every note-off. | An event transformer either consumes a controller or passes it, never both. |
+| A note-off could be lost when the output buffer was full. | The "owed" state was cleared even when the write failed. | Clear state only after a successful emit; reserve a slot for the overflow marker; port the reviewer's fuzz into the suite. |
+| The timing "independent model" shared rules with the implementation. | It was written by the implementer. | State contract rules once as the spec; assert properties from musical time alone for the rest. |
+| Tests invoked with a comma in a Catch2 filter matched nothing. | Catch2 splits filters on commas. | Filter by prefix with `*`. |
+
 ## Linux target and public-release prep (2026-11-12)
 
 | Problem | Cause | Fix / rule |

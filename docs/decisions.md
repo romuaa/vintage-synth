@@ -3,6 +3,40 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Linux ARM64 and container checks (owner decision, 2026-11-12)
+
+- **Linux ARM64 (aarch64) is a supported target,** built and validated in CI only; the owner has no
+  such machine yet, so there is no manual DAW check. It is not performance-tuned for small boards.
+  x86_64 and ARM64 are merged into one Linux bundle, like the Windows one.
+- **Local Linux pre-flight runs in a native ARM64 container on the Mac** (`scripts/linux-check.sh`).
+  x86_64 Linux is not emulated locally: it would be slow and unreliable under emulation, and CI
+  builds and tests the real binary on real hardware.
+- **CI runs the Linux bundle in containers of several distributions** to prove it loads above the
+  glibc floor, not only on the image it was built on.
+- A headless render through a real DAW in CI is being studied; no proprietary software is
+  downloaded or run for that without the owner's approval.
+
+## Wave 2 results: M3 and M4 (2026-11-12)
+
+All (review) unless marked.
+
+| Decision | Why |
+|---|---|
+| **Pan and balance never boost:** unity at centre, the near side stays at unity, the far side falls to 0. | The first version boosted the remaining side by 3 dB per stage (+6 dB with both at an extreme). |
+| **Mixer gains latch across a key-mode change** until the part starts a new note or is silent. | Dual → Whole made Lower's release tails audible that the balance had silenced. |
+| **Key-mode change releases all voices of both parts** (even with the pedal down; pedal, bend and wheel are kept). A note-off for a key nobody owns is dropped; a key re-pressed after a split move can be owned by both parts and its note-off goes to both. | No hung or orphaned notes; verified by a 300,000-sequence fuzz against the real allocators. |
+| **In Whole mode the Upper part is not rendered** (it still receives controllers); when it comes back its parameters jump to target and its LFO restarts. | No CPU for a silent part; the result does not depend on block size. |
+| **Key mode and split point changes take effect at the start of the host block.** | Hosts deliver parameters per block; quantising further was not worth it. |
+| **Oversampling: 4× below 44.1 kHz, 2× up to 88.2 kHz, 1× above (offline 4×/4×/2×).** Reported latency is the measured decimator delay plus BLEP: 6, 5 and 8 samples. | Internal rate ≥ 88.2 kHz everywhere; 32 voices at 192 kHz cost about 10 % of a core (was 19 %). The old latency figure included an upsampler the voice path does not use. |
+| **Slow per-sample state is double precision** (envelope level, LFO phase, timers) and coefficients use `expm1`. | At 384 kHz internal a 10 s attack was 7.7 % off and decays stalled 0.4 dB above sustain. |
+| **Behaviour suites run at 48 kHz (2×), 96 kHz (1×) and 192 kHz (1×).** Parameter, state and gain-law tests run at 48 kHz only. | Contract gate 4.4. Running them at high rates exposed a smoother rounding problem (fixed). |
+| **Golden references can be stereo** (format version 2: one body per channel). | Upper's pan was barely covered by left-channel-only references. |
+| **OPEN — hard sync combined with audio-rate cross-mod aliases at −44 to −71 dB**, at every oversampling factor; it predates M3 (the alias gate only measured plain waveforms and sync alone, which pass at ≤ −100 dB). The check stays at −100 dB and is tagged as an expected failure, so it is reported on every run. | Frequency modulation creates bandwidth that BLEP correction cannot remove. Needs a study: band-limit the modulator, raise oversampling while cross-mod is active, or define a separate, documented budget for cross-mod. **Owner decision needed after the study**, because the project rule says the gate must not be relaxed. |
+| **The sub-block-equivalence test uses a smooth patch at −90 dB** and bounds the chaotic sync + cross-mod patch at −55 dB. | That patch amplifies 1e-7 differences; a real control-rate step still fails both bounds. |
+| **After v1.0, parameter *IDs* are frozen, not list positions.** JUCE derives each VST3 parameter ID from a hash of the string ID; hosts key automation on it and our state is keyed by string ID. Order only affects generic parameter lists. A test checks the IDs are distinct. | Lets per-part parameters be added after release without breaking sessions. The "never reorder" wording in `CLAUDE.md` is to be refined before v1.0 (owner). |
+| **Arp/sequencer: consumes the sustain pedal while on** (decision); legato overlap at 100 % gate when the pitch changes; host-position drift up to about one step is absorbed, larger is a jump; swing and rate changes keep the step count; a pattern change continues from the last played note; with the host playing, the first key waits for the next grid step; the sequencer starts on the grid step after the key press and takes its root from the lowest key in the pattern. | Review findings and choices the contract left open. Passing the pedal on made arpeggiated notes pile up in the synth. |
+| **An intermittent crash of pluginval at process exit was seen once on Linux CI** (after SUCCESS; a re-run and later runs were clean). No cause found in our code. | Watch for it; capture a backtrace if it recurs. No CI retries added. |
+
 ## Product names (owner decision, 2026-11-12)
 
 - **Every product name carries the company prefix: "Exitium Vintage Synth" and "Exitium B-Side".**

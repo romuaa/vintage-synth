@@ -213,20 +213,26 @@ return NaN for NaN input, so the processor's non-finite output guard still fires
   affects notes pressed after the change.
 
 ### 4.3 Mixer
-- `mix.balance` (global, −1…+1, default 0): constant-power balance between Lower and Upper; at 0
-  both are at unity. It has no effect in Whole mode (Lower at unity).
-- `mix.pan` (per part, −1…+1, default 0, appended to the per-part float list): constant-power pan,
-  unity at centre.
-- All three are smoothed (no zipper noise).
+- `mix.balance` (global, −1…+1, default 0) between Lower and Upper, and `mix.pan` (per part,
+  −1…+1, default 0, appended to the per-part float list) use the same **no-boost law**: unity on
+  both sides at centre; toward either side the near side stays at exactly unity and the far side
+  falls (√2·cos θ, capped at 1) to exactly 0 at the extreme. Balance has no effect in Whole mode.
+- All gains are smoothed (no zipper noise).
+- **Latch after a key-mode change:** a part that is still sounding keeps its mixer gains until it
+  starts its first new note or has gone silent, so release tails fade at the level they were heard at.
+- Key mode and split point are read once per host block: a change takes effect at that block's
+  first sample (accepted; automation of these two is block-accurate, not sample-accurate).
 
 ### 4.4 Oversampling by host rate (closes the open CPU item)
 | Host rate | Real time | Offline render |
 |---|---|---|
-| below 88.2 kHz | 2× | 4× |
+| below 44.1 kHz | 4× | 4× |
+| 44.1 kHz to below 88.2 kHz | 2× | 4× |
 | 88.2 kHz and above | 1× | 2× |
 
-The internal rate is then at least 88.2 kHz at every host rate. Latency is reported per
-configuration (decimator + BLEP; BLEP only at 1×). The alias gate (≤ −100 dB, 0–20 kHz) and all
+The internal rate is then at least 88.2 kHz at every host rate from 22.05 kHz up. Latency is the
+measured delay of the decimator alone plus the BLEP delay, rounded to the nearest sample (6 at 2×,
+5 at 4×, 8 at 1×). The alias gate's band is 0 to min(20 kHz, 20/48 × host rate). The alias gate (≤ −100 dB, 0–20 kHz) and all
 existing DSP tests must pass in every configuration; `voice_bench 192000` must show 32 voices
 inside the 15 % budget.
 
@@ -325,12 +331,20 @@ int process (std::span<const NoteEvent> in, const Transport&, int numSamples,
 - **Every note-on it emits gets a note-off**, also on bypass, mode or setting changes, All Notes
   Off, transport stop/start and reset. A random stream of events and setting changes must never
   leave a note sounding.
-- Pitch bend, mod wheel, sustain pedal and panic events pass through unchanged, in order.
+- Pitch bend, mod wheel and panic events pass through unchanged, in order. **While the module is
+  on it consumes the sustain pedal** (it keeps released keys in the pattern) and does not pass it
+  to the part; switching on or off hands the pedal state over.
+- At 100 % gate, when the next note has a different pitch, its note-on comes before the previous
+  note-off (legato: a Solo part can glide); same pitch: off, then on.
+- A small deviation of the host position (up to about one step, e.g. during tempo ramps) is drift:
+  re-anchor without cutting or repeating notes. Only a larger discontinuity or a transport
+  start/stop releases and resynchronises. Swing and rate changes never repeat or skip a step.
 - Output velocity: the pressed key's velocity (arp) or the step's velocity (sequencer).
 - Deterministic: same input, transport and seed → same output, for any block size.
 - When off, events pass through bit-exactly.
-- Output capacity is fixed; on overflow it stops emitting new notes but still emits the note-offs
-  it owes.
+- Output capacity is fixed; on overflow it stops emitting new notes, and a note-off that does not
+  fit stays owed and is retried, so no note can hang. `ArpSeq::minimumCapacity` gives the size at
+  which nothing is ever dropped.
 
 ### 6.2 Arpeggiator
 - Modes: Up, Down, Up & Down (end notes not repeated), Random (seeded), As Played.
@@ -372,9 +386,9 @@ chip revisions are called **Model A** (early: warm, distorting filter) and **Mod
 filter).
 
 ### 8.1 Structure
-- **Separate plugin target, shared code.** Not a second engine inside Vintage Synth: hosts identify a
+- **Separate plugin target, shared code.** Not a second engine inside Exitium Vintage Synth: hosts identify a
   plugin by its codes and parameter list, and the two instruments share neither parameters nor presets.
-- **Step S0 extracts a common library** (`source/common/`) from Vintage Synth, with no behaviour
+- **Step S0 extracts a common library** (`source/common/`) from Exitium Vintage Synth, with no behaviour
   change: note events and MIDI parsing, voice allocator, parameter plumbing and smoothing, fast math,
   BLEP table, oversampler, effect blocks, test helpers, render-regression harness, benchmarks.
   S0 runs only when no other agent is editing the engine (after M3 is merged).
@@ -462,4 +476,4 @@ not in the modulation section.
 | S3 | Model B filter, then Model A filter with chip variation; output stage; filter as a part-owned resource |
 | S4 | Polyphony, macros, effects from the common library; 10–20 reference patches (drums, arpeggio chord, pulse lead, filter bass); audition by the owner |
 | S5 | Chord-into-one-voice mode, shared-filter mode, look-ahead restart, kit mode |
-| S6 | Table editor UI, presets and release together with Vintage Synth's M6–M8 |
+| S6 | Table editor UI, presets and release together with Exitium Vintage Synth's M6–M8 |
