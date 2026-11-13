@@ -67,7 +67,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         kDefaultLimiterCeilingDb,
         juce::AudioParameterFloatAttributes()
             .withLabel ("dB")
-            .withStringFromValueFunction ([] (float v, int) { return juce::String (v, 1); }) // shown in 0.1 dB, stored exactly
+            .withStringFromValueFunction ([] (float v, int) { // shown in 0.1 dB, stored exactly
+                const float shown = std::round (v * 10.0f) / 10.0f;
+                return juce::String (std::abs (shown) < 0.05f ? 0.0f : shown, 1); // never "-0.0"
+            })
             .withValueFromStringFunction ([] (const juce::String& t) { return t.getFloatValue(); })));
 
     return layout;

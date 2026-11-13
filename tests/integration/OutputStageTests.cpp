@@ -66,7 +66,7 @@ Stereo runLimiter (Stereo s, double fs, float ceilingDb, int block)
 {
     SoftLimiter lim;
     lim.prepare (fs);
-    lim.reset (ceilingDb);
+    lim.reset (ceilingDb, true);
     const int n = static_cast<int> (s.l.size());
     for (int pos = 0; pos < n; pos += block)
     {
@@ -225,7 +225,7 @@ TEST_CASE ("Soft limiter: block-size independent, also while the ceiling moves",
     auto run = [&] (int block) {
         SoftLimiter lim;
         lim.prepare (fs);
-        lim.reset (-1.0f);
+        lim.reset (-1.0f, true);
         Stereo s = in;
         // The ceiling changes at fixed samples (a host splits its blocks there), any block size.
         const int changes[] { 3000, 7001, 12000 };
@@ -347,48 +347,188 @@ TEST_CASE ("Limiter through the processor: block-size independent with ceiling a
     }
 }
 
-TEST_CASE ("Limiter through the processor: a ceiling sweep does not click; non-finite values are safe", "[wave4][output]")
+namespace
 {
-    auto render = [] (bool sweep, float bad) {
-        Rig rig (48000.0, 512);
-        rig.set ("key.mode", 1);
-        rig.set ("master.volume", 6.0f);
-        rig.prepare();
-        std::vector<Rig::Change> ch;
-        if (sweep)
-        {
-            // 0 -> -12 dB and back in 0.5 dB steps every 10 ms (an automation lane at block rate).
-            for (int k = 0; k <= 48; ++k)
-            {
-                const float c = -0.5f * static_cast<float> (k <= 24 ? k : 48 - k);
-                ch.push_back ({ 24000 + 480 * k, [c] (Rig& r) { r.set ("master.limiter.ceiling", c); } });
-            }
-            auto* raw = rig.proc.getState().getRawParameterValue ("master.limiter.ceiling");
-            auto* sw = rig.proc.getState().getRawParameterValue ("master.limiter");
-            ch.push_back ({ 60000, [raw, sw, bad] (Rig&) { raw->store (bad); sw->store (bad); } });
-        }
-        auto out = rig.render (72000, fullChord (100), 256, ch);
-        return std::make_pair (std::move (out), rig.proc.getLimiter().currentCeilingDb());
-    };
-    const float bad = GENERATE (std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity());
-    const auto [still, c0] = render (false, 0.0f);
-    const auto [moved, c1] = render (true, bad);
-    CHECK (allFiniteSamples (moved));
-    // A click is a sample-to-sample jump larger than the music itself makes.
-    auto maxStep = [] (const Stereo& s, size_t from, size_t to) {
-        double m = 0.0;
+/** The loudest chord at master +6 dB (about 10 dB over the default ceiling), with changes. The
+    rest of the path is the same with the limiter off, so a limiter-off render is exactly the
+    limiter's input. */
+Stereo loudRender (std::vector<Rig::Change> ch, bool limiterOn = true, int samples = 72000)
+{
+    Rig rig (48000.0, 512);
+    rig.set ("key.mode", 1);
+    rig.set ("master.volume", 6.0f);
+    rig.set ("master.limiter", limiterOn ? 1.0f : 0.0f);
+    rig.prepare();
+    return rig.render (samples, fullChord (100), 256, std::move (ch));
+}
+
+/** The gain ratio y / x per sample in dB, where x is loud enough to measure it; the largest
+    change between neighbouring samples in [from, to). With x the limiter's input this is the
+    applied gain (which also jumps when the instant-attack detector catches a new peak); with x a
+    render that differs only in a parameter, the detector moves cancel (they depend on the input
+    alone) and only the parameter's own effect on the gain remains. */
+double maxGainStepDb (const Stereo& in, const Stereo& out, size_t from, size_t to)
+{
+    const double floor = 0.05 * std::max (peakAbs (in.l, from, to), peakAbs (in.r, from, to));
+    double worst = 0.0;
+    for (const auto* ch : { &in.l, &in.r })
+    {
+        const auto& x = *ch;
+        const auto& y = ch == &in.l ? out.l : out.r;
         for (size_t i = from + 1; i < to; ++i)
-            m = std::max ({ m, static_cast<double> (std::abs (s.l[i] - s.l[i - 1])), static_cast<double> (std::abs (s.r[i] - s.r[i - 1])) });
-        return m;
+            if (std::abs (x[i]) > floor && std::abs (x[i - 1]) > floor)
+            {
+                const double a = toDb (std::abs (y[i]) / std::abs (x[i]));
+                const double b = toDb (std::abs (y[i - 1]) / std::abs (x[i - 1]));
+                worst = std::max (worst, std::abs (a - b));
+            }
+    }
+    return worst;
+}
+} // namespace
+
+TEST_CASE ("Limiter through the processor: a ceiling sweep moves the gain smoothly, both directions", "[wave4][output]")
+{
+    // 0 -> -12 dB in 0.5 dB steps every 10 ms (an automation lane at block rate), then back up.
+    std::vector<Rig::Change> ch;
+    for (int k = 0; k <= 48; ++k)
+    {
+        const float c = -0.5f * static_cast<float> (k <= 24 ? k : 48 - k);
+        ch.push_back ({ 24000 + 480 * k, [c] (Rig& r) { r.set ("master.limiter.ceiling", c); } });
+    }
+    const auto still = loudRender ({});
+    const auto moved = loudRender (ch);
+    CHECK (allFiniteSamples (moved));
+    // moved / still: the gain change the ceiling causes, without the detectors' own moves.
+    const double down = maxGainStepDb (still, moved, 24000, 24000 + 480 * 24);
+    const double up = maxGainStepDb (still, moved, 24000 + 480 * 24, 48000);
+    std::printf ("ceiling sweep in 0.5 dB steps, largest per-sample gain change caused by the ceiling: down %.5f dB, "
+                 "up %.5f dB (unsmoothed it would be up to 0.5 dB)\n", down, up);
+    CHECK (down < 0.01);
+    CHECK (up < 0.01);
+    CHECK (down > 0.0); // it did move
+}
+
+TEST_CASE ("Limiter through the processor: switching it while it reduces the gain is crossfaded, both directions", "[wave4][output]")
+{
+    // Off at 30000 while it reduces the gain by about 10 dB, on again at 50000.
+    const std::vector<Rig::Change> ch { { 30000, [] (Rig& r) { r.set ("master.limiter", 0); } },
+                                        { 50000, [] (Rig& r) { r.set ("master.limiter", 1); } } };
+    const auto in = loudRender ({}, false);
+    const auto still = loudRender ({});
+    const auto out = loudRender (ch);
+    const double reduction = -toDb (rms (still.l, 25000, 30000) / rms (in.l, 25000, 30000));
+    // The applied gain (out / in) across each switch. Switching on restarts the detectors, so
+    // after the fade the gain moves the way it does at any loud onset (instant attack, the slow
+    // detector charging): measured separately, against the largest move of the always-on render.
+    const double off = maxGainStepDb (in, out, 29000, 32000);
+    const double onFade = maxGainStepDb (in, out, 49000, 50000 + 241);
+    const double onAfter = maxGainStepDb (in, out, 50000 + 241, 54000);
+    const double steady = maxGainStepDb (in, still, 20000, 60000);
+    const double onset = maxGainStepDb (in, still, 0, 4000); // the chord's own onset, limiter on all along
+    std::printf ("limiter switch while reducing %.1f dB: largest per-sample gain change switching off %.4f dB, switching on "
+                 "%.4f dB during the fade and %.4f dB in the 80 ms after it (always on: sustained %.4f dB, at the chord's "
+                 "onset %.4f dB; the fade alone = %.4f dB per sample; unfaded the step would be the whole reduction)\n",
+                 reduction, off, onFade, onAfter, steady, onset, reduction / 240.0);
+    REQUIRE (reduction > 6.0);
+    CHECK (off < 0.1);                 // the fade alone: reduction / 240 samples
+    CHECK (onFade <= onset + 0.05);    // no worse than a loud onset with the limiter on all along
+    CHECK (onAfter < 2.0 * steady);
+    CHECK (onFade < 1.0);              // far from the unfaded step
+    // Fully off after the fade: exactly the limiter-off path.
+    const auto from = static_cast<std::ptrdiff_t> (30000 + 240 + 1);
+    CHECK (sameBits (std::vector<float> (out.l.begin() + from, out.l.begin() + 50000), std::vector<float> (in.l.begin() + from, in.l.begin() + 50000)));
+    CHECK (sameBits (std::vector<float> (out.r.begin() + from, out.r.begin() + 50000), std::vector<float> (in.r.begin() + from, in.r.begin() + 50000)));
+    // On again: limited at the ceiling once the fade is over.
+    CHECK (peakDbOf (out, 50000 + 241, out.l.size()) <= vs::kDefaultLimiterCeilingDb + kCeilingToleranceDb);
+}
+
+TEST_CASE ("Soft limiter: switching below the knee leaves the samples untouched; fully off costs nothing", "[wave4][limiter]")
+{
+    const double fs = 48000.0;
+    const auto in = chordSignal (48000, fs, dbToGain (-1.0 - SoftLimiter::kKneeDb) * 0.999);
+    SoftLimiter lim;
+    lim.prepare (fs);
+    lim.reset (-1.0f, true);
+    Stereo s = in;
+    for (int pos = 0, k = 0; pos < 48000; pos += 1000, ++k)
+    {
+        lim.setEnabled (k % 3 != 1); // toggles every few blocks, fades included
+        lim.process (s.l.data() + pos, s.r.data() + pos, 1000);
+    }
+    CHECK (bitIdentical (s, in));
+    // Off and faded out: process() returns at once, also for a signal far over the ceiling.
+    lim.reset (-1.0f, false);
+    auto loud = chordSignal (4800, fs, 8.0);
+    const auto copy = loud;
+    lim.process (loud.l.data(), loud.r.data(), 4800);
+    CHECK (bitIdentical (loud, copy));
+    CHECK (lim.isOff());
+}
+
+TEST_CASE ("Limiter: non-finite parameter values give the defaults (on, -1 dB)", "[wave4][output]")
+{
+    const float bad = GENERATE (std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                                -std::numeric_limits<float>::infinity());
+    Rig rig (48000.0, 512);
+    rig.set ("key.mode", 1);
+    rig.set ("master.volume", 6.0f);
+    rig.set ("master.limiter.ceiling", -9.0f);
+    rig.prepare();
+    auto* raw = rig.proc.getState().getRawParameterValue ("master.limiter.ceiling");
+    auto* sw = rig.proc.getState().getRawParameterValue ("master.limiter");
+    const std::vector<Rig::Change> ch { { 12000, [raw, sw, bad] (Rig&) { raw->store (bad); sw->store (bad); } } };
+    const auto out = rig.render (36000, fullChord (100), 256, ch);
+    CHECK (allFiniteSamples (out));
+    CHECK (rig.proc.getLimiter().isEnabled());
+    CHECK (std::abs (rig.proc.getLimiter().currentCeilingDb() - vs::kDefaultLimiterCeilingDb) < 1.0e-6f);
+    CHECK (peakDbOf (out, 24000, 36000) <= vs::kDefaultLimiterCeilingDb + kCeilingToleranceDb);
+    CHECK (rig.proc.getGuardTrips() == 0);
+}
+
+TEST_CASE ("State: a parameter missing from a loaded session takes its default, not the instance's value", "[wave4][state]")
+{
+    // A session saved before Wave 4 has no limiter entries. Measured: JUCE 9.0.5 already resets
+    // a missing parameter to its default (this test passes with the processor's own completion
+    // step disabled); the processor makes it explicit, and this test guards both.
+    const juce::File dir (VS_FIXTURE_DIR);
+    juce::MemoryBlock old;
+    REQUIRE (dir.getChildFile ("state_m5.bin").loadFileAsData (old));
+    Rig rig;
+    rig.set ("master.limiter", 0);
+    rig.set ("master.limiter.ceiling", -12.0f);
+    rig.proc.setStateInformation (old.getData(), static_cast<int> (old.getSize()));
+    CHECK (rig.get ("master.limiter") > 0.5f);
+    CHECK (std::abs (rig.get ("master.limiter.ceiling") - vs::kDefaultLimiterCeilingDb) < 1.0e-6f);
+    CHECK (std::abs (rig.get ("master.volume") + 52.7f) < 1.0e-3f); // what the session holds is restored
+
+    // Any parameter, not only the new ones: drop two entries from a saved state.
+    juce::MemoryBlock saved;
+    rig.set ("lower.vcf.cutoff", 0.123f);
+    rig.set ("arp.tempo", 77.0f);
+    rig.proc.getStateInformation (saved);
+    auto xml = juce::AudioProcessor::getXmlFromBinary (saved.getData(), static_cast<int> (saved.getSize()));
+    REQUIRE (xml != nullptr);
+    for (const char* id : { "lower.vcf.cutoff", "arp.tempo" })
+    {
+        auto* e = xml->getChildByAttribute ("id", id);
+        REQUIRE (e != nullptr);
+        xml->removeChildElement (e, true);
+    }
+    juce::MemoryBlock trimmed;
+    juce::AudioProcessor::copyXmlToBinary (*xml, trimmed);
+    Rig other;
+    other.set ("lower.vcf.cutoff", 0.9f);
+    other.set ("arp.tempo", 200.0f);
+    other.set ("upper.vcf.cutoff", 0.9f);
+    other.proc.setStateInformation (trimmed.getData(), static_cast<int> (trimmed.getSize()));
+    auto def = [&] (const char* id) {
+        auto* p = other.proc.getState().getParameter (id);
+        return p->convertFrom0to1 (p->getDefaultValue());
     };
-    const double staticStep = maxStep (still, 24000, 48000);
-    const double sweepStep = maxStep (moved, 24000, 48000);
-    INFO ("largest step: static " << staticStep << ", during the sweep " << sweepStep);
-    CHECK (sweepStep <= staticStep * 1.05);
-    // Non-finite host values: the parameter defaults (limiter on, -1 dB).
-    CHECK (std::abs (c1 - vs::kDefaultLimiterCeilingDb) < 1.0e-6f);
-    CHECK (std::abs (c0 - vs::kDefaultLimiterCeilingDb) < 1.0e-6f);
-    CHECK (peakDbOf (moved, 62000, 72000) <= vs::kDefaultLimiterCeilingDb + kCeilingToleranceDb);
+    CHECK (std::abs (other.get ("lower.vcf.cutoff") - def ("lower.vcf.cutoff")) < 1.0e-6f);
+    CHECK (std::abs (other.get ("arp.tempo") - def ("arp.tempo")) < 1.0e-4f);
+    CHECK (std::abs (other.get ("upper.vcf.cutoff") - rig.get ("upper.vcf.cutoff")) < 1.0e-6f); // present: from the session
 }
 
 TEST_CASE ("Report: output peaks of the loudest chord with the trim, limiter on and off", "[.report]")

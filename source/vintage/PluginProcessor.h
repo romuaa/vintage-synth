@@ -176,7 +176,6 @@ private:
 
     // Output stage: master gain x kOutputTrim -> soft limiter (if on) -> safety clamp.
     fx::SoftLimiter limiter;
-    bool limiterActive = false; // the limiter ran in the last chunk (off -> on starts it clean)
 
     // One arpeggiator/sequencer in front of each part. Their outputs are what the parts get.
     seq::ArpSeq lowerArp, upperArp;

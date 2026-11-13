@@ -123,8 +123,7 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterVolume.get()));
     limiter.prepare (sampleRate);
-    limiter.reset (blockParams.limiterCeilingDb);
-    limiterActive = blockParams.limiterOn;
+    limiter.reset (blockParams.limiterCeilingDb, blockParams.limiterOn);
 
     // Effects (allocate here only).
     chorus.prepare (sampleRate, preparedBlockSize);
@@ -180,7 +179,9 @@ void VintageSynthProcessor::resetEngine() noexcept
     chorus.reset(); // O(1): stale delay-line content is hidden by the blocks (section 5.1)
     delay.reset();
     reverb.reset();
-    limiter.reset (blockParams.limiterCeilingDb);
+    // The current parameter values, not the last block's (after a bypass they may be stale), so
+    // the limiter starts at its ceiling and switch without a ramp or fade.
+    limiter.reset (limiterCeiling.get(), limiterSwitch.index() != 0);
     playerPedal = false; // the parts cleared their pedal
 }
 
@@ -433,6 +434,7 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
         upperPart.setVintage (vintageAmount);
         masterGain.setTargetValue (juce::Decibels::decibelsToGain (blockParams.masterDb));
         limiter.setCeilingDb (blockParams.limiterCeilingDb);
+        limiter.setEnabled (blockParams.limiterOn); // crossfaded over 5 ms (docs/decisions.md)
 
         // Effects: once per block; the blocks smooth their continuous parameters themselves.
         fxSettings = blockParams.fx;
@@ -634,13 +636,7 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
         left[i] = l;
         right[i] = r;
     }
-    if (blockParams.limiterOn)
-    {
-        if (! limiterActive)
-            limiter.reset (blockParams.limiterCeilingDb); // switched on: starts clean, at its ceiling
-        limiter.process (left, right, len);
-    }
-    limiterActive = blockParams.limiterOn;
+    limiter.process (left, right, len); // returns at once when fully off
     for (int i = 0; i < len; ++i)
     {
         // Speaker/ear safety behind the limiter, never reached normally.
@@ -711,6 +707,25 @@ void migrateState (juce::ValueTree& state)
     [[maybe_unused]] const int version = state.getProperty (kVersionAttr, 1);
     // if (version < 2) { ... }
 }
+
+/** A session saved before a parameter existed has no entry for it. The loaded sound must not
+    depend on the instance's history, so every parameter of ours missing from the incoming state
+    gets an entry without a value, which AudioProcessorValueTreeState restores to the parameter's
+    default. (JUCE 9.0.5 happens to do the same for a missing entry, through the child it appends
+    while reconnecting its parameters; this makes the rule explicit and independent of that
+    internal. Tested in OutputStageTests, "State: a parameter missing ...".) */
+void addMissingParameters (juce::ValueTree& state, const juce::Array<juce::AudioProcessorParameter*>& params)
+{
+    static const juce::Identifier paramType ("PARAM"), idProperty ("id"); // JUCE's state format
+    for (auto* p : params)
+        if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            if (! state.getChildWithProperty (idProperty, withId->paramID).isValid())
+            {
+                juce::ValueTree entry (paramType);
+                entry.setProperty (idProperty, withId->paramID, nullptr);
+                state.appendChild (entry, nullptr);
+            }
+}
 } // namespace
 
 void VintageSynthProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -728,6 +743,7 @@ void VintageSynthProcessor::setStateInformation (const void* data, int sizeInByt
     if (info.isValid())
         state.removeChild (info, nullptr);
     migrateState (state);
+    addMissingParameters (state, getParameters());
 
     // Hosts call this on any thread: no file I/O here (a user bank named by the session is looked
     // up later on the message thread). One writer lock around both steps, so no apply on another
