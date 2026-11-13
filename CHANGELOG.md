@@ -5,6 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### Output stage: headroom and soft limiter (2026-11-13)
+- A fixed −6.02 dB output trim: the loudest chord (Dual, 32 voices, full velocity, dry) now peaks
+  at −2.57 dBFS at the default master volume (was +3.45 dBFS). Everything is 6 dB quieter; the
+  relative levels of programs and effects are unchanged. Golden renders re-blessed (old × 0.5 exactly).
+- A soft limiter on the output, on by default: stereo-linked, no added latency, transparent below
+  its knee, never above its ceiling. Two parameters, `master.limiter` and
+  `master.limiter.ceiling` (−12 … 0 dB, default −1 dB); session settings like master volume, not
+  part of programs. 172 parameters in total.
+
 ### M6a — presets and banks, infrastructure (2026-11-13)
 - Tones, programs and banks as text files; a read-only factory bank (8 placeholder programs for
   now); loading and saving from a small preset bar; MIDI Program Change; host program list;

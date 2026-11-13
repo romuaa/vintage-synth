@@ -3,6 +3,15 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Wave 4: output stage (2026-11-13)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A limiter with a 4 s release still measured −25 dB "distortion". | One least-squares gain fit over 2 s counts slow level changes (release) as error. | Measure distortion with a gain fit per short window (20 ms) and report the long-window figure separately. |
+| A slow "program-dependent" detector changed nothing. | It followed the rectified signal, whose average sits far below its peaks. | Feed the slow detector from the peak detector, not from the raw signal. |
+| Re-blessing goldens after a level change needed proof that nothing else changed. | — | Make the gain a power of two and compare the raw `[.bitdump]` floats: new = old × 0.5 except values that become subnormal (flushed to zero). |
+| In an agent worktree, shell commands naming the top-level `source` directory as a bare word were refused by the sandbox. | It reads the word as the shell's `source` builtin. | Write `source/common`, `source/vintage` (with a slash and subfolder) in commands. |
+
 ## M6a: presets and banks (2026-11-13)
 
 | Problem | Cause | Fix / rule |
