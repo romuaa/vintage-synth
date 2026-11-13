@@ -304,10 +304,13 @@ inline Measured measure (const Stereo& s, const Performance& p)
 /** A fresh processor (48 kHz, real-time path, default master volume) on factory program `slot`. */
 struct FactoryRig : PresetRig
 {
-    explicit FactoryRig (int slot) : PresetRig (kFs, 512, 2)
+    /** limiter: the output limiter (a session setting, not part of a program) on at its defaults,
+        or off so that levels compare programs and not the limiter. */
+    explicit FactoryRig (int slot, bool limiter = true) : PresetRig (kFs, 512, 2)
     {
         prepare();
         REQUIRE (presets().selectProgram (slot));
+        set ("master.limiter", limiter ? 1.0f : 0.0f);
     }
 
     /** Renders the performance, then `tailSeconds` after its last note-off. */

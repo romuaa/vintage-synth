@@ -6,6 +6,7 @@
 
 #include "FactorySound.h"
 
+#include <cstdio>
 #include <map>
 #include <set>
 
@@ -18,6 +19,8 @@ namespace
 constexpr double kGroupToleranceDb = 2.0;
 /** And no program's full-velocity eight-note chord more than this above Init's (RMS and peak). */
 constexpr double kChordHeadroomDb = 3.0;
+/** Where the output limiter's knee starts at its defaults (ceiling -1 dBFS, knee 3 dB below it). */
+constexpr double kLimiterKneeDbfs = -4.0;
 
 double medianOf (std::vector<double> v)
 {
@@ -113,23 +116,25 @@ TEST_CASE ("Factory level rule: comparable loudness per group, and chord headroo
     std::vector<double> rms (static_cast<size_t> (kPresetBankSize));
     std::map<LevelGroup, std::vector<double>> byGroup;
     double initChordRms = 0.0, initChordPeak = 0.0;
+    // Measured with the output limiter off: the rule compares programs, not the limiter.
     for (int slot = 0; slot < kPresetBankSize; ++slot)
     {
         const auto& prog = bank.programs[static_cast<size_t> (slot)];
         const auto info = categoryInfo (prog.meta.category);
-        FactoryRig rig (slot);
+        FactoryRig rig (slot, false);
         const auto perf = phraseFor (prog, rig.schema());
         const auto m = measure (rig.play (perf, 0.0), perf);
         rms[static_cast<size_t> (slot)] = m.rmsDb;
         if (info.group != LevelGroup::Reference)
             byGroup[info.group].push_back (m.rmsDb);
 
-        FactoryRig chordRig (slot);
+        FactoryRig chordRig (slot, false);
         auto chord = fullVelocityChord();
         const auto out = chordRig.play (chord, 0.0);
         chord.firstOn = at (0.55); // steady part
         const auto cm = measure (out, chord);
         INFO (rig.presets().positionName (slot) << " " << prog.meta.name << ": chord RMS " << cm.rmsDb << " dB, peak " << cm.peakDb << " dBFS");
+        CHECK (cm.peakDb < 0.0); // below full scale without the limiter
         if (slot == 0)
         {
             initChordRms = cm.rmsDb;
@@ -154,4 +159,30 @@ TEST_CASE ("Factory level rule: comparable loudness per group, and chord headroo
                              << " dB, deviation " << dev << " dB");
         CHECK (std::abs (dev) <= kGroupToleranceDb);
     }
+}
+
+TEST_CASE ("Factory bank and the output limiter: standard phrases stay below the knee", "[presets][factory][level]")
+{
+    // With the limiter on at its defaults (as a new instance plays): a program's standard phrase at
+    // velocity 100 must not reach the knee, so the limiter does not shape the factory sounds. The
+    // full-velocity eight-note chords that do reach it are listed (expected for a few programs).
+    const auto& bank = factoryBank();
+    juce::StringArray chordsInKnee;
+    for (int slot = 0; slot < kPresetBankSize; ++slot)
+    {
+        const auto& prog = bank.programs[static_cast<size_t> (slot)];
+        FactoryRig rig (slot);
+        const auto perf = phraseFor (prog, rig.schema());
+        const auto m = measure (rig.play (perf, 0.0), perf);
+        INFO (rig.presets().positionName (slot) << " " << prog.meta.name << ": phrase peak " << m.peakDb << " dBFS");
+        CHECK (m.peakDb < kLimiterKneeDbfs);
+
+        FactoryRig chordRig (slot);
+        const auto chord = fullVelocityChord();
+        const auto cm = measure (chordRig.play (chord, 0.0), chord);
+        if (cm.peakDb >= kLimiterKneeDbfs)
+            chordsInKnee.add (rig.presets().positionName (slot) + " " + prog.meta.name + " (" + juce::String (cm.peakDb, 1) + " dBFS)");
+    }
+    std::printf ("full-velocity chords reaching the limiter knee (%d): %s\n", chordsInKnee.size(),
+                 chordsInKnee.joinIntoString (", ").toRawUTF8());
 }

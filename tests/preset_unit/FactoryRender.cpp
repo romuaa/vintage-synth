@@ -47,7 +47,7 @@ TEST_CASE ("Render m6b_factory audition and measurements", "[.render]")
     std::vector<float> allL, allR;
     juce::String index, table;
     table << "slot\tname\tcategory\tgroup\tpeak_dBFS\trms_dB\tdev_dB\tattack_ms\trelease_ms\tcentroid_Hz\twidth_dB\t"
-             "chord_peak_dBFS\tchord_rms_dB\treported_tail_s\n";
+             "chord_peak_dBFS\tchord_rms_dB\treported_tail_s\tlim_on_peak_dBFS\tlim_on_chord_peak_dBFS\n";
 
     struct Row
     {
@@ -64,18 +64,25 @@ TEST_CASE ("Render m6b_factory audition and measurements", "[.render]")
         const auto info = categoryInfo (prog.meta.category);
         INFO (prog.meta.name);
         REQUIRE (info.known);
-        FactoryRig rig (slot);
+        // Measurements with the output limiter off (levels compare programs, not the limiter) ...
+        FactoryRig rig (slot, false);
         const auto perf = phraseFor (prog, rig.schema());
         const double reported = rig.proc.getTailLengthSeconds();
-        const auto out = rig.play (perf, std::max (reported, 1.0) + 0.5);
-        const auto m = measure (out, perf);
+        const auto m = measure (rig.play (perf, std::max (reported, 1.0) + 0.5), perf);
 
-        FactoryRig chordRig (slot);
+        FactoryRig chordRig (slot, false);
         const auto chord = fullVelocityChord();
         const auto co = chordRig.play (chord, 0.0);
         Performance window = chord;
         window.firstOn = at (0.55); // steady part of the chord
         const auto cm = measure (co, window);
+
+        // ... and the audition as a new instance plays it: limiter on at its defaults.
+        FactoryRig onRig (slot);
+        const auto out = onRig.play (perf, kAuditionTail + 0.5);
+        const auto mOn = measure (out, perf);
+        FactoryRig chordOnRig (slot);
+        const auto cmOn = measure (chordOnRig.play (chord, 0.0), chord);
 
         // Audition clip: the phrase plus up to 4 s of release, with a 50 ms fade if cut.
         const size_t len = std::min (out.l.size(), static_cast<size_t> (perf.lastOff + at (kAuditionTail)));
@@ -106,7 +113,8 @@ TEST_CASE ("Render m6b_factory audition and measurements", "[.render]")
         line << pos << "\t" << prog.meta.name << "\t" << prog.meta.category << "\t" << groupName (info.group) << "\t"
              << fmt (m.peakDb) << "\t" << fmt (m.rmsDb) << "\t%DEV%\t" << fmt (m.attackMs, 0) << "\t"
              << (m.tailCut ? ">" : "") << fmt (m.releaseMs, 0) << "\t" << fmt (m.centroidHz, 0) << "\t" << fmt (m.widthDb) << "\t"
-             << fmt (cm.peakDb) << "\t" << fmt (cm.rmsDb) << "\t" << fmt (reported) << "\n";
+             << fmt (cm.peakDb) << "\t" << fmt (cm.rmsDb) << "\t" << fmt (reported) << "\t" << fmt (mOn.peakDb) << "\t"
+             << fmt (cmOn.peakDb) << "\n";
         rows.push_back ({ line, info.group, m.rmsDb });
         byGroup[info.group].push_back (m.rmsDb);
         CHECK (m.finite);
