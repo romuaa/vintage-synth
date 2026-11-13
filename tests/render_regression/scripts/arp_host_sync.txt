@@ -1,0 +1,40 @@
+# Arpeggiator on the host transport (Wave 3): Split at C4, a held bass on Lower, the arpeggio
+# (Up, 2 octaves, 1/16, swing 58 %, gate 60 %) on Upper only. The host plays from beat 2.5 at
+# 126 bpm, slows to 100 bpm at 2.0 s (the grid follows, nothing is cut), jumps back to beat 0 at
+# 3.0 s (loop: released and resynchronised) and stops at 3.6 s, where the internal clock (110 bpm)
+# takes over with the keys still held. Stereo (Lower left, Upper right of centre).
+rate 48000
+channels 2
+length 4.6
+
+param key.mode 2
+param key.split_point 60
+param lower.mix.pan -0.4
+param upper.mix.pan 0.4
+param lower.vco1.range 1
+param lower.vcf.cutoff 0.35
+param lower.env2.release 0.3
+param upper.vco1.waveform 3
+param upper.vcf.cutoff 0.62
+param upper.vcf.resonance 0.3
+param upper.env2.release 0.2
+param arp.mode 1
+param arp.target 1
+param arp.rate 3
+param arp.octaves 2
+param arp.swing 58
+param arp.gate 60
+param arp.tempo 110
+
+0.00 play 126 2.5
+0.05 on 36 100
+0.10 on 64 100
+0.10 on 67 90
+0.10 on 72 80
+2.00 tempo 100
+3.00 locate 0
+3.60 stop
+4.20 off 36
+4.20 off 64
+4.20 off 67
+4.20 off 72

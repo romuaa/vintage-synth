@@ -4,7 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "SeqTestUtil.h"
-#include "seq/Clock.h"
+#include "common/seq/Clock.h"
 
 #include <cmath>
 

@@ -8,9 +8,9 @@
 // demo does not depend on the synth engine.
 #include <catch2/catch_test_macros.hpp>
 
-#include "fx/Chorus.h"
-#include "fx/Delay.h"
-#include "fx/Reverb.h"
+#include "common/fx/Chorus.h"
+#include "common/fx/Delay.h"
+#include "common/fx/Reverb.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 

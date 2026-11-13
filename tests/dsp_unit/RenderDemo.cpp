@@ -3,8 +3,8 @@
 // Output: $VS_RENDER_DIR (if set) or <working dir>/renders: m1_demo.wav + m1_demo_spectrogram.png
 #include <catch2/catch_test_macros.hpp>
 
-#include "engine/Part.h"
-#include "params/Mappings.h"
+#include "vintage/engine/Part.h"
+#include "vintage/params/PartMappings.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_dsp/juce_dsp.h>

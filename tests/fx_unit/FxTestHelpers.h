@@ -6,7 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "../dsp_unit/TestHelpers.h"
-#include "fx/FxCommon.h"
+#include "common/fx/FxCommon.h"
 
 #include <algorithm>
 #include <cmath>

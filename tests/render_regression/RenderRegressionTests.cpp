@@ -120,6 +120,26 @@ TEST_CASE ("Render regression: every script matches its golden reference", "[ren
     }
 }
 
+TEST_CASE ("Render regression: the program command loads a factory program by slot or by name", "[render]")
+{
+    const auto bySlot = renderScript (parseScript ("length 1.5\n0 program A3\n0.1 on 36 100\n"), kGoldenBlock);
+    const auto byName = renderScript (parseScript ("length 1.5\n0 program Placeholder Bass\n0.1 on 36 100\n"), kGoldenBlock);
+    const auto other = renderScript (parseScript ("length 1.5\n0 program A4\n0.1 on 36 100\n"), kGoldenBlock);
+    const auto none = renderScript (parseScript ("length 1.5\n0.1 on 36 100\n"), kGoldenBlock);
+    CHECK (bySlot == byName); // bit-identical: same program
+    CHECK (bySlot != other);
+    CHECK (bySlot != none);
+    // Loaded in the middle of a phrase it releases what sounds and the sound then follows the program.
+    const auto mid = renderScript (parseScript ("length 3\n0.1 on 60 100\n1.0 program A3\n"), kGoldenBlock);
+    double tail = 0.0;
+    for (size_t i = mid.size() - 4800; i < mid.size(); ++i)
+        tail = std::max (tail, static_cast<double> (std::abs (mid[i])));
+    CHECK (tail < 1.0e-3);
+    CHECK_THROWS (renderScript (parseScript ("length 1\n0 program Z9\n"), kGoldenBlock));
+    CHECK_THROWS (renderScript (parseScript ("length 1\n0 program No Such Name\n"), kGoldenBlock));
+    CHECK_THROWS (parseScript ("length 1\n0 program\n"));
+}
+
 TEST_CASE ("Render regression: stereo golden format round-trips and keeps version 1 for one channel", "[render]")
 {
     const auto s = parseScript ("channels 2\nlength 0.5\n0 on 60 100\n");

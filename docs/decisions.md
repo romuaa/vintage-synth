@@ -3,6 +3,64 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Wave 3 integration contract (2026-11-12)
+
+All (review).
+
+| Decision | Why |
+|---|---|
+| Effects stay global and in series (chorus → delay → reverb) on the stereo bus; 11 parameters. Delay time is free (1 ms–2 s, default 700 ms, ping-pong on by default as in the approved demo); tempo-synced delay can be appended later. | Matches what the owner approved by ear; per-part sends and delay sync are additive later. |
+| One arpeggiator/sequencer settings set with a part selector (Lower, Upper, Both); the sequencer's 16 steps are host parameters (48 of them). | One set is easy to understand and automate; step parameters make the sequencer usable and testable before the custom UI exists and are saved with the state. Parameter count becomes 170. |
+| With no usable host transport the arp/seq runs on its internal tempo parameter. | Works in simple hosts and when just playing. |
+
+## M6a results: preset and bank infrastructure (2026-11-13)
+
+All (review) unless marked.
+
+| Decision | Why |
+|---|---|
+| **Preset files are read by our own strict JSON reader** (RFC 8259 subset, 1 MB cap, depth ≤ 12, at most 4096 members per object, duplicate keys rejected, linear time). JUCE's JSON parser is not used for untrusted input. | Sanitizers and review: JUCE's parser overflows on long digit strings, also accepts single-quoted strings (which defeated a pre-check), and is quadratic in the number of keys. |
+| **A session names its user bank by plain file name inside the banks folder, never by path; restoring a session reads no files.** The bank is resolved later on the message thread. All preset reads go through one bounded reader that accepts regular files only. | Review blocker: a crafted project could hang the host (path to a pipe), exhaust memory (a device file) or, on Windows, trigger a network connection (UNC path). |
+| A missing user bank leaves the restored sound and name intact, detached from any slot and marked modified; the host is shown slot 1 of the factory bank. | Silently presenting a factory slot as current while another sound plays would mislead. |
+| **Applying a program is serialised by one lock off the audio thread; the audio thread takes a consistent copy of all block parameters (sequence-counter read) and keeps the previous block's set while a change is in progress.** | Three hand-over gaps let a block read a half-applied parameter set; a test now proves no mixed set is ever observed. |
+| Storing into or renaming a slot of a user bank writes the bank file at once (atomic replace). | The change was lost at the next session load. |
+| Every preset file carries an instrument id; bank size, slot naming and file extensions belong to the instrument, not the shared code. Format 1 is not released yet, so this is free. | A file of the future second instrument must not load as all-defaults. |
+| Number text in files is formatted and parsed without locale-dependent functions; names are stripped of control, bidirectional and zero-width characters. | Hosts can change the process locale; names reach the host's program list. |
+| **OPEN — MIDI Program Change timing.** It is applied by the message thread shortly after it arrives: notes in the same block start on the old program and are then released, and in offline rendering the moment it takes effect is not deterministic. No Bank Select; Program Changes 64–127 are ignored. Every program change releases held notes. | Sample-accurate program changes need the bank precomputed for the audio thread: a larger design step. Owner decision whether it is needed. |
+| The test that constructs the editor and preset bar is skipped under AddressSanitizer (a report inside the system graphics library); it runs in the normal builds. The bar's menus and file dialogs are not exercised by any test. | Needs a human at the screen. |
+
+## M6 contract: presets and banks (2026-11-12)
+
+All (review).
+
+| Decision | Why |
+|---|---|
+| Three levels: tone (one part), program (whole instrument without master volume), bank (64 programs, 8 × 8). One read-only factory bank compiled in; user banks are files. | Mirrors how a bi-timbral instrument is used: sounds per part, combinations as programs. |
+| Presets are JSON text, parameters by ID with plain values, tolerant loading, malformed files rejected whole. | Human-readable and diffable; survives added parameters in both directions. |
+| Applying a program releases all notes first and sets parameters through the host-notifying API on the message thread. | Meets the real-time rule and keeps hosts and automation in step. |
+| Factory programs are trimmed to a level rule (a full-velocity eight-note chord below 0 dBFS at the default master volume). | Answers part of the open output-level question at the preset level, whatever is decided for the output stage. |
+| A minimal preset bar above the generic editor until the custom UI exists. | Makes presets usable and testable before M7. |
+| Factory sounds are drafted by an agent from a written specification and auditioned by the owner. | Agents cannot hear. |
+
+## Wave 3 results: effects and arp/sequencer in the plugin; oscillator fixes (2026-11-12)
+
+All (review) unless marked.
+
+| Decision | Why |
+|---|---|
+| **Host bypass is a clean stop:** 5 ms fade, then everything is released and reset (parts, key router, arp/seq incl. Hold and pedal, effects); MIDI is ignored while bypassed; keys still held are silent until pressed again. | JUCE's default bypass drops MIDI, so a note-off arriving during bypass hung the note; with the arpeggiator on the pattern never stopped, and old echoes returned afterwards. |
+| **Parameter values are sanitised where they enter the engine:** non-finite → the parameter's default; otherwise clamped to its range. | A NaN from a host silenced the whole instrument for as long as it lasted. |
+| **Integer and choice parameters are stepped for hosts** (including the split point). | JUCE's integer parameter reports itself as continuous to VST3 hosts, which then store values between steps. |
+| **Reported tail = synth release + effects, capped at 30 s.** Synth part: 2.5 × the longest ENV-2 release among the parts that can sound (time to −100 dB), × 5.66 with envelope key follow, + 8 % for Vintage. Effects: the longest tail of the effects that are on. Hosts cannot be notified when it changes. | The tail ignored the synth's own release (up to 10 s). |
+| **In Whole mode the arp/seq applies to Lower whatever the part selector says.** | Whole + selector Upper gave no arpeggio at all. |
+| When the arp/seq is Off or a part is not selected, that part gets the router's events directly (bit-exact). A key-mode change resets both arp/seq instances and re-synchronises the pedal. | Keeps "off = exactly as before"; without the resync, voices piled up after a mode change with the pedal down. |
+| A key-mode change drops a Hold-latched pattern; arp on → Off with keys held is silent until re-pressed; with the transport stopped the arp runs at its own tempo; arp/seq/effect automation is block-accurate; the play head's loop flags are not used; a step with velocity 0 plays at 1/127. | Consistent with the other release rules; accepted limits. |
+| **OPEN — output level and the hard clip.** At the default master volume (−6 dB) a 32-voice Dual chord at full velocity peaks at +3.45 dBFS dry, +5.6 dBFS with moderate effects, and reaches the +12 dBFS hard clamp with extreme effect settings. | To decide with the owner: more headroom by default (lower part or master gain), a soft limiter at the output, or accept it as normal for a polysynth and leave level to the user. |
+| **Hard sync with a sine VCO-1 is band-limited exactly** (the reset error of a sine is a gated sinusoid, integrated against the same windowed-sinc kernel). Aliasing went from −43…−60 dB to −109 dB or better; wanted partials move by at most 0.003 dB; all other waveforms are bit-identical. | The study's defect 1. Adding polynomial correction orders made it worse, because their residuals only cancel in the full series. |
+| **Offline, a note that starts with Cross Mod above zero renders its whole voice at the real-time rate** (second oscillator pair, same code and coefficients), then is interpolated 2× to the part's offline rate; other notes are delayed 15 internal samples to stay aligned, and the reported offline latency grows accordingly. Decided per note at note start. | The study's defect 2: a bounce of a Cross Mod patch must sound like playback. Offline partials now differ from real time by ≤ 0.014 dB (was up to 55 dB). Oscillators alone were not enough: the filter's saturation also aliases differently with the rate. Aligning sync and Cross Mod timing instead was rejected: it would move real-time partials by up to 49.6 dB. |
+| **The real-time Cross Mod sound is unchanged** (bit-identical renders against the previous version). **Classic Cross Mod is guarded by a regression test of 72 measured levels (+3 dB), not by the −100 dB gate.** | Owner decision to keep the sound. |
+| The sync gate has one documented exception: a 20 % pulse with VCO-1 near 10 kHz at 88.2 kHz 1× measures −99.2 dB, which is the oscillator's own floor above the 5 kHz range the gate covers. | A longer correction table would change the saw, which had to stay bit-identical. |
+
 ## Local-first verification; CI offline (owner decision, 2026-11-12)
 
 - **Everything that can be verified on the development Mac is verified there; GitHub Actions is a
@@ -268,7 +326,7 @@ All are marked **(review)**: the owner has not confirmed them yet.
 | LFO waves | Sine, Triangle, Saw (falling), Square, Random (S&H), Noise (smoothed random at 8× rate). | Matches the six panel symbols. |
 | LFO delay | Zero output for the first half of the delay time, then a linear fade-in over the second half. Re-triggered when a note is played with no other keys held. | Classic delayed-vibrato feel. |
 
-### Ranges and tapers (`source/params/Mappings.h`)
+### Ranges and tapers (`source/common/params/Mappings.h`)
 These are the single source of truth: the parameter display text and the DSP both call these functions.
 
 - VCF cutoff 20 Hz – 20.48 kHz, exponential (10 octaves). Env mod up to 7 oct. LFO mod up to ±4 oct (squared taper). Key follow 0–100 %.

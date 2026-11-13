@@ -2,8 +2,8 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "TestHelpers.h"
-#include "dsp/Oscillator.h"
-#include "engine/Oversampler.h"
+#include "vintage/dsp/Oscillator.h"
+#include "common/engine/Oversampler.h"
 
 using vs::dsp::Oscillator;
 using vs::dsp::Wave;

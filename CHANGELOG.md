@@ -5,6 +5,21 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M6a — presets and banks, infrastructure (2026-11-13)
+- Tones, programs and banks as text files; a read-only factory bank (8 placeholder programs for
+  now); loading and saving from a small preset bar; MIDI Program Change; host program list;
+  sessions remember the current program.
+- Preset files and session data are treated as untrusted input: strict reader, bounded file
+  access, no file access while a session loads.
+
+### M5 — effects and arpeggiator/sequencer in the plugin (2026-11-12)
+- Chorus, delay and reverb on the stereo bus (11 parameters); arpeggiator and 16-step sequencer in
+  front of each part with a part selector, locked to the host tempo (58 parameters). 170 in total.
+- Host bypass is a clean stop; non-finite parameter values are sanitised; integer parameters are
+  stepped for hosts; the reported tail includes the synth's release.
+- Hard sync with a sine VCO-1 no longer aliases (−109 dB or better, was −43 to −60 dB).
+- Offline renders of Cross Mod patches now match real-time playback.
+
 ### Local-first verification (2026-11-12)
 - `scripts/preflight.sh`: one local gate for everything a Mac can check, including the VST3
   validator built from the pinned SDK commit, the security scan and repository hygiene checks.
@@ -30,7 +45,7 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 ### M4 — arpeggiator and step sequencer module, not wired in yet (2026-11-12)
 - Arpeggiator (Up, Down, Up & Down, Random, As Played; 1–4 octaves; hold; swing; gate length) and a
   16-step sequencer (offset, Note/Rest/Tie, velocity), locked sample-accurately to the host tempo
-  or an internal clock. Standalone module in `source/seq/` with tests; connected in a later step.
+  or an internal clock. Standalone module in `source/common/seq/` with tests; connected in a later step.
 
 ### Linux target and public-release preparation (2026-11-12)
 - Linux x86_64 VST3 is a supported target: built in CI on Ubuntu 22.04 (glibc 2.35 or newer, static
@@ -53,7 +68,7 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ### M5 — effect blocks, not wired in yet (2026-11-12)
 - Chorus (two modes, mix up to wet = dry), stereo/ping-pong delay with tape-style time glide, and a
-  16-line hall reverb, as standalone JUCE-free blocks in `source/fx/` with tests and `fx_bench`
+  16-line hall reverb, as standalone JUCE-free blocks in `source/common/fx/` with tests and `fx_bench`
   (all three: about 0.55 % of one core at 48 kHz). They are connected to the plugin in a later step.
 
 ### Developer tools (2026-11-12)

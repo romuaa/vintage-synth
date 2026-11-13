@@ -1,5 +1,5 @@
 #include "FxTestHelpers.h"
-#include "fx/Chorus.h"
+#include "common/fx/Chorus.h"
 
 using namespace vs::fx;
 using namespace vs::fxtest;

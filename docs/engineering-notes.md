@@ -3,6 +3,30 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## M6a: presets and banks (2026-11-13)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A session could make the host hang or exhaust memory at load. | A file path from the state was opened unchecked; "exists as file" is true for pipes and devices, whose size reads 0, and the read ran to end of file. | **State and preset files are untrusted input.** Store names, not paths; one bounded reader for regular files only; no file I/O in `setStateInformation` (hosts call it on any thread). |
+| A pre-check written to protect a third-party parser was bypassed. | The parser accepted more syntax (single-quoted strings) than the check knew. | Don't guard a lenient parser with a second tokenizer: use one strict parser. Fuzz it in the suite, with the reviewer's token list. |
+| A block could read a half-applied parameter set, and ThreadSanitizer saw nothing. | Each variable was atomic; the ordering was wrong (two holders of one flag, acknowledgement before the last read). | Test consistency with an invariant across many parameters, checked by the audio thread; sanitizers do not find logical races. |
+| The implementing agent ran out of budget before running the gates. | A large task in one go. | The orchestrator runs the full gate on every hand-back, whatever the report says. |
+| Parallel test runs collided in temporary folders. | Name generation is per process. | Random folder names in tests. |
+
+## Wave 3: integration and oscillator fixes (2026-11-12)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Bypassing the plugin in a host hung notes (and an arpeggio never stopped). | JUCE's default `processBlockBypassed` drops the MIDI buffer; the note-off never arrives. | Always override bypass in an instrument: release, reset, ignore MIDI. |
+| Hosts stored values between the steps of integer parameters. | `juce::AudioParameterInt` is not discrete for the VST3 wrapper. | Use a stepped integer parameter; test that every integer and choice parameter reports its step count. |
+| A NaN parameter value kept the output guard firing on every block. | Target + deviation smoothers keep a NaN forever. | Sanitise at the parameter boundary; keep the guard as the last line. |
+| A test harness "allocated on the audio thread". | `AudioBuffer::setSize` in the test itself, when growing. | Preallocate in allocation tests. |
+| Linux UBSan flagged `memcmp` on an empty vector; macOS did not. | `memcmp(nullptr, …, 0)` is undefined. | Run both sanitizer builds. |
+| A block-size fuzz showed large differences. | Event overflow bursts: the parser drops the rest of a chunk by design, and which events survive depends on chunk boundaries. | Exempt overflow bursts from block-size comparison; still check hangs and silence. |
+| The reviewer's fuzz found what the implementer's tests missed (again). | — | **Port every reviewer fuzz into the suite**, with a larger seed count behind a hidden tag. |
+| A sine reset could not be fixed with step + ramp + curvature corrections. | Higher polynomial orders have residual tails beyond the kernel window; they only cancel in the full series. | Band-limit the actual error signal by integrating it against the kernel. |
+| Rendering only the oscillator pair at the real-time rate offline still left 3.8 dB differences. | The filter's input saturation aliases differently at each rate. | Rate-dependent non-linearities anywhere in the voice matter: keep the whole voice at one rate. |
+
 ## Linux containers and ARM64 (2026-11-12)
 
 | Problem | Cause | Fix / rule |

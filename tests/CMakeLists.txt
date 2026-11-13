@@ -11,6 +11,7 @@ target_link_libraries(vs_test_core
     PRIVATE
         juce::juce_audio_utils
         juce::juce_dsp
+        VintageSynthFactoryData
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
@@ -29,17 +30,18 @@ add_executable(VintageSynthTests
     dsp_unit/KeyRouterTests.cpp
     dsp_unit/BitimbralTests.cpp
     dsp_unit/OversamplingTests.cpp
+    dsp_unit/SyncCrossModTests.cpp
     dsp_unit/RenderDemo.cpp
     dsp_unit/RenderDemoM3.cpp)
 
-# M5 effect blocks (header-only, source/fx/).
+# M5 effect blocks (header-only, source/common/fx/).
 target_sources(VintageSynthTests PRIVATE
     fx_unit/ChorusTests.cpp
     fx_unit/DelayTests.cpp
     fx_unit/ReverbTests.cpp
     fx_unit/FxRenderDemo.cpp)
 
-# M4 arpeggiator and step sequencer (header-only, source/seq/).
+# M4 arpeggiator and step sequencer (header-only, source/common/seq/).
 target_sources(VintageSynthTests PRIVATE
     seq_unit/ClockTests.cpp
     seq_unit/TimingTests.cpp
@@ -53,6 +55,20 @@ target_sources(VintageSynthTests PRIVATE
     seq_unit/ArpPatternTests.cpp
     seq_unit/MusicalTimeTests.cpp
     seq_unit/FuzzTests.cpp)
+
+# Wave 3 integration: effects and arpeggiator/sequencer in the processor (docs/architecture.md 6a).
+target_sources(VintageSynthTests PRIVATE
+    integration/FxIntegrationTests.cpp
+    integration/ArpIntegrationTests.cpp
+    integration/RobustnessTests.cpp
+    integration/RenderDemoM5.cpp)
+
+# M6a presets and banks (docs/architecture.md 6b): files, manager, factory bank, state, MIDI, host list.
+target_sources(VintageSynthTests PRIVATE
+    preset_unit/PresetFormatTests.cpp
+    preset_unit/PresetManagerTests.cpp
+    preset_unit/StrictJsonTests.cpp)
+target_compile_definitions(VintageSynthTests PRIVATE VS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core

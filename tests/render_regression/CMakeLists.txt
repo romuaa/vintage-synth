@@ -7,7 +7,8 @@ option(UPDATE_GOLDENS "Rewrite render-regression references instead of comparing
 
 add_executable(render_regression
     RenderHarness.cpp
-    RenderRegressionTests.cpp)
+    RenderRegressionTests.cpp
+    BitDump.cpp)
 
 target_include_directories(render_regression PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(render_regression PRIVATE

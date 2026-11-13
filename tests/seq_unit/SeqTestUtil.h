@@ -4,7 +4,7 @@
 // a module with an absolute-time event list under arbitrary block sizes, and an exact integer
 // model of the step grid (independent of the module's own arithmetic).
 
-#include "seq/ArpSeq.h"
+#include "common/seq/ArpSeq.h"
 
 #include <algorithm>
 #include <cstdint>

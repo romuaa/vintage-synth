@@ -4,16 +4,16 @@
 // (pitch, release, steal fade, block-size independence) at 1x.
 #include <catch2/catch_test_macros.hpp>
 
-#include "PluginProcessor.h"
+#include "vintage/PluginProcessor.h"
 #include "TestHelpers.h"
-#include "dsp/Envelope.h"
-#include "dsp/FastMath.h"
-#include "dsp/Filters.h"
-#include "dsp/Lfo.h"
-#include "dsp/Oscillator.h"
-#include "engine/Oversampler.h"
-#include "engine/Part.h"
-#include "params/Mappings.h"
+#include "vintage/dsp/Envelope.h"
+#include "common/dsp/FastMath.h"
+#include "vintage/dsp/Filters.h"
+#include "vintage/dsp/Lfo.h"
+#include "vintage/dsp/Oscillator.h"
+#include "common/engine/Oversampler.h"
+#include "vintage/engine/Part.h"
+#include "vintage/params/PartMappings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,10 +36,15 @@ constexpr Config kConfigs[] {
     { 176400.0, false, 1 }, { 176400.0, true, 2 }, { 192000.0, false, 1 }, { 192000.0, true, 2 },
 };
 
-/** Exact latency of a configuration: decimator phase delay (down path only) + BLEP delay. */
-double exactLatency (int factor)
+/**
+    Exact latency of a configuration: decimator phase delay (down path only) + BLEP delay. Offline
+    at twice the real-time factor, Cross Mod notes render at the real-time rate and every note of
+    the part is aligned to them (Voice::kRtPathExtraDelay internal samples more).
+*/
+double exactLatency (int factor, bool offlineAtTwiceRealTime = false)
 {
-    return vs::measureDecimatorDelay (factor) + static_cast<double> (vs::dsp::Oscillator::kLatency) / static_cast<double> (factor);
+    const int align = offlineAtTwiceRealTime ? vs::Voice::kRtPathExtraDelay : 0;
+    return vs::measureDecimatorDelay (factor) + static_cast<double> (vs::dsp::Oscillator::kLatency + align) / static_cast<double> (factor);
 }
 } // namespace
 
@@ -78,12 +83,43 @@ TEST_CASE ("Oversampling by host rate: the processor uses the table and reports 
         CHECK (proc.getLowerPart().getOversamplingFactor() == c.factor);
         CHECK (proc.getUpperPart().getOversamplingFactor() == c.factor);
         const int latency = proc.getLatencySamples();
-        CHECK (latency == juce::roundToInt (exactLatency (c.factor)));
+        const bool twice = c.offline && c.factor == 2 * vs::voiceOversamplingFactor (c.rate, false);
+        CHECK (latency == juce::roundToInt (exactLatency (c.factor, twice)));
         CHECK (latency == proc.getLowerPart().getLatencySamples());
-        CHECK (std::abs (proc.getLowerPart().getExactLatency() - exactLatency (c.factor)) < 1.0e-9);
+        CHECK (std::abs (proc.getLowerPart().getExactLatency() - exactLatency (c.factor, twice)) < 1.0e-9);
         WARN (c.rate << " Hz " << (c.offline ? "offline" : "real time") << " (" << c.factor << "x): latency "
                      << proc.getLowerPart().getExactLatency() << " samples, reported " << latency);
     }
+}
+
+TEST_CASE ("Offline: the processor renders notes that start with Cross Mod up at the real-time rate (and only offline)", "[os][xmod][offline]")
+{
+    for (const auto& c : kConfigs)
+        for (const float crossMod : { 0.0f, 0.4f })
+        {
+            juce::ScopedJuceInitialiser_GUI init;
+            vs::VintageSynthProcessor proc;
+            proc.getState().getParameter ("lower.vco1.cross_mod")->setValueNotifyingHost (crossMod);
+            proc.setNonRealtime (c.offline);
+            proc.setPlayConfigDetails (0, 2, c.rate, 512);
+            proc.prepareToPlay (c.rate, 512);
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 10);
+            proc.processBlock (buffer, midi);
+
+            const bool twice = c.offline && c.factor == 2 * vs::voiceOversamplingFactor (c.rate, false);
+            int onRtPath = 0, sounding = 0;
+            for (int v = 0; v < vs::kMaxVoices; ++v)
+            {
+                sounding += proc.getLowerPart().getVoice (v).isActive() ? 1 : 0;
+                onRtPath += proc.getLowerPart().getVoice (v).usesRealTimePair() ? 1 : 0;
+            }
+            INFO (c.rate << " Hz, offline " << c.offline << ", Cross Mod " << crossMod);
+            CHECK (sounding == 1);
+            CHECK (onRtPath == (twice && crossMod > 0.0f ? 1 : 0));
+            CHECK (buffer.getMagnitude (0, 512) > 0.0f);
+        }
 }
 
 TEST_CASE ("Latency: the reported latency is the true delay of the voice path, measured independently (+-0.5 sample)", "[os][m3][latency]")
@@ -263,126 +299,8 @@ TEST_CASE ("Alias gate (<= -100 dB in 0..20 kHz up to a 5 kHz fundamental) in ev
     }
 }
 
-namespace
-{
-/**
-    Hard sync (and optionally cross-mod) as Voice::renderSample does it: VCO-2 is the master at a
-    bin-centred frequency, VCO-1 (saw) is reset at every master wrap at the exact sub-sample point
-    and its rate is exponentially modulated by VCO-2's output. With sync the output repeats every
-    master period, so every legitimate component sits on a multiple of the master frequency and
-    anything else in the audio band is aliasing. Same production path back to the host rate as
-    measureAliasing.
-*/
-AliasResult measureSyncAliasing (double hz, double slaveRatio, float crossModOct, double rate, int factor)
-{
-    constexpr int order = 15, n = 1 << order, block = 512;
-    int k = static_cast<int> (std::lround (hz * n / rate));
-    k = (k % 2 == 0) ? k + 1 : k;
-    auto os = factor > 1 ? vs::makeVoiceOversampler (factor) : nullptr;
-    if (os != nullptr)
-        os->initProcessing (block);
-    juce::AudioBuffer<float> silence (1, block), out (1, block);
-    silence.clear();
-
-    vs::dsp::Oscillator master, slave;
-    master.setWave (vs::dsp::Wave::Saw);
-    slave.setWave (vs::dsp::Wave::Saw);
-    master.reset();
-    slave.reset();
-    const float dt2 = static_cast<float> (k) / static_cast<float> (factor * n);
-    const float dt1 = static_cast<float> (static_cast<double> (dt2) * slaveRatio);
-    auto sample = [&] {
-        float wrap2 = -1.0f, unused = -1.0f;
-        const float o2 = master.process (dt2, 0.5f, -1.0f, wrap2);
-        const float d1 = crossModOct > 0.0f ? dt1 * vs::dsp::fast::exp2 (crossModOct * o2) : dt1;
-        return slave.process (std::min (d1, 0.45f), 0.5f, wrap2, unused);
-    };
-
-    std::vector<float> captured;
-    const int warmup = 16384;
-    for (int done = 0; done < warmup + n; done += block)
-    {
-        if (os != nullptr)
-        {
-            auto up = os->processSamplesUp (juce::dsp::AudioBlock<float> (silence));
-            float* p = up.getChannelPointer (0);
-            for (size_t i = 0; i < up.getNumSamples(); ++i)
-                p[i] = sample();
-            juce::dsp::AudioBlock<float> ob (out);
-            os->processSamplesDown (ob);
-        }
-        else
-        {
-            float* p = out.getWritePointer (0);
-            for (int i = 0; i < block; ++i)
-                p[i] = sample();
-        }
-        if (done >= warmup)
-            captured.insert (captured.end(), out.getReadPointer (0), out.getReadPointer (0) + block);
-    }
-    const auto mag = vs::test::magnitudeSpectrum (captured, order);
-    double ref = 0.0; // the strongest harmonic: the reference level
-    for (size_t b = static_cast<size_t> (k); b < mag.size(); b += static_cast<size_t> (k))
-        ref = std::max (ref, static_cast<double> (mag[b]));
-    AliasResult r { -300.0, 0.0 };
-    for (size_t b = 1; b < mag.size(); ++b)
-    {
-        const double f = static_cast<double> (b) * rate / n;
-        if (f > std::min (20000.0, rate * 20.0 / 48.0))
-            break;
-        if (b % static_cast<size_t> (k) == 0)
-            continue;
-        const double db = vs::test::toDb (mag[b] / ref);
-        if (db > r.worstDb)
-            r = { db, f };
-    }
-    return r;
-}
-} // namespace
-
-namespace
-{
-struct SyncCfg
-{
-    double rate;
-    int factor;
-};
-constexpr SyncCfg kSyncCfgs[] { { 88200.0, 1 }, { 96000.0, 1 }, { 48000.0, 2 } };
-
-void syncAliasSweep (float crossModOct, const char* label)
-{
-    for (const auto c : kSyncCfgs)
-    {
-        double worst = -300.0;
-        for (const double hz : { 110.0, 440.0, 1000.0, 2000.0, 5000.0 })
-            for (const double ratio : { 1.37, 2.71 })
-            {
-                const auto r = measureSyncAliasing (hz, ratio, crossModOct, c.rate, c.factor);
-                INFO (label << ", " << c.rate << " Hz " << c.factor << "x, master " << hz << " Hz, slave ratio " << ratio << ": "
-                            << r.worstDb << " dB at " << r.worstHz << " Hz");
-                CHECK (r.worstDb <= -100.0);
-                worst = std::max (worst, r.worstDb);
-            }
-        WARN (label << " alias floor " << c.rate << " Hz " << c.factor << "x: worst " << worst << " dB");
-    }
-}
-} // namespace
-
-TEST_CASE ("Alias gate with hard sync: 1x at 88.2 / 96 kHz, and 2x at 48 kHz for comparison", "[os][m3][alias][sync]")
-{
-    syncAliasSweep (0.0f, "sync");
-}
-
-// KNOWN FINDING (M3 review), kept at the real gate and marked [!mayfail] so it reports without
-// failing the run: audio-rate exponential cross-mod (here 1 octave, the Cross Mod slider at 0.5)
-// creates FM sidebands far above the internal Nyquist, which fold back. The BLEP corrects
-// discontinuities, not FM bandwidth, so this is not specific to 1x: 2x at 48 kHz measures about
-// the same (-44 to -71 dB). Fixing it needs FM-aware band-limiting or more oversampling while
-// cross-mod is active; it is listed for a decision, not loosened here.
-TEST_CASE ("Alias gate with hard sync + cross-mod (1 octave): 1x at 88.2 / 96 kHz, 2x at 48 kHz", "[os][m3][alias][sync][!mayfail]")
-{
-    syncAliasSweep (1.0f, "sync + cross-mod");
-}
+// Hard sync and Cross Mod alias checks (every VCO-1 waveform, every configuration) and the real-time
+// vs offline equivalence of Cross Mod patches: SyncCrossModTests.cpp.
 
 TEST_CASE ("Ladder filter at the new internal rates: -12.04 / -6.02 dB at fc, self-oscillation at fc +-3 %", "[os][m3][vcf]")
 {

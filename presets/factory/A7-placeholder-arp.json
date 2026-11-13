@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Placeholder Arp",
+  "category": "Placeholder",
+  "author": "Exitium (placeholder: exercises the preset mechanism, replaced by the designed factory bank)",
+  "global": {
+    "arp.mode": 1,
+    "arp.target": 2,
+    "arp.rate": 3,
+    "arp.pattern": 2,
+    "arp.octaves": 2,
+    "arp.gate": 60,
+    "arp.tempo": 120
+  },
+  "lower": {
+    "vcf.cutoff": 0.55,
+    "vcf.env_mod": 0.4,
+    "env1.decay": 0.35,
+    "env1.sustain": 0.2,
+    "env2.attack": 0,
+    "env2.decay": 0.35,
+    "env2.sustain": 0.5,
+    "env2.release": 0.3
+  },
+  "upper": {}
+}

@@ -5,14 +5,16 @@
 //   3. the derived per-part overhead and a projection against the 15 % budget,
 //   4. real Parts with 16 voices each driven through the allocator (M2b), 1 and 2 Parts,
 //   5. the whole processor in Dual mode (M3: parser, KeyRouter, both Parts, PartMixer, stereo
-//      output) with 32 voices, at the oversampling factor the host rate selects (1x from 88.2 kHz).
+//      output) with 32 voices, at the oversampling factor the host rate selects (1x from 88.2 kHz),
+//   6. the full plugin path (Wave 3): section 5 plus the arpeggiator on both parts (1/32, host
+//      transport playing) and chorus, delay and reverb on, 32 voices sounding.
 // Run: build/mac-arm64/tests/voice_bench [base sample rate, default 48000] [Vintage, default 0.5]
-#include "PluginProcessor.h"
-#include "engine/Modulation.h"
-#include "engine/Oversampler.h"
-#include "engine/Part.h"
-#include "engine/Voice.h"
-#include "params/Mappings.h"
+#include "vintage/PluginProcessor.h"
+#include "vintage/engine/Modulation.h"
+#include "common/engine/Oversampler.h"
+#include "vintage/engine/Part.h"
+#include "vintage/engine/Voice.h"
+#include "vintage/params/PartMappings.h"
 
 #include <algorithm>
 #include <chrono>
@@ -29,11 +31,31 @@ constexpr int block = 256;
 constexpr int seconds = 5; // audio per timed run
 constexpr int repeats = 3; // best of
 
+// The patch: sync + Cross Mod 0.3 by default. Environment overrides (to compare voice types):
+// VS_BENCH_SYNC (0/1), VS_BENCH_XMOD (Cross Mod slider 0..1), VS_BENCH_WAVE1 (VCO-1 waveform index,
+// 0 sine .. 4 pulse).
+int benchSync()
+{
+    const char* e = std::getenv ("VS_BENCH_SYNC");
+    return e != nullptr ? std::atoi (e) : 1;
+}
+float benchCrossMod()
+{
+    const char* e = std::getenv ("VS_BENCH_XMOD");
+    return e != nullptr ? static_cast<float> (std::atof (e)) : 0.3f;
+}
+int benchWave1()
+{
+    const char* e = std::getenv ("VS_BENCH_WAVE1");
+    return e != nullptr ? std::atoi (e) : 2;
+}
+
 vs::PartParams benchParams()
 {
     vs::PartParams p;
-    p.vcoSync = 1;
-    p.vco1CrossMod = 0.3f;
+    p.vcoSync = benchSync();
+    p.vco1CrossMod = benchCrossMod();
+    p.vco1Wave = benchWave1();
     p.vcfResonance = 0.6f;
     p.vcoModLfo = 0.1f;
     p.env2Sustain = 1.0f;
@@ -201,8 +223,9 @@ ProcessorResult benchProcessor (PolyLoad load)
         set ("global.vintage", gVintage);
         for (const juce::String prefix : { "lower.", "upper." })
         {
-            set (prefix + "vco2.sync", 1.0f);
-            set (prefix + "vco1.cross_mod", 0.3f);
+            set (prefix + "vco2.sync", static_cast<float> (benchSync()));
+            set (prefix + "vco1.cross_mod", benchCrossMod());
+            set (prefix + "vco1.waveform", static_cast<float> (benchWave1()));
             set (prefix + "vcf.resonance", 0.6f);
             set (prefix + "vcomod.lfo_mod", 0.1f);
             set (prefix + "env2.sustain", 1.0f);
@@ -245,6 +268,93 @@ ProcessorResult benchProcessor (PolyLoad load)
     }
     return { 100.0 * best / seconds, factor };
 }
+// 6. Wave 3: the full plugin path. Dual, both parts arpeggiated (Up, 1/32 on a playing host
+// transport), every note rings for 10 s, so after a 2 s pre-roll all 32 voices sound and the
+// arpeggio retriggers them; chorus I, delay and reverb on. Times 5 s after the pre-roll.
+struct BenchPlayHead final : public juce::AudioPlayHead
+{
+    double ppq = 0.0;
+    juce::Optional<PositionInfo> getPosition() const override
+    {
+        PositionInfo info;
+        info.setIsPlaying (true);
+        info.setBpm (120.0);
+        info.setPpqPosition (ppq);
+        return info;
+    }
+};
+
+struct FullPathResult
+{
+    double percent;
+    int factor;
+    int lowerVoices, upperVoices;
+};
+
+FullPathResult benchFullPath()
+{
+    double best = 1.0e9;
+    FullPathResult res {};
+    for (int r = 0; r < repeats; ++r)
+    {
+        vs::VintageSynthProcessor proc;
+        BenchPlayHead playHead;
+        proc.setPlayHead (&playHead);
+        auto set = [&proc] (const juce::String& id, float plain) {
+            auto* p = dynamic_cast<juce::RangedAudioParameter*> (proc.getState().getParameter (id));
+            p->setValueNotifyingHost (p->convertTo0to1 (plain));
+        };
+        set ("key.mode", 1.0f); // Dual
+        set ("global.vintage", gVintage);
+        for (const juce::String prefix : { "lower.", "upper." })
+        {
+            set (prefix + "vco2.sync", 1.0f);
+            set (prefix + "vco1.cross_mod", 0.3f);
+            set (prefix + "vcf.resonance", 0.6f);
+            set (prefix + "vcomod.lfo_mod", 0.1f);
+            set (prefix + "env2.sustain", 1.0f);
+            set (prefix + "env2.release", 1.0f); // 10 s: every arpeggio note keeps a voice busy
+        }
+        set ("arp.mode", 1.0f);
+        set ("arp.target", 2.0f);
+        set ("arp.rate", 5.0f); // 1/32
+        set ("arp.gate", 50.0f);
+        set ("fx.chorus.mode", 1.0f);
+        set ("fx.delay.level", 0.4f);
+        set ("fx.reverb.level", 0.3f);
+        proc.setNonRealtime (false);
+        proc.setPlayConfigDetails (0, 2, fs, block);
+        proc.prepareToPlay (fs, block);
+        res.factor = proc.getOversamplingFactor();
+
+        juce::AudioBuffer<float> buffer (2, block);
+        const int preroll = static_cast<int> (fs) * 2 / block;
+        const int blocks = static_cast<int> (fs) * seconds / block;
+        double sum = 0.0;
+        juce::MidiBuffer midi;
+        auto runBlock = [&] (int b) {
+            midi.clear();
+            if (b == 0)
+                for (int v = 0; v < vs::kMaxVoices; ++v)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 48 + v, 0.5f + 0.03f * static_cast<float> (v)), 0);
+            proc.processBlock (buffer, midi);
+            playHead.ppq += static_cast<double> (block) * 120.0 / (60.0 * fs);
+            sum += static_cast<double> (buffer.getSample (0, 0));
+        };
+        for (int b = 0; b < preroll; ++b)
+            runBlock (b);
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int b = preroll; b < preroll + blocks; ++b)
+            runBlock (b);
+        const auto t1 = std::chrono::steady_clock::now();
+        gSink = static_cast<float> (sum);
+        best = std::min (best, std::chrono::duration<double> (t1 - t0).count());
+        res.lowerVoices = proc.getLowerPart().numSoundingVoices();
+        res.upperVoices = proc.getUpperPart().numSoundingVoices();
+    }
+    res.percent = 100.0 * best / seconds;
+    return res;
+}
 } // namespace
 
 int main (int argc, char** argv)
@@ -254,7 +364,8 @@ int main (int argc, char** argv)
         fs = std::atof (argv[1]);
     if (argc > 2)
         gVintage = static_cast<float> (std::atof (argv[2]));
-    std::printf ("base rate %.0f Hz, Vintage %.2f\n", fs, static_cast<double> (gVintage));
+    std::printf ("base rate %.0f Hz, Vintage %.2f; patch: sync %d, Cross Mod %.2f, VCO-1 waveform %d\n", fs, static_cast<double> (gVintage),
+                 benchSync(), static_cast<double> (benchCrossMod()), benchWave1());
     std::printf ("Sections 1-4 use fixed 2x/4x factors. At this rate the plugin uses %dx real time and %dx offline\n"
                  "(docs/architecture.md 4.4); section 5 measures the processor with the real-time factor.\n\n",
                  vs::voiceOversamplingFactor (fs, false), vs::voiceOversamplingFactor (fs, true));
@@ -339,6 +450,13 @@ int main (int argc, char** argv)
         std::printf ("processor, Dual, 32 voices, steal/20 ms + 1 s glide: %.3f%%\n", steal.percent);
         std::printf ("processor budget: worst case %.2f%% + effects %.1f%% = %.2f%% of %.0f%% (%s)\n",
                      steal.percent, fxShare, steal.percent + fxShare, budget, steal.percent + fxShare <= budget ? "ok" : "OVER");
+
+        // 6. Wave 3: the whole plugin path, effects and arpeggiator included (no projection).
+        const auto full = benchFullPath();
+        std::printf ("\nFull plugin path (Wave 3: section 5 + arp 1/32 on both parts, host transport, chorus + delay + reverb), %.0f Hz -> %dx\n",
+                     fs, full.factor);
+        std::printf ("full path, Dual, %d + %d voices sounding, arp + 3 effects: %.3f%% of %.0f%% (%s)\n",
+                     full.lowerVoices, full.upperVoices, full.percent, budget, full.percent <= budget ? "ok" : "OVER");
     }
     return 0;
 }

@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Placeholder Bass",
+  "category": "Placeholder",
+  "author": "Exitium (placeholder: exercises the preset mechanism, replaced by the designed factory bank)",
+  "global": {},
+  "lower": {
+    "vco1.range": 1,
+    "vco1.waveform": 2,
+    "vco2.range": 0,
+    "vco2.waveform": 3,
+    "vco2.fine_tune": 0.04,
+    "vcf.cutoff": 0.3,
+    "vcf.resonance": 0.3,
+    "vcf.env_mod": 0.55,
+    "env1.attack": 0,
+    "env1.decay": 0.3,
+    "env1.sustain": 0.1,
+    "env1.release": 0.2,
+    "env2.attack": 0,
+    "env2.decay": 0.4,
+    "env2.sustain": 0.9,
+    "env2.release": 0.2,
+    "assign.mode": 2
+  },
+  "upper": {}
+}
