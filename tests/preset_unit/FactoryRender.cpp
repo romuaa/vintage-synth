@@ -4,7 +4,7 @@
 // Output in $VS_RENDER_DIR (or the system temp directory; never the repository), 48 kHz / 24 bit:
 //   <slot>-<name>.wav       one file per program: the phrase plus up to 4 s of its release
 //   m6b_audition.wav        all 64 in slot order with 0.4 s of silence between them
-//   m6b_index.txt           start time of every program in the audition file, with what to listen for
+//   m6b_index.txt           start time, slot, name and category of every program in the audition file
 //   m6b_metrics.tsv         the measurement table (see FactorySound.h for the definitions)
 #include <catch2/catch_test_macros.hpp>
 
