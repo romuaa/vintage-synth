@@ -5,6 +5,20 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M6b — the factory bank (2026-11-13)
+- 64 designed factory programs (A1–H8) replace the 8 placeholders: brass, strings and pads, keys,
+  plucks and bells, basses, leads, organ, percussion and sound effects, Dual layers and Splits,
+  arpeggiator and sequencer programs, effect showcases. Specification, level rule and feature
+  coverage: `docs/factory-sounds.md`.
+- Levels matched per group (sustained, percussive, bass): every program's standard phrase is within
+  2 dB of its group's median, and no full-velocity eight-note chord is more than 3 dB above Init's.
+  Enforced by tests, together with: every program sounds, stays finite and falls silent once its
+  reported tail has passed.
+- Hidden audition render (`Render m6b_factory*`): one WAV per program, the concatenated audition
+  with an index, and a measurement table (peak, RMS, attack, release tail, spectral centroid,
+  stereo width).
+- Render-regression references for seven designed programs replace the placeholder ones.
+
 ### M6a — presets and banks, infrastructure (2026-11-13)
 - Tones, programs and banks as text files; a read-only factory bank (8 placeholder programs for
   now); loading and saving from a small preset bar; MIDI Program Change; host program list;

@@ -13,6 +13,20 @@ All (review).
 | One arpeggiator/sequencer settings set with a part selector (Lower, Upper, Both); the sequencer's 16 steps are host parameters (48 of them). | One set is easy to understand and automate; step parameters make the sequencer usable and testable before the custom UI exists and are saved with the state. Parameter count becomes 170. |
 | With no usable host transport the arp/seq runs on its internal tempo parameter. | Works in simple hosts and when just playing. |
 
+## M6b: the factory bank (2026-11-13)
+
+All (review): drafted by an agent that cannot hear; the owner's audition decides.
+
+| Decision | Why |
+|---|---|
+| **Bank layout by theme:** A Init + brass, B strings/pads, C keys/plucks/bells, D basses, E leads, F organ/percussion/effects, G Dual (G1–G4) and Split (G5–G8), H arpeggiator, sequencer and effect showcases. Spec: `docs/factory-sounds.md`. | Browsable by sound type; brass first because it is the genre's signature. |
+| **The level rule is relative, in three groups** (sustained, percussive, bass): the standard phrase at velocity 100 within ±2 dB (unweighted RMS, note-on to last note-off) of the group median; plus a headroom check: a full-velocity eight-note chord at most 3 dB above Init's (RMS and peak). Delivered within ±0.6 dB. Replaces the contract's "chord below 0 dBFS at the default master volume" (`docs/architecture.md` 6b.4), which the planned output trim and limiter now handle globally. | Owner brief for M6b: the separate output stage keeps relative levels, so programs only need to match each other. Unweighted RMS keeps the measure simple; bass has its own group because it carries more energy per perceived loudness. |
+| **Levels are set with each part's VCA level only**; master volume is not stored in programs and was not touched. | The contract excludes master volume from programs; one control per part keeps trims easy to read. |
+| **Split programs split at G3 (MIDI 55)** with the bass part in Lower. | Leaves a usable two-octave bass range and middle C and up for the other part. |
+| **Arp Hold is off in every program;** Arp pattern Down and 16 unison voices are not used. | A held pattern never stops, so it fails "silent after the tail" and surprises when browsing. The unused options are shown by their neighbours. |
+| **Programs with the −12 dB VCF slope (A7 B3 B4 B7 C5 D7 F4) step audibly when applied over sounding notes** (see the engine finding in the M6b report): kept, because the slope is a feature the bank must show. | The fix belongs in the engine (crossfading the switch on releasing voices), not in the presets. |
+| **Render-regression references cover seven designed programs, loaded by name, not all 64** (`docs/architecture.md` 6b.5 asks for one per program). | Each reference is about 40 KB; 64 would add about 2.5 MB of features to the repository. The factory tests already check every program's sound, finiteness, release and level. Owner decision whether all 64 are wanted. |
+
 ## M6a results: preset and bank infrastructure (2026-11-13)
 
 All (review) unless marked.
