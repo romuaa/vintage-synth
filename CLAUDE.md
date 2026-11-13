@@ -93,7 +93,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - MIDI Program Change timing: accepted as is for now (owner will test later).
 - **Wave 4 output stage is done on branch `wave4/output-stage`** (from `main`): fixed −6.02 dB
   output trim, soft limiter (`master.limiter`, `master.limiter.ceiling`; session settings), 172
-  parameters, goldens re-blessed (old × 0.5 exactly). Verified by the local gate only. Open for the
+  parameters, goldens re-blessed (raw renders old × 0.5 exactly; `selftest_basic` also took old
+  drift), golden scene `limiter_drive`. Verified by the local gate only. Open for the
   owner: confirm trim and limiter by ear (decisions, Wave 4).
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone

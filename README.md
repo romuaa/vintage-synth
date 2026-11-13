@@ -34,7 +34,8 @@ Working now (M3):
 - **Sound quality:** anti-aliased oscillators (measured aliasing ≤ −113 dB up to a 5 kHz fundamental),
   2× oversampling in real time and 4× when rendering offline. Latency (about 7 samples) is reported to the host.
 - **Output:** 6 dB of fixed headroom and a soft limiter (on by default, ceiling −12 … 0 dB, no added
-  latency) so that heavy chords and effect settings do not clip.
+  latency, never above the current (smoothed) ceiling) so that heavy chords and effect settings do
+  not clip.
 
 Planned: arpeggiator and 16-step sequencer, chorus, delay and reverb (these modules exist and are
 tested, but are not connected to the plugin yet), and patch banks.

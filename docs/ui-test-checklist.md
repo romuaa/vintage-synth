@@ -25,6 +25,7 @@ The host has no CPU meter: use Activity Monitor, and `voice_bench` for budgeting
 - Sweep the limiter ceiling from 0 to −12 dB and back while a loud chord sounds: the level follows
   smoothly, no clicks or zipper noise.
 - Toggle the limiter while quiet material plays (below the ceiling minus 3 dB): no audible change.
+- Toggle the limiter while a loud chord is being limited: the level changes smoothly (5 ms fade), no click.
 - Load another program and initialise: the limiter switch and ceiling stay as set.
 
 ## State

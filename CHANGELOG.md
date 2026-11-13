@@ -8,11 +8,15 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 ### Output stage: headroom and soft limiter (2026-11-13)
 - A fixed −6.02 dB output trim: the loudest chord (Dual, 32 voices, full velocity, dry) now peaks
   at −2.57 dBFS at the default master volume (was +3.45 dBFS). Everything is 6 dB quieter; the
-  relative levels of programs and effects are unchanged. Golden renders re-blessed (old × 0.5 exactly).
+  relative levels of programs and effects are unchanged. **Sessions saved earlier play 6.02 dB
+  quieter.** Golden renders re-blessed: the raw renders are exactly the old ones × 0.5, and 13 of
+  14 reference files shift by exactly the trim; `selftest_basic` also took the within-tolerance
+  drift it had gathered since its last bless (e3de0bd, M2b). New golden scene `limiter_drive`.
 - A soft limiter on the output, on by default: stereo-linked, no added latency, transparent below
-  its knee, never above its ceiling. Two parameters, `master.limiter` and
+  its knee, never above the current (smoothed) ceiling. Two parameters, `master.limiter` and
   `master.limiter.ceiling` (−12 … 0 dB, default −1 dB); session settings like master volume, not
-  part of programs. 172 parameters in total.
+  part of programs. Switching it on or off is crossfaded over 5 ms. 172 parameters in total.
+- A session that lacks a parameter (saved by an older version) loads it at its default.
 
 ### M6a — presets and banks, infrastructure (2026-11-13)
 - Tones, programs and banks as text files; a read-only factory bank (8 placeholder programs for
