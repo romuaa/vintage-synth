@@ -694,7 +694,9 @@ void migrateState (juce::ValueTree& state)
 void VintageSynthProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     const auto xml = getXmlFromBinary (data, sizeInBytes);
-    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+    // The tag is the constant, not apvts.state.getType(): that tree may be replaced right now by a
+    // restore on another thread (this runs before the writer lock is taken).
+    if (xml == nullptr || ! xml->hasTagName (kStateTag))
         return;
 
     auto state = juce::ValueTree::fromXml (*xml);
