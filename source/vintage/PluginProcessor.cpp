@@ -18,7 +18,6 @@ namespace
 constexpr const char* kStateTag = "VintageSynthState";
 constexpr const char* kVersionAttr = "stateVersion";
 constexpr const char* kPresetInfoType = "Preset"; // child of the state tree: the bank / program the sound came from
-constexpr float kOutputClamp = 4.0f; // +12 dBFS
 } // namespace
 
 VintageSynthProcessor::VintageSynthProcessor()
@@ -32,6 +31,8 @@ VintageSynthProcessor::VintageSynthProcessor()
     keyMode.bind (apvts, ParamID::keyMode);
     splitPoint.bind (apvts, ParamID::keySplitPoint);
     balance.bind (apvts, ParamID::mixBalance);
+    limiterSwitch.bind (apvts, ParamID::masterLimiter);
+    limiterCeiling.bind (apvts, ParamID::masterLimiterCeiling);
     fxBinding.bind (apvts);
     arpBinding.bind (apvts);
 
@@ -121,6 +122,9 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     mixer.reset();
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterVolume.get()));
+    limiter.prepare (sampleRate);
+    limiter.reset (blockParams.limiterCeilingDb);
+    limiterActive = blockParams.limiterOn;
 
     // Effects (allocate here only).
     chorus.prepare (sampleRate, preparedBlockSize);
@@ -157,6 +161,8 @@ void VintageSynthProcessor::readBlockParams (BlockParams& out) const noexcept
     out.vintage = vintage.get();
     out.masterDb = masterVolume.get();
     out.balance = balance.get();
+    out.limiterOn = limiterSwitch.index() != 0;
+    out.limiterCeilingDb = limiterCeiling.get();
     out.mode = keyModeOf (keyMode);
     out.splitPoint = splitPoint.index();
     fxBinding.read (out.fx);
@@ -174,6 +180,7 @@ void VintageSynthProcessor::resetEngine() noexcept
     chorus.reset(); // O(1): stale delay-line content is hidden by the blocks (section 5.1)
     delay.reset();
     reverb.reset();
+    limiter.reset (blockParams.limiterCeilingDb);
     playerPedal = false; // the parts cleared their pedal
 }
 
@@ -425,6 +432,7 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
         lowerPart.setVintage (vintageAmount);
         upperPart.setVintage (vintageAmount);
         masterGain.setTargetValue (juce::Decibels::decibelsToGain (blockParams.masterDb));
+        limiter.setCeilingDb (blockParams.limiterCeilingDb);
 
         // Effects: once per block; the blocks smooth their continuous parameters themselves.
         fxSettings = blockParams.fx;
@@ -611,9 +619,11 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
     delay.process (left, right, len);
     reverb.process (left, right, len);
 
+    // Output stage (docs/decisions.md, "Output level"): master gain with the fixed trim (a power
+    // of two: exactly the untrimmed output scaled), the soft limiter if on, the safety clamp.
     for (int i = 0; i < len; ++i)
     {
-        const float g = masterGain.getNextValue();
+        const float g = masterGain.getNextValue() * kOutputTrim;
         float l = left[i] * g;
         float r = right[i] * g;
         if (! std::isfinite (l) || ! std::isfinite (r))
@@ -621,9 +631,21 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
             nonFinite = true;
             l = r = 0.0f;
         }
-        // Speaker/ear safety, never reached normally.
-        left[i] = juce::jlimit (-kOutputClamp, kOutputClamp, l);
-        right[i] = juce::jlimit (-kOutputClamp, kOutputClamp, r);
+        left[i] = l;
+        right[i] = r;
+    }
+    if (blockParams.limiterOn)
+    {
+        if (! limiterActive)
+            limiter.reset (blockParams.limiterCeilingDb); // switched on: starts clean, at its ceiling
+        limiter.process (left, right, len);
+    }
+    limiterActive = blockParams.limiterOn;
+    for (int i = 0; i < len; ++i)
+    {
+        // Speaker/ear safety behind the limiter, never reached normally.
+        left[i] = juce::jlimit (-kOutputClamp, kOutputClamp, left[i]);
+        right[i] = juce::jlimit (-kOutputClamp, kOutputClamp, right[i]);
     }
 
     if (numChannels >= 2)

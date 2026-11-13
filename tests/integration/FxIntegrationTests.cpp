@@ -58,7 +58,7 @@ TEST_CASE ("Wave 3 parameters: 69 appended in the contract's order with IDs, nam
     vs::VintageSynthProcessor proc;
     auto& state = proc.getState();
     const auto& params = proc.getParameters();
-    REQUIRE (params.size() == 170);
+    REQUIRE (params.size() == 172);
 
     struct Expected
     {
@@ -333,7 +333,7 @@ TEST_CASE ("Wave 3 parameters: every parameter reaches its module with the docum
     CHECK (rig.proc.getArpSeq (1).settings().mode == vs::seq::Mode::Arp);
 }
 
-TEST_CASE ("Wave 3 parameters: state round-trip of all 170 parameters", "[wave3][params][state]")
+TEST_CASE ("Wave 3 parameters: state round-trip of all 172 parameters", "[wave3][params][state]")
 {
     juce::ScopedJuceInitialiser_GUI init;
     std::mt19937 rng (7);
@@ -352,7 +352,7 @@ TEST_CASE ("Wave 3 parameters: state round-trip of all 170 parameters", "[wave3]
     vs::VintageSynthProcessor restored;
     restored.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
     const auto& params = restored.getParameters();
-    REQUIRE (params.size() == 170);
+    REQUIRE (params.size() == 172);
     for (int i = 0; i < params.size(); ++i)
     {
         INFO (idAt (params, i));
@@ -443,7 +443,7 @@ struct M3Reference
             mixer.process (lo.data(), whole ? nullptr : hi.data(), l.data(), r.data(), len);
             for (int i = 0; i < len; ++i)
             {
-                const float g = gain.getNextValue();
+                const float g = gain.getNextValue() * vs::VintageSynthProcessor::kOutputTrim;
                 float a = l[static_cast<size_t> (i)] * g, b = r[static_cast<size_t> (i)] * g;
                 if (! std::isfinite (a) || ! std::isfinite (b))
                     a = b = 0.0f;
@@ -471,9 +471,20 @@ TEST_CASE ("Effects and arp/seq off: output bit-identical to the M3 pipeline", "
     const double fs = GENERATE (48000.0, 96000.0);
     const int keyMode = GENERATE (0, 1); // Whole, Dual
     const int block = GENERATE (512, 37);
-    INFO ("rate " << fs << ", key mode " << keyMode << ", block " << block);
+    // Output stage (Wave 4): 0 = the limiter on at its defaults, the phrase stays below its knee
+    // (transparent); 1 = the limiter off, its ceiling at -12 dB and the master at +6 dB: the phrase
+    // goes far above that ceiling (off = the path without a limiter, plus the trim the reference
+    // also applies).
+    const int loud = GENERATE (0, 1);
+    INFO ("rate " << fs << ", key mode " << keyMode << ", block " << block << ", loud " << loud);
 
     Rig rig (fs, 512);
+    if (loud == 1)
+    {
+        rig.set ("master.limiter", 0);
+        rig.set ("master.limiter.ceiling", -12.0f);
+        rig.set ("master.volume", 6.0f);
+    }
     rig.set ("global.vintage", 1.0f);
     rig.set ("key.mode", static_cast<float> (keyMode));
     rig.set ("lower.mix.pan", -0.3f);
@@ -508,6 +519,12 @@ TEST_CASE ("Effects and arp/seq off: output bit-identical to the M3 pipeline", "
     const auto got = rig.render (total, midi, block);
     const auto want = ref.render (total, midi, block);
     CHECK (peakAbs (want.l, 0, want.l.size()) > 0.05);
+    const double kneeStart = juce::Decibels::decibelsToGain (vs::kDefaultLimiterCeilingDb - vs::fx::SoftLimiter::kKneeDb);
+    const double peak = std::max (peakAbs (want.l, 0, want.l.size()), peakAbs (want.r, 0, want.r.size()));
+    if (loud == 0)
+        CHECK (peak < kneeStart);
+    else
+        CHECK (peak > juce::Decibels::decibelsToGain (-12.0));
     CHECK (bitIdentical (got, want));
     CHECK (std::abs (rig.proc.getTailLengthSeconds() - rig.proc.getSynthTailSeconds()) < 1.0e-12); // no effect tail
 }

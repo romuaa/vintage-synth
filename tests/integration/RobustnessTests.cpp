@@ -1,6 +1,7 @@
 // Wave 3 follow-up (independent review): host bypass, stepped integer parameters, non-finite
 // parameter values, the arp/seq selector in Whole mode, the player's pedal across a reset, the
-// processor-level fuzz (ported from the review), no allocation on every path, and a gain report.
+// processor-level fuzz (ported from the review) and no allocation on every path. (The gain report moved
+// to OutputStageTests.cpp in Wave 4.)
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
@@ -227,8 +228,8 @@ TEST_CASE ("Every integer and choice parameter is discrete with the right number
         }
     }
     // 2 x 19 part choices, key mode, split point, 2 effect choices, 5 arp choices, octaves and
-    // length, 16 step notes and 16 step types.
-    CHECK (checked == 38 + 1 + 1 + 2 + 5 + 2 + 32);
+    // length, 16 step notes and 16 step types, the limiter switch.
+    CHECK (checked == 38 + 1 + 1 + 2 + 5 + 2 + 32 + 1);
     auto* split = dynamic_cast<juce::AudioParameterInt*> (proc.getState().getParameter (vs::ParamID::keySplitPoint));
     REQUIRE (split != nullptr);
     CHECK (static_cast<juce::AudioProcessorParameter*> (split)->getNumSteps() == 128);
@@ -241,7 +242,8 @@ TEST_CASE ("Non-finite parameter values: the engine gets the parameter's default
     // One parameter of every binding, and the processor's own globals.
     const char* ids[] { "lower.vcf.cutoff", "upper.vco1.waveform", "upper.env2.release", "fx.chorus.mode", "fx.delay.time",
                         "fx.reverb.decay", "fx.delay.feedback", "arp.swing", "arp.rate", "arp.tempo", "seq.step02.note",
-                        "seq.length", "master.volume", "global.vintage", "key.mode", "key.split_point", "mix.balance" };
+                        "seq.length", "master.volume", "global.vintage", "key.mode", "key.split_point", "mix.balance",
+                        "master.limiter", "master.limiter.ceiling" };
     for (const char* id : ids)
     {
         INFO (id << " = " << bad);
@@ -678,40 +680,3 @@ TEST_CASE ("No allocation: oversized blocks, target changes, reset, guard and th
     CHECK (rig.proc.getGuardTrips() == 1);
 }
 #endif
-
-// =================================================================================================
-// Gain report for the owner (hidden)
-// =================================================================================================
-
-TEST_CASE ("Report: peak levels of a 32-voice Dual chord at velocity 127, dry and through the effects", "[.report]")
-{
-    struct Cfg
-    {
-        const char* name;
-        std::vector<std::pair<juce::String, float>> params;
-    };
-    const std::vector<Cfg> cfgs {
-        { "dry", {} },
-        { "moderate effects (chorus I, delay 0.3, reverb 0.3)", { { "fx.chorus.mode", 1.0f }, { "fx.delay.level", 0.3f }, { "fx.reverb.level", 0.3f } } },
-        { "extreme effects (chorus II full, delay 1.0 at 95 % / 250 ms, reverb 1.0 at 20 s)",
-          { { "fx.chorus.mode", 2.0f }, { "fx.chorus.mix", 1.0f }, { "fx.delay.level", 1.0f }, { "fx.delay.feedback", 1.0f },
-            { "fx.delay.time", vs::map::delayTimeFromSec (0.25f) }, { "fx.reverb.level", 1.0f }, { "fx.reverb.decay", 1.0f } } },
-    };
-    for (const auto& c : cfgs)
-    {
-        Rig rig (48000.0, 512);
-        rig.set ("key.mode", 1);
-        for (const auto& [id, v] : c.params)
-            rig.set (id, v);
-        rig.prepare();
-        std::vector<Midi> midi;
-        for (int n = 0; n < 16; ++n)
-            midi.push_back (noteOn (0, 36 + 3 * n, 127));
-        const auto out = rig.render (rig.samples (6.0), midi, 512);
-        int clamped = 0;
-        for (size_t i = 0; i < out.l.size(); ++i)
-            clamped += (std::abs (out.l[i]) >= 3.999f || std::abs (out.r[i]) >= 3.999f) ? 1 : 0;
-        std::printf ("peak, Dual 32 voices vel 127, master -6 dB, %s: %.2f dBFS (L %.3f, R %.3f), samples at the +12 dBFS clamp %d\n", c.name,
-                     peakDb (out, 0, out.l.size()), peakAbs (out.l, 0, out.l.size()), peakAbs (out.r, 0, out.r.size()), clamped);
-    }
-}

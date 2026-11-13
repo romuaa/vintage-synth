@@ -1,6 +1,7 @@
 #include "vintage/params/ParameterLayout.h"
 
 #include "vintage/params/PartMappings.h"
+#include "common/fx/SoftLimiter.h"
 
 namespace vs
 {
@@ -56,6 +57,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 
     addFxParameters (layout);
     addArpSeqParameters (layout);
+
+    // Wave 4: the output soft limiter (session settings, not part of a program; docs/decisions.md).
+    layout.add (makeChoice (ParamID::masterLimiter, "Limiter", kOffOnLabels, 1));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ParamID::masterLimiterCeiling, kParamVersionHint },
+        "Limiter Ceiling",
+        juce::NormalisableRange<float> { fx::SoftLimiter::kMinCeilingDb, fx::SoftLimiter::kMaxCeilingDb, 0.1f },
+        kDefaultLimiterCeilingDb,
+        juce::AudioParameterFloatAttributes().withLabel ("dB")));
 
     return layout;
 }

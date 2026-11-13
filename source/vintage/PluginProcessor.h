@@ -11,6 +11,7 @@
 #include "common/fx/Chorus.h"
 #include "common/fx/Delay.h"
 #include "common/fx/Reverb.h"
+#include "common/fx/SoftLimiter.h"
 #include "vintage/params/ParameterLayout.h"
 #include "common/seq/ArpSeq.h"
 
@@ -89,6 +90,8 @@ public:
     {
         PartParams lower, upper;
         float vintage = 0.0f, masterDb = 0.0f, balance = 0.0f;
+        bool limiterOn = true;
+        float limiterCeilingDb = kDefaultLimiterCeilingDb;
         KeyMode mode = KeyMode::Whole;
         int splitPoint = 60;
         FxSettings fx;
@@ -112,6 +115,15 @@ public:
     bool isBypassed() const noexcept { return bypassed; }
 
     static constexpr std::uint32_t kLowerSeed = 0x1001u, kUpperSeed = 0x2001u;
+
+    /** Fixed output trim, applied with the master gain (docs/decisions.md, "Output level"):
+        -6.02 dB, exactly 0.5, so a render differs from the untrimmed one by exactly that factor.
+        Per-voice, per-part and effect gains are untouched: preset levels and send balance stay. */
+    static constexpr float kOutputTrim = 0.5f;
+    /** The safety clamp behind the limiter (+12 dBFS); never reached in normal use. */
+    static constexpr float kOutputClamp = 4.0f;
+    /** The limiter state, for tests and meters (read between blocks). */
+    const fx::SoftLimiter& getLimiter() const noexcept { return limiter; }
 
 private:
     void renderChunk (float* const* out, int numChannels, int start, int len) noexcept;
@@ -139,6 +151,7 @@ private:
     Part lowerPart, upperPart;
 
     BoundParam masterVolume, vintage, keyMode, splitPoint, balance; // sanitised reads (ParameterLayout.h)
+    BoundParam limiterSwitch, limiterCeiling;
     FxParamBinding fxBinding;
     ArpParamBinding arpBinding;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> masterGain;
@@ -160,6 +173,10 @@ private:
     fx::Delay delay;
     fx::Reverb reverb;
     FxSettings fxSettings;
+
+    // Output stage: master gain x kOutputTrim -> soft limiter (if on) -> safety clamp.
+    fx::SoftLimiter limiter;
+    bool limiterActive = false; // the limiter ran in the last chunk (off -> on starts it clean)
 
     // One arpeggiator/sequencer in front of each part. Their outputs are what the parts get.
     seq::ArpSeq lowerArp, upperArp;

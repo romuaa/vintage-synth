@@ -167,7 +167,7 @@ struct ProcRig
         return out;
     }
 
-    float masterGain() { return juce::Decibels::decibelsToGain (get (vs::ParamID::masterVolume)); }
+    float masterGain() { return juce::Decibels::decibelsToGain (get (vs::ParamID::masterVolume)) * vs::VintageSynthProcessor::kOutputTrim; }
 };
 
 /** Parsed events at host positions (48 kHz positions x scale). */
@@ -1069,7 +1069,7 @@ TEST_CASE ("M3 parameters: IDs, order, ranges, defaults and display text", "[m3]
     vs::VintageSynthProcessor proc;
     auto& state = proc.getState();
     const auto& params = proc.getParameters();
-    REQUIRE (params.size() == 170); // Wave 3 appended 69 after mix.balance
+    REQUIRE (params.size() == 172); // Wave 3 appended 69 after mix.balance, Wave 4 the 2 limiter parameters
 
     auto idAt = [&] (int i) { return dynamic_cast<juce::AudioProcessorParameterWithID*> (params[i])->paramID; };
     auto indexOf = [&] (const juce::String& id) {
