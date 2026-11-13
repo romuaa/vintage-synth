@@ -131,7 +131,7 @@ public:
 
         const float mixed = o1 + (o2 - o1) * sourceMix;
         const float hp = hpf.processG (mixed, hpfG);
-        const float y = vcf.tick (hp, cG[k], c1[k], c2[k], c3[k], c4[k], cK[k], cInv[k], slope24);
+        const float y = slopeFading ? vcfSlopeFade (hp, k) : vcf.tick (hp, cG[k], c1[k], c2[k], c3[k], c4[k], cK[k], cInv[k], slope24);
         return y * gain[k];
     }
 
@@ -164,7 +164,7 @@ public:
         const float g2 = 2.0f * g / (1.0f - g * g);
         const float mixed = o1 + (o2 - o1) * sourceMix;
         const float hp = hpf.processG (mixed, g2 / (1.0f + g2));
-        const float y = vcf.tick (hp, cG[k], c1[k], c2[k], c3[k], c4[k], cK[k], cInv[k], slope24) * gain[k];
+        const float y = (slopeFading ? vcfSlopeFade (hp, k) : vcf.tick (hp, cG[k], c1[k], c2[k], c3[k], c4[k], cK[k], cInv[k], slope24)) * gain[k];
 
         for (size_t j = 0; j + 1 < rtHist.size(); ++j)
             rtHist[j] = rtHist[j + 1];
@@ -212,10 +212,37 @@ public:
     */
     static constexpr int kRtPathExtraDelay = dsp::Oscillator::kLatency + 2 * kRtInterpTaps - 1;
 
+    /**
+        A VCF slope change on a sounding voice crossfades between the two filter taps over this
+        time (the taps differ in phase and level: switching at once steps the output). An idle
+        voice, and a note starting from idle, take the new slope at once.
+    */
+    static constexpr float kSlopeFadeSeconds = 0.005f;
+    /** True while a slope change crossfades. For tests. */
+    bool isSlopeFading() const noexcept { return slopeFading; }
+
     /** Voices interleaved together in renderBlock (more are rendered in further groups). */
     static constexpr int kVoiceGroup = 32;
 
 private:
+    /** One VCF sample during a slope crossfade (see kSlopeFadeSeconds); ends the fade at its end. */
+    float vcfSlopeFade (float hp, size_t k) noexcept
+    {
+        slopeMix += slope24 ? slopeFadeStep : -slopeFadeStep;
+        if (slopeMix >= 1.0f || slopeMix <= 0.0f)
+        {
+            slopeMix = slope24 ? 1.0f : 0.0f;
+            slopeFading = false;
+        }
+        return vcf.tickMix (hp, cG[k], c1[k], c2[k], c3[k], c4[k], cK[k], cInv[k], slopeMix);
+    }
+    /** Ends any slope crossfade: the voice uses the current slope from now on. */
+    void snapSlope() noexcept
+    {
+        slopeMix = slope24 ? 1.0f : 0.0f;
+        slopeFading = false;
+    }
+
     void applyEnvTimes() noexcept;
     void restartFromIdle() noexcept;
     void mirrorRealTimePair() noexcept;
@@ -287,6 +314,10 @@ private:
     int vcoModTarget = 1, pwmSource = 0, vco1RangeOct = 0, vco2RangeOct = 0, vcfEnvSource = 0;
     bool vco2LoFreq = false, sync = false, slope24 = true, env1Inverted = false;
     bool crossModOn = false; // this sub-block
+    // VCF slope crossfade: the output is stage 2 + (stage 4 - stage 2) * slopeMix. While not
+    // fading, slopeMix is 1 (-24 dB) or 0 (-12 dB) and the plain tap is used (bit-identical).
+    float slopeMix = 1.0f, slopeFadeStep = 0.0f;
+    bool slopeFading = false;
 
     // Per-sample results of beginBlock(), consumed by renderSample().
     static constexpr size_t kN = kMaxSubBlock;
