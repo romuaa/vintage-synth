@@ -536,7 +536,7 @@ its events unchanged. The random seed is fixed, so renders are reproducible.
 | ID | Name | Range (default) |
 |---|---|---|
 | `master.limiter` | Limiter | Off, On (On) |
-| `master.limiter.ceiling` | Limiter Ceiling | −12 … 0 dB, step 0.1 (−1 dB) |
+| `master.limiter.ceiling` | Limiter Ceiling | −12 … 0 dB, continuous (−1 dB) |
 
 Host parameter count 170 → **172**. Like `master.volume`, both are **session settings**: saved in
 the host session, not part of a program, tone or bank; loading or initialising a program does not
