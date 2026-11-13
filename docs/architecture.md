@@ -495,9 +495,12 @@ its events unchanged. The random seed is fixed, so renders are reproducible.
   leads (incl. sync and unison leads), bells and plucks (cross-mod), organ and keys, effects and
   noises, arpeggiated and sequenced programs, Dual layers and Splits. Own names; no third-party
   names of any kind (the hygiene check covers `presets/`).
-- **Level:** every program is trimmed so that a full-velocity eight-note chord stays below 0 dBFS
-  at the default master volume, and single notes sit at a comparable loudness across programs
-  (measured, tolerance stated). This is tested for every program.
+- **Level:** every program is trimmed (part VCA levels only) so that, measured with the output
+  limiter off at the default master volume: a full-velocity eight-note chord stays below 0 dBFS and
+  at most 3 dB above Init's (RMS and peak); and the category's standard phrase at velocity 100 is
+  within ±2 dB (unweighted RMS) of the median of its level group (sustained, percussive, bass).
+  With the limiter on at its defaults, no standard phrase reaches the limiter's knee. Phrases,
+  groups and measurements: `docs/factory-sounds.md`. This is tested for every program.
 - Programs are drafted by an agent from a written sound specification and **auditioned by the
   owner** (the M6 audition gate): one short rendered phrase per program, with a contact sheet
   (name, category, what to listen for).
