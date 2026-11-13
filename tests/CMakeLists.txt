@@ -61,6 +61,7 @@ target_sources(VintageSynthTests PRIVATE
     integration/FxIntegrationTests.cpp
     integration/ArpIntegrationTests.cpp
     integration/RobustnessTests.cpp
+    integration/OutputStageTests.cpp
     integration/RenderDemoM5.cpp)
 
 # M6a presets and banks (docs/architecture.md 6b): files, manager, factory bank, state, MIDI, host list.

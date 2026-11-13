@@ -18,7 +18,6 @@ namespace
 constexpr const char* kStateTag = "VintageSynthState";
 constexpr const char* kVersionAttr = "stateVersion";
 constexpr const char* kPresetInfoType = "Preset"; // child of the state tree: the bank / program the sound came from
-constexpr float kOutputClamp = 4.0f; // +12 dBFS
 } // namespace
 
 VintageSynthProcessor::VintageSynthProcessor()
@@ -32,6 +31,8 @@ VintageSynthProcessor::VintageSynthProcessor()
     keyMode.bind (apvts, ParamID::keyMode);
     splitPoint.bind (apvts, ParamID::keySplitPoint);
     balance.bind (apvts, ParamID::mixBalance);
+    limiterSwitch.bind (apvts, ParamID::masterLimiter);
+    limiterCeiling.bind (apvts, ParamID::masterLimiterCeiling);
     fxBinding.bind (apvts);
     arpBinding.bind (apvts);
 
@@ -121,6 +122,8 @@ void VintageSynthProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     mixer.reset();
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterVolume.get()));
+    limiter.prepare (sampleRate);
+    limiter.reset (blockParams.limiterCeilingDb, blockParams.limiterOn);
 
     // Effects (allocate here only).
     chorus.prepare (sampleRate, preparedBlockSize);
@@ -157,6 +160,8 @@ void VintageSynthProcessor::readBlockParams (BlockParams& out) const noexcept
     out.vintage = vintage.get();
     out.masterDb = masterVolume.get();
     out.balance = balance.get();
+    out.limiterOn = limiterSwitch.index() != 0;
+    out.limiterCeilingDb = limiterCeiling.get();
     out.mode = keyModeOf (keyMode);
     out.splitPoint = splitPoint.index();
     fxBinding.read (out.fx);
@@ -174,6 +179,9 @@ void VintageSynthProcessor::resetEngine() noexcept
     chorus.reset(); // O(1): stale delay-line content is hidden by the blocks (section 5.1)
     delay.reset();
     reverb.reset();
+    // The current parameter values, not the last block's (after a bypass they may be stale), so
+    // the limiter starts at its ceiling and switch without a ramp or fade.
+    limiter.reset (limiterCeiling.get(), limiterSwitch.index() != 0);
     playerPedal = false; // the parts cleared their pedal
 }
 
@@ -425,6 +433,8 @@ void VintageSynthProcessor::processInternal (juce::AudioBuffer<float>& buffer, j
         lowerPart.setVintage (vintageAmount);
         upperPart.setVintage (vintageAmount);
         masterGain.setTargetValue (juce::Decibels::decibelsToGain (blockParams.masterDb));
+        limiter.setCeilingDb (blockParams.limiterCeilingDb);
+        limiter.setEnabled (blockParams.limiterOn); // crossfaded over 5 ms (docs/decisions.md)
 
         // Effects: once per block; the blocks smooth their continuous parameters themselves.
         fxSettings = blockParams.fx;
@@ -611,9 +621,11 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
     delay.process (left, right, len);
     reverb.process (left, right, len);
 
+    // Output stage (docs/decisions.md, "Output level"): master gain with the fixed trim (a power
+    // of two: exactly the untrimmed output scaled), the soft limiter if on, the safety clamp.
     for (int i = 0; i < len; ++i)
     {
-        const float g = masterGain.getNextValue();
+        const float g = masterGain.getNextValue() * kOutputTrim;
         float l = left[i] * g;
         float r = right[i] * g;
         if (! std::isfinite (l) || ! std::isfinite (r))
@@ -621,9 +633,15 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
             nonFinite = true;
             l = r = 0.0f;
         }
-        // Speaker/ear safety, never reached normally.
-        left[i] = juce::jlimit (-kOutputClamp, kOutputClamp, l);
-        right[i] = juce::jlimit (-kOutputClamp, kOutputClamp, r);
+        left[i] = l;
+        right[i] = r;
+    }
+    limiter.process (left, right, len); // returns at once when fully off
+    for (int i = 0; i < len; ++i)
+    {
+        // Speaker/ear safety behind the limiter, never reached normally.
+        left[i] = juce::jlimit (-kOutputClamp, kOutputClamp, left[i]);
+        right[i] = juce::jlimit (-kOutputClamp, kOutputClamp, right[i]);
     }
 
     if (numChannels >= 2)
@@ -689,6 +707,25 @@ void migrateState (juce::ValueTree& state)
     [[maybe_unused]] const int version = state.getProperty (kVersionAttr, 1);
     // if (version < 2) { ... }
 }
+
+/** A session saved before a parameter existed has no entry for it. The loaded sound must not
+    depend on the instance's history, so every parameter of ours missing from the incoming state
+    gets an entry without a value, which AudioProcessorValueTreeState restores to the parameter's
+    default. (JUCE 9.0.5 happens to do the same for a missing entry, through the child it appends
+    while reconnecting its parameters; this makes the rule explicit and independent of that
+    internal. Tested in OutputStageTests, "State: a parameter missing ...".) */
+void addMissingParameters (juce::ValueTree& state, const juce::Array<juce::AudioProcessorParameter*>& params)
+{
+    static const juce::Identifier paramType ("PARAM"), idProperty ("id"); // JUCE's state format
+    for (auto* p : params)
+        if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            if (! state.getChildWithProperty (idProperty, withId->paramID).isValid())
+            {
+                juce::ValueTree entry (paramType);
+                entry.setProperty (idProperty, withId->paramID, nullptr);
+                state.appendChild (entry, nullptr);
+            }
+}
 } // namespace
 
 void VintageSynthProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -706,6 +743,7 @@ void VintageSynthProcessor::setStateInformation (const void* data, int sizeInByt
     if (info.isValid())
         state.removeChild (info, nullptr);
     migrateState (state);
+    addMissingParameters (state, getParameters());
 
     // Hosts call this on any thread: no file I/O here (a user bank named by the session is looked
     // up later on the message thread). One writer lock around both steps, so no apply on another

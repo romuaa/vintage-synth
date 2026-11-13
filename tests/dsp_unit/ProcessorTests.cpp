@@ -107,12 +107,12 @@ TEST_CASE ("Parameter names: every per-part name reaches the host as the UTF-8 t
     CHECK (nonAscii == 4); // Velocity -> VCA / VCF, both parts
 }
 
-TEST_CASE ("Parameter layout: 170 parameters, the M2 parameters appended with their defaults", "[processor][state]")
+TEST_CASE ("Parameter layout: 172 parameters, the M2 parameters appended with their defaults", "[processor][state]")
 {
     JuceEnv env;
     vs::VintageSynthProcessor proc;
     const auto& params = proc.getParameters();
-    CHECK (params.size() == 170); // master + 2 x 48 per part + vintage + 3 M3 globals + 11 effects + 58 arp/seq (Wave 3)
+    CHECK (params.size() == 172); // master + 2 x 48 per part + vintage + 3 M3 globals + 11 effects + 58 arp/seq (Wave 3) + 2 limiter (Wave 4)
 
     auto* state = &proc.getState();
     const char* m2Floats[] { "porta.time", "unison.detune", "vel.vca", "vel.vcf", "mod.wheel_vco" };

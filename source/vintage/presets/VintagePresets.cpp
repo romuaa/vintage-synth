@@ -19,7 +19,7 @@ presets::Instrument vintageInstrument()
 
 presets::Schema makeVintageSchema (const juce::AudioProcessor& processor)
 {
-    return presets::Schema::fromProcessor (processor, { kLowerPrefix, kUpperPrefix }, { ParamID::masterVolume }, vintageInstrument());
+    return presets::Schema::fromProcessor (processor, { kLowerPrefix, kUpperPrefix }, { ParamID::masterVolume, ParamID::masterLimiter, ParamID::masterLimiterCeiling }, vintageInstrument());
 }
 
 presets::Bank makeVintageFactoryBank (const presets::Schema& schema, juce::StringArray* errors)

@@ -18,11 +18,16 @@ inline constexpr const char* vintage = "global.vintage";
 inline constexpr const char* keyMode = "key.mode";
 inline constexpr const char* keySplitPoint = "key.split_point";
 inline constexpr const char* mixBalance = "mix.balance";
+// Wave 4: output soft limiter (appended after the arp/seq step parameters, in this order). Session
+// settings like master.volume: not part of a program (vintage/presets/VintagePresets.cpp).
+inline constexpr const char* masterLimiter = "master.limiter";
+inline constexpr const char* masterLimiterCeiling = "master.limiter.ceiling";
 } // namespace ParamID
 
 /** "Key Mode" choices; order == vs::KeyMode. */
 inline constexpr std::array<const char*, 3> kKeyModeLabels { "Whole", "Dual", "Split" };
 inline constexpr int kDefaultSplitPoint = 60; // C4
+inline constexpr float kDefaultLimiterCeilingDb = -1.0f;
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 

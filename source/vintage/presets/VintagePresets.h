@@ -2,8 +2,8 @@
 
 // What is specific to this instrument in the preset system (the generic part is common/presets/):
 // which parameters form a tone (the lower.* and upper.* sets), which are left out of programs
-// (master volume), the file identity, bank layout and extensions, the folder name for user files and
-// the embedded factory bank.
+// (master volume and the output limiter: session settings), the file identity, bank layout and
+// extensions, the folder name for user files and the embedded factory bank.
 
 #include "common/presets/FactoryBank.h"
 #include "common/presets/PresetManager.h"

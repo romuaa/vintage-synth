@@ -99,7 +99,7 @@ int main (int argc, char** argv)
         return 1;
 
     const int numParams = ownParameters (*plugin).size();
-    check (numParams == 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3, "own parameter count " + juce::String (numParams)
+    check (numParams == 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3 + 2, "own parameter count " + juce::String (numParams)
                                         + " (total incl. wrapper params " + juce::String (plugin->getParameters().size()) + ")");
 
     // Host program list: the 64 programs of the factory bank, through the VST3 wrapper's program list.

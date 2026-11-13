@@ -124,6 +124,8 @@ TEST_CASE ("selectProgram sets every program parameter and nothing else", "[pres
     PresetRig rig;
     auto& pm = rig.presets();
     rig.set ("master.volume", -20.0f); // not part of a program
+    rig.set ("master.limiter", 0);     // nor is the limiter (Wave 4): session settings
+    rig.set ("master.limiter.ceiling", -7.5f);
     const auto program = randomProgram (rig.schema(), 11, "Mine");
     pm.setBank ([&] {
         Bank b = makeInitBank (rig.schema());
@@ -140,6 +142,8 @@ TEST_CASE ("selectProgram sets every program parameter and nothing else", "[pres
     CHECK (rig.differences (program.values).isEmpty());
     CHECK (rig.get ("master.volume") < -19.9f);
     CHECK (rig.get ("master.volume") > -20.1f);
+    CHECK (rig.get ("master.limiter") < 0.5f);
+    CHECK (std::abs (rig.get ("master.limiter.ceiling") + 7.5f) < 0.01f);
     // Nearly every program parameter is non-default in this program: they were all really set.
     int changedFromDefault = 0;
     for (int i = 0; i < rig.schema().numParams(); ++i)
@@ -193,6 +197,12 @@ TEST_CASE ("The modified flag", "[presets][manager]")
     SECTION ("master volume is not part of a program")
     {
         rig.set ("master.volume", -30.0f);
+        CHECK_FALSE (pm.isModified());
+    }
+    SECTION ("the limiter is not part of a program")
+    {
+        rig.set ("master.limiter", 0);
+        rig.set ("master.limiter.ceiling", -6.0f);
         CHECK_FALSE (pm.isModified());
     }
     SECTION ("a change made on another thread (host automation) counts")
