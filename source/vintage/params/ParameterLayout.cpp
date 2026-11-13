@@ -65,7 +65,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         "Limiter Ceiling",
         juce::NormalisableRange<float> { fx::SoftLimiter::kMinCeilingDb, fx::SoftLimiter::kMaxCeilingDb },
         kDefaultLimiterCeilingDb,
-        juce::AudioParameterFloatAttributes().withLabel ("dB")));
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("dB")
+            .withStringFromValueFunction ([] (float v, int) { return juce::String (v, 1); }) // shown in 0.1 dB, stored exactly
+            .withValueFromStringFunction ([] (const juce::String& t) { return t.getFloatValue(); })));
 
     return layout;
 }
