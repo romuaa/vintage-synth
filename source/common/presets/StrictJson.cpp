@@ -444,14 +444,14 @@ bool Document::parseImpl (const char* p, size_t n, const Limits& limits, std::st
 
     enum class State
     {
-        Value,            // a value must come
+        ExpectValue,      // a value must come
         ArrayValueOrEnd,  // after '['
         ObjectKeyOrEnd,   // after '{'
         ObjectKey,        // after ',' in an object
         AfterValue,       // a value inside a container ended: ',' or the closing bracket
         Done
     };
-    State state = State::Value;
+    State state = State::ExpectValue;
     Item pendingKey;
 
     // Attaches a finished value to its container (or makes it the root).
@@ -526,7 +526,7 @@ bool Document::parseImpl (const char* p, size_t n, const Limits& limits, std::st
                         return false;
                     continue;
                 }
-                state = State::Value;
+                state = State::ExpectValue;
                 continue;
 
             case State::ObjectKeyOrEnd:
@@ -547,7 +547,7 @@ bool Document::parseImpl (const char* p, size_t n, const Limits& limits, std::st
                 if (i >= n || p[i] != ':')
                     return fail ("expected ':' after a key");
                 ++i;
-                state = State::Value;
+                state = State::ExpectValue;
                 continue;
 
             case State::AfterValue:
@@ -556,7 +556,7 @@ bool Document::parseImpl (const char* p, size_t n, const Limits& limits, std::st
                 if (c == ',')
                 {
                     ++i;
-                    state = inObject ? State::ObjectKey : State::Value;
+                    state = inObject ? State::ObjectKey : State::ExpectValue;
                     continue;
                 }
                 if (c == (inObject ? '}' : ']'))
@@ -568,7 +568,7 @@ bool Document::parseImpl (const char* p, size_t n, const Limits& limits, std::st
                 return fail (inObject ? "expected ',' or '}'" : "expected ',' or ']'");
             }
 
-            case State::Value:
+            case State::ExpectValue:
             {
                 if (c == '{' || c == '[')
                 {
