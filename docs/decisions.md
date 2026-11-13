@@ -13,6 +13,15 @@ All (review).
 | One arpeggiator/sequencer settings set with a part selector (Lower, Upper, Both); the sequencer's 16 steps are host parameters (48 of them). | One set is easy to understand and automate; step parameters make the sequencer usable and testable before the custom UI exists and are saved with the state. Parameter count becomes 170. |
 | With no usable host transport the arp/seq runs on its internal tempo parameter. | Works in simple hosts and when just playing. |
 
+## VCF slope switch on sounding voices (2026-11-13)
+
+(review)
+
+| Decision | Why |
+|---|---|
+| **A VCF slope change crossfades the output between the stage-2 and stage-4 taps over 5 ms on every voice that is sounding** (held or releasing); idle voices and notes starting from idle take the slope at once. Outside the 5 ms the plain tap is used, so the steady sound is bit-identical (all render-regression scripts compared bit for bit). This applies to a hand flip of the switch as well as to a program change. | The two taps differ in phase and level, so switching between them stepped the output (0.18–0.33 on a held sine chord against its own 0.018). 5 ms is the parameter-smoothing time used elsewhere; the crossfade is a gain ramp between two correlated signals, so it has no step of its own. This does not smooth the switch value itself (the "never smooth switches" rule): the filter is in one mode or the other, only the output moves between them. |
+| **Other switches are left as they are.** Measured on a held chord and in a program apply, waveform, range, sync, VCO-2 mode, ENV-1 polarity, VCF envelope source, ENV-1 key follow and chorus mode cause no step larger than the sound's own. | A waveform switch jumps the oscillator to the new shape at its current phase; the jump is no larger than the new waveform's own edges and is low-passed by the VCF, so it is not heard as a click. Not band-limited, so it can alias once; left as is unless the owner hears it. |
+
 ## M6b: the factory bank (2026-11-13)
 
 All (review): drafted by an agent that cannot hear; the owner's audition decides.
@@ -24,7 +33,7 @@ All (review): drafted by an agent that cannot hear; the owner's audition decides
 | **Levels are set with each part's VCA level only**; master volume is not stored in programs and was not touched. | The contract excludes master volume from programs; one control per part keeps trims easy to read. |
 | **Split programs split at G3 (MIDI 55)** with the bass part in Lower. | Leaves a usable two-octave bass range and middle C and up for the other part. |
 | **Arp Hold is off in every program;** Arp pattern Down and 16 unison voices are not used. | A held pattern never stops, so it fails "silent after the tail" and surprises when browsing. The unused options are shown by their neighbours. |
-| **Programs with the −12 dB VCF slope (A7 B3 B4 B7 C5 D7 F4) step audibly when applied over sounding notes** (see the engine finding in the M6b report): kept, because the slope is a feature the bank must show. | The fix belongs in the engine (crossfading the switch on releasing voices), not in the presets. |
+| **Programs with the −12 dB VCF slope (A7 B3 B4 B7 C5 D7 F4) step audibly when applied over sounding notes** (see the engine finding in the M6b report): kept, because the slope is a feature the bank must show. | The fix belongs in the engine, not in the presets. **Fixed** (2026-11-13): the slope now crossfades on sounding voices (see "VCF slope switch on sounding voices"). |
 | **Render-regression references cover seven designed programs, loaded by name, not all 64** (`docs/architecture.md` 6b.5 asks for one per program). | Each reference is about 40 KB; 64 would add about 2.5 MB of features to the repository. The factory tests already check every program's sound, finiteness, release and level. Owner decision whether all 64 are wanted. |
 
 ## M6a results: preset and bank infrastructure (2026-11-13)

@@ -90,6 +90,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 - **In progress (Wave 4a):** the output stage (more default headroom as a global trim, adjustable
   soft limiter; owner decision) on `wave4/output-stage`, and M6b, the 64 factory programs, on
   `wave4/factory-sounds` (owner auditions before merge). B-Side S1 can start in parallel.
+  `wave4/slope-click` (stacked on `wave4/factory-sounds`): the VCF slope crossfades on sounding
+  voices, so the −12 dB factory programs no longer click when applied over notes.
 - MIDI Program Change timing: accepted as is for now (owner will test later).
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone

@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### VCF slope switch without a click (2026-11-13)
+- Changing the VCF slope while notes sound (by hand, by automation, or by applying a program such as
+  the factory −12 dB programs A7 B3 B4 B7 C5 D7 F4) no longer steps the output: sounding voices
+  crossfade between the filter taps over 5 ms. Steady sound is bit-identical; CPU cost unchanged.
+- The program-apply click test covers −12 dB programs again (both directions); a new Part test flips
+  the slope on a held chord at every host rate and checks block-size independence.
+
 ### M6b — the factory bank (2026-11-13)
 - 64 designed factory programs (A1–H8) replace the 8 placeholders: brass, strings and pads, keys,
   plucks and bells, basses, leads, organ, percussion and sound effects, Dual layers and Splits,
