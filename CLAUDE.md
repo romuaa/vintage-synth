@@ -83,16 +83,14 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
-- **Wave 3 (M5) is complete on branch `wave3/product`, awaiting the owner's audition (`m5_demo`)
-  and merge approval:** effects and arp/sequencer in the plugin (170 parameters), host bypass,
-  parameter sanitising, tail length, the sine-sync alias fix and offline = real time for Cross Mod.
-  Verified by the local gate only. Open for the owner: output level / hard clip (see decisions).
-- **S0 (common library) is done on branch `wave3/s0`** (pure restructuring, bit-identical renders,
-  identical parameter list; verified by the local gate), stacked on `wave3/product`.
-- **M6a (preset and bank infrastructure) is done on branch `wave3/m6`,** stacked on `wave3/s0`:
-  verified by the local gate; reviewed, review findings fixed. Open for the owner: MIDI Program
-  Change timing; a look at the preset bar on screen. **Next:** M6b, the 64 factory programs
-  (drafted from a sound specification, auditioned by the owner); B-Side S1 can start in parallel.
+- **Wave 3 is merged to `main`** (PR #9, owner approved 2026-11-13): M5 (effects and arp/sequencer
+  in the plugin, 170 parameters, host bypass, sine-sync alias fix, offline = real time for Cross
+  Mod), S0 (common library `source/common/`) and M6a (presets and banks, preset bar, 8 placeholder
+  programs). Verified by the local gate only.
+- **In progress (Wave 4a):** the output stage (more default headroom as a global trim, adjustable
+  soft limiter; owner decision) on `wave4/output-stage`, and M6b, the 64 factory programs, on
+  `wave4/factory-sounds` (owner auditions before merge). B-Side S1 can start in parallel.
+- MIDI Program Change timing: accepted as is for now (owner will test later).
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
   in `source/common/seq/`, not wired in. Audition approved by the owner.
@@ -104,6 +102,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
      in `CMakeLists.txt`, a float-comparison rewrite in `source/common/fx/FxCommon.h` (2026-11-12).
   2. `scripts/preflight.sh` and the manual-only CI workflow (the reworked `build.yml` itself has
      never run on GitHub: its first dispatch is also its first test) (2026-11-12).
+  3. Wave 3 (PR #9): effects and arp/sequencer integration, the common-library split, presets and
+     banks incl. the strict JSON reader and file dialogs (2026-11-13).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
