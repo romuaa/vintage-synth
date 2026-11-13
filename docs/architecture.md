@@ -524,10 +524,15 @@ its events unchanged. The random seed is fixed, so renders are reproducible.
   one by exactly that factor (except values that become subnormal and are flushed to zero).
 - **Limiter** (`common/fx/SoftLimiter.h`): stereo-linked, zero latency (the reported latency does
   not change), soft knee 3 dB below the ceiling, gain exactly 1 below the knee (samples untouched,
-  bit-identical to limiter off), output never above the ceiling (float rounding aside), program-
-  dependent release. Block-size independent, deterministic, allocation-free, denormal-safe.
-  Switched on from off it starts clean (envelope reset). Reset with everything else (`reset()`,
-  the non-finite guard).
+  bit-identical to limiter off), output never above the current (smoothed) ceiling (float
+  rounding aside; the ceiling ramps over 20 ms), program-dependent release. Block-size
+  independent, deterministic, allocation-free, denormal-safe.
+- **Switch:** crossfaded over 5 ms (applied gain g^m, m ramping 0 ↔ 1, linear in dB), a deliberate
+  exception to "never smooth switches" (docs/decisions.md). The detectors keep running during a
+  fade-out; fully off, the limiter does nothing and costs nothing (bit-identical to the path ×
+  trim); switched on from fully off it starts clean (detectors cleared). Below the knee the
+  samples stay untouched, also during a fade. Reset with everything else (`reset()`, the
+  non-finite guard, the end of a host bypass), at the current parameter values without a ramp.
 - The clamp at ±4.0 (+12 dBFS) stays as a safety net behind the limiter.
 - The limiter adds no tail: the reported tail length is unchanged.
 
@@ -542,20 +547,33 @@ Host parameter count 170 → **172**. Like `master.volume`, both are **session s
 the host session, not part of a program, tone or bank; loading or initialising a program does not
 change them and changing them does not mark the program modified. Non-finite host values become
 the default (sanitised binding). The ceiling is smoothed (20 ms linear ramp in dB); the switch is
-not smoothed.
+crossfaded (5 ms). The ceiling is shown in 0.1 dB steps ("0.0", never "-0.0").
+
+**Sessions saved before a parameter existed:** every parameter missing from a loaded state is set
+to its default (the processor adds an empty entry for it before the state is applied; JUCE 9.0.5
+also does this by itself, the processor makes it explicit). A session saved before Wave 4 so loads
+with the limiter on at −1 dB, and plays 6.02 dB quieter than before (the trim).
 
 ### 6c.3 Gates
 1. Headroom: the 32-voice full-velocity Dual chord, dry, default master, limiter off, peaks at or
    below −1 dBFS.
 2. Limiter block: below the knee bit-identical; the gain returns to exactly 1 after a burst; no
    sample above the ceiling on sustained material (+6/+12/+24 dB over) or a hard transient, at
-   44.1/48/192 kHz; block-size independent with a moving (and NaN) ceiling.
+   44.1/48/192 kHz; **bit-identical** for block sizes 1, 7, 61, 512 and 4096 with a moving (and
+   NaN) ceiling; switching below the knee leaves the samples untouched; fully off does nothing.
 3. Through the processor: ceiling held for the loudest chord dry and with extreme effects; limiter
    off = the plain path plus trim (bit-identical to the M3 reference at a level far above the
    ceiling); distortion of a chord 6 dB over the ceiling below −38 dB (20 ms fits); block-size
-   independent with ceiling automation and switch changes; a ceiling sweep does not click;
-   non-finite values are safe; program loads leave both parameters alone.
-4. Golden renders re-blessed only after showing old × 0.5 = new for every sample.
+   independent with ceiling automation and switch changes (whole processor, blocks 512 / 61 / 7:
+   difference **below −120 dB**, not bit-identical, as for the rest of the engine); a ceiling
+   sweep in 0.5 dB steps changes the gain by less than 0.01 dB per sample (measured against the
+   unswept render, so the detectors' own moves cancel); switching off or on while reducing the
+   gain changes it by less than 0.1 dB per sample during the fade; non-finite values are safe;
+   program loads leave both parameters alone; a session without the limiter entries loads them
+   at their defaults.
+4. Golden renders re-blessed only after showing old × 0.5 = new for every sample of the raw
+   renders. Golden scene `limiter_drive` drives the limiter (master +6 dB, ceiling moves, switch
+   off and on), so limiter changes show up in render regression.
 
 ## 7. Test and validation infrastructure (parallel track in Wave 1)
 
