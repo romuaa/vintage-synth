@@ -117,7 +117,10 @@ public:
     /**
         Phase 2: output of sample i (< m.numSamples) of the sub-block begun last. The other
         arguments are that sample's shared values from the ModBlock.
+        MayFade: false only if no VCF slope crossfade runs in this sub-block (isSlopeFading() was
+        false after beginBlock): renderBlock then runs the plain loop without the per-sample check.
     */
+    template <bool MayFade = true>
     float renderSample (int i, float hpfG, float crossModOct, float sourceMix) noexcept
     {
         const auto k = static_cast<size_t> (i);
@@ -131,7 +134,7 @@ public:
 
         const float mixed = o1 + (o2 - o1) * sourceMix;
         const float hp = hpf.processG (mixed, hpfG);
-        const float y = slopeFading ? vcfSlopeFade (hp, k) : vcf.tick (hp, cG[k], c1[k], c2[k], c3[k], c4[k], cK[k], cInv[k], slope24);
+        const float y = MayFade && slopeFading ? vcfSlopeFade (hp, k) : vcf.tick (hp, cG[k], c1[k], c2[k], c3[k], c4[k], cK[k], cInv[k], slope24);
         return y * gain[k];
     }
 

@@ -431,6 +431,7 @@ void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m,
         Voice* active[kVoiceGroup];
         Voice* rtPairs[kVoiceGroup]; // offline Cross Mod notes rendered at the real-time rate
         int numActive = 0, numRtPairs = 0;
+        bool anyFading = false;
         const int last = std::min (numVoices, first + kVoiceGroup);
         for (int v = first; v < last; ++v)
             if (voices[v]->beginBlock (m))
@@ -438,16 +439,30 @@ void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m,
                 if (voices[v]->rtPair)
                     rtPairs[numRtPairs++] = voices[v];
                 else
+                {
+                    anyFading = anyFading || voices[v]->slopeFading;
                     active[numActive++] = voices[v];
+                }
             }
 
-        for (int i = 0; i < n; ++i)
-        {
-            float sum = 0.0f;
-            for (int a = 0; a < numActive; ++a)
-                sum += active[a]->renderSample (i, hpfG[i], crossOct[i], mix[i]);
-            out[i] += sum;
-        }
+        // A VCF slope crossfade is rare (5 ms after a slope change): only then does the loop pay
+        // for the per-sample check (a branch in this loop costs about a quarter of the voice time).
+        if (anyFading)
+            for (int i = 0; i < n; ++i)
+            {
+                float sum = 0.0f;
+                for (int a = 0; a < numActive; ++a)
+                    sum += active[a]->renderSample<true> (i, hpfG[i], crossOct[i], mix[i]);
+                out[i] += sum;
+            }
+        else
+            for (int i = 0; i < n; ++i)
+            {
+                float sum = 0.0f;
+                for (int a = 0; a < numActive; ++a)
+                    sum += active[a]->renderSample<false> (i, hpfG[i], crossOct[i], mix[i]);
+                out[i] += sum;
+            }
         if (numRtPairs > 0) // offline only
             for (int i = 0; i < n; ++i)
             {
