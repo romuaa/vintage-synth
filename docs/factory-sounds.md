@@ -97,8 +97,9 @@ unless named. Ranges and tapers are in `docs/decisions.md`; IDs in `PartParamLis
 ## Standard phrases and level groups
 
 Every program is measured with the phrase of its category (`tests/preset_unit/FactorySound.h`),
-at velocity 100, 48 kHz, the default master volume, rendered through the real preset path
-(`PresetManager::selectProgram` on the processor).
+at velocity 100, 48 kHz, the default master volume (−6 dB) and the fixed output trim (−6.02 dB),
+rendered through the real preset path (`PresetManager::selectProgram` on the processor). Levels are
+measured with the output limiter **off**, so the rule compares programs and not the limiter.
 
 | Phrase | Categories | Notes |
 |---|---|---|
@@ -117,14 +118,23 @@ Init is the reference and belongs to no group.
 **Level rule** (enforced over the embedded bank by `FactoryBankTests.cpp`):
 1. Loudness = unweighted RMS of both channels from the first note-on to the last note-off of the
    standard phrase. Each program is within ±2 dB of its group's median. (The bank as delivered is
-   within ±0.6 dB; group medians: sustained −21.3 dB, percussive −25.5 dB, bass −26.7 dB.)
+   within ±0.6 dB; group medians: sustained −27.3 dB, percussive −31.5 dB, bass −32.8 dB.)
 2. An eight-note chord (C3 E3 G3 C4 E4 G4 C5 E5) at velocity 127, held 2 s: neither its RMS (from
-   0.55 s) nor its peak is more than 3 dB above Init's (Init: −14.5 dB RMS, −1.0 dBFS peak).
-3. The standard phrase peaks below 0 dBFS.
+   0.55 s) nor its peak is more than 3 dB above Init's (Init: −20.5 dB RMS, −7.0 dBFS peak), and its
+   peak is below 0 dBFS. (Loudest chord as delivered: −4.5 dBFS, C2.)
+3. The standard phrase peaks below 0 dBFS (loudest: −8.3 dBFS, F5).
+4. With the limiter **on** at its defaults (ceiling −1 dBFS, knee from −4 dBFS): no standard phrase
+   reaches the knee, so the limiter never shapes a factory sound played normally. The test also lists
+   the full-velocity chords that reach the knee: none as delivered.
 
-Levels are set with each part's VCA level only. Master volume is not part of a program
-(`docs/architecture.md` 6b.1) and is left at its default; the global output trim and limiter being
-added separately keep these relative levels.
+This replaces the contract's earlier wording in `docs/architecture.md` 6b.4 ("a full-velocity
+eight-note chord stays below 0 dBFS at the default master volume"): that check is kept (rule 2),
+and the relative rule is added on top.
+
+Levels are set with each part's VCA level only. Master volume, the limiter switch and its ceiling are
+session settings, not part of a program (`docs/architecture.md` 6b.1, 6c), and are left at their
+defaults. The output trim scales every program equally (exactly × 0.5), so relative levels are
+unchanged by it.
 
 ## Measurements
 
@@ -134,7 +144,9 @@ program, `m6b_audition.wav` (all 64 in slot order), `m6b_index.txt` (start time 
 (note-on until the 5 ms RMS envelope first reaches 90 % of its maximum before the first note-off),
 release tail (last note-off until the envelope stays 60 dB below its maximum, effects included),
 spectral centroid (magnitude-weighted, mid signal, over the notes), stereo width (side/mid energy,
-dB; −99 = mono), the eight-note chord's peak and RMS, and the tail the processor reports to the host.
+dB; −99 = mono), the eight-note chord's peak and RMS, and the tail the processor reports to the host
+(all with the limiter off), plus the phrase and chord peaks with the limiter on. The audition files
+are rendered with the limiter on at its defaults, as a new instance plays.
 
 The automated tests also require, for every program: it loads without parse errors, is distinct
 from Init and from every other program, renders finite audio that is not silent (RMS above −40 dB),

@@ -18,9 +18,10 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   arpeggiator and sequencer programs, effect showcases. Specification, level rule and feature
   coverage: `docs/factory-sounds.md`.
 - Levels matched per group (sustained, percussive, bass): every program's standard phrase is within
-  2 dB of its group's median, and no full-velocity eight-note chord is more than 3 dB above Init's.
-  Enforced by tests, together with: every program sounds, stays finite and falls silent once its
-  reported tail has passed.
+  2 dB of its group's median, and no full-velocity eight-note chord is more than 3 dB above Init's
+  or reaches 0 dBFS (measured with the output limiter off). With the limiter on at its defaults, no
+  program's standard phrase reaches its knee. Enforced by tests, together with: every program
+  sounds, stays finite and falls silent once its reported tail has passed.
 - Hidden audition render (`Render m6b_factory*`): one WAV per program, the concatenated audition
   with an index, and a measurement table (peak, RMS, attack, release tail, spectral centroid,
   stereo width).
