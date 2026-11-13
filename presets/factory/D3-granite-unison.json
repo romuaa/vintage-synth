@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Granite Unison",
+  "category": "Bass",
+  "author": "Exitium",
+  "global": {
+    "global.vintage": 0.4
+  },
+  "lower": {
+    "vco1.range": 1,
+    "vco2.range": 0,
+    "vco2.fine_tune": 0.04,
+    "vcf.cutoff": 0.3,
+    "vcf.resonance": 0.2,
+    "vcf.env_mod": 0.45,
+    "vcf.key_follow": 0.6,
+    "env1.attack": 0.0,
+    "env1.decay": 0.5,
+    "env1.sustain": 0.15,
+    "env1.release": 0.3,
+    "env2.attack": 0.0,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.85,
+    "env2.release": 0.25,
+    "assign.mode": 1,
+    "assign.unison_voices": 1,
+    "unison.detune": 0.22,
+    "vca.level": 0.66
+  },
+  "upper": {}
+}

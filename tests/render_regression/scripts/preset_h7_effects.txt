@@ -1,0 +1,12 @@
+# Factory program "Deep Space Echo" (M6b), loaded by name like a preset change: long ping-pong delay, long reverb and chorus II; short notes so the tails are heard.
+# Regenerate this reference only when the program is changed on purpose.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program Deep Space Echo
+
+0.10 on 60 100
+0.40 off 60
+0.60 on 67 100
+0.90 off 67

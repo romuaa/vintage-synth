@@ -1,5 +1,5 @@
 # Preset mechanism (M6a): factory program A1, loaded by the script like a preset change. Init program (all defaults): a held major triad then a single note.
-# One of the placeholder bank programs; when the designed factory bank replaces it, regenerate this reference.
+# Init stays the first program of the factory bank.
 rate 48000
 channels 2
 length 3.2

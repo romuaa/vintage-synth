@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Thin Air",
+  "category": "Lead",
+  "author": "Exitium",
+  "global": {
+    "fx.delay.level": 0.2,
+    "fx.reverb.level": 0.2
+  },
+  "lower": {
+    "assign.mode": 2,
+    "vcf.cutoff": 0.66,
+    "vcf.resonance": 0.2,
+    "vcf.env_mod": 0.25,
+    "env2.attack": 0.12,
+    "env2.sustain": 0.9,
+    "env2.release": 0.42,
+    "lfo.delay": 0.45,
+    "vcomod.lfo_mod": 0.06,
+    "lfo.rate": 0.67,
+    "mod.wheel_vco": 0.4,
+    "vco1.waveform": 4,
+    "vco2.waveform": 4,
+    "vcomod.pwm_source": 1,
+    "vcomod.pwm": 0.8,
+    "vco2.fine_tune": 0.08,
+    "hpf.cutoff": 0.3,
+    "bend.range": 12,
+    "vel.vcf": 0.5,
+    "vca.level": 0.78
+  },
+  "upper": {}
+}

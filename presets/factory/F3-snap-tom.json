@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Snap Tom",
+  "category": "Percussion",
+  "author": "Exitium",
+  "global": {
+    "fx.reverb.level": 0.2
+  },
+  "lower": {
+    "vco1.waveform": 0,
+    "vco2.waveform": 5,
+    "mixer.source_mix": 0.12,
+    "vco1.range": 1,
+    "vcomod.env_mod": 0.32,
+    "vcomod.target": 0,
+    "vcf.cutoff": 0.5,
+    "vcf.env_mod": 0.3,
+    "env1.attack": 0.0,
+    "env1.decay": 0.42,
+    "env1.sustain": 0.0,
+    "env1.release": 0.4,
+    "env2.attack": 0.0,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.0,
+    "env2.release": 0.55,
+    "vel.vca": 0.7,
+    "vca.level": 0.835
+  },
+  "upper": {}
+}

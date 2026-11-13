@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Harp Rain",
+  "category": "Pluck",
+  "author": "Exitium",
+  "global": {
+    "fx.reverb.level": 0.4,
+    "fx.reverb.decay": 0.6,
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.35
+  },
+  "lower": {
+    "vco1.waveform": 1,
+    "vco2.waveform": 2,
+    "mixer.source_mix": 0.4,
+    "vco2.fine_tune": 0.05,
+    "vcf.cutoff": 0.42,
+    "vcf.env_mod": 0.45,
+    "env1.attack": 0.0,
+    "env1.decay": 0.6,
+    "env1.sustain": 0.05,
+    "env1.key_follow": 1,
+    "env2.attack": 0.0,
+    "env2.decay": 0.82,
+    "env2.sustain": 0.0,
+    "env2.release": 0.75,
+    "env2.key_follow": 1,
+    "vca.level": 0.72
+  },
+  "upper": {}
+}

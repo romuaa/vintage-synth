@@ -1,0 +1,12 @@
+# Factory program "Rubber Floor" (M6b), loaded by name like a preset change: resonant Solo bass with legato glide; two notes.
+# Regenerate this reference only when the program is changed on purpose.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program Rubber Floor
+
+0.10 on 36 110
+0.90 off 36
+1.00 on 43 110
+1.80 off 43

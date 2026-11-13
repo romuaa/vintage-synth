@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Octave Choir",
+  "category": "Dual",
+  "author": "Exitium",
+  "global": {
+    "key.mode": 1,
+    "fx.chorus.mode": 2,
+    "fx.chorus.mix": 0.5,
+    "fx.reverb.level": 0.35
+  },
+  "lower": {
+    "vco1.waveform": 4,
+    "vcomod.pwm": 0.45,
+    "lfo.rate": 0.45,
+    "vcf.cutoff": 0.45,
+    "vcf.env_mod": 0.0,
+    "env2.attack": 0.6,
+    "env2.sustain": 1.0,
+    "env2.release": 0.7,
+    "vca.level": 0.608,
+    "mix.pan": -0.6
+  },
+  "upper": {
+    "vco1.range": 3,
+    "vco2.range": 2,
+    "vco1.waveform": 4,
+    "vcomod.pwm": 0.5,
+    "lfo.rate": 0.5,
+    "vco2.fine_tune": 0.15,
+    "vcf.cutoff": 0.5,
+    "vcf.env_mod": 0.0,
+    "env2.attack": 0.68,
+    "env2.sustain": 1.0,
+    "env2.release": 0.75,
+    "vca.level": 0.547,
+    "mix.pan": 0.6
+  }
+}

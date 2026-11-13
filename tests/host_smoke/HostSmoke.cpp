@@ -112,8 +112,8 @@ int main (int argc, char** argv)
         check (plugin->getNumPrograms() == 64, "64 programs: " + juce::String (plugin->getNumPrograms()));
         check (plugin->getCurrentProgram() == 0, "current program 0");
         check (plugin->getProgramName (0) == "Init", "program 0 is Init: " + plugin->getProgramName (0));
-        check (plugin->getProgramName (1) == "Placeholder Pad", "program 1 name: " + plugin->getProgramName (1));
-        check (plugin->getProgramName (63) == "Init", "program 63 is Init");
+        check (plugin->getProgramName (1) == "Copper Fanfare", "program 1 name: " + plugin->getProgramName (1));
+        check (plugin->getProgramName (63) == "Chorus Garden", "program 63 name: " + plugin->getProgramName (63));
 
         const auto cutoffOf = [&] {
             for (auto* param : ownParameters (*plugin))
@@ -122,11 +122,11 @@ int main (int argc, char** argv)
             return -1.0f;
         };
         const float before = cutoffOf();
-        plugin->setCurrentProgram (2); // Placeholder Bass: a darker filter than the default
+        plugin->setCurrentProgram (2); // A3 Low Sun Horns: a darker filter than the default
         check (plugin->getCurrentProgram() == 2, "setCurrentProgram(2) sticks: " + juce::String (plugin->getCurrentProgram()));
         const float after = cutoffOf();
         check (before > 0.55f && after < 0.35f, "the program's parameters were applied: cutoff " + juce::String (before) + " -> " + juce::String (after));
-        check (plugin->getProgramName (2) == "Placeholder Bass", "program 2 name: " + plugin->getProgramName (2));
+        check (plugin->getProgramName (2) == "Low Sun Horns", "program 2 name: " + plugin->getProgramName (2));
     }
 
     for (const double sr : { 44100.0, 48000.0, 96000.0 })

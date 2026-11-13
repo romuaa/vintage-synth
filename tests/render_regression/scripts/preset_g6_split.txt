@@ -1,0 +1,14 @@
+# Factory program "Two Rooms" (M6b), loaded by name like a preset change: Split at G3: poly bass below, synced lead above.
+# Regenerate this reference only when the program is changed on purpose.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program Two Rooms
+
+0.10 on 36 110
+0.10 on 72 100
+0.90 off 72
+1.00 on 76 100
+1.60 off 36
+1.80 off 76

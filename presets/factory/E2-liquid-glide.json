@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Liquid Glide",
+  "category": "Lead",
+  "author": "Exitium",
+  "global": {
+    "fx.delay.level": 0.3,
+    "fx.delay.time": 0.86,
+    "fx.delay.feedback": 0.42,
+    "fx.delay.ping_pong": 0
+  },
+  "lower": {
+    "assign.mode": 2,
+    "vcf.cutoff": 0.55,
+    "vcf.resonance": 0.2,
+    "vcf.env_mod": 0.25,
+    "env2.attack": 0.12,
+    "env2.sustain": 0.9,
+    "env2.release": 0.42,
+    "lfo.delay": 0.45,
+    "vcomod.lfo_mod": 0.06,
+    "lfo.rate": 0.67,
+    "mod.wheel_vco": 0.4,
+    "vco1.waveform": 3,
+    "vco2.waveform": 3,
+    "vco2.range": 2,
+    "mixer.source_mix": 0.3,
+    "porta.time": 0.25,
+    "porta.mode": 0,
+    "vca.level": 0.638
+  },
+  "upper": {}
+}

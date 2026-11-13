@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Bright Parade",
+  "category": "Brass",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.3,
+    "fx.reverb.level": 0.15
+  },
+  "lower": {
+    "vco2.fine_tune": 0.09,
+    "vcf.cutoff": 0.45,
+    "vcf.resonance": 0.08,
+    "vcf.env_mod": 0.5,
+    "env1.attack": 0.32,
+    "env1.decay": 0.62,
+    "env1.sustain": 0.55,
+    "env1.release": 0.55,
+    "env2.attack": 0.3,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.9,
+    "env2.release": 0.55,
+    "vel.vcf": 0.35,
+    "vco2.range": 2,
+    "mixer.source_mix": 0.35,
+    "vcomod.env_mod": 0.08,
+    "vcomod.target": 0,
+    "vca.level": 0.6
+  },
+  "upper": {}
+}

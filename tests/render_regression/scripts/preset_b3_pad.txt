@@ -1,0 +1,14 @@
+# Factory program "Glass Hall" (M6b), loaded by name like a preset change: hollow square pad, slow attack, chorus II and reverb; a held triad.
+# Regenerate this reference only when the program is changed on purpose.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program Glass Hall
+
+0.10 on 48 90
+0.10 on 55 85
+0.10 on 64 90
+2.20 off 48
+2.20 off 55
+2.20 off 64

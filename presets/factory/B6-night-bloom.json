@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Night Bloom",
+  "category": "Pad",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.5,
+    "fx.reverb.level": 0.35
+  },
+  "lower": {
+    "vco1.waveform": 2,
+    "vco2.waveform": 4,
+    "vcomod.pwm": 0.35,
+    "vcf.cutoff": 0.68,
+    "vcf.resonance": 0.25,
+    "vcf.env_mod": 0.35,
+    "env1.polarity": 1,
+    "env1.attack": 0.75,
+    "env1.decay": 0.8,
+    "env1.sustain": 0.3,
+    "env2.attack": 0.5,
+    "env2.sustain": 1.0,
+    "env2.release": 0.75,
+    "vca.level": 0.442
+  },
+  "upper": {}
+}

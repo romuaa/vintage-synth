@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Quiet Orbit Pad",
+  "category": "Pad",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 2,
+    "fx.chorus.mix": 0.45,
+    "fx.reverb.level": 0.4,
+    "fx.reverb.decay": 0.62,
+    "global.vintage": 0.6
+  },
+  "lower": {
+    "vco1.waveform": 1,
+    "vco2.waveform": 2,
+    "vco2.range": 0,
+    "mixer.source_mix": 0.45,
+    "vco2.fine_tune": 0.03,
+    "vcf.cutoff": 0.45,
+    "vcf.env_mod": 0.0,
+    "vcf.lfo_mod": 0.18,
+    "lfo.waveform": 0,
+    "lfo.rate": 0.28,
+    "vca.lfo_mod": 1,
+    "env2.attack": 0.72,
+    "env2.sustain": 1.0,
+    "env2.release": 0.8,
+    "vca.level": 0.632
+  },
+  "upper": {}
+}

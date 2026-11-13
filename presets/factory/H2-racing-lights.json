@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Racing Lights",
+  "category": "Arpeggio",
+  "author": "Exitium",
+  "global": {
+    "arp.mode": 1,
+    "arp.rate": 3,
+    "arp.pattern": 2,
+    "arp.octaves": 3,
+    "arp.gate": 50,
+    "arp.tempo": 132,
+    "fx.delay.level": 0.2,
+    "fx.delay.time": 0.7,
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.3
+  },
+  "lower": {
+    "vcf.cutoff": 0.35,
+    "vcf.resonance": 0.3,
+    "vcf.env_mod": 0.55,
+    "env1.attack": 0.0,
+    "env1.decay": 0.45,
+    "env1.sustain": 0.0,
+    "env2.attack": 0.0,
+    "env2.decay": 0.66,
+    "env2.sustain": 0.25,
+    "env2.release": 0.5,
+    "vco2.sync": 1,
+    "vco1.range": 3,
+    "vcomod.env_mod": 0.3,
+    "vcomod.target": 0,
+    "vca.level": 1.0
+  },
+  "upper": {}
+}

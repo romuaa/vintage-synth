@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Tin Roof Pluck",
+  "category": "Pluck",
+  "author": "Exitium",
+  "global": {
+    "fx.delay.level": 0.25,
+    "fx.delay.time": 0.75,
+    "fx.delay.feedback": 0.35,
+    "fx.delay.ping_pong": 0
+  },
+  "lower": {
+    "vcf.cutoff": 0.36,
+    "vcf.resonance": 0.3,
+    "vcf.env_mod": 0.6,
+    "env1.attack": 0.0,
+    "env1.decay": 0.5,
+    "env1.sustain": 0.0,
+    "env1.release": 0.45,
+    "env2.attack": 0.0,
+    "env2.decay": 0.7,
+    "env2.sustain": 0.0,
+    "env2.release": 0.6,
+    "vel.vcf": 0.4,
+    "vca.level": 0.911
+  },
+  "upper": {}
+}

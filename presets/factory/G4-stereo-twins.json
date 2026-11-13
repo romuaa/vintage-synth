@@ -1,0 +1,47 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Stereo Twins",
+  "category": "Dual",
+  "author": "Exitium",
+  "global": {
+    "key.mode": 1,
+    "global.vintage": 0.7,
+    "fx.reverb.level": 0.2
+  },
+  "lower": {
+    "vco2.fine_tune": 0.15,
+    "vcf.cutoff": 0.38,
+    "vcf.resonance": 0.08,
+    "vcf.env_mod": 0.5,
+    "env1.attack": 0.42,
+    "env1.decay": 0.62,
+    "env1.sustain": 0.55,
+    "env1.release": 0.55,
+    "env2.attack": 0.3,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.9,
+    "env2.release": 0.55,
+    "vel.vcf": 0.35,
+    "mix.pan": -1.0,
+    "vca.level": 0.628
+  },
+  "upper": {
+    "vco2.fine_tune": -0.15,
+    "vcf.cutoff": 0.38,
+    "vcf.resonance": 0.08,
+    "vcf.env_mod": 0.5,
+    "env1.attack": 0.45,
+    "env1.decay": 0.62,
+    "env1.sustain": 0.55,
+    "env1.release": 0.55,
+    "env2.attack": 0.3,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.9,
+    "env2.release": 0.55,
+    "vel.vcf": 0.35,
+    "mix.pan": 1.0,
+    "vca.level": 0.628
+  }
+}

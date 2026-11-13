@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Parlour Organ",
+  "category": "Organ",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.5
+  },
+  "lower": {
+    "vco1.waveform": 4,
+    "vcomod.pwm_source": 1,
+    "vcomod.pwm": 0.3,
+    "vco2.waveform": 0,
+    "vco2.range": 2,
+    "vco2.fine_tune": 0.0,
+    "mixer.source_mix": 0.45,
+    "vcf.cutoff": 0.55,
+    "vcf.env_mod": 0.25,
+    "env1.attack": 0.0,
+    "env1.decay": 0.35,
+    "env1.sustain": 0.0,
+    "env2.attack": 0.02,
+    "env2.sustain": 1.0,
+    "env2.release": 0.3,
+    "vca.lfo_mod": 1,
+    "lfo.rate": 0.72,
+    "vel.vca": 0.0,
+    "vca.level": 0.479
+  },
+  "upper": {}
+}

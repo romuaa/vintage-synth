@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Winter Ensemble",
+  "category": "Strings",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.6,
+    "fx.reverb.level": 0.28,
+    "global.vintage": 0.5
+  },
+  "lower": {
+    "vco2.fine_tune": 0.1,
+    "vcf.cutoff": 0.55,
+    "vcf.resonance": 0.05,
+    "vcf.env_mod": 0.1,
+    "hpf.cutoff": 0.2,
+    "env1.attack": 0.7,
+    "env1.decay": 0.7,
+    "env1.sustain": 0.7,
+    "env1.release": 0.75,
+    "env2.attack": 0.68,
+    "env2.decay": 0.7,
+    "env2.sustain": 0.95,
+    "env2.release": 0.75,
+    "vcomod.lfo_mod": 0.0,
+    "lfo.rate": 0.5,
+    "vel.vca": 0.3,
+    "vco1.waveform": 4,
+    "vcomod.pwm": 0.5,
+    "lfo.delay": 0.45,
+    "vca.level": 0.457
+  },
+  "upper": {}
+}
