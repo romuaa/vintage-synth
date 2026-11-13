@@ -1393,14 +1393,24 @@ TEST_CASE ("Applying a program while notes sound releases them without a click",
     PresetRig rig;
     rig.prepare();
     const int at = rig.samples (0.6);
-    // The programs keep the default VCF slope: a slope switch on a releasing voice steps its output
-    // (an engine behaviour reported in M6b, not what this test is about).
-    for (const int program : { kSlotSoloBass, kSlotDual, kSlotArp, 63 }) // bass, dual layer, arp, effects (H8: a tail that fits the render)
+    // The switches a program changes act on the releasing voices at once: waveforms, envelope
+    // source and key follow, chorus mode, key mode, and the VCF slope, which crossfades between its
+    // taps (a slope switch stepped the output 5x the limit before, M6b). Both slope directions.
+    struct Case
     {
-        INFO ("program " << program);
+        int program;
+        int slope; // the slope of the sound that is playing (1 = -24 dB)
+    };
+    for (const auto c : { Case { kSlotSoloBass, 1 }, Case { kSlotDual, 1 }, Case { kSlotArp, 1 }, Case { 63, 1 }, // bass, dual layer, arp, effects (H8: a tail that fits the render)
+                          Case { 6, 1 }, Case { 30, 1 },                // A7 brass and D7 bass: -12 dB
+                          Case { kSlotSoloBass, 0 }, Case { 63, 0 } }) // -12 dB playing, -24 dB programs
+    {
+        const int program = c.program;
+        INFO ("program " << program << ", slope before " << c.slope);
         auto& r = rig;
         r.hostReset();
         r.presets().selectProgram (0);
+        r.set ("lower.vcf.slope", static_cast<float> (c.slope));
         r.set ("lower.vco1.waveform", 0);
         r.set ("lower.vco2.waveform", 0);
         r.set ("lower.vcf.cutoff", 0.45f);
