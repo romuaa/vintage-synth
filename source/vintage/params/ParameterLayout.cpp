@@ -63,7 +63,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ParamID::masterLimiterCeiling, kParamVersionHint },
         "Limiter Ceiling",
-        juce::NormalisableRange<float> { fx::SoftLimiter::kMinCeilingDb, fx::SoftLimiter::kMaxCeilingDb, 0.1f },
+        juce::NormalisableRange<float> { fx::SoftLimiter::kMinCeilingDb, fx::SoftLimiter::kMaxCeilingDb },
         kDefaultLimiterCeilingDb,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
 
