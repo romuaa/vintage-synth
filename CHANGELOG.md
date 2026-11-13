@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M6a — presets and banks, infrastructure (2026-11-13)
+- Tones, programs and banks as text files; a read-only factory bank (8 placeholder programs for
+  now); loading and saving from a small preset bar; MIDI Program Change; host program list;
+  sessions remember the current program.
+- Preset files and session data are treated as untrusted input: strict reader, bounded file
+  access, no file access while a session loads.
+
 ### M5 — effects and arpeggiator/sequencer in the plugin (2026-11-12)
 - Chorus, delay and reverb on the stereo bus (11 parameters); arpeggiator and 16-step sequencer in
   front of each part with a part selector, locked to the host tempo (58 parameters). 170 in total.

@@ -3,6 +3,16 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## M6a: presets and banks (2026-11-13)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A session could make the host hang or exhaust memory at load. | A file path from the state was opened unchecked; "exists as file" is true for pipes and devices, whose size reads 0, and the read ran to end of file. | **State and preset files are untrusted input.** Store names, not paths; one bounded reader for regular files only; no file I/O in `setStateInformation` (hosts call it on any thread). |
+| A pre-check written to protect a third-party parser was bypassed. | The parser accepted more syntax (single-quoted strings) than the check knew. | Don't guard a lenient parser with a second tokenizer: use one strict parser. Fuzz it in the suite, with the reviewer's token list. |
+| A block could read a half-applied parameter set, and ThreadSanitizer saw nothing. | Each variable was atomic; the ordering was wrong (two holders of one flag, acknowledgement before the last read). | Test consistency with an invariant across many parameters, checked by the audio thread; sanitizers do not find logical races. |
+| The implementing agent ran out of budget before running the gates. | A large task in one go. | The orchestrator runs the full gate on every hand-back, whatever the report says. |
+| Parallel test runs collided in temporary folders. | Name generation is per process. | Random folder names in tests. |
+
 ## Wave 3: integration and oscillator fixes (2026-11-12)
 
 | Problem | Cause | Fix / rule |

@@ -89,9 +89,10 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Verified by the local gate only. Open for the owner: output level / hard clip (see decisions).
 - **S0 (common library) is done on branch `wave3/s0`** (pure restructuring, bit-identical renders,
   identical parameter list; verified by the local gate), stacked on `wave3/product`.
-- **Next:** M6 presets and banks (`docs/architecture.md` 6b); B-Side S1 (contract, plugin shell,
-  oracle workflow) can start in parallel. Not yet shared: the processor skeleton and the display
-  formatter, which stay in `source/vintage/` until B-Side's first milestone designs the abstraction.
+- **M6a (preset and bank infrastructure) is done on branch `wave3/m6`,** stacked on `wave3/s0`:
+  verified by the local gate; reviewed, review findings fixed. Open for the owner: MIDI Program
+  Change timing; a look at the preset bar on screen. **Next:** M6b, the 64 factory programs
+  (drafted from a sound specification, auditioned by the owner); B-Side S1 can start in parallel.
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
   in `source/common/seq/`, not wired in. Audition approved by the owner.

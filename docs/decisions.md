@@ -13,6 +13,22 @@ All (review).
 | One arpeggiator/sequencer settings set with a part selector (Lower, Upper, Both); the sequencer's 16 steps are host parameters (48 of them). | One set is easy to understand and automate; step parameters make the sequencer usable and testable before the custom UI exists and are saved with the state. Parameter count becomes 170. |
 | With no usable host transport the arp/seq runs on its internal tempo parameter. | Works in simple hosts and when just playing. |
 
+## M6a results: preset and bank infrastructure (2026-11-13)
+
+All (review) unless marked.
+
+| Decision | Why |
+|---|---|
+| **Preset files are read by our own strict JSON reader** (RFC 8259 subset, 1 MB cap, depth ≤ 12, at most 4096 members per object, duplicate keys rejected, linear time). JUCE's JSON parser is not used for untrusted input. | Sanitizers and review: JUCE's parser overflows on long digit strings, also accepts single-quoted strings (which defeated a pre-check), and is quadratic in the number of keys. |
+| **A session names its user bank by plain file name inside the banks folder, never by path; restoring a session reads no files.** The bank is resolved later on the message thread. All preset reads go through one bounded reader that accepts regular files only. | Review blocker: a crafted project could hang the host (path to a pipe), exhaust memory (a device file) or, on Windows, trigger a network connection (UNC path). |
+| A missing user bank leaves the restored sound and name intact, detached from any slot and marked modified; the host is shown slot 1 of the factory bank. | Silently presenting a factory slot as current while another sound plays would mislead. |
+| **Applying a program is serialised by one lock off the audio thread; the audio thread takes a consistent copy of all block parameters (sequence-counter read) and keeps the previous block's set while a change is in progress.** | Three hand-over gaps let a block read a half-applied parameter set; a test now proves no mixed set is ever observed. |
+| Storing into or renaming a slot of a user bank writes the bank file at once (atomic replace). | The change was lost at the next session load. |
+| Every preset file carries an instrument id; bank size, slot naming and file extensions belong to the instrument, not the shared code. Format 1 is not released yet, so this is free. | A file of the future second instrument must not load as all-defaults. |
+| Number text in files is formatted and parsed without locale-dependent functions; names are stripped of control, bidirectional and zero-width characters. | Hosts can change the process locale; names reach the host's program list. |
+| **OPEN — MIDI Program Change timing.** It is applied by the message thread shortly after it arrives: notes in the same block start on the old program and are then released, and in offline rendering the moment it takes effect is not deterministic. No Bank Select; Program Changes 64–127 are ignored. Every program change releases held notes. | Sample-accurate program changes need the bank precomputed for the audio thread: a larger design step. Owner decision whether it is needed. |
+| The test that constructs the editor and preset bar is skipped under AddressSanitizer (a report inside the system graphics library); it runs in the normal builds. The bar's menus and file dialogs are not exercised by any test. | Needs a human at the screen. |
+
 ## M6 contract: presets and banks (2026-11-12)
 
 All (review).
