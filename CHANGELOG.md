@@ -21,6 +21,15 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 - Tests (`bside_unit`): every row of 8.4.3, the fast path against stepping (states and events), block
   size 1/7/61/512 and internal rate independence of the digital state, replay with the real chip.
 - Judgement calls where 8.4.3 says "confirm" or is silent: `docs/decisions.md` (all review).
+- Review round 1: events are self-contained (`SyncResetEvent` with the source's sub-cycle crossing and
+  the target's phase, `NoiseClockEvent`, new `NoiseWriteBackEvent`); a sink must not read the chip; the
+  noise events follow `Sink::kWantsNoiseEvents` in both paths; time, sample, envelope and event-order
+  conventions in the `Chip.h` header, `ChipClock::position` for sub-sample positions. Accessors assert
+  0..2; a default-constructed chip advances at the default clock and rate; Authentic rounds half away
+  from zero; `setFilter` keeps the external-input bit at 0. New tests: sync chains in every rotation and
+  all three together, no write-back under the test bit, every snapshot field (incl. the dividers) with
+  its own value. Four rows in `docs/decisions.md` are now marked known open deviations (attack from 0xff,
+  write and pipeline delays, test-bit noise reset, oscillator-3 read with no waveform).
 
 ### B-Side S1b review follow-up (2026-11-14)
 - S1c merged in (`bside_unit`, `bs_juce_free`): `tests/bside/CMakeLists.txt` holds both test structures.
