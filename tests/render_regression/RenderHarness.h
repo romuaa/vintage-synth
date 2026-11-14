@@ -1,7 +1,10 @@
 // Golden-render regression harness.
 //
 // A text "script" (timed note / CC / pitch-bend events and parameter settings by ID) is rendered
-// offline through the real vs::VintageSynthProcessor using only the public juce::AudioProcessor API.
+// offline through a real instrument processor using only the public juce::AudioProcessor API (and
+// its preset manager for `program`). The instrument comes from a factory: by default the one this
+// executable defines in makeDefaultInstance() (Vintage: VintageInstance.cpp), so the harness itself
+// depends on no instrument.
 // The render is reduced to perceptual features (third-octave band energy per ~25 ms frame plus an
 // overall level envelope). References store those features, never audio, and the comparison uses
 // dB tolerances with a noise-floor gate, so arm64/x64 and clang/MSVC last-bit differences pass.
@@ -37,11 +40,30 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
+namespace vs::presets
+{
+class PresetManager;
+}
+
 namespace vs::rr
 {
+/** A processor to render with and its preset manager (`program` commands, offline hand-over). */
+struct Instance
+{
+    std::unique_ptr<juce::AudioProcessor> processor;
+    presets::PresetManager* presets = nullptr; // owned by the processor
+};
+
+/** Makes a fresh instance for one render (called after JUCE is initialised). */
+using ProcessorFactory = std::function<Instance()>;
+
+/** The instrument this executable renders when no factory is given (defined once per executable). */
+Instance makeDefaultInstance();
 struct Event
 {
     enum class Kind { param, noteOn, noteOff, cc, bend, allOff, play, tempo, locate, stop, program };
@@ -67,13 +89,13 @@ Script parseScript (const std::string& text);
 
 /** Renders mono (channel 0 of the stereo output). All blocks are `blockSize` long except where a
     parameter event splits a block, so parameter changes land at the same sample for any block size. */
-std::vector<float> renderScript (const Script& script, int blockSize);
+std::vector<float> renderScript (const Script& script, int blockSize, const ProcessorFactory& factory = {});
 
 /** The same render, both output channels: { left, right }. */
-std::vector<std::vector<float>> renderScriptStereo (const Script& script, int blockSize);
+std::vector<std::vector<float>> renderScriptStereo (const Script& script, int blockSize, const ProcessorFactory& factory = {});
 
 /** The channels a script asks to analyse: { left } or { left, right }. */
-std::vector<std::vector<float>> renderScriptChannels (const Script& script, int blockSize);
+std::vector<std::vector<float>> renderScriptChannels (const Script& script, int blockSize, const ProcessorFactory& factory = {});
 
 // ---- Features ----
 constexpr int kFftSize = 4096; // 85 ms window at 48 kHz, centred on each frame
