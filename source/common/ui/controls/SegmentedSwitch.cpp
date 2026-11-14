@@ -103,7 +103,15 @@ void SegmentedSwitch::resized()
 {
     auto r = getLocalBounds().toFloat();
     labelArea = label.isNotEmpty() ? r.removeFromTop (static_cast<float> (metrics::kLabelRow)) : juce::Rectangle<float>();
-    row = cardLayout ? r : r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), static_cast<float> (metrics::kSegment)));
+    row = cardLayout ? r : r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), static_cast<float> (rowHeightPx)));
+}
+
+void SegmentedSwitch::setLargeStyle (float px, int rowHeight)
+{
+    captionPx = px;
+    rowHeightPx = rowHeight;
+    resized();
+    repaint();
 }
 
 void SegmentedSwitch::setSegmentPainter (SegmentPainter p, bool cards)
@@ -145,7 +153,7 @@ void SegmentedSwitch::paint (juce::Graphics& g)
         if (painter)
             painter (g, seg, i, on);
         g.setColour (on ? colour (Tok::TextOnAccent) : textColour());
-        g.setFont (ctx.theme.font (kText, on));
+        g.setFont (ctx.theme.font (captionPx, on));
         drawFittedText (g, captions[i], cardLayout ? seg.withTrimmedTop (seg.getHeight() - 20.0f).reduced (2.0f, 0.0f) : seg.reduced (2.0f, 0.0f),
                         juce::Justification::centred);
         if (i > 0 && ! on && i - 1 != lit)

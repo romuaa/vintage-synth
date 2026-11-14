@@ -34,6 +34,8 @@ public:
         rest to the painter. Called from paint(): it must not allocate. */
     using SegmentPainter = std::function<void (juce::Graphics&, juce::Rectangle<float> segment, int index, bool lit)>;
     void setSegmentPainter (SegmentPainter painter, bool cards = false);
+    /** A larger switch (the Arp + Seq mode switch): caption size and row height in logical px. */
+    void setLargeStyle (float captionPx, int rowHeightPx);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -56,6 +58,8 @@ private:
     juce::Rectangle<float> labelArea, row;
     SegmentPainter painter;
     bool cardLayout = false;
+    float captionPx = metrics::kText;
+    int rowHeightPx = metrics::kSegment;
 };
 
 class Toggle final : public BoundComponent
