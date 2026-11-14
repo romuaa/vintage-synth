@@ -1,0 +1,126 @@
+bside-trace 1
+# Twin of a_filter: the same writes with the voice NOT routed to the filter, so each segment has the same noise excitation (filter response = a_filter / this).
+# Segments s00..s15: resonance 0, cutoff 0, 136, 273, 409, 546, 682, 819, 955, 1092, 1228, 1365, 1501, 1638, 1774, 1911, 2047 (16 values).
+# Segments s16..s31: cutoff 1024, resonance 0..15.
+clock 985248
+model B
+8 0e ff
+8 0f ff
+8 13 00
+8 14 80
+8 12 81
+8 17 00
+8 18 1f
+# cutoff 0, resonance 0
+24642 15 00
+24642 16 00
+# cutoff 136, resonance 0
+640422 15 00
+640422 16 11
+# cutoff 273, resonance 0
+1256202 15 01
+1256202 16 22
+# cutoff 409, resonance 0
+1871982 15 01
+1871982 16 33
+# cutoff 546, resonance 0
+2487762 15 02
+2487762 16 44
+# cutoff 682, resonance 0
+3103542 15 02
+3103542 16 55
+# cutoff 819, resonance 0
+3719322 15 03
+3719322 16 66
+# cutoff 955, resonance 0
+4335102 15 03
+4335102 16 77
+# cutoff 1092, resonance 0
+4950882 15 04
+4950882 16 88
+# cutoff 1228, resonance 0
+5566662 15 04
+5566662 16 99
+# cutoff 1365, resonance 0
+6182442 15 05
+6182442 16 aa
+# cutoff 1501, resonance 0
+6798222 15 05
+6798222 16 bb
+# cutoff 1638, resonance 0
+7414002 15 06
+7414002 16 cc
+# cutoff 1774, resonance 0
+8029782 15 06
+8029782 16 dd
+# cutoff 1911, resonance 0
+8645562 15 07
+8645562 16 ee
+# cutoff 2047, resonance 0
+9261342 15 07
+9261342 16 ff
+# cutoff 1024, resonance 0
+9877122 15 00
+9877122 16 80
+9877122 17 00
+# cutoff 1024, resonance 1
+10492902 15 00
+10492902 16 80
+10492902 17 10
+# cutoff 1024, resonance 2
+11108682 15 00
+11108682 16 80
+11108682 17 20
+# cutoff 1024, resonance 3
+11724462 15 00
+11724462 16 80
+11724462 17 30
+# cutoff 1024, resonance 4
+12340242 15 00
+12340242 16 80
+12340242 17 40
+# cutoff 1024, resonance 5
+12956022 15 00
+12956022 16 80
+12956022 17 50
+# cutoff 1024, resonance 6
+13571802 15 00
+13571802 16 80
+13571802 17 60
+# cutoff 1024, resonance 7
+14187582 15 00
+14187582 16 80
+14187582 17 70
+# cutoff 1024, resonance 8
+14803362 15 00
+14803362 16 80
+14803362 17 80
+# cutoff 1024, resonance 9
+15419142 15 00
+15419142 16 80
+15419142 17 90
+# cutoff 1024, resonance 10
+16034922 15 00
+16034922 16 80
+16034922 17 a0
+# cutoff 1024, resonance 11
+16650702 15 00
+16650702 16 80
+16650702 17 b0
+# cutoff 1024, resonance 12
+17266482 15 00
+17266482 16 80
+17266482 17 c0
+# cutoff 1024, resonance 13
+17882262 15 00
+17882262 16 80
+17882262 17 d0
+# cutoff 1024, resonance 14
+18498042 15 00
+18498042 16 80
+18498042 17 e0
+# cutoff 1024, resonance 15
+19113822 15 00
+19113822 16 80
+19113822 17 f0
+end 19729592

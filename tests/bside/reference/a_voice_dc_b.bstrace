@@ -1,0 +1,31 @@
+bside-trace 1
+# Volume steps with every voice silent (envelopes at 0): the output steps by the voices
+# DC level times the volume change; the board high-pass turns each step into a decaying
+# pulse. Read the frame levels after each write (frame 0 holds the power-on transient;
+# the first step comes after 1 s). Steps are 1 s apart (40 frames). Then the same with
+# oscillator 1 routed to the filter (low-pass).
+clock 985248
+model B
+8 18 00
+# volume 15
+985258 18 0f
+# volume 0
+1970506 18 00
+# volume 8
+2955754 18 08
+# volume 15
+3941002 18 0f
+# volume 4
+4926250 18 04
+# volume 0
+5911498 18 00
+# oscillator 1 routed to the filter, low-pass
+6896746 17 01
+6896746 18 10
+# volume 15 (low-pass)
+7881994 18 1f
+# volume 0 (low-pass)
+8867242 18 10
+# volume 8 (low-pass)
+9852490 18 18
+end 10837728

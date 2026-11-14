@@ -1,0 +1,57 @@
+bside-trace 1
+# Filter distortion: triangle at 160.1 Hz (frequency 0x0aa6 at the 50 Hz clock) through the
+# low-pass at cutoff 2047, resonance 0, volume 15; drive = 1, 2 and 3 voices in phase
+# (sustain 15), then 3 voices at sustain 8. Segments s00..s03.
+clock 985248
+model A
+8 04 08
+8 00 a6
+8 01 0a
+8 05 00
+8 06 f0
+8 0b 08
+8 07 a6
+8 08 0a
+8 0c 00
+8 0d f0
+8 12 08
+8 0e a6
+8 0f 0a
+8 13 00
+8 14 f0
+20 15 07
+20 16 ff
+20 18 1f
+# drive step 0
+24642 04 08
+24642 0b 08
+24642 12 08
+24642 17 01
+24644 04 11
+# drive step 1
+640422 04 08
+640422 0b 08
+640422 12 08
+640422 17 03
+640424 04 11
+640424 0b 11
+# drive step 2
+1256202 04 08
+1256202 0b 08
+1256202 12 08
+1256202 17 07
+1256204 04 11
+1256204 0b 11
+1256204 12 11
+# drive step 3
+1871982 04 08
+1871982 0b 08
+1871982 12 08
+1871982 06 80
+1871982 0d 80
+1871982 14 80
+1871982 17 07
+1871984 04 11
+1871984 0b 11
+1871984 12 11
+end 2487752
