@@ -3,6 +3,8 @@
 #include "UiData.h"
 #include "vintage/ui/ArpSeqPage.h"
 #include "vintage/ui/EffectsPage.h"
+#include "vintage/ui/EnvelopesPage.h"
+#include "vintage/ui/LfoPage.h"
 #include "vintage/ui/PlaceholderPage.h"
 #include "vintage/ui/PlayPage.h"
 #include "vintage/ui/SoundPage.h"
@@ -25,8 +27,8 @@ std::vector<EditorFrame::Page> vintagePages()
 {
     return {
         { kVintagePageNames[0], "Sound", PageIcon::Sound, true, "Sound: the oscillators, the filter and the level of the edited part. Drag the dots on the curve." },
-        { kVintagePageNames[1], "Envelopes", PageIcon::Envelopes, true, "Envelopes: how the filter, pitch and loudness move on each note (placeholder until M7b)." },
-        { kVintagePageNames[2], "LFO", PageIcon::Lfo, true, "LFO: the slow wobble and what it moves (placeholder until M7b)." },
+        { kVintagePageNames[1], "Envelopes", PageIcon::Envelopes, true, "Envelopes: how the filter, pitch and loudness move on each note. Drag the dots on the shapes." },
+        { kVintagePageNames[2], "LFO", PageIcon::Lfo, true, "LFO: the slow wobble and what it moves. Drag the dots to set the delay and the speed." },
         { kVintagePageNames[3], "Play", PageIcon::Play, false, "Play: how the two parts share the keyboard, and how each part is played. Drag the split marker on the keyboard." },
         { kVintagePageNames[4], "Arp + Seq", PageIcon::ArpSeq, false, "Arp + Seq: pick a pattern or paint steps; the picture shows what the arpeggiator and the sequencer will play." },
         { kVintagePageNames[5], "Effects", PageIcon::Effects, false, "Effects: chorus, delay and reverb on both parts, in signal order. Drag the dots on the pictures." },
@@ -108,6 +110,10 @@ VintageEditor::~VintageEditor()
     frame.closeOutputPopover();
     for (auto& s : sound)
         s->cancelInteraction();
+    for (auto& e : envelopes)
+        e->cancelInteraction();
+    for (auto& l : lfo)
+        l->cancelInteraction();
     playPage->cancelInteraction();
     effectsPage->cancelInteraction();
     if (arpSeq != nullptr)
@@ -144,11 +150,13 @@ void VintageEditor::buildPages()
         sound[part]->onOpenEffects = [this] { selectPage (static_cast<int> (VintagePage::Effects), frame.getPart()); };
         frame.addPageComponent (0, part, *sound[part]);
 
-        const auto partName = juce::String (part == 0 ? "Lower" : "Upper");
-        addPlaceholder (VintagePage::Envelopes, part, "Envelopes (" + partName + ")",
-                        "Placeholder until M7b: every envelope parameter of this part, with plain sliders.", partItems (envelopeSuffixes(), part));
-        addPlaceholder (VintagePage::Lfo, part, "LFO (" + partName + ")", "Placeholder until M7b: every LFO and modulation parameter of this part.",
-                        partItems (lfoSuffixes(), part));
+        registry.setContext (kVintagePageNames[1], part);
+        envelopes[part] = std::make_unique<EnvelopesPage> (ctx, part);
+        frame.addPageComponent (static_cast<int> (VintagePage::Envelopes), part, *envelopes[part]);
+
+        registry.setContext (kVintagePageNames[2], part);
+        lfo[part] = std::make_unique<LfoPage> (ctx, part);
+        frame.addPageComponent (static_cast<int> (VintagePage::Lfo), part, *lfo[part]);
     }
 
     // Global pages: one component each (-1).

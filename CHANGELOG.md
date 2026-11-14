@@ -78,6 +78,31 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   have a power switch (level 0 and back, no new parameter).
 - New: `KeyboardStrip`, `DelayView`, `ReverbView`, `ChorusView`, `PowerSwitch`, JUCE-free models
   `KeyboardModel.h` and `FxPictureModels.h`; tests `tests/ui/PlayEffectsTests.cpp`.
+### M7b — Envelopes and LFO pages (2026-11-14)
+- **Envelopes page** for both parts: two ADSR pictures drawn from the engine's own envelope code
+  (the real RC curves), each with four draggable handles (peak = attack, sustain start = decay and
+  sustain, sustain end = sustain, release end = release; time labels under them), the four sliders,
+  key follow, Envelope 1's direction (an inverted Envelope 1 shows a mirrored ghost under the axis),
+  and "what the envelope does" (filter amount and source, pitch bend, velocity amounts). The panel
+  titles name what each envelope drives and follow the filter source.
+- **LFO page** for both parts: the LFO's waveform from the engine's own LFO on a time axis with a
+  delay handle (end of the fade-in) and a cycle handle (sets the rate), waveform, rate and delay
+  controls, and the four "the LFO moves ..." panels (pitch, pulse width, filter, volume); the pulse
+  width controls dim while neither oscillator is set to Pulse.
+- New shared pieces: `EnvelopeView`, `LfoView`, JUCE-free `EnvelopeModel.h` and `LfoModel.h`;
+  `Panel::setText` repaints only its header.
+- Tests (`tests/ui/EnvLfoModelTests.cpp`, `EnvLfoPageTests.cpp`): handle maths and label spreading,
+  window choice, the envelope shape against a 48 kHz `Envelope`, the LFO preview against a direct
+  `Lfo` run, automation follow of every control, handle and picture (host writes from another thread,
+  programs, Init, tones, session restore), handle gestures, titles, ghost, dimming, repaint scope,
+  paint-allocation stability, layout snapshots (100 % and 150 %, both parts).
+
+### M7b review round 1 (2026-11-14)
+- LFO picture: delay wording and fade-in wedge with the delay handle on its envelope line, "starts"
+  marker, Random/Noise pre-rolled with an "Example" caption, windows up to 50 s with a keep-while-it-suits
+  rule, contested drags show the user's value, "key released" below the axis.
+- Tests: contested drags, window rule, captions, time labels, panel header and title, nothing repaints at
+  rest, paint allocations through a context that draws nothing; M7a's repaint-scope test now records.
 
 ### M7a — custom editor: foundation, frame, Sound page (2026-11-14)
 - The plugin opens its own editor (`source/vintage/ui/`): a 1360 × 784 canvas scaled as a whole,

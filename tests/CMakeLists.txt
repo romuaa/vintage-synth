@@ -110,6 +110,9 @@ target_sources(VintageSynthTests PRIVATE
     ui/PlayEffectsTests.cpp
     ui/ParamTextTests.cpp
     ui/ArpSeqPageTests.cpp
+    ui/EnvLfoModelTests.cpp
+    ui/EnvLfoPageTests.cpp
+    ui/EnvLfoReviewTests.cpp
     ui/UiShots.cpp)
 target_compile_definitions(VintageSynthTests PRIVATE
     VS_UI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ui/golden"

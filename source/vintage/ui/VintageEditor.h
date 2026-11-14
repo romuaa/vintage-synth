@@ -29,6 +29,8 @@ class SoundPage;
 class PlayPage;
 class EffectsPage;
 class ArpSeqPage;
+class EnvelopesPage;
+class LfoPage;
 class PlaceholderPage;
 
 /** The embedded Inter faces (resources/fonts/inter, SIL OFL 1.1). */
@@ -56,6 +58,8 @@ public:
     PlayPage& getPlayPage() noexcept { return *playPage; }
     EffectsPage& getEffectsPage() noexcept { return *effectsPage; }
     ArpSeqPage& getArpSeqPage() noexcept { return *arpSeq; }
+    EnvelopesPage& getEnvelopesPage (int part) noexcept { return *envelopes[part & 1]; }
+    LfoPage& getLfoPage (int part) noexcept { return *lfo[part & 1]; }
     PlaceholderPage& getPlaceholder (VintagePage page, int part = 0);
     const HelpTexts& getHelpTexts() const noexcept { return help; }
     const Theme& getTheme() const noexcept { return theme; }
@@ -96,6 +100,8 @@ private:
     std::unique_ptr<PlayPage> playPage;
     std::unique_ptr<EffectsPage> effectsPage;
     std::unique_ptr<ArpSeqPage> arpSeq;
+    std::unique_ptr<EnvelopesPage> envelopes[2];
+    std::unique_ptr<LfoPage> lfo[2];
     std::vector<std::unique_ptr<PlaceholderPage>> placeholders;
     struct PlaceholderRef
     {
