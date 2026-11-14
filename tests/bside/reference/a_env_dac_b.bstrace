@@ -1,0 +1,15 @@
+bside-trace 1
+# Envelope converter at every counter value: oscillator 1 triangle 440 Hz (0x1d45) direct,
+# volume 15, attack rate 15 from 0 to 0xff (31 251 cycles, about 1.27 frames, per value): the
+# frame levels follow the counter through all 256 values (our replay knows the counter at
+# every cycle). Then 1 s at 0xff.
+clock 985248
+model B
+8 00 45
+8 01 1d
+8 05 f0
+8 06 f0
+8 18 0f
+8 04 10
+24642 04 11
+end 9010146

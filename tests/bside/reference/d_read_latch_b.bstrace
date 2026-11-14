@@ -1,0 +1,78 @@
+bside-trace 1
+# The oscillator-3 read register around waveform selections (one waveform bit at a time):
+# the first triangle or saw selection after power-on, and the switch to triangle or saw
+# from pulse, from noise and from no waveform; every cycle probed after each switch.
+clock 985248
+model B
+8 0e 00
+8 0f 10
+8 10 00
+8 11 04
+8 13 00
+8 14 f0
+# first saw after power-on
+100 12 21
+101 15 00
+102 15 00
+103 15 00
+104 15 00
+105 15 00
+106 15 00
+107 15 00
+108 15 00
+# pulse, then saw
+700 12 41
+701 15 00
+702 15 00
+703 15 00
+704 15 00
+1300 12 21
+1301 15 00
+1302 15 00
+1303 15 00
+1304 15 00
+1305 15 00
+1306 15 00
+1307 15 00
+1308 15 00
+# noise, then triangle
+1900 12 81
+1901 15 00
+1902 15 00
+1903 15 00
+1904 15 00
+2500 12 11
+2501 15 00
+2502 15 00
+2503 15 00
+2504 15 00
+2505 15 00
+2506 15 00
+2507 15 00
+2508 15 00
+# no waveform, then saw
+3100 12 01
+3101 15 00
+3102 15 00
+3103 15 00
+3104 15 00
+3700 12 21
+3701 15 00
+3702 15 00
+3703 15 00
+3704 15 00
+3705 15 00
+3706 15 00
+3707 15 00
+3708 15 00
+# saw, then triangle
+4300 12 11
+4301 15 00
+4302 15 00
+4303 15 00
+4304 15 00
+4305 15 00
+4306 15 00
+4307 15 00
+4308 15 00
+end 5000
