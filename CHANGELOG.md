@@ -45,6 +45,58 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   double-click selects; Delete/Backspace no longer reset; a restored session applies its window
   size; duplicate `UiState`/`Preset` children of a hostile session are all removed.
 
+### B-Side S1b review follow-up (2026-11-14)
+- S1c merged in (`bside_unit`, `bs_juce_free`): `tests/bside/CMakeLists.txt` holds both test structures.
+- Sanitizer target selection fixed: `ninja -t targets \| grep -q` under `pipefail` made every target look
+  missing, so the sanitizer steps skipped tests silently. One shared `scripts/sanitize-targets.sh` (preflight,
+  Linux container, CI job): required targets are an error when missing, unlisted test-looking targets are an
+  error, and each step prints the tests registered per target before ctest runs.
+- `preflight.sh` refuses `VS_PREFLIGHT_PLUGINS` other than `all` for the default and `--full` runs; the summary
+  names the plugins covered.
+- The JUCE modules of the test cores are compiled once (`vs_juce_modules`) and shared by `vs_test_core` and
+  `bs_test_core`: cold test build 45 s wall / 460 s CPU before, 26 s / 319 s after on this Mac; the plugin
+  targets' compile and link commands are identical, Vintage dumps byte-identical. Full gate afterwards (machine
+  load about 3 to 5): total 17m25 (mac 3m07, linux 2m46, mac-sanitize 6m15, linux-sanitize 5m14) against
+  14m05 for Vintage alone (warm).
+- `getPresets()` throws `ConfigError` like the other preset uses (tested); `TestTonePart` applies an event at or
+  beyond the block's end after the last sample and ignores a non-finite pitch bend (both tested); the dev host
+  has no build dependency on the Vintage bundle; the CI distribution job checks both bundles in one container;
+  `--skip-gui-tests` carries a TODO for the custom editor.
+
+### B-Side S1b — the plugin shell and gates for two plugins (2026-11-14)
+- **Skeleton tightened first** (`docs/architecture.md` 8.2.5): the plugin name comes from the
+  instrument (`Derived::kName`); a missing parameter (`BoundParam::bind`) or a missing `initPresets`
+  call fails at construction with a named `ConfigError` in every build type, and the plugin entry
+  point `shell::createPluginProcessor<T>()` turns it into a message plus abort instead of an
+  exception crossing the host boundary; `static_assert`s that the per-block hooks are `noexcept`.
+  Vintage unchanged, proven on this Mac (universal Release build): raw `[.bitdump]` output of all 15
+  scripts and the stress script at block sizes 512 and 61, the new `[.statedump]` (name, latency,
+  tail, programs, all 172 parameters with default, steps and display text at 0, .25, .5, .75, 1) and
+  the default saved state are byte-identical to the build before the change.
+- **Exitium B-Side exists** as a second VST3 plugin (`source/bside/`, CMake option `VS_BUILD_BSIDE`,
+  default ON): identity `Bsy1` / `com.exitium.bside` / manufacturer `Exit`, state tag `BSideState`,
+  the 75 shared parameters, preset identity `b-side` (8 × 8, `.bsprog`/`.bstone`/`.bsbank`, folder
+  `Exitium/B-Side/`) with one Init program, the shared editor, and a placeholder test-tone part
+  (16-voice sine, 5 ms attack and release, latency 0). No chip sound yet (S2 to S4).
+- Tests: `BSideTests` (own test core `bs_test_core`; never linked with Vintage's): the skeleton
+  contract with a second instrument, the part, parameters, programs, state, bypass, guard, arp,
+  preset files, no allocation in `processBlock`. `host_smoke --profile vintage|bside` and
+  `host_smoke_bside`; `vst3_validator_bside`; `[.statedump]` in `render_regression`.
+- Gates cover both plugins: `scripts/preflight.sh` (lipo, pluginval 10 and validator per bundle,
+  sanitizers, `VS_PREFLIGHT_PLUGINS=vintage|bside|all`), the Linux container check, the docs check
+  (the instruments include nothing from each other; `bside/chip|program|trace` JUCE-free),
+  `scripts/dev-host.sh --plugin bside`, and `build.yml` (every row builds both; per-plugin
+  pluginval, dependency check, artifacts, distribution tests, bundle merges). **`build.yml` has not
+  run** (CI is offline); only its YAML and plan table are checked.
+- Gate time on this Mac (full default gate, machine load 4 to 10 from other work, so indicative):
+  Vintage only (before) cold 18m52 / warm 14m05; both plugins cold: mac 5m13 (before 4m17), linux
+  3m35 (2m41), linux-sanitize 8m24 (4m55); warm: total 22m18 (mac 2m42 vs 2m13, linux 3m11 vs 1m44,
+  mac-sanitize 5m46 vs 5m35, linux-sanitize 10m34 vs 4m30). The macOS build step is within the
+  contract's targets (+22 % cold, +22 % warm against +50 % and +25 %); the whole gate is not
+  (warm +58 %), because the Linux steps, above all the
+  sanitizer build of a second JUCE test core, are not. The optional shared JUCE-module library
+  (8.1.2) was not tried: it is the obvious next lever.
+
 ### B-Side S1c, JUCE-free formats (2026-11-14)
 - `source/bside/program/`: the strict reader and compiler of the patch table text format (8.6.5),
   the compact `Program` (a fixed 5.9 KB trivially copyable struct, byte equality = program

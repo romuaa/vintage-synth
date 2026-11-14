@@ -112,7 +112,8 @@ fi
 # 4. Source layout -----------------------------------------------------------------------------
 # source/common/ is shared by every instrument and must not depend on one: no include of
 # "vintage/...", "bside/..." (or any other instrument directory) from it. The pathspec covers every
-# subdirectory, the shared processor skeleton source/common/shell/ included. The directories that are JUCE-free
+# subdirectory, the shared processor skeleton source/common/shell/ included. The two instruments
+# never include each other either (source/vintage <-> source/bside). The directories that are JUCE-free
 # today stay so (common/engine too, except Oversampler.h, which wraps juce::dsp). No two tracked
 # files may differ only by case (macOS is case-insensitive, Linux is not).
 bad=$(git grep -n --untracked -E '#[[:space:]]*include[[:space:]]*[<"](vintage|bside|chip)/' -- 'source/common/*' || true)
@@ -121,21 +122,22 @@ if [[ -n $bad ]]; then
 else
   ok "source/common (incl. shell/) does not include anything from an instrument directory"
 fi
+bad=$(git grep -n --untracked -E '#[[:space:]]*include[[:space:]]*[<"]bside/' -- 'source/vintage/*' 'tests/dsp_unit/*' 'tests/integration/*' 'tests/preset_unit/*' || true)
+bad2=$(git grep -n --untracked -E '#[[:space:]]*include[[:space:]]*[<"]vintage/' -- 'source/bside/*' 'tests/bside/*' || true)
+if [[ -n $bad || -n $bad2 ]]; then
+  fail "the two instruments include each other (Vintage <-> B-Side):"; echo "$bad$bad2" >&2
+else
+  ok "source/vintage and source/bside (and their tests) include nothing from each other"
+fi
 bad=$(git grep -n --untracked -iE '#[[:space:]]*include[[:space:]]*[<"]juce' -- \
         'source/common/dsp/*' 'source/common/fx/*' 'source/common/seq/*' 'source/vintage/dsp/*' \
         'source/common/engine/*' ':!source/common/engine/Oversampler.h' \
         'source/common/ui/models/*' 'source/common/shell/EditorState.h' \
-        'source/bside/text/*' 'source/bside/program/*' 'source/bside/trace/*' || true)
+        'source/bside/chip/*' 'source/bside/text/*' 'source/bside/program/*' 'source/bside/trace/*' || true)
 if [[ -n $bad ]]; then
   fail "JUCE include in a directory that is JUCE-free by design:"; echo "$bad" >&2
 else
-  ok "the JUCE-free directories (common dsp/fx/seq/engine incl. UiFeed.h, ui/models, shell/EditorState.h, vintage dsp, bside text/program/trace) include no JUCE header"
-fi
-bad=$(git grep -n --untracked -E '#[[:space:]]*include[[:space:]]*[<"]vintage/' -- 'source/bside/*' || true)
-if [[ -n $bad ]]; then
-  fail "source/bside includes the other instrument:"; echo "$bad" >&2
-else
-  ok "source/bside does not include source/vintage"
+  ok "the JUCE-free directories (common dsp/fx/seq/engine incl. UiFeed.h, ui/models, shell/EditorState.h, vintage dsp, bside chip/text/program/trace) include no JUCE header"
 fi
 dups=$(tr '\0' '\n' < "$tmp/files" | tr 'A-Z' 'a-z' | sort | uniq -d)
 if [[ -n $dups ]]; then

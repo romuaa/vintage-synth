@@ -72,6 +72,12 @@ cmake --build build/mac --parallel
 The plugin is at `build/mac/VintageSynth_artefacts/Release/VST3/Exitium Vintage Synth.vst3`. Copy it to
 `~/Library/Audio/Plug-Ins/VST3/` to use it in a DAW.
 
+**Two plugins.** The same build also produces **Exitium B-Side**, the second instrument (a chip synth, in
+development: today a shell around test tones, see the [Roadmap](#roadmap)), at
+`build/mac/BSide_artefacts/Release/VST3/Exitium B-Side.vst3`. `-DVS_BUILD_BSIDE=OFF` builds only
+Exitium Vintage Synth and its tests, exactly as before B-Side existed. Build one plugin with
+`cmake --build build/mac --target VintageSynth_VST3` or `--target BSide_VST3`.
+
 **Windows:**
 
 ```bat
@@ -106,8 +112,9 @@ with GCC in a native Linux ARM64 container (`--sanitize` for the AddressSanitize
 
 `scripts/dev-host.sh` (macOS) builds the plugin and JUCE's AudioPluginHost (about 2 minutes the first
 time on Apple silicon) and opens the host with MIDI Input → Exitium Vintage Synth → Audio Output already wired.
+`scripts/dev-host.sh --plugin bside` does the same for Exitium B-Side (`--plugin vintage` is the default).
 
-- Open the editor: double-click the "Exitium Vintage Synth" node.
+- Open the editor: double-click the plugin's node ("Exitium Vintage Synth" or "Exitium B-Side").
 - Play without a MIDI keyboard: the on-screen piano at the bottom of the host window (mouse, or the
   computer keys A W S E D F T G Y H U J K; Z and X shift the octave). A hardware keyboard also works.
 - Audio device and buffer size: Options > Audio Settings. macOS may ask for microphone permission
@@ -122,9 +129,10 @@ What to check by hand: [docs/ui-test-checklist.md](docs/ui-test-checklist.md).
 
 Run `scripts/preflight.sh --quick` while working and `scripts/preflight.sh` before you push (needs
 CMake, Ninja and Docker; the first run downloads pluginval, the VST3 validator sources and a scanner
-image into `~/Library/Caches/vs-preflight/`). It builds and tests the macOS universal plugin, runs
-pluginval and the VST3 validator, the sanitizers, the Linux ARM64 container build, a security scan
-and repository checks. `scripts/preflight.sh --clean` removes what it cached. Windows and Linux
+image into `~/Library/Caches/vs-preflight/`). It builds and tests both macOS universal plugins, runs
+pluginval and the VST3 validator on each bundle, the sanitizers, the Linux ARM64 container build, a
+security scan and repository checks (`VS_PREFLIGHT_PLUGINS=vintage` or `bside` limits pluginval and the
+validator to one plugin while iterating; the hand-over run always covers both). `scripts/preflight.sh --clean` removes what it cached. Windows and Linux
 x86_64 are confirmed by a manually started CI run.
 
 ## Testing
@@ -138,7 +146,10 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
 - **Unit tests** (Catch2) cover oscillator aliasing and pitch, filter cutoff, slope and self-oscillation,
   envelope and LFO timing, sample-accurate MIDI, and determinism.
 - **host_smoke** loads the built `.vst3` the way a DAW does and checks identity, parameters, rendering at
-  44.1/48/96 kHz and state save/restore.
+  44.1/48/96 kHz and state save/restore (`host_smoke --profile vintage|bside <bundle>`; ctest runs
+  `host_smoke` and `host_smoke_bside`).
+- **BSideTests** (`tests/bside/`) test Exitium B-Side's shell: the skeleton contract, parameters,
+  programs, state, bypass, the guard, the arpeggiator and no allocation in `processBlock`.
 - **pluginval** at strictness 10 runs in CI on macOS and Windows x64:
   `pluginval --strictness-level 10 --validate-in-process --skip-gui-tests "<path>/Exitium Vintage Synth.vst3"`.
 
@@ -159,7 +170,9 @@ source/dsp/        DSP building blocks (oscillator, filters, envelope, LFO, drif
 source/engine/     voice, part (note handling, LFO, oversampling)
 source/params/     parameter list, value mappings, parameter layout
 source/            plugin processor
-tests/             unit tests, CPU benchmark, VST3 host smoke test
+source/common/     shared by both instruments (dsp, engine, fx, seq, params, presets, shell)
+source/bside/      Exitium B-Side: processor, test-tone part, parameters, presets
+tests/             unit tests, CPU benchmark, VST3 host smoke test; tests/bside/ for B-Side
 docs/              design decisions and engineering notes
 external/          JUCE and Catch2 (git submodules, pinned)
 ```
@@ -184,7 +197,10 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 A second instrument is planned in this repository: **B-Side**, a polyphonic synth modelled on a classic 3-voice
 sound chip from early-1980s home computers, as its own plugin sharing the common engine code. Step S1a
 is done: the instrument-independent processor (MIDI, key modes, arpeggiator/sequencer, effects,
-output stage, bypass, presets, state) is a shared skeleton in `source/common/shell/`.
+output stage, bypass, presets, state) is a shared skeleton in `source/common/shell/`. Step S1b is done:
+**Exitium B-Side** exists as a second VST3 plugin (`source/bside/`, built unless `-DVS_BUILD_BSIDE=OFF`)
+with the shared parameters, 64 programs, state, the arpeggiator and the effects around a placeholder
+test-tone part. It makes no chip sound yet; the chip model follows in S2 to S4.
 
 ## License
 

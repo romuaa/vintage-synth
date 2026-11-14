@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Linux pre-flight check, run on a developer machine with Docker, before pushing.
 #
-#   scripts/linux-check.sh              GCC Release build of everything (warnings are errors,
-#                                       all errors shown) + full ctest under xvfb (incl. host_smoke)
+#   scripts/linux-check.sh              GCC Release build of everything, both plugins (warnings are
+#                                       errors, all errors shown) + full ctest under xvfb (incl. both
+#                                       host_smoke tests)
 #   scripts/linux-check.sh --sanitize   Clang ASan+UBSan build + tests (mirrors CI "linux-sanitizers",
 #                                       Ubuntu 24.04 image like CI)
 #   scripts/linux-check.sh --shell      interactive shell in the container (source snapshot in /work/src)

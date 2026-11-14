@@ -1,32 +1,41 @@
 #!/usr/bin/env bash
-# Build Exitium Vintage Synth + JUCE's AudioPluginHost (from the JUCE submodule) for this Mac's native
-# architecture and launch the host with a graph: MIDI in -> Exitium Vintage Synth -> audio out.
+# Build one of our plugins + JUCE's AudioPluginHost (from the JUCE submodule) for this Mac's native
+# architecture and launch the host with a graph: MIDI in -> the plugin -> audio out.
 #
-#   scripts/dev-host.sh              build (incremental), launch the host detached and return
+#   scripts/dev-host.sh              Exitium Vintage Synth: build (incremental), launch the host detached and return
+#   scripts/dev-host.sh --plugin bside   the same for Exitium B-Side (--plugin vintage is the default)
 #   scripts/dev-host.sh --wait       launch the host and stay attached until it is closed
 #   scripts/dev-host.sh --build-only build, don't launch
 #   scripts/dev-host.sh --no-build   launch what is already built
 #   scripts/dev-host.sh --debug      Debug build in build/dev-host-debug
 #   scripts/dev-host.sh --install    also copy the .vst3 to ~/Library/Audio/Plug-Ins/VST3/
 #
-# Nothing outside the repo is touched unless --install is given.
+# Both plugins share the build tree build/dev-host (build/dev-host-debug), so switching between them
+# only builds what is missing. Nothing outside the repo is touched unless --install is given.
 set -euo pipefail
 
 die() { echo "dev-host: error: $*" >&2; exit 1; }
 info() { echo "dev-host: $*"; }
 
-DO_BUILD=1; DO_LAUNCH=1; DO_INSTALL=0; DO_WAIT=0; CONFIG=Release; BDIR_NAME=dev-host
-for a in "$@"; do
-  case "$a" in
+DO_BUILD=1; DO_LAUNCH=1; DO_INSTALL=0; DO_WAIT=0; CONFIG=Release; BDIR_NAME=dev-host; WHICH=vintage
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --build-only) DO_LAUNCH=0 ;;
     --no-build)   DO_BUILD=0 ;;
     --debug)      CONFIG=Debug; BDIR_NAME=dev-host-debug ;;
     --install)    DO_INSTALL=1 ;;
     --wait)       DO_WAIT=1 ;;
-    -h|--help)    sed -n '2,12p' "$0"; exit 0 ;;
-    *)            die "unknown option '$a' (see --help)" ;;
+    --plugin)     [[ $# -ge 2 ]] || die "--plugin needs vintage or bside"; WHICH=$2; shift ;;
+    -h|--help)    sed -n '2,14p' "$0"; exit 0 ;;
+    *)            die "unknown option '$1' (see --help)" ;;
   esac
+  shift
 done
+case "$WHICH" in
+  vintage) TARGET=VintageSynth_VST3; BUNDLE_NAME="Exitium Vintage Synth.vst3"; GRAPH_NAME=vintage-synth-dev.filtergraph ;;
+  bside)   TARGET=BSide_VST3;        BUNDLE_NAME="Exitium B-Side.vst3";        GRAPH_NAME=bside-dev.filtergraph ;;
+  *)       die "unknown plugin '$WHICH' (vintage or bside)" ;;
+esac
 [[ $DO_BUILD -eq 0 && $DO_LAUNCH -eq 0 ]] && die "--build-only and --no-build together do nothing"
 
 [[ "$(uname -s)" == "Darwin" ]] || die "macOS only"
@@ -44,12 +53,12 @@ if [[ $DO_BUILD -eq 1 ]]; then
     -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
     -DVS_BUILD_TESTS=OFF \
     -DVS_BUILD_DEV_HOST=ON >/dev/null || die "configure failed"
-  info "building plugin + host (first build takes several minutes)"
-  cmake --build "$BUILD" --parallel --target VintageSynth_VST3 AudioPluginHost || die "build failed"
+  info "building $WHICH plugin + host (first build takes several minutes)"
+  cmake --build "$BUILD" --parallel --target "$TARGET" AudioPluginHost || die "build failed"
 fi
 
 [[ -d "$BUILD" ]] || die "no build at build/$BDIR_NAME; run without --no-build first"
-PLUGIN="$(find "$BUILD" -maxdepth 4 -type d -name 'Exitium Vintage Synth.vst3' | head -n1)"
+PLUGIN="$(find "$BUILD" -maxdepth 4 -type d -name "$BUNDLE_NAME" | head -n1)"
 HOST_APP="$(find "$BUILD" -maxdepth 4 -type d -name 'AudioPluginHost.app' | head -n1)"
 [[ -n "$PLUGIN" ]] || die "plugin bundle not found under build/$BDIR_NAME (build it first)"
 [[ -n "$HOST_APP" ]] || die "AudioPluginHost.app not found under build/$BDIR_NAME (build it first)"
@@ -59,22 +68,22 @@ HOST_BIN="$HOST_APP/Contents/MacOS/AudioPluginHost"
 if [[ $DO_INSTALL -eq 1 ]]; then
   DEST="$HOME/Library/Audio/Plug-Ins/VST3"
   mkdir -p "$DEST"
-  rm -rf "$DEST/Exitium Vintage Synth.vst3"
-  # The bundle was called "Vintage Synth.vst3" before the rename. It has the same class ID, so a
+  rm -rf "${DEST:?}/$BUNDLE_NAME"
+  # The Vintage bundle was called "Vintage Synth.vst3" before the rename. It has the same class ID, so a
   # host would see two copies of one plugin: remove the old one.
-  if [[ -d "$DEST/Vintage Synth.vst3" ]]; then
+  if [[ $WHICH == vintage && -d "$DEST/Vintage Synth.vst3" ]]; then
     rm -rf "$DEST/Vintage Synth.vst3"
     info "removed the old bundle $DEST/Vintage Synth.vst3 (renamed to Exitium Vintage Synth, same plugin ID)"
   fi
   cp -R "$PLUGIN" "$DEST/"
-  info "installed to $DEST/Exitium Vintage Synth.vst3"
+  info "installed to $DEST/$BUNDLE_NAME"
 fi
 
 # ---- graph file ------------------------------------------------------------------------------
 # The host identifies a VST3 by name + a hash of its class ID, both read from the bundle's
 # moduleinfo.json (written by the JUCE build). Format derived from PluginGraph::createXml and
 # PluginDescription::createXml in the JUCE submodule.
-GRAPH="$BUILD/vintage-synth-dev.filtergraph"
+GRAPH="$BUILD/$GRAPH_NAME"
 MODINFO="$PLUGIN/Contents/Resources/moduleinfo.json"
 make_graph() {
   [[ -f "$MODINFO" ]] || return 1

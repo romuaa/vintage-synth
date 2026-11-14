@@ -8,6 +8,7 @@
 
 #include <array>
 #include <atomic>
+#include <stdexcept>
 
 #include "common/params/Mappings.h"
 
@@ -15,6 +16,16 @@ namespace vs
 {
 // Version hint for every parameter. JUCE/VST3 uses it to keep parameter order stable.
 inline constexpr int kParamVersionHint = 1;
+
+/** A setup mistake in an instrument, found while it is being built: a parameter the shared code needs
+    is missing from the layout (BoundParam::bind), or the instrument never called initPresets
+    (shell::BiTimbralProcessor). A programming error that every build type reports at construction,
+    by name; see shell::createPluginProcessor for what the plugin entry point does with it. */
+class ConfigError : public std::logic_error
+{
+public:
+    using std::logic_error::logic_error;
+};
 
 /** How a float parameter is shown and parsed. The kind names are used by the instruments' X-macro
     lists (e.g. vintage/params/PartParamList.h). */

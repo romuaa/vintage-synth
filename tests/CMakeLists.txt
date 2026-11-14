@@ -1,3 +1,24 @@
+# vs_juce_modules: the JUCE modules the test cores use (audio_utils, dsp and what they pull in),
+# compiled ONCE and shared by vs_test_core and bs_test_core (tests/bside). They link the modules
+# PRIVATE: JUCE's module targets carry their .cpp files as interface sources, so a PUBLIC link would
+# compile them again into every consumer (and the two copies would collide at link time). What the
+# consumers need to compile against the modules (include directories, JUCE_* definitions) they take
+# from their own plugin target, as before; the library itself is built with Vintage's. The JucePlugin_*
+# definitions differ per plugin, but no JUCE module code the cores use depends on them (the plugin
+# client module is not part of it). Nothing here touches the shipped plugin targets.
+add_library(vs_juce_modules STATIC)
+target_include_directories(vs_juce_modules PRIVATE
+    $<TARGET_PROPERTY:VintageSynth,INCLUDE_DIRECTORIES>)
+target_compile_definitions(vs_juce_modules PRIVATE
+    $<TARGET_PROPERTY:VintageSynth,COMPILE_DEFINITIONS>)
+target_link_libraries(vs_juce_modules
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+set_target_properties(vs_juce_modules PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+
 # vs_test_core: the plugin's code (our sources + JUCE modules) compiled again *without* LTO.
 # Linking tests against the LTO-built VintageSynth shared code made every test executable pay
 # a full link-time code generation (about 5 min per Windows CI job). Same sources, same
@@ -9,8 +30,7 @@ target_compile_definitions(vs_test_core PUBLIC
     $<TARGET_PROPERTY:VintageSynth,COMPILE_DEFINITIONS>)
 target_link_libraries(vs_test_core
     PRIVATE
-        juce::juce_audio_utils
-        juce::juce_dsp
+        vs_juce_modules
         VintageSynthFactoryData
         VintageUiData
     PUBLIC
@@ -120,12 +140,18 @@ target_link_libraries(host_smoke PRIVATE
     juce::juce_recommended_warning_flags)
 add_dependencies(host_smoke VintageSynth_VST3)
 add_test(NAME host_smoke
-         COMMAND host_smoke "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+         COMMAND host_smoke --profile vintage "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+if(VS_BUILD_BSIDE)
+    add_dependencies(host_smoke BSide_VST3)
+    add_test(NAME host_smoke_bside
+             COMMAND host_smoke --profile bside "$<GENEX_EVAL:$<TARGET_PROPERTY:BSide_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+endif()
 
 # Golden-render regression harness (ctest label "render").
 add_subdirectory(render_regression)
 
-# B-Side JUCE-free unit tests (docs/architecture.md 8.1.2): table reader/writer, trace formats, comparer.
+# Exitium B-Side (tests/bside/CMakeLists.txt): the JUCE-free unit tests (bside_unit: table reader/writer,
+# trace formats, comparer; always built) and, with VS_BUILD_BSIDE, the plugin shell's test core and BSideTests.
 add_subdirectory(bside)
 
 # Steinberg VST3 validator (optional). Pass the path of a built `validator` binary, e.g. from CI:
@@ -144,4 +170,12 @@ if(VS_VST3_VALIDATOR)
     set_tests_properties(vst3_validator PROPERTIES
         LABELS vst3
         PASS_REGULAR_EXPRESSION "Result: [1-9][0-9]* tests passed, 0 tests failed")
+    if(VS_BUILD_BSIDE)
+        add_test(NAME vst3_validator_bside
+                 COMMAND "${VS_VST3_VALIDATOR}"
+                         "$<GENEX_EVAL:$<TARGET_PROPERTY:BSide_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+        set_tests_properties(vst3_validator_bside PROPERTIES
+            LABELS vst3
+            PASS_REGULAR_EXPRESSION "Result: [1-9][0-9]* tests passed, 0 tests failed")
+    endif()
 endif()
