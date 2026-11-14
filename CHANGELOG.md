@@ -5,6 +5,20 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side reference data: contract 8.15 and owner decision (2026-11-14, `bside/reference-data`)
+- `docs/architecture.md` 8.15 "Amendments from the reference data": the per-cycle specification of
+  the chip's digital core (step order, envelope pipelines and precedence, lost gate-off, sync after
+  all outputs, ring fold XOR NOT source, Model B read latch from 0x555, test bit, noise fill and
+  fade constants), the known reference artefacts and the analog reference conventions (985 248 Hz
+  only, -40 dBFS floor, band 22 to 20 kHz). Earlier contract rows it replaces point to it. An
+  independent per-cycle model written from the text matches every checkpoint of every committed
+  `d_*` trace.
+- Owner decision "follow, own tables": the digital core follows the reference's per-cycle
+  behaviour; combined-waveform shapes and analog constants stay our own fits. B-Side is therefore
+  tied to GPL-compatible licensing (`docs/decisions.md`). Open: how combined-waveform checkpoints
+  are compared (8.15.8).
+- `main` (B-Side S1d) merged in; the reference data set itself is unchanged (76 traces, 3.93 MB).
+
 ### B-Side reference data, review round 2 (2026-11-14)
 - Gap traces: lost gate-off and a step executed in another phase (`d_env_lost_gate_off_b`), the Model B
   read-back latch (`d_read_latch_*`), the envelope converter at all 256 counter values
