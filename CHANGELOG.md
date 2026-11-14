@@ -28,6 +28,14 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   field; the five formerly ambiguous cases are kept as regression sequences; the equivalence tests compare
   the full new state and the fill events.
 - Judgement calls and the specification gaps found: `docs/decisions.md`, "B-Side S2a fidelity pass".
+- Review round 1: a combined-waveform table is used for two or more of triangle, saw and pulse, or pulse
+  with noise (`wave::usesTable`); noise with only triangle or only saw is exact, so `c_9_*`/`c_a_*` are now
+  exact tests of the write-back path (0 exempt, asserted, as for every `d_*` and `a_*` trace). An
+  accumulator exemption also ends at a certain sync reset; the tracker keeps the noise register and the
+  noise output apart. `[replay]` lines list per field the exempt and the differing checkpoints. New unit
+  tests: the table rule, every way an exemption ends, the 8-bit envelope wrap (cycles named from
+  `d_env_cases_b`/`d_env_rates_b`), the Smooth-mode latch-step copy into the noise output. `c_*` exempt
+  checkpoints 4 315 -> 3 915 of 5 236; still 0 mismatches.
 
 ### B-Side S2a — the chip's digital core (2026-11-14)
 - Digital unit gate by an independent test agent: `tests/bside/unit/ChipStepperTests.cpp`, a naive per-cycle
