@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S1 contract (2026-11-14)
+- `docs/architecture.md` section 8 is now the contract for the second instrument's S1–S4: the
+  shared processor skeleton (S1a), the plugin shell (S1b), table and trace formats (S1c), the chip
+  model, polyphony, the patch program engine with its text format, the parameter list, presets,
+  the test and authenticity plan and the milestone breakdown. Judgement calls in `docs/decisions.md`;
+  owner decisions pending (Q1–Q8). Documentation only.
+
 ### VCF slope switch without a click (2026-11-13)
 - Changing the VCF slope while notes sound (by hand, by automation, or by applying a program such as
   the factory −12 dB programs A7 B3 B4 B7 C5 D7 F4) no longer steps the output: sounding voices

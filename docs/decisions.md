@@ -3,6 +3,42 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## M7 UI direction (owner, 2026-11-14)
+
+| Decision | Reason |
+|---|---|
+| **Tabbed workspace: every purpose gets the full window** (Sound, Shape, Play, Arp+Seq, Effects, Browser), with a slim persistent frame. Chosen from three wireframe concepts; a single signal-flow page seemed to be missing features and a both-parts-at-once page was far too busy. | Better visibility and larger controls that are easier with a mouse. |
+| **Sliders, not round knobs,** for continuous controls. | Knobs are hard to use with a mouse. |
+| **As simple as possible; graphs for visualisation and intuition.** A new user must be able to see how to set up the arpeggiator without a manual. | Owner's requirement. |
+
+## B-Side S1 contract (2026-11-14)
+
+Contract: `docs/architecture.md` section 8. All (review); the owner decisions it waits for are
+listed in its 8.12 (Q1–Q8).
+
+| Decision | Why |
+|---|---|
+| **S1 is split into S1a (shared skeleton, Vintage unchanged), S1b (plugin shell with a test tone) and S1c (table and trace formats).** S1a is proven by bit-identical raw renders, an identical parameter dump and identical state and preset bytes. | S1a is the only step that touches the shipped instrument; making it reviewable alone, with a proof that cannot pass by accident, keeps the risk where it can be seen. |
+| **The shared skeleton is a CRTP base (`shell::BiTimbralProcessor<Derived>`) with a `PartEngine` concept;** the block algorithm's order is written down and may not change. | Both instruments are bi-timbral with the same router, arp/seq, mixer, effects and output stage; sharing the orchestration (not only helpers) keeps the block-size and release rules in one place. Hooks run per block, so no per-sample virtual cost. |
+| **No shared static library of our code; each plugin compiles the common sources.** B-Side's JUCE-free code has its own test executable without JUCE. | JUCE modules and `JucePlugin_*` definitions are per plugin target; a JUCE-free unit test binary keeps the inner loop fast and limits the gate's growth. |
+| **Proposed identity: plugin code `Bsy1`, bundle ID `com.exitium.bside`, manufacturer `Exit`** (Q1). | Parallel to `Vsy1` / `com.exitium.vintagesynth`; distinct VST3 class ID. |
+| **Two parts (Lower/Upper with Whole/Dual/Split)** like Vintage (Q2). | Reuses the router, mixer and arp/seq unchanged and allows layering Model A over Model B. |
+| **One note = one whole chip** (three oscillators, one filter) by default; the hardware's shared-chip layout is S5. | A playable poly needs a filter per note; three oscillators per note are how the classic patches stack and ring-modulate. |
+| **Chip time is an integer cycle count (64-bit + 32-bit fraction); the digital state is advanced in closed form per internal sample and must equal a naive per-cycle stepper and the reference emulator bit for bit.** | Integer time makes ticks and digital state independent of block size and oversampling; the stepper gives an exact check that needs no external data. |
+| **Waveforms are band-limited; the 12-bit amplitude staircase is not rendered; envelope steps are not band-limited.** Alias budgets for B-Side: −100 dB for plain waveforms (as Vintage), −96/−80 dB for Model A DAC and combined waveforms, −90 dB for write discontinuities, a spectral match for noise (Q6). | The staircase lies above 20 kHz for any audible pitch; envelope steps are the chip's own content. The project rule forbids relaxing the gate, so the B-Side budgets need the owner's approval. |
+| **Smooth resolution by default; Authentic rounds pitch, pulse width and cutoff to the registers.** In Authentic, notes above the frequency register's maximum (about 3.85 kHz) play at the maximum. | Smooth playing by default, the original stepping on request; clamping is what the chip does. |
+| **Default chip model for Init: Model B** (Q3). | Predictable, clean filter; Model A is chosen per patch. |
+| **The tick clock is an integer number of cycles; Frame rate = 19 656 / 17 095 cycles; every note has its own tick phase starting at its note-on.** | Exact, block-size independent ticks; per-note phase gives every note the same attack. A global phase like the hardware's is an S5 option. |
+| **Seven lanes per tone (three wave/note, three pulse, one filter), up to 64 rows each; writes of a tick are applied at one cycle in a fixed order.** | One wave and one pulse lane per oscillator, because a note owns three oscillators; a fixed order makes register traces exact. |
+| **Lane ownership:** a register follows the host parameter until a lane writes it for the note. | Tables and host parameters work together without one silently overriding the other. |
+| **Note-off acts at its sample (release labels, gate off), not at the next tick** (Q7). | Up to 20 ms extra release latency would be felt when playing; the tick clock keeps running. |
+| **Restart policies: Clean (default), Precondition, Authentic; Look-ahead in S5** (Q8). Clean resets the envelope's counters directly when a note did not get its full lead, so the envelope delay quirk never happens unless chosen. | Live playing cannot announce the next note; Clean is predictable, the other policies keep the original behaviour available. |
+| **Velocity is a per-note gain after the chip** (plus an optional cutoff amount). | The chip has no per-voice level; changing envelopes or the volume register would change the sound, not only its level. |
+| **The table text format is strict (errors, not clamping), bounded (32 KB, 1024 lines, 64 rows per lane) and line-based; in presets it is an array of lines.** | It is an authoring language and untrusted input; lines fit the strict JSON reader's string cap and diff well. |
+| **A voice copies its compiled program (≤ 8 KB) at note-on; programs are published in three buffers inside the ApplyGate hold.** | No lifetime tracking on the audio thread, and parameters and table are always seen together. |
+| **Per part 63 host parameters plus `chip.clock`; 202 in total after S2**, added in one serial step; behaviour lands over S2–S4. | Matches the project's append-once discipline and avoids parameter churn across milestones. |
+| **Reference emulator: used only by an adapter outside this repository; reference data (state checkpoints and spectral features, never audio) is committed under neutral names with hashes only** (Q4). Analog constants and combined waveform shapes are fitted, not copied (Q5). | Keeps third-party names and code out of the repository and the plugin, keeps the licence question to a developer tool, and makes the authenticity tests reproducible offline. |
+
 ## Wave 4: output stage, headroom and soft limiter (2026-11-13)
 
 Owner decision "more headroom and an adjustable soft limiter"; the numbers below are judgement
