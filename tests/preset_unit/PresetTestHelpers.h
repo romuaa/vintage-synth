@@ -139,8 +139,37 @@ inline presets::Instrument testInstrument()
     return i;
 }
 
+/** The small schema's instrument with tables switched on: a table is a list of lines that each start
+    with "ok" (anything else is rejected with its line number); the canonical form trims the end of each
+    line. Limits: 64 lines, 2000 bytes. The checking functions never see an empty table. */
+inline presets::Instrument tableTestInstrument()
+{
+    auto i = testInstrument();
+    i.id = "test-tables";
+    i.maxTableLines = 64;
+    i.maxTableBytes = 2000;
+    i.validateTable = [] (const std::vector<std::string>& lines) -> juce::String
+    {
+        for (size_t k = 0; k < lines.size(); ++k)
+            if (lines[k].rfind ("ok", 0) != 0)
+                return "line " + juce::String (static_cast<int> (k) + 1) + ", column 1: expected \"ok\"";
+        return {};
+    };
+    i.canonicaliseTable = [] (const std::vector<std::string>& lines)
+    {
+        std::vector<std::string> out;
+        for (const auto& l : lines)
+        {
+            auto end = l.find_last_not_of (' ');
+            out.push_back (l.substr (0, end + 1));
+        }
+        return out;
+    };
+    return i;
+}
+
 /** A processor-free schema for the format tests: a few parameters of each kind, two tone prefixes. */
-inline presets::Schema smallSchema()
+inline presets::Schema smallSchema (presets::Instrument instrument = testInstrument())
 {
     std::vector<presets::ParamSpec> all;
     auto add = [&] (const char* id, float lo, float hi, float def, bool discrete) { all.push_back ({ id, lo, hi, def, discrete }); };
@@ -154,6 +183,6 @@ inline presets::Schema smallSchema()
     add ("g.mode", 0.0f, 2.0f, 0.0f, true);
     add ("g.split", 0.0f, 127.0f, 60.0f, true);
     add ("g.mix", -1.0f, 1.0f, 0.25f, false);
-    return presets::Schema (std::move (all), { "a.", "b." }, { "master.vol" }, testInstrument());
+    return presets::Schema (std::move (all), { "a.", "b." }, { "master.vol" }, std::move (instrument));
 }
 } // namespace vs::ptest

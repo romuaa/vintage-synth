@@ -17,6 +17,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <cstddef>
+#include <functional>
+#include <string>
 #include <vector>
 
 namespace vs::presets
@@ -38,6 +40,26 @@ struct Instrument
     juce::String id;                // written into every file as "instrument"; a file of another instrument is rejected
     int groups = 8, slotsPerGroup = 8; // a bank is groups x slotsPerGroup programs, named A1 ... (letter, then 1-9)
     juce::String programExtension, toneExtension, bankExtension; // with the dot: ".vsprog"
+
+    // ---- Patch tables (docs/architecture.md 8.8): optional text attached to a tone ----
+    // An instrument that has none (Vintage) leaves every field below at its default: its files and
+    // its saved state are then exactly what they were before tables existed, and a "tables" or
+    // "table" key in a file of such an instrument is an unknown key and is ignored.
+    /** Checks one table (its lines, without line ends). Returns an empty string when the table is
+        acceptable, else the message. Called only for a non-empty table that already passed the
+        shape checks below, on the message thread or a host's state thread, never on the audio thread.
+        Must not throw (an exception is caught and turns into an error). Setting it turns tables on. */
+    std::function<juce::String (const std::vector<std::string>&)> validateTable;
+    /** Optional: the canonical lines of a table that validateTable accepted (the form saved in a
+        session). Without it the lines are kept as they are. */
+    std::function<std::vector<std::string> (const std::vector<std::string>&)> canonicaliseTable;
+    int maxTableLines = 0;       // lines per table, checked before validateTable (and before anything is copied)
+    size_t maxTableBytes = 0;    // the lines with one line end each, summed, checked before validateTable
+    size_t maxFileBytes = 0;     // largest preset file read; 0 = kMaxFileBytes
+    int maxJsonValues = 0;       // values in one preset file's JSON tree; 0 = the reader's default
+
+    bool hasTables() const noexcept { return static_cast<bool> (validateTable); }
+    size_t fileCap() const noexcept { return maxFileBytes != 0 ? maxFileBytes : kMaxFileBytes; }
 
     int bankSize() const noexcept { return groups * slotsPerGroup; }
     bool isValid() const noexcept;
@@ -112,12 +134,16 @@ struct Tone
 {
     Meta meta;
     std::vector<float> values; // schema.toneSize() values
+    std::vector<std::string> data; // the part's table: its lines (empty = no table); only for an instrument with tables
 };
 
 struct Program
 {
     Meta meta;
     std::vector<float> values; // schema.numParams() values; excluded parameters hold their default
+    /** One table per tone (its lines; empty = no table). Empty or shorter than schema.numTones():
+        the missing tones have no table. Only for an instrument with tables. */
+    std::vector<std::vector<std::string>> data;
 };
 
 struct Bank
@@ -140,6 +166,20 @@ inline bool isHiddenOrControlCharacter (juce::juce_wchar c) noexcept { return is
     is required). */
 juce::String sanitiseText (const juce::String& s, int maxChars);
 juce::String sanitiseName (const juce::String& s);
+
+// ---- Tables (Instrument::validateTable) ----
+/** Lines of one table, joined with one LF after each line (the text the instrument's reader gets). */
+std::string joinTableLines (const std::vector<std::string>& lines);
+/** The shape every table must have before an instrument's validator sees it: at most
+    maxTableLines lines, maxTableBytes bytes (a line end counted after each line), and no line
+    break or NUL inside a line (so lines and text correspond one to one). Returns "" if it fits. */
+juce::String checkTableShape (const Instrument& instrument, const std::vector<std::string>& lines);
+/** Shape check, then the instrument's validator (exceptions caught). "" = accepted; an empty table is accepted. */
+juce::String validateTableLines (const Instrument& instrument, const std::vector<std::string>& lines);
+/** Splits the text of a session property into lines (an LF ends each line; one final LF does not
+    start another), refusing more than maxTableBytes bytes or maxTableLines lines before copying
+    anything. Returns "" on success. */
+juce::String splitTableText (const Instrument& instrument, const juce::String& text, std::vector<std::string>& lines);
 
 // ---- Construction and conversion ----
 Program makeInitProgram (const Schema& schema);

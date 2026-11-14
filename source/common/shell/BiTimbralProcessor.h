@@ -318,6 +318,8 @@ public:
         auto state = apvts.copyState();
         state.setProperty (kStateVersionAttr, Derived::kStateVersion, nullptr);
         state.appendChild (pm().createSessionInfo(), nullptr);
+        if (auto tables = pm().createTablesInfo(); tables.isValid()) // only an instrument with tables has any
+            state.appendChild (tables, nullptr);
 
         if (auto xml = state.createXml())
             copyXmlToBinary (*xml, destData);
@@ -334,9 +336,11 @@ public:
         auto state = juce::ValueTree::fromXml (*xml);
         // The preset info (bank, program, modified flag) rides along as a child; sessions saved before
         // presets existed have none. It is taken out before the parameters are restored.
-        auto info = state.getChildWithName (kPresetInfoType);
-        if (info.isValid())
-            state.removeChild (info, nullptr);
+        // A hostile or damaged session may carry several: the first is used and every one is removed
+        // (a leftover child would be kept by the parameter tree and saved again with the next state).
+        auto info = takeChildren (state, kPresetInfoType);
+        // The same for the tables child (patch tables, 8.8); an instrument without tables ignores it.
+        auto tablesInfo = takeChildren (state, presets::kTablesInfoType);
         Derived::migrateState (state);
         addMissingParameters (state, getParameters());
 
@@ -344,9 +348,12 @@ public:
         // up later on the message thread). One writer lock around both steps, so no apply on another
         // thread can come between the parameters and the preset info; the audio thread keeps its
         // parameter values until all of them have been replaced.
+        // The tables are checked before the hold (no table, or one that does not check out, leaves that
+        // part empty with an error the editor can show) and published inside it, with the parameters.
+        auto tables = pm().prepareTablesInfo (tablesInfo);
         {
             const juce::ScopedLock w (pm().writerLock());
-            pm().withParametersHeld ([&] { apvts.replaceState (state); });
+            pm().withParametersHeld ([&] { apvts.replaceState (state); pm().restoreTables (std::move (tables)); });
             pm().restoreSessionInfo (info);
         }
         pm().sessionRestored();
@@ -430,10 +437,13 @@ protected:
 
     /** Called once by Derived's constructor, after every parameter is bound and before any is
         changed (the schema's defaults are the parameters' current values). */
-    void initPresets (presets::Schema schema, presets::Bank factoryBank, const juce::String& productFolder)
+    void initPresets (presets::Schema schema, presets::Bank factoryBank, const juce::String& productFolder,
+                      std::unique_ptr<presets::TableSink> tableSink = nullptr)
     {
+        // The manager owns the sink: it outlives every thread that can reach it (the manager's own timer
+        // and the host's state calls stop when the manager is destroyed, after the derived class's members).
         presetManager = std::make_unique<presets::PresetManager> (apvts, std::move (schema), std::move (factoryBank), presetGate,
-                                                                  presets::Locations::userDefault (productFolder));
+                                                                  presets::Locations::userDefault (productFolder), std::move (tableSink));
     }
 
     /** The key mode from the parameter atomics (any thread; NaN-safe). */
