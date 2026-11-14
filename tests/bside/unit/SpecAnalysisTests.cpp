@@ -155,3 +155,17 @@ TEST_CASE ("spec analysis: analyseRender builds a spec that validates", "[spec]"
     std::vector<float> wrong (x.begin(), x.end() - 1);
     CHECK_FALSE (analyseRender (t, std::string (64, 'a'), wrong, s, &why));
 }
+
+TEST_CASE ("spec analysis: band 22 counts 16 kHz .. 20 kHz only", "[spec]")
+{
+    std::vector<std::int16_t> level, bands;
+    const auto hi = sine (48000, 22000.0, 1.0);
+    featureFrames (hi.data(), hi.size(), 40, level, bands);
+    CHECK (bands[20 * kSpecBands + 22] < -800);        // above the limit: left out
+    CHECK (std::abs (level[20] - (-30)) <= 1);         // the level is not band-limited
+    featureFrames (hi.data(), hi.size(), 40, level, bands, 24000.0);
+    CHECK (std::abs (bands[20 * kSpecBands + 22] - (-30)) <= 1); // without the limit (harness layout)
+    const auto in = sine (48000, 18000.0, 1.0);
+    featureFrames (in.data(), in.size(), 40, level, bands);
+    CHECK (std::abs (bands[20 * kSpecBands + 22] - (-30)) <= 1); // below the limit: counted
+}

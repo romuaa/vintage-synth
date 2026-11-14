@@ -107,3 +107,27 @@ TEST_CASE ("analog measure: tone level reads the nearest bin", "[measure]")
     CHECK (std::abs (toneLevelDb (s, 655.0) + 5.5) < 1e-9);
     CHECK (std::abs (toneLevelDb (s, 5.0) + 120.0) < 1e-9);
 }
+
+TEST_CASE ("analog measure: the corner iteration converges and says so", "[measure]")
+{
+    SpecSegment f, b;
+    makePair (1800.0, 0.7071, -1.0, 1.0, f, b);
+    const auto c = lowpassCorner (filterResponse (f, b));
+    REQUIRE (c.found);
+    CHECK (c.converged);
+    CHECK (c.rounds >= 2);
+    CHECK (c.rounds <= 8);
+}
+
+TEST_CASE ("analog measure: at resonance 0 plateau noise far below the corner is not a peak", "[measure]")
+{
+    SpecSegment f, b;
+    makePair (5000.0, 0.7071, 0.0, 0.0, f, b);
+    // a bump of +2 dB around 40 Hz, five octaves below the corner
+    for (int k = 11; k <= 13; ++k)
+        f.spectrum[static_cast<std::size_t> (k)] = static_cast<std::int16_t> (f.spectrum[static_cast<std::size_t> (k)] + 20);
+    const auto p = resonancePeak (filterResponse (f, b));
+    REQUIRE (p.found);
+    CHECK (p.db < 0.3);
+    CHECK (p.hz > 2000.0);
+}

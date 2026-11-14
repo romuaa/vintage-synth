@@ -42,7 +42,7 @@ TEST_CASE ("B-Side spec features equal the render-regression features", "[render
 
     const auto ref = vs::rr::extractFeatures (x, 48000.0);
     std::vector<std::int16_t> level, bands;
-    vs::bside::trace::featureFrames (x.data(), x.size(), ref.frames, level, bands);
+    vs::bside::trace::featureFrames (x.data(), x.size(), ref.frames, level, bands, 24000.0); // no band limit: the harness's layout
     REQUIRE (ref.frames == static_cast<int> ((n + 1199) / 1200));
 
     int worst = 0, differing = 0;

@@ -13,6 +13,8 @@ constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr int kBins = kSpecBins;
 /** A corner needs an octave of plateau below it: bin 12 = 40 Hz. */
 constexpr double kMinCornerBin = 12.0;
+/** Plateau/corner iteration: at most this many rounds, then 'not converged'. */
+constexpr int kMaxRounds = 8;
 
 double medianOf (std::vector<double> v)
 {
@@ -151,8 +153,9 @@ Corner lowpassCorner (const Response& r)
     Corner c;
     const auto s = smoothResponse (r);
     int kc = kBins - 1;
-    for (int round = 0; round < 4; ++round)
+    for (int round = 1; round <= kMaxRounds; ++round)
     {
+        c.rounds = round;
         const double plateau = plateauBelow (r, kc - 12);
         if (std::isnan (plateau))
             return Corner {};
@@ -162,11 +165,17 @@ Corner lowpassCorner (const Response& r)
         const double x = curveCrossing (r, k, plateau - 3.0);
         if (std::isnan (x) || x < kMinCornerBin)
             return Corner {};
-        c.found = true;
         c.hz = binHz (std::min (x, static_cast<double> (kBins - 1)));
         c.plateauDb = plateau;
+        if (k == kc)
+        {
+            c.found = true;
+            return c;
+        }
         kc = k;
     }
+    c.found = false;
+    c.converged = false;
     return c;
 }
 
@@ -177,9 +186,10 @@ Peak resonancePeak (const Response& r)
         return Peak {};
     const auto s = smoothResponse (r);
     const int last = std::min (kBins - 1, static_cast<int> (std::ceil (12.0 * std::log2 (c.hz / 20.0))) + 6);
+    const int first = std::max (0, static_cast<int> (std::floor (12.0 * std::log2 (c.hz / 20.0))) - 12);
     Peak p;
     double best = -std::numeric_limits<double>::infinity();
-    for (int k = 0; k <= last; ++k)
+    for (int k = first; k <= last; ++k)
         if (! std::isnan (s[static_cast<std::size_t> (k)]) && s[static_cast<std::size_t> (k)] > best)
         {
             best = s[static_cast<std::size_t> (k)];

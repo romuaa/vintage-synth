@@ -124,7 +124,8 @@ std::vector<PlannedSegment> segmentPlan (const Trace& t)
     return out;
 }
 
-void featureFrames (const float* mono, std::size_t n, int frames, std::vector<std::int16_t>& level, std::vector<std::int16_t>& bands)
+void featureFrames (const float* mono, std::size_t n, int frames, std::vector<std::int16_t>& level, std::vector<std::int16_t>& bands,
+                    double bandLimitHz)
 {
     level.assign (static_cast<std::size_t> (frames), 0);
     bands.assign (static_cast<std::size_t> (frames) * kSpecBands, 0);
@@ -133,6 +134,8 @@ void featureFrames (const float* mono, std::size_t n, int frames, std::vector<st
     for (int k = 1; k < kFeatureFftSize / 2; ++k)
     {
         const double hz = k * static_cast<double> (kSpecRate) / kFeatureFftSize;
+        if (hz >= bandLimitHz)
+            break; // left out of every band (bandOfBin stays -1)
         int b = 0;
         while (b + 1 < kSpecBands && hz >= bandLowerEdge (b + 1))
             ++b;
@@ -157,7 +160,8 @@ void featureFrames (const float* mono, std::size_t n, int frames, std::vector<st
         fft.forward (buf);
         double power[kSpecBands] = {};
         for (int k = 1; k < kFeatureFftSize / 2; ++k)
-            power[bandOfBin[static_cast<std::size_t> (k)]] += std::norm (buf[static_cast<std::size_t> (k)]);
+            if (bandOfBin[static_cast<std::size_t> (k)] >= 0)
+                power[bandOfBin[static_cast<std::size_t> (k)]] += std::norm (buf[static_cast<std::size_t> (k)]);
         for (int b = 0; b < kSpecBands; ++b)
             bands[static_cast<std::size_t> (fr * kSpecBands + b)] = tenthDb (2.0 * power[b] / (kFeatureFftSize * windowPower));
 

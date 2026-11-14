@@ -10,13 +10,15 @@
 // - Bins where the bypass is at or below -100 dB carry no information (NaN).
 // - Smoothing: running mean over 5 bins (2 either side, NaN skipped, fewer at the ends).
 // - Plateau: median of the unsmoothed response over the bins from 0 up to one octave below the corner
-//   (at least bins 0..5, 20..26.7 Hz); found by iterating with the corner estimate (4 rounds).
+//   (at least bins 0..5, 20..26.7 Hz); found by iterating with the corner estimate until the
+//   corner's bin no longer changes (at most 8 rounds; not converged = not found, `converged` false).
 // - Corner (-3 dB): the first bin k where the smoothed response and the next bin's are both below
 //   plateau - 3 dB; then a least-squares parabola through the unsmoothed response over bins
 //   k-4 .. k+4 (log frequency) and its falling crossing of plateau - 3 dB nearest k. Not found when
 //   there is none, or when it lies below bin 12 (40 Hz: a corner needs an octave of plateau).
-// - Resonance peak: the largest smoothed value up to half an octave above the corner, minus the
-//   plateau (dB).
+// - Resonance peak: the largest smoothed value from one octave below the corner up to half an octave
+//   above it, minus the plateau (dB). (Searching from bin 0 would report plateau noise as the peak
+//   at low resonance.)
 // - Tone level: the bin nearest the tone's frequency (round (12 log2 (f / 20 Hz))).
 
 #include "bside/trace/ReferenceFormat.h"
@@ -36,8 +38,10 @@ Response smoothResponse (const Response& r);
 struct Corner
 {
     bool found = false;
+    bool converged = true; // false: the plateau/corner iteration did not settle (found is false then)
     double hz = 0.0;
     double plateauDb = 0.0;
+    int rounds = 0;
 };
 
 /** The -3 dB point of a low-pass response (rules above). */
