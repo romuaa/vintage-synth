@@ -299,7 +299,7 @@ TEST_CASE ("The AUTO badge never overlaps the label or the value, on every slide
             CHECK (s->getLocalBounds().toFloat().contains (badge));
             ++checked;
         }
-    CHECK (checked > 100);
+    CHECK (checked > 50); // (the placeholder pages counted every step bar of the sequencer as a slider; they are bars now)
 }
 
 TEST_CASE ("High-pass handle: moves for every value change over its whole range and stays inside the graph", "[ui][editor][graphs]")

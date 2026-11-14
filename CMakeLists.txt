@@ -67,6 +67,9 @@ set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/BoundComponent.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/Slider.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/SegmentedSwitch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/StepTypeToggle.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/StepGrid.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/PianoRollView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/GraphView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/FrameParts.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/EditorFrame.cpp)
@@ -79,6 +82,7 @@ set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Part.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/VintageEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/SoundPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/ArpSeqPage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/PlaceholderPage.cpp)
 set(VS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${VS_VINTAGE_SOURCES})
 
