@@ -57,7 +57,7 @@ Format (one entry per line, nothing else on the line):
 
 - `<part>.lfo.waveform`: The shape of the wobble. Random jumps to a new value every cycle; Noise wanders quickly.
 - `<part>.lfo.rate`: How fast the LFO (a slow wobble) repeats, from slow sweeps to fast trills.
-- `<part>.lfo.delay`: How long the LFO takes to come in after you start playing: silent for the first half, then it fades in.
+- `<part>.lfo.delay`: How long after you start playing the LFO wobble is at full strength. It is silent for the first half, then fades in.
 - `<part>.vcomod.lfo_mod`: How much the LFO bends the pitch up and down (vibrato).
 - `<part>.vcomod.env_mod`: How far Envelope 1 bends the pitch on each note. The oscillators it affects are set by Pitch goes to.
 - `<part>.vcomod.target`: Which oscillators the LFO and Envelope 1 pitch amounts move: oscillator 1, both, or oscillator 2.

@@ -27,7 +27,7 @@ LfoPage::LfoPage (UiContext& c, int p)
             [] (int wave, float rateHz, float delaySec, float windowSec, model::LfoPreview& out) { computeLfoPreview (wave, rateHz, delaySec, windowSec, out); }),
       waveform (c, prefix (p) + "lfo.waveform", "Waveform", p),
       rate (c, prefix (p) + "lfo.rate", "Rate", p),
-      delay (c, prefix (p) + "lfo.delay", "Delay before it starts", p),
+      delay (c, prefix (p) + "lfo.delay", "Delay until full strength", p),
       pitchAmount (c, prefix (p) + "vcomod.lfo_mod", "Amount", p),
       pitchTarget (c, prefix (p) + "vcomod.target", "Pitch goes to", p, { "Osc 1", "Both", "Osc 2" }),
       pwmAmount (c, prefix (p) + "vcomod.pwm", "Amount", p),
@@ -70,6 +70,8 @@ LfoPage::LfoPage (UiContext& c, int p)
     rename (delay, "LFO delay");
     rename (rate, "LFO rate");
     rename (waveform, "LFO waveform");
+
+    view.setExampleWaves ({ 4, 5 }); // Random and Noise are different every time (kLfoWaveLabels order)
 
     waveIndex[0] = ctx.mirror.indexOf (prefix (p) + "vco1.waveform");
     waveIndex[1] = ctx.mirror.indexOf (prefix (p) + "vco2.waveform");

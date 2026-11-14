@@ -167,24 +167,42 @@ TEST_CASE ("Envelope time labels: spread so they never overlap, stay inside the 
     CHECK (out[2] - out[1] == Approx (72.0f));
 }
 
-TEST_CASE ("LFO window: the smallest of 0.5, 1, 2, 5, 10, 20 s that holds the delay plus two cycles", "[ui][models][lfo]")
+TEST_CASE ("LFO window: the smallest of 0.5 ... 50 s that holds the delay plus two cycles, with the first whole cycle inside 80 %", "[ui][models][lfo]")
 {
     CHECK (lfoWindowFor (0.0f, 4.0f) == Approx (0.5f));  // two cycles of 4 Hz = 0.5 s exactly
     CHECK (lfoWindowFor (0.0f, 3.0f) == Approx (1.0f));  // 0.667 s
     CHECK (lfoWindowFor (0.6f, 3.0f) == Approx (2.0f));  // 1.267 s
     CHECK (lfoWindowFor (0.0f, 40.0f) == Approx (0.5f)); // fastest rate: shortest window
-    CHECK (lfoWindowFor (5.0f, 40.0f) == Approx (10.0f)); // 5.05 s
+    CHECK (lfoWindowFor (5.0f, 40.0f) == Approx (10.0f)); // 5.05 s, and 5.025 s must be within 80 %
     CHECK (lfoWindowFor (0.0f, 0.5f) == Approx (5.0f));  // 4 s
-    CHECK (lfoWindowFor (0.0f, 0.05f) == Approx (20.0f)); // 40 s needed: 20 s at most
-    CHECK (lfoWindowFor (5.0f, 0.05f) == Approx (20.0f));
-    // The window always holds what it can: delay + two cycles, whenever that is within 20 s.
-    for (float delay : { 0.0f, 0.3f, 1.0f, 4.0f })
-        for (float rate : { 0.2f, 1.0f, 2.5f, 12.0f })
+    CHECK (lfoWindowFor (0.0f, 0.05f) == Approx (50.0f)); // two cycles are 40 s: beyond the old 20 s
+    CHECK (lfoWindowFor (5.0f, 0.05f) == Approx (50.0f)); // the cycle ends at 25 s
+    CHECK (lfoWindowFor (4.5f, 4.0f) == Approx (10.0f));  // 5 s would hold delay + 2 cycles, but not 4.75 s within 80 %
+    // Whatever the settings, the delay and the whole cycle after it are inside (never clamped to the edge).
+    for (float delay : { 0.0f, 0.3f, 1.0f, 4.0f, 5.0f })
+        for (float rate : { 0.05f, 0.2f, 1.0f, 2.5f, 12.0f, 40.0f })
         {
             const float w = lfoWindowFor (delay, rate);
-            if (delay + 2.0f / rate <= 20.0f)
-                CHECK (delay + 2.0f / rate <= w + 1.0e-4f);
+            CHECK (delay + 1.0f / rate <= 0.8f * w + 1.0e-4f);
+            CHECK (lfoWindowKeeps (w, delay, rate));
         }
+}
+
+TEST_CASE ("LFO window rule: kept while the delay handle is at most 90 % along and the cycle handle between 10 % and 90 %", "[ui][models][lfo]")
+{
+    // window 2 s, rate 2 Hz (cycle 0.5 s)
+    CHECK (lfoWindowKeeps (2.0f, 0.0f, 2.0f));   // delay at the left edge is fine; cycle at 25 %
+    CHECK (lfoWindowKeeps (2.0f, 1.2f, 2.0f));   // cycle ends at 1.7 s = 85 %
+    CHECK_FALSE (lfoWindowKeeps (2.0f, 1.4f, 2.0f)); // 1.9 s = 95 %
+    CHECK_FALSE (lfoWindowKeeps (2.0f, 1.85f, 40.0f)); // delay at 92 %
+    CHECK_FALSE (lfoWindowKeeps (20.0f, 0.0f, 2.0f)); // cycle at 2.5 %: zoomed out too far
+    CHECK_FALSE (lfoWindowKeeps (0.0f, 0.0f, 2.0f));  // no window yet
+    CHECK (lfoWindowKeeps (0.5f, 0.0f, 40.0f));       // the smallest window cannot zoom in further
+    // lfoChooseWindow keeps a window that still suits and chooses again otherwise.
+    CHECK (lfoChooseWindow (5.0f, 0.0f, 2.0f) == Approx (5.0f).margin (0.0)); // cycle at 10 %: kept
+    CHECK (lfoChooseWindow (20.0f, 0.0f, 2.0f) == Approx (lfoWindowFor (0.0f, 2.0f)));
+    CHECK (lfoChooseWindow (2.0f, 1.4f, 2.0f) == Approx (lfoWindowFor (1.4f, 2.0f)));
+    CHECK (lfoChooseWindow (0.0f, 0.0f, 2.0f) == Approx (lfoWindowFor (0.0f, 2.0f)));
 }
 
 TEST_CASE ("LFO handles: delay and cycle round-trip through the parameters' own mappings, clamped to 0 - 5 s and 0.05 - 40 Hz", "[ui][models][lfo]")
@@ -328,6 +346,29 @@ TEST_CASE ("LFO preview: 1000 points of the engine's own LFO, silent for half th
     CHECK (delayed.y[749] == Approx (delayed.y[249]).margin (2.0e-3)); // and again
     // ... but not a quarter of a cycle after it (point 311: the sine's crest).
     CHECK (std::abs (delayed.y[311] - delayed.y[249]) > 0.9f);
+}
+
+TEST_CASE ("LFO preview: Random and Noise start with real values (the real LFO is free-running), not a flat first cycle", "[ui][pictures][lfo]")
+{
+    LfoPreview p;
+    for (int wave : { 4, 5 })
+    {
+        computeLfoPreview (wave, 3.0f, 0.0f, 2.0f, p); // one cycle = 1/3 s = points 0 ... 166
+        int moving = 0;
+        for (int i = 0; i < 166; ++i)
+            if (std::abs (p.y[static_cast<size_t> (i)]) > 1.0e-3f)
+                ++moving;
+        INFO ("wave " << wave);
+        CHECK (moving > 150);
+        computeLfoPreview (wave, 3.0f, 1.0f, 2.0f, p); // delayed: silent first, still real values afterwards
+        for (int i = 0; i < 100; ++i)
+            CHECK (std::abs (p.y[static_cast<size_t> (i)]) < 1.0e-3f);
+        CHECK (std::abs (p.y[400]) > 1.0e-3f);
+    }
+    // The other waves do not depend on any pre-roll: a sine starts at 0 and rises.
+    computeLfoPreview (0, 3.0f, 0.0f, 2.0f, p);
+    CHECK (std::abs (p.y[0]) < 0.05f);
+    CHECK (p.y[10] > 0.0f);
 }
 
 TEST_CASE ("LFO preview: every waveform is drawn (index order of the choice), the random ones deterministically", "[ui][pictures][lfo]")

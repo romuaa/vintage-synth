@@ -1,7 +1,9 @@
 #pragma once
 
-// LFO picture maths (docs/architecture.md 9.3.3). JUCE-free. Linear time axis; the window is the
-// smallest of 0.5, 1, 2, 5, 10, 20 s that holds the delay plus two cycles (20 s at most).
+// LFO picture maths (docs/architecture.md 9.3.3). JUCE-free. Linear time axis. The window (0.5 ... 50 s)
+// is chosen so that the delay and one whole cycle after it lie inside it (a handle is never clamped
+// to the edge outside a drag), preferably the delay plus two cycles; it is kept through a drag and
+// after it for as long as both handles lie in the middle of the plot (lfoWindowKeeps).
 
 #include "common/params/Mappings.h"
 #include "common/ui/models/ParamTarget.h"
@@ -12,17 +14,33 @@
 
 namespace vs::ui::model
 {
-inline constexpr std::array<float, 6> kLfoWindowsSec { 0.5f, 1.0f, 2.0f, 5.0f, 10.0f, 20.0f };
+inline constexpr std::array<float, 7> kLfoWindowsSec { 0.5f, 1.0f, 2.0f, 5.0f, 10.0f, 20.0f, 50.0f };
 inline constexpr float kLfoMinRateHz = 0.05f, kLfoMaxRateHz = 40.0f, kLfoMaxDelaySec = 5.0f;
 
-/** The window (seconds) that holds the delay and two cycles at the given rate. */
+/** The smallest window (seconds) that holds the delay plus two cycles, with the end of the first whole
+    cycle after the delay within 80 % of it; the largest one if none does (delay 5 s, 0.05 Hz: 50 s). */
 inline float lfoWindowFor (float delaySec, float rateHz) noexcept
 {
-    const float need = delaySec + 2.0f / std::max (rateHz, 1.0e-3f);
+    const float cycle = 1.0f / std::max (rateHz, 1.0e-3f);
     for (const float w : kLfoWindowsSec)
-        if (need <= w)
+        if (delaySec + 2.0f * cycle <= w && delaySec + cycle <= 0.8f * w)
             return w;
     return kLfoWindowsSec.back();
+}
+
+/** True while `window` still suits the settings: the delay handle lies at most 90 % along the plot and
+    the cycle handle between 10 % and 90 % (the 10 % only where a smaller window exists). */
+inline bool lfoWindowKeeps (float window, float delaySec, float rateHz) noexcept
+{
+    const float cycleEnd = delaySec + 1.0f / std::max (rateHz, 1.0e-3f);
+    return window > 0.0f && delaySec <= 0.9f * window && cycleEnd <= 0.9f * window
+           && (cycleEnd >= 0.1f * window || window <= kLfoWindowsSec.front());
+}
+
+/** The window to show: the previous one while it keeps, else a new choice. */
+inline float lfoChooseWindow (float previous, float delaySec, float rateHz) noexcept
+{
+    return lfoWindowKeeps (previous, delaySec, rateHz) ? previous : lfoWindowFor (delaySec, rateHz);
 }
 
 /** The LFO's waveform over the window, one point per 1/kPoints of it (the instrument computes it

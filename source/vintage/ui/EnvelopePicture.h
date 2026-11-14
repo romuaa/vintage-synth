@@ -17,6 +17,7 @@
 #include "vintage/dsp/Lfo.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace vs::ui
@@ -75,6 +76,15 @@ inline void computeLfoPreview (int wave, float rateHz, float delaySec, float win
     lfo.setWave (static_cast<dsp::LfoWave> (std::clamp (wave, 0, static_cast<int> (dsp::kNumLfoWaves) - 1)));
     lfo.setRate (rateHz);
     lfo.setDelay (delaySec);
+    if (wave >= static_cast<int> (dsp::LfoWave::Random))
+    {
+        // The real LFO is free-running and keeps its last value across notes: Random and Noise would
+        // start flat (a fresh Lfo holds 0 until its first cycle ends). Run two cycles first, at the
+        // preview's own deterministic seed, so the picture shows real values from its first point.
+        const int preroll = static_cast<int> (std::ceil (2.0 * static_cast<double> (n) / static_cast<double> (windowSec) / static_cast<double> (rateHz))) + 2;
+        for (int i = 0; i < preroll; ++i)
+            lfo.process();
+    }
     lfo.trigger();
     out.windowSec = windowSec;
     for (int i = 0; i < n; ++i)

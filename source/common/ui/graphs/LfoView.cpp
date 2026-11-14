@@ -5,7 +5,7 @@ namespace vs::ui
 namespace
 {
 constexpr int kTicks = 5;
-constexpr float kLabelStrip = 18.0f, kCaptionWidth = 200.0f;
+constexpr float kLabelStrip = 18.0f, kCaptionWidth = 240.0f;
 
 juce::String secondsText (float t)
 {
@@ -15,7 +15,7 @@ juce::String secondsText (float t)
 } // namespace
 
 LfoView::LfoView (UiContext& c, int part, const Ids& idList, PreviewFn previewFunction)
-    : GraphView (c.theme), ctx (c), ids (idList), previewFn (std::move (previewFunction)), smallFont (c.theme.font (metrics::kTextSmall)), accentColour (accentFor (part))
+    : GraphView (c.theme), ctx (c), ids (idList), previewFn (std::move (previewFunction)), examplePhrase ("Example: different every time"), smallFont (c.theme.font (metrics::kTextSmall)), accentColour (accentFor (part))
 {
     setTitle (partPrefix (part) + "LFO waveform");
     idx[0] = ctx.mirror.indexOf (ids.waveform);
@@ -24,7 +24,7 @@ LfoView::LfoView (UiContext& c, int part, const Ids& idList, PreviewFn previewFu
     jassert (idx[0] >= 0 && idx[1] >= 0 && idx[2] >= 0);
 
     const auto expected = [this] (int which) {
-        return [this, which] { return handleCentre (which, axisFor (windowForMirror()), read (2, false), read (1, false)); };
+        return [this, which] { return handleCentre (which, axis, read (2, false), read (1, false)); };
     };
     const auto clampedTime = [this] (float px) { return axis.timeAt (std::clamp (px, axis.x0, axis.x0 + axis.width)); };
     addHandle (std::make_unique<GraphHandle> (
@@ -36,7 +36,7 @@ LfoView::LfoView (UiContext& c, int part, const Ids& idList, PreviewFn previewFu
     for (auto& h : handles)
     {
         h->setAccent (accentColour);
-        h->onChange = [this] { refresh(); };
+        h->onChange = [this] { refresh (true); };
     }
     for (int i : idx)
         ctx.mirror.subscribe (i, this);
@@ -84,15 +84,18 @@ model::LfoAxis LfoView::axisFor (float windowSec) const
     return { plot.getX(), plot.getWidth(), windowSec };
 }
 
-float LfoView::windowForMirror() const
+float LfoView::amplitude() const
 {
-    return model::lfoWindowFor (map::lfoDelaySec (read (2, false)), map::lfoRateHz (read (1, false)));
+    return plotArea().getHeight() * 0.46f;
 }
 
 juce::Point<float> LfoView::handleCentre (int which, const model::LfoAxis& a, float delayV, float rateV) const
 {
+    // The delay handle sits on the fade-in's envelope line (the top of the wedge) where the LFO reaches
+    // full strength; the cycle handle on the zero line at the end of the first whole cycle.
     const float t = which == Delay ? model::lfoDelayHandleSec (delayV) : model::lfoCycleHandleSec (delayV, rateV);
-    return { std::clamp (a.xOf (t), a.x0, a.x0 + a.width), plotArea().getCentreY() };
+    const float mid = plotArea().getCentreY();
+    return { std::clamp (a.xOf (t), a.x0, a.x0 + a.width), which == Delay ? mid - amplitude() : mid };
 }
 
 void LfoView::mirrorChanged (int, bool valueChanged)
@@ -104,12 +107,12 @@ void LfoView::mirrorChanged (int, bool valueChanged)
 void LfoView::mirrorIdle (double)
 {
     if (dirty)
-        refresh();
+        refresh (false);
 }
 
 void LfoView::resized()
 {
-    refresh();
+    refresh (false);
 }
 
 void LfoView::placeHandles()
@@ -118,20 +121,31 @@ void LfoView::placeHandles()
         getHandle (i).setCentre (handleCentre (i, axis, delayValue, rateValue));
 }
 
-void LfoView::refresh()
+void LfoView::setExampleWaves (std::set<int> waves)
+{
+    exampleWaves = std::move (waves);
+    dirty = true;
+}
+
+void LfoView::refresh (bool live)
 {
     dirty = false;
     if (getLocalBounds().isEmpty())
         return;
-    const bool live = anyDragging();
+    const bool dragging = anyDragging();
     auto& waveParam = ctx.mirror.parameter (idx[0]);
     const float waveValue = read (0, live);
     wave = model::stepIndex (waveValue, waveParam.getNumSteps());
     rateValue = read (1, live);
     delayValue = read (2, live);
+    // During a drag the dragged parameter shows the user's value, whatever the host writes meanwhile.
+    if (auto& m = getHandle (Delay).getModel(); m.hasDragged (0))
+        delayValue = m.draggedValue (0);
+    if (auto& m = getHandle (Cycle).getModel(); m.hasDragged (0))
+        rateValue = m.draggedValue (0);
     const float rateHz = map::lfoRateHz (rateValue), delaySec = map::lfoDelaySec (delayValue);
-    // The window is chosen when no handle is dragged and kept during a drag.
-    const float window = live && lastWindow > 0.0f ? lastWindow : model::lfoWindowFor (delaySec, rateHz);
+    // The window is kept through a drag, and after it while both handles lie in the middle of the plot.
+    const float window = dragging && lastWindow > 0.0f ? lastWindow : model::lfoChooseWindow (lastWindow, delaySec, rateHz);
     axis = axisFor (window);
 
     const float in[3] { static_cast<float> (wave), rateValue, delayValue };
@@ -158,20 +172,30 @@ void LfoView::refresh()
     // Paths and captions, prepared here (never in paint()).
     ++pathCount;
     const auto plot = plotArea();
-    const float amp = plot.getHeight() * 0.46f, mid = plot.getCentreY();
+    const float amp = amplitude(), mid = plot.getCentreY();
     wavePath.clear();
     constexpr int n = model::LfoPreview::kPoints;
     wavePath.startNewSubPath (axis.x0, mid);
     for (int i = 0; i < n; ++i)
         wavePath.lineTo (axis.x0 + axis.width * static_cast<float> (i + 1) / n, mid - std::clamp (preview.y[static_cast<size_t> (i)], -1.0f, 1.0f) * amp);
-
     waveStroke.clear();
     juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded).createStrokedPath (waveStroke, wavePath);
+
     delayX = std::clamp (axis.xOf (model::lfoDelayHandleSec (delayValue)), axis.x0, axis.x0 + axis.width);
     cycleX = std::clamp (axis.xOf (model::lfoCycleHandleSec (delayValue, rateValue)), axis.x0, axis.x0 + axis.width);
+    startX = std::clamp (axis.xOf (0.5f * model::lfoDelayHandleSec (delayValue)), axis.x0, axis.x0 + axis.width);
+    const bool delayed = delaySec > 0.0f;
     delayDashed.clear();
-    if (delayX > axis.x0 + 1.0f)
+    wedge.clear();
+    startMarker.clear();
+    if (delayed)
     {
+        // The fade-in: silent until the start marker, then growing linearly to full strength at the handle.
+        wedge.startNewSubPath (startX, mid);
+        wedge.lineTo (delayX, mid - amp);
+        wedge.lineTo (delayX, mid + amp);
+        wedge.closeSubPath();
+        startMarker.addRectangle (startX - 0.5f, mid - 8.0f, 1.0f, 16.0f);
         juce::Path line;
         line.startNewSubPath (delayX, plot.getY());
         line.lineTo (delayX, plot.getBottom());
@@ -186,7 +210,6 @@ void LfoView::refresh()
     cycleBracket.lineTo (cycleX, by);
     cycleBracket.startNewSubPath (cycleX, by - 4.0f);
     cycleBracket.lineTo (cycleX, by + 4.0f);
-
     bracketStroke.clear();
     juce::PathStrokeType (1.0f).createStrokedPath (bracketStroke, cycleBracket);
 
@@ -196,9 +219,11 @@ void LfoView::refresh()
         const auto t = p.getText (v, 1024);
         return label.isEmpty() ? t : t + " " + label;
     };
-    delayText = "Delay " + text (2, delayValue) + " (drag)";
-    cycleText = "1 cycle = " + text (1, rateValue) + " (drag)";
-    setDescription ("Waveform " + waveParam.getText (waveValue, 32) + ", rate " + text (1, rateValue) + ", delay " + text (2, delayValue));
+    delayText = delayed ? "Full strength after " + text (2, delayValue) + " (drag)" : juce::String();
+    startText = delayed ? "starts" : juce::String();
+    cycleText = "1 cycle (rate " + text (1, rateValue) + ")";
+    exampleText = exampleWaves.count (wave) > 0 ? examplePhrase : juce::String();
+    setDescription ("Waveform " + waveParam.getText (waveValue, 32) + ", rate " + text (1, rateValue) + ", full strength after " + text (2, delayValue));
 
     placeHandles();
     repaint();
@@ -226,6 +251,10 @@ void LfoView::paint (juce::Graphics& g)
     g.setColour (colour (Tok::BgTrack).withAlpha (0.9f));
     g.drawHorizontalLine (juce::roundToInt (plot.getCentreY()), plot.getX(), plot.getRight());
 
+    g.setColour (colour (Tok::TextSecondary).withAlpha (0.14f));
+    g.fillPath (wedge);
+    g.setColour (colour (Tok::TextSecondary).withAlpha (0.6f));
+    g.fillPath (startMarker);
     g.setColour (accentColour.withAlpha (0.7f));
     g.fillPath (delayDashed);
     g.setColour (accentColour);
@@ -239,9 +268,19 @@ void LfoView::paint (juce::Graphics& g)
         g.setColour (colour (Tok::TextPrimary));
         g.drawText (text, area.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
     };
-    const float ex = std::min (delayX + 6.0f, plot.getRight() - kCaptionWidth);
-    pill (delayText, { std::max (plot.getX(), ex), plot.getY() + 2.0f, kCaptionWidth, 16.0f });
+    if (delayText.isNotEmpty())
+    {
+        const float ex = std::min (delayX + 10.0f, plot.getRight() - kCaptionWidth);
+        pill (delayText, { std::max (plot.getX(), ex), plot.getY() + 2.0f, kCaptionWidth, 16.0f });
+        g.setColour (colour (Tok::TextSecondary));
+        g.drawText (startText, juce::Rectangle<float> (startX + 3.0f, plot.getCentreY() + 4.0f, 44.0f, 12.0f), juce::Justification::centredLeft, false);
+    }
     const float cx = std::clamp (delayX, plot.getX(), plot.getRight() - kCaptionWidth);
     pill (cycleText, { cx, plot.getBottom() - 20.0f, kCaptionWidth, 16.0f });
+    if (exampleText.isNotEmpty())
+    {
+        g.setColour (colour (Tok::TextSecondary));
+        g.drawText (exampleText, juce::Rectangle<float> (plot.getRight() - 240.0f, plot.getBottom() - 40.0f, 236.0f, 14.0f), juce::Justification::centredRight, false);
+    }
 }
 } // namespace vs::ui

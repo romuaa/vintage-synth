@@ -112,8 +112,14 @@ void checkPagesFollow (EditorRig& rig, const juce::String& when)
         REQUIRE (lv.shownWave() == engine.lfoWave);
         REQUIRE (lv.shownRateValue() == Approx (engine.lfoRate).margin (1.0e-6));
         REQUIRE (lv.shownDelayValue() == Approx (engine.lfoDelay).margin (1.0e-6));
-        const float window = ui::model::lfoWindowFor (delaySec, rateHz);
-        REQUIRE (lv.getAxis().windowSec == Approx (window));
+        // The window is kept while it suits (9.3.3), so it is not always the fresh choice: but outside a
+        // drag both handles always lie inside it (never clamped to the edge).
+        const float window = lv.getAxis().windowSec;
+        REQUIRE (ui::model::lfoWindowKeeps (window, delaySec, rateHz));
+        REQUIRE (lv.getHandle (ui::LfoView::Cycle).getCentre().x < lv.getAxis().x0 + lv.getAxis().width);
+        REQUIRE ((delaySec > 0.0f) == lv.delayCaption().isNotEmpty());
+        REQUIRE ((delaySec > 0.0f) == lv.startCaption().isNotEmpty());
+        REQUIRE ((engine.lfoWave >= 4) == lv.exampleCaption().isNotEmpty()); // Random and Noise
         ui::model::LfoPreview want;
         ui::computeLfoPreview (engine.lfoWave, rateHz, delaySec, window, want);
         for (size_t i = 0; i < want.y.size(); ++i)
@@ -378,64 +384,6 @@ TEST_CASE ("Envelope handles: a drag writes the time or level that puts the hand
     CHECK (rig.editor->getMirror().openGestures() == 0);
 }
 
-TEST_CASE ("LFO handles: the delay and cycle handles write delay and rate; the window is kept during a drag and chosen again after it", "[ui][editor][gestures][lfo]")
-{
-    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
-    EditorRig rig;
-    GestureCounter host (rig.proc);
-    auto& view = rig.editor->getLfoPage (1).getLfoView();
-    const auto axis = view.getAxis();
-    CHECK (axis.windowSec == Approx (1.0f)); // default rate 3.85 Hz, no delay: two cycles = 0.52 s
-
-    // Delay: dragged to about 0.8 s, far enough that a fresh window would be 2 s.
-    auto& dh = view.getHandle (ui::LfoView::Delay);
-    HandleMouse dm { dh };
-    const auto c = dh.getCentre();
-    const float x = axis.xOf (0.8f);
-    dm.down (c);
-    dm.drag ({ x, c.y });
-    CHECK (host.openCount() == 1);
-    const float wantDelay = ui::model::lfoDelayFromHandle (axis.timeAt (x));
-    CHECK (rig.param ("upper.lfo.delay").getValue() == Approx (wantDelay).margin (1.0e-4));
-    CHECK (view.getAxis().windowSec == Approx (1.0f)); // kept while dragging: the handle does not run away from the pointer
-    CHECK (dh.getCentre().x == Approx (x).margin (0.6));
-    dm.drag ({ axis.xOf (3.0f), c.y }); // past the window: the handle stops at its edge, the value is clamped to what the window shows
-    CHECK (rig.param ("upper.lfo.delay").getValue() == Approx (ui::model::lfoDelayFromHandle (1.0f)).margin (1.0e-4));
-    dm.drag ({ x, c.y });
-    dm.up ({ x, c.y });
-    CHECK (host.openCount() == 0);
-    rig.tick();
-    const float delaySec = map::lfoDelaySec (rig.param ("upper.lfo.delay").getValue());
-    const float rateHz = map::lfoRateHz (rig.param ("upper.lfo.rate").getValue());
-    CHECK (view.getAxis().windowSec == Approx (ui::model::lfoWindowFor (delaySec, rateHz))); // chosen again
-    CHECK (view.getAxis().windowSec > 1.5f);
-
-    // Cycle: dragged to a cycle of 0.25 s after the delay (4 Hz).
-    auto& ch = view.getHandle (ui::LfoView::Cycle);
-    HandleMouse cm { ch };
-    const auto a2 = view.getAxis();
-    const auto cc = ch.getCentre();
-    const float cx = a2.xOf (delaySec + 0.25f);
-    cm.down (cc);
-    cm.drag ({ cx, cc.y });
-    const float wantRate = ui::model::lfoRateFromHandle (a2.timeAt (cx), rig.param ("upper.lfo.delay").getValue());
-    CHECK (rig.param ("upper.lfo.rate").getValue() == Approx (wantRate).margin (1.0e-4));
-    CHECK (map::lfoRateHz (rig.param ("upper.lfo.rate").getValue()) == Approx (4.0f).epsilon (0.02));
-    CHECK (view.getAxis().windowSec == Approx (a2.windowSec)); // kept
-    cm.up ({ cx, cc.y });
-    rig.tick();
-    CHECK (view.getAxis().windowSec == Approx (ui::model::lfoWindowFor (delaySec, 4.0f)));
-    juce::String why;
-    for (const auto& e : rig.editor->getRegistry().entries())
-        if (e.page == "lfo")
-            CHECK (e.view->showsMirroredValue (why));
-
-    rig.tick (400.0);
-    CHECK (host.begins == host.ends);
-    CHECK (host.valuesOutsideGesture == 0);
-    CHECK (host.nestedBegins == 0);
-}
-
 TEST_CASE ("Envelope and LFO handles: the editor destroyed mid-drag ends every open gesture", "[ui][editor][gestures][envelopes]")
 {
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
@@ -512,78 +460,20 @@ TEST_CASE ("Envelopes and LFO pages: one automated parameter repaints only its o
             rig.tick();
             INFO ("page " << which << ": " << suffix);
             CHECK (recorder->all == 0);
-            long long total = 0;
+            juce::RectangleList<int> repainted; // the union: overlapping requests count once
             for (const auto& a : recorder->areas)
             {
                 CHECK (a.getWidth() * a.getHeight() < pageArea / 3); // the biggest picture is a third of the page; a whole panel (the title) would be more
-                total += static_cast<long long> (a.getWidth()) * a.getHeight();
+                repainted.add (a);
             }
+            long long total = 0;
+            for (const auto& r : repainted)
+                total += static_cast<long long> (r.getWidth()) * r.getHeight();
             CHECK (total < pageArea * 4 / 10);
         }
     }
     rig.editor->setCachedComponentImage (nullptr);
 }
-
-#if VS_SEQ_COUNT_ALLOCATIONS
-TEST_CASE ("Paint allocations: repeated paints of the envelope and LFO pictures cost the same every time, whatever the shape", "[ui][editor][alloc][envelopes]")
-{
-    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
-    EditorRig rig;
-    // The software renderer itself allocates while it draws (about 35 times for every line of text, 5 - 30 for a
-    // path), so the contract's "<= 8 per component" cannot hold for any component that draws text. What this test
-    // shows: a steady-state paint costs the same every time (nothing accumulates or is rebuilt lazily), and the
-    // cost is the same whatever the shape. What it cannot show: that a path was prepared and not built in paint()
-    // (checked: moving the LFO's waveform stroke into paint() adds only 19 of about 550 allocations), so that part
-    // stays a review item (the strings, paths and strokes are made in refresh()).
-    const auto counts = [&] (juce::Component& c) {
-        juce::Image image (juce::Image::ARGB, c.getWidth(), c.getHeight(), true, juce::SoftwareImageType());
-        juce::Graphics g (image);
-        std::vector<int> n;
-        for (int i = 0; i < 6; ++i)
-        {
-            vs::seq::test::AllocationCounter counter;
-            c.paintEntireComponent (g, false);
-            n.push_back (counter.count());
-        }
-        return n;
-    };
-    struct Item
-    {
-        const char* name;
-        juce::Component* c;
-    };
-    for (const int program : { 3, 40 })
-    {
-        rig.proc.getPresets().selectProgram (program);
-        rig.tick();
-        auto& ev = rig.editor->getEnvelopesPage (0).getEnvelopeView (0);
-        auto& ev2 = rig.editor->getEnvelopesPage (0).getEnvelopeView (1);
-        auto& lv = rig.editor->getLfoPage (0).getLfoView();
-        for (const Item item : { Item { "Envelope 1 picture", &ev }, Item { "Envelope 2 picture", &ev2 }, Item { "LFO picture", &lv } })
-        {
-            const auto n = counts (*item.c);
-            INFO (item.name << ", program " << program << ": allocations per paint " << n[2] << ", " << n[3] << ", " << n[4] << ", " << n[5]);
-            CHECK (n[3] == n[2]);
-            CHECK (n[4] == n[2]);
-            CHECK (n[5] == n[2]);
-            CHECK (n[2] > 0); // the probe sees the renderer (a probe that counts nothing proves nothing)
-            CHECK (n[2] < 800);
-        }
-    }
-
-    // A steady-state paint does not grow with the shape: a 20-point and a 1000-point LFO picture cost the same.
-    auto& lv = rig.editor->getLfoPage (0).getLfoView();
-    hostWrite (rig.param ("lower.lfo.waveform"), 0.0f); // sine
-    hostWrite (rig.param ("lower.lfo.rate"), 0.0f);     // 0.05 Hz: one slow wave
-    rig.tick();
-    const auto slow = counts (lv);
-    hostWrite (rig.param ("lower.lfo.rate"), 1.0f);     // 40 Hz: the window is full of cycles
-    rig.tick();
-    const auto fast = counts (lv);
-    INFO ("slow " << slow[2] << ", fast " << fast[2]);
-    CHECK (std::abs (fast[2] - slow[2]) <= slow[2] / 10);
-}
-#endif
 
 // =================================================================================================
 // Layout snapshot (text, exact): Envelopes and LFO pages, both parts, 100 % and 150 %
@@ -621,7 +511,7 @@ TEST_CASE ("Layout snapshot: the Envelopes and LFO pages' component bounds equal
 // Hidden: pictures of the states the default shots do not show ($VS_UISHOT_DIR, never compared)
 // =================================================================================================
 
-TEST_CASE ("UI shots: Envelopes with an inverted Envelope 1, LFO with a delay and a sine wave, as PNG", "[.uishots]")
+TEST_CASE ("UI shots: Envelopes and LFO in the states the default shots do not show, at 75, 100 and 200 %, as PNG", "[.uishots]")
 {
     const auto dir = juce::SystemStats::getEnvironmentVariable ("VS_UISHOT_DIR", {});
     if (dir.isEmpty())
@@ -629,29 +519,62 @@ TEST_CASE ("UI shots: Envelopes with an inverted Envelope 1, LFO with a delay an
     const juce::File out (dir);
     REQUIRE (out.createDirectory());
     EditorRig rig;
+    const auto write = [&] (int page, int part, int percent, const juce::String& name) {
+        rig.editor->setSizePercent (percent);
+        rig.editor->selectPage (page, part);
+        rig.tick();
+        const auto image = rig.editor->createComponentSnapshot (rig.editor->getLocalBounds(), true, 1.0f);
+        const auto file = out.getChildFile (name + "_" + juce::String (percent) + ".png");
+        file.deleteFile();
+        juce::FileOutputStream stream (file);
+        REQUIRE (stream.openedOk());
+        REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+    };
+    // The default sound at 75 % (the shared shots have 100 and 200).
+    write (1, 0, 75, "x_envelopes_default");
+    write (2, 0, 75, "x_lfo_default");
+
+    // Envelope 1 inverted, Envelope 2 feeding the filter.
     rig.set ("upper.env1.polarity", 1.0f);
     rig.set ("upper.env1.attack", 0.3f);
     rig.set ("upper.env1.decay", 0.5f);
     rig.set ("upper.env1.sustain", 0.45f);
     rig.set ("upper.env1.release", 0.6f);
     rig.set ("upper.vcf.env_source", 1.0f);
-    rig.set ("upper.lfo.waveform", 0.0f);
+    rig.tick();
+    for (int percent : { 75, 100, 200 })
+        write (1, 1, percent, "x_envelopes_inverted");
+
+    // A delayed sine, a delayed Random, a Noise.
     rig.set ("upper.lfo.delay", 0.4f);
     rig.set ("upper.lfo.rate", 0.5f);
     rig.set ("upper.vco2.waveform", 4.0f);
-    rig.tick();
-    const auto write = [&] (int page, const char* name) {
-        rig.editor->setSizePercent (100);
-        rig.editor->selectPage (page, 1);
-        rig.tick();
-        const auto image = rig.editor->createComponentSnapshot (rig.editor->getLocalBounds(), true, 1.0f);
-        const auto file = out.getChildFile (name);
-        file.deleteFile();
-        juce::FileOutputStream stream (file);
-        REQUIRE (stream.openedOk());
-        REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
-    };
-    write (1, "envelopes_upper_inverted_100.png");
-    write (2, "lfo_upper_delay_sine_100.png");
-}
+    for (int percent : { 75, 100, 200 })
+    {
+        rig.set ("upper.lfo.waveform", 0.0f);
+        write (2, 1, percent, "x_lfo_delayed_sine");
+    }
+    rig.set ("upper.lfo.waveform", 4.0f);
+    write (2, 1, 100, "x_lfo_random");
+    rig.set ("upper.lfo.waveform", 5.0f);
+    rig.set ("upper.lfo.delay", 0.0f);
+    write (2, 1, 100, "x_lfo_noise");
 
+    // Extremes: every time at its maximum with full sustain; the fastest LFO; the slowest with the longest delay.
+    rig.set ("lower.env1.attack", 1.0f);
+    rig.set ("lower.env1.decay", 1.0f);
+    rig.set ("lower.env1.sustain", 1.0f);
+    rig.set ("lower.env1.release", 1.0f);
+    rig.set ("lower.env2.attack", 0.0f);
+    rig.set ("lower.env2.decay", 0.0f);
+    rig.set ("lower.env2.sustain", 0.0f);
+    rig.set ("lower.env2.release", 0.0f);
+    write (1, 0, 100, "x_envelopes_extreme");
+    rig.set ("lower.lfo.rate", 1.0f);
+    rig.set ("lower.lfo.waveform", 3.0f);
+    write (2, 0, 100, "x_lfo_fast_square");
+    rig.set ("lower.lfo.rate", 0.0f);
+    rig.set ("lower.lfo.delay", 1.0f);
+    rig.set ("lower.lfo.waveform", 1.0f);
+    write (2, 0, 100, "x_lfo_slowest_longest_delay");
+}

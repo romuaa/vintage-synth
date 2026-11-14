@@ -21,6 +21,8 @@ public:
     int getPart() const noexcept { return part; }
     /** 0: Envelope 1, 1: Envelope 2. */
     EnvelopeView& getEnvelopeView (int envelope) noexcept { return envelope == 0 ? view1 : view2; }
+    /** The envelope's panel (tests read its header text and accessibility title). */
+    const Panel& getPanel (int envelope) const noexcept { return envelope == 0 ? panel1 : panel2; }
     /** The panel title as shown ("Envelope 1 (filter, pitch)"). */
     juce::String getPanelTitle (int envelope) const { return envelope == 0 ? title1 : title2; }
     /** The title the filter source asks for (tests compare it with the shown one). */

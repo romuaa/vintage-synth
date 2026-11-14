@@ -25,12 +25,12 @@ Editor 0 0 1360 784
   Window size 1290 10 58 28
   Help 0 760 1360 24
   envelopes.lower 112 48 1248 712
-    Envelope 1 12 12 606 688
+    Envelope 1 (filter, pitch) 12 12 606 688
       Lower Envelope 1 shape 12 36 582 244
         Envelope 1 attack 21 0 28 28
-        Envelope 1 decay and sustain 109 139 28 28
-        Envelope 1 sustain level 220 139 28 28
-        Envelope 1 release 295 198 28 28
+        Envelope 1 decay and sustain 109 129 28 28
+        Envelope 1 sustain level 220 129 28 28
+        Envelope 1 release 295 184 28 28
       lower.env1.attack 12 290 138 40
       lower.env1.decay 160 290 138 40
       lower.env1.sustain 308 290 138 40
@@ -41,12 +41,12 @@ Editor 0 0 1360 784
       lower.env1.key_follow 12 356 120 28
       lower.env1.polarity 170 340 260 46
       lower.vcf.env_source 12 490 300 46
-    Envelope 2 630 12 606 688
+    Envelope 2 (loudness) 630 12 606 688
       Lower Envelope 2 shape 12 36 582 244
         Envelope 2 attack 21 0 28 28
-        Envelope 2 decay and sustain 103 40 28 28
-        Envelope 2 sustain level 213 40 28 28
-        Envelope 2 release 288 198 28 28
+        Envelope 2 decay and sustain 103 37 28 28
+        Envelope 2 sustain level 213 37 28 28
+        Envelope 2 release 288 184 28 28
       lower.env2.attack 12 290 138 40
       lower.env2.decay 160 290 138 40
       lower.env2.sustain 308 290 138 40

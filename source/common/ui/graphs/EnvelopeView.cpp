@@ -4,7 +4,7 @@ namespace vs::ui
 {
 namespace
 {
-constexpr float kLabelWidth = 72.0f, kLabelStrip = 18.0f;
+constexpr float kLabelWidth = 72.0f, kLabelStrip = 32.0f; // two rows under the axis: the time labels, then "key released"
 } // namespace
 
 EnvelopeView::EnvelopeView (UiContext& c, int part, const Ids& idList, const juce::String& name, ShapeFn shapeFunction)
@@ -41,7 +41,7 @@ EnvelopeView::EnvelopeView (UiContext& c, int part, const Ids& idList, const juc
     for (auto& h : handles)
     {
         h->setAccent (accentColour);
-        h->onChange = [this] { refresh(); };
+        h->onChange = [this] { refresh (true); };
     }
 
     for (int i : idx)
@@ -122,12 +122,12 @@ void EnvelopeView::mirrorChanged (int, bool valueChanged)
 void EnvelopeView::mirrorIdle (double)
 {
     if (dirty)
-        refresh();
+        refresh (false);
 }
 
 void EnvelopeView::resized()
 {
-    refresh();
+    refresh (false);
 }
 
 void EnvelopeView::placeHandles()
@@ -142,13 +142,37 @@ void EnvelopeView::placeHandles()
     }
 }
 
-void EnvelopeView::refresh()
+float EnvelopeView::timeLabelWidth() noexcept
+{
+    return kLabelWidth;
+}
+
+juce::Rectangle<float> EnvelopeView::keyReleasedArea() const
+{
+    const auto plot = plotArea();
+    const float x = std::clamp (layout.points (values).plateauEndX, plot.getX() + 40.0f, plot.getRight() - 40.0f);
+    return { x - 40.0f, plot.getBottom() + 26.0f, 80.0f, 14.0f };
+}
+
+void EnvelopeView::refresh (bool live)
 {
     dirty = false;
     if (getLocalBounds().isEmpty())
         return;
-    const bool live = anyDragging();
     values = readValues (live);
+    // During a drag the dragged parameters show the user's value, whatever the host writes meanwhile.
+    {
+        float* const xTarget[4] { &values.attack, &values.decay, nullptr, &values.release };
+        float* const yTarget[4] { nullptr, &values.sustain, &values.sustain, nullptr };
+        for (int i = 0; i < numHandles(); ++i)
+        {
+            auto& m = getHandle (i).getModel();
+            if (m.hasDragged (0) && xTarget[i] != nullptr)
+                *xTarget[i] = m.draggedValue (0);
+            if (m.hasDragged (1) && yTarget[i] != nullptr)
+                *yTarget[i] = m.draggedValue (1);
+        }
+    }
     inverted = idx[4] >= 0 && model::stepIndex (read (4, live), 2) == 1;
     layout = layoutFor (values, inverted);
 
@@ -271,8 +295,7 @@ void EnvelopeView::paint (juce::Graphics& g)
     g.setFont (smallFont);
     g.setColour (colour (Tok::TextSecondary));
     const auto plot = plotArea();
-    const float releasedX = layout.points (values).plateauEndX;
-    g.drawText (keyReleasedText, juce::Rectangle<float> (releasedX + 4.0f, plot.getY() - 10.0f, 80.0f, 14.0f), juce::Justification::centredLeft, false);
+    g.drawText (keyReleasedText, keyReleasedArea(), juce::Justification::centred, false);
     g.drawText (timeAxisText, juce::Rectangle<float> (r.getRight() - 52.0f, plot.getY() - 10.0f, 46.0f, 14.0f), juce::Justification::centredRight,
                 false);
     for (size_t i = 0; i < timeText.size(); ++i)

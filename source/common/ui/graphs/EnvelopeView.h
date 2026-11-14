@@ -39,6 +39,11 @@ public:
     const model::EnvelopeShape& shownShape() const noexcept { return shape; }
     bool showsGhost() const noexcept { return inverted; }
     const juce::String& timeLabel (int i) const noexcept { return timeText[static_cast<size_t> (i)]; }
+    /** Centre x of time label i (attack, decay, release) and the label's width. */
+    float timeLabelCentre (int i) const noexcept { return labelX[static_cast<size_t> (i)]; }
+    static float timeLabelWidth() noexcept;
+    /** Where "key released" is drawn (below the axis, at the release line). */
+    juce::Rectangle<float> keyReleasedArea() const;
     int shapeComputations() const noexcept { return shapeCount; }
     int pathBuilds() const noexcept { return pathCount; }
     /** Where the page's mapping puts the handles for these values (also the handles' own "expected"). */
@@ -53,7 +58,8 @@ private:
     float read (int which, bool live) const;
     model::EnvelopeValues readValues (bool live) const;
     bool anyDragging() const;
-    void refresh();
+    /** `live`: read the parameters themselves (the mirror lags by a tick): after the picture's own edit. */
+    void refresh (bool live);
     void placeHandles();
     juce::Point<float> handleCentre (int which, const model::EnvelopeLayout& l, const model::EnvelopeValues& v) const;
     juce::Rectangle<float> plotArea() const;

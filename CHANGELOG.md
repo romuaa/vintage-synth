@@ -24,6 +24,13 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   programs, Init, tones, session restore), handle gestures, titles, ghost, dimming, repaint scope,
   paint-allocation stability, layout snapshots (100 % and 150 %, both parts).
 
+### M7b review round 1 (2026-11-14)
+- LFO picture: delay wording and fade-in wedge with the delay handle on its envelope line, "starts"
+  marker, Random/Noise pre-rolled with an "Example" caption, windows up to 50 s with a keep-while-it-suits
+  rule, contested drags show the user's value, "key released" below the axis.
+- Tests: contested drags, window rule, captions, time labels, panel header and title, nothing repaints at
+  rest, paint allocations through a context that draws nothing; M7a's repaint-scope test now records.
+
 ### M7a — custom editor: foundation, frame, Sound page (2026-11-14)
 - The plugin opens its own editor (`source/vintage/ui/`): a 1360 × 784 canvas scaled as a whole,
   75–200 % at a fixed aspect (corner resizer and a Size menu), page rail, top bar (part switch with
