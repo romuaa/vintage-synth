@@ -12,7 +12,8 @@ set(BS_JUCEFREE_SOURCES
     ${PROJECT_SOURCE_DIR}/source/bside/trace/Sha256.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/trace/TraceFormat.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/trace/ReferenceFormat.cpp
-    ${PROJECT_SOURCE_DIR}/source/bside/trace/Compare.cpp)
+    ${PROJECT_SOURCE_DIR}/source/bside/trace/Compare.cpp
+    ${PROJECT_SOURCE_DIR}/source/bside/chip/Chip.cpp)
 
 add_library(bs_juce_free STATIC ${BS_JUCEFREE_SOURCES})
 target_include_directories(bs_juce_free PUBLIC ${PROJECT_SOURCE_DIR}/source)
@@ -30,7 +31,8 @@ add_executable(bside_unit
     unit/ReferenceFormatTests.cpp
     unit/ReplayCompareTests.cpp
     unit/FormatLimitTests.cpp
-    unit/FuzzTests.cpp)
+    unit/FuzzTests.cpp
+    unit/ChipRowTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
 set_target_properties(bside_unit PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
