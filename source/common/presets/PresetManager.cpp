@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace vs::presets
 {
@@ -125,6 +126,29 @@ juce::String PresetManager::programName (int i) const
     const juce::ScopedLock sl (lock);
     const bool isCurrent = ! detached.load (std::memory_order_relaxed) && i == index.load (std::memory_order_relaxed);
     return isCurrent ? current.name : bank.programs[static_cast<size_t> (i)].meta.name;
+}
+
+Meta PresetManager::slotMeta (int slot) const
+{
+    if (slot < 0 || slot >= bankSize())
+        return { {}, {}, {} };
+    const juce::ScopedLock sl (lock);
+    const bool isCurrent = ! detached.load (std::memory_order_relaxed) && slot == index.load (std::memory_order_relaxed);
+    return isCurrent ? current : bank.programs[static_cast<size_t> (slot)].meta;
+}
+
+std::uint32_t PresetManager::bankGeneration() const
+{
+    const juce::ScopedLock sl (lock);
+    return generation;
+}
+
+float PresetManager::slotValue (int slot, int paramIndex) const
+{
+    if (slot < 0 || slot >= bankSize() || paramIndex < 0 || paramIndex >= schema.numParams())
+        return std::numeric_limits<float>::quiet_NaN();
+    const juce::ScopedLock sl (lock);
+    return bank.programs[static_cast<size_t> (slot)].values[static_cast<size_t> (paramIndex)];
 }
 
 void PresetManager::setCurrent (int i, const Meta& meta, bool nowModified, bool nowDetached)
@@ -396,6 +420,21 @@ void PresetManager::applyTone (const Tone& tone, int part)
     broadcaster.sendSynchronousChangeMessage();
 }
 
+juce::String PresetManager::applyToneFromSlot (int slot, int sourceTone, int targetPart)
+{
+    if (slot < 0 || slot >= bankSize())
+        return "No such slot.";
+    if (sourceTone < 0 || sourceTone >= schema.numTones() || targetPart < 0 || targetPart >= schema.numTones())
+        return "No such part.";
+    Program p;
+    {
+        const juce::ScopedLock sl (lock);
+        p = bank.programs[static_cast<size_t> (slot)];
+    }
+    applyTone (toneOf (schema, p, sourceTone), targetPart);
+    return {};
+}
+
 bool PresetManager::selectProgram (int i, bool tellHost)
 {
     if (i < 0 || i >= bankSize())
@@ -637,6 +676,7 @@ juce::String PresetManager::storeInBank (int i)
         if (gen != generation || bankFile != written)
             return "The bank changed while it was being written.";
         bank = std::move (updated);
+        ++generation;
     }
     setCurrent (i, p.meta, false, false);
     notifyHost();
@@ -671,6 +711,7 @@ juce::String PresetManager::renameProgram (int i, const juce::String& name)
         if (gen != generation || bankFile != written)
             return "The bank changed while it was being written.";
         bank = std::move (updated);
+        ++generation;
     }
     {
         const juce::ScopedLock sl (lock);
@@ -853,6 +894,7 @@ void PresetManager::resolvePendingBank()
         const juce::ScopedLock sl (lock);
         if (gen != generation || status != BankStatus::Pending)
             return; // something else changed the bank meanwhile
+        ++generation;
         if (ok)
         {
             status = BankStatus::User;

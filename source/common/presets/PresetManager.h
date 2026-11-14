@@ -119,6 +119,16 @@ public:
     /** The slot's name in the current bank (the current slot shows the current program's name). */
     juce::String programName (int index) const;
     juce::String positionName (int slot) const { return schema.instrument().positionName (slot); }
+    /** The metadata of a slot of the bank that is shown (a copy; any thread). The current slot shows the
+        current program's metadata, as programName does. A slot out of range gives an empty Meta (no name). */
+    Meta slotMeta (int slot) const;
+    /** Changes whenever the bank shown changes (another bank, a stored or renamed program, a session's bank
+        resolved): a view that caches slotMeta refreshes when it differs from the value it saw. Any thread. */
+    std::uint32_t bankGeneration() const;
+    /** The stored value (plain, in the parameter's own unit) of schema parameter `paramIndex` in a slot of the
+        bank that is shown; NaN if the slot or index is out of range. For display only (the Browser marks
+        a tone that a Whole-mode program does not play); a copy, any thread. */
+    float slotValue (int slot, int paramIndex) const;
 
     // ---- Selecting and applying (message thread) ----
     /** Loads program `index` of the current bank into the instrument. False if out of range. */
@@ -148,6 +158,10 @@ public:
     /** Loads a program from in-memory values. slot < 0: the program belongs to no slot (detached). */
     void applyProgram (const Program& program, int slot, bool markModified, bool tellHost = true);
     void applyTone (const Tone& tone, int part);
+    /** Puts tone `sourceTone` of the stored program in `slot` of the bank that is shown into part `targetPart`:
+        applyTone (toneOf (schema, program, sourceTone), targetPart). Message thread. Returns "" on success,
+        else the reason (nothing changed). */
+    juce::String applyToneFromSlot (int slot, int sourceTone, int targetPart);
     Program captureProgram() const;
     Tone captureTone (int part) const;
     /** Replaces the current bank (no sound change). userFile: the bank's file, or juce::File() for the factory bank. */
