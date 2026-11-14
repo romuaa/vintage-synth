@@ -28,6 +28,7 @@ namespace vs::ui
 class SoundPage;
 class PlayPage;
 class EffectsPage;
+class ArpSeqPage;
 class PlaceholderPage;
 
 /** The embedded Inter faces (resources/fonts/inter, SIL OFL 1.1). */
@@ -54,6 +55,7 @@ public:
     SoundPage& getSoundPage (int part) noexcept { return *sound[part & 1]; }
     PlayPage& getPlayPage() noexcept { return *playPage; }
     EffectsPage& getEffectsPage() noexcept { return *effectsPage; }
+    ArpSeqPage& getArpSeqPage() noexcept { return *arpSeq; }
     PlaceholderPage& getPlaceholder (VintagePage page, int part = 0);
     const HelpTexts& getHelpTexts() const noexcept { return help; }
     const Theme& getTheme() const noexcept { return theme; }
@@ -93,6 +95,7 @@ private:
     std::unique_ptr<SoundPage> sound[2];
     std::unique_ptr<PlayPage> playPage;
     std::unique_ptr<EffectsPage> effectsPage;
+    std::unique_ptr<ArpSeqPage> arpSeq;
     std::vector<std::unique_ptr<PlaceholderPage>> placeholders;
     struct PlaceholderRef
     {

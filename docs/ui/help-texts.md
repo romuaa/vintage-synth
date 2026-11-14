@@ -116,6 +116,8 @@ Format (one entry per line, nothing else on the line):
 - `seq.stepNN.note`: The pitch of this step in semitones, counted from the lowest key you hold.
 - `seq.stepNN.type`: Note plays the step, Rest stays silent, Tie holds the previous note on without a new attack.
 - `seq.stepNN.velocity`: How hard this step is played. What that changes depends on the part's velocity settings.
+- `ui.arp_preview`: What the arpeggiator will play for the keys you hold, or an example chord. Each block is one note: its length follows Gate, and Swing shifts every second one.
+- `ui.seq_grid`: Drag a top bar for pitch, a lower bar for velocity; R rests a step, T ties it. Drag across steps to paint them, and drag the flag to set the length.
 
 ## Interface items that are not parameters
 
