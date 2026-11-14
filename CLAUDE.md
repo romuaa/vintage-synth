@@ -102,6 +102,11 @@ When a new one comes up, list it here; once decided, move it to "Decisions".
 - **B-Side S1 contract is written** (architecture section 8, 2026-11-14), awaiting Q1–Q8 (open
   decisions). **Next:** S1a, the shared processor skeleton (no agent may edit Vintage's
   processor or editor in parallel), then S1b/S1c.
+- **B-Side S1c, JUCE-free part, is on branch `bside/s1c-formats`** (table text reader/writer and
+  compiler `source/bside/program/`, trace/reference/spec formats, replay driver and comparer
+  `source/bside/trace/`, shared scanner `source/bside/text/`, test target `bside_unit` in
+  `tests/bside/`, adapter interface `docs/bside-oracle-adapter.md`). Verified by the local gate only.
+  Not done: the preset-model extension (8.8; waits for S1a) and any reference data (Q4).
 - **M7 UI direction (owner, 2026-11-14):** a tabbed workspace, one purpose per full page (Sound,
   Shape, Play, Arp+Seq, Effects, Browser), as simple as possible, sliders instead of knobs (knobs
   are hard with a mouse), graphs for visualisation. Wireframe drafts are being iterated outside
@@ -160,6 +165,11 @@ source/vintage/   this instrument: PluginProcessor.*
   engine/         Voice, Part, Modulation (shared per-part modulation)
   params/         PartParamList.h (X-macro list of all per-part params), PartMappings.h,
                   ParameterLayout (assembles the layout), StateVersion.h
+source/bside/    the second instrument (JUCE-free parts so far): text/ (strict-reader plumbing),
+                 program/ (patch table reader, writer, compiled Program), trace/ (trace, reference and spec
+                 formats, replay driver, comparer); must not include anything from source/vintage/
+tests/bside/     bside_unit (Catch2, no JUCE; ctest label "bside"); `bside_unit "[.fuzz-long]"` is the hidden
+                 10^6-case fuzz run (BS_FUZZ_CASES overrides the count)
 tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
 tests/benchmarks/ voice_bench (CPU cost per voice)
 tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)

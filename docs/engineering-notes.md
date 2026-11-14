@@ -3,6 +3,19 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S1c: text readers and their tests (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Error columns pointed at the wrong place in some messages. | `errors.add (line, c.column(), ..., tokenOrChar (c))`: the order in which function arguments are evaluated is unspecified, so the cursor had already moved when `c.column()` ran. | Read the column into a local before anything that advances the cursor. Never call a consuming function twice in one expression either (`c.token().empty() ? x : c.token()` consumed the token and returned an empty second one). |
+| The note name `=C#6` was cut at the `#` (a comment). | The grammar allows a comment right after any token. | In a pitch token that starts with `=`, a `#` in the second character belongs to the note name; everywhere else `#` ends the token. |
+| A test macro with a parameter called `what` broke `e.what`. | The preprocessor replaced the member name. | Give macro parameters names no member shares (`phrase`). |
+| Cross-correlation "found" a delay of -9 for identical 10-sample signals and -256 for silence. | The overlap of one sample correlates perfectly by chance; and silence ties at every lag. | Ignore lags whose overlap is under half of the signal; on a tie take the smallest lag. |
+| The contract's own example trace is rejected by a plain 64-byte line limit. | Its comment lines are 85–105 bytes. | The limit applies to the statement (before `#`); the whole line may be 256 bytes. When a contract example and a contract limit disagree, make the example a test. |
+| A hand-counted column in a test is wrong half the time. | Counting characters in a string literal by eye. | Write the test with the intended message first, run it, and check each reported position against the text before accepting it; do not "fix" the reader to match a miscounted test. |
+| A fuzz test that only checks "no crash" misses leaks of work, not memory. | A hang or quadratic parser passes it. | Cap the wall time per input and count the bytes allocated per call with a replaced global `operator new` in the test executable (works under ASan); assert both. |
+| `git status` in a worktree with symlinked submodules shows an error about `external/Catch2`. | Git expects a submodule directory, not a symlink. | Harmless; commit explicit paths only and never `git add -A`. |
+
 ## M6b: factory bank (2026-11-13)
 
 | Problem | Cause | Fix / rule |

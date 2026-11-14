@@ -5,6 +5,23 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S1c, JUCE-free formats (2026-11-14)
+- `source/bside/program/`: the strict reader and compiler of the patch table text format (8.6.5),
+  the compact `Program` (a fixed 5.9 KB trivially copyable struct, byte equality = program
+  equality), and the canonical writer. Every limit and error class of the contract, errors with
+  line and column, at most 8 messages. No runtime or tick engine yet.
+- `source/bside/trace/`: the `.bstrace` trace, `.bsref` reference and `.bsspec` spec readers and
+  writers (bounded, strict), SHA-256, the checkpoint schedule, the replay driver (template over the
+  chip, proven against a stub) and the comparer with the 8.9.4 tolerance table.
+- `tests/bside/`: new JUCE-free executable `bside_unit` (about 5 s to build and run), part of
+  `ctest`, the sanitizer steps of `scripts/preflight.sh` and `scripts/linux-check.sh`. Spec tests
+  for every command and error class, the four example tables, bounds tests for every limit, round
+  trips, and a deterministic fuzz test (short in the normal run; 10^6 cases hidden under
+  `[.fuzz-long]`).
+- `docs/bside-oracle-adapter.md`: the interface of the external reference-emulator adapter
+  (nothing is downloaded or generated). `docs-check` now also keeps `source/bside/{text,program,trace}`
+  JUCE-free and `source/bside` free of `vintage/` includes.
+
 ### B-Side S1 contract (2026-11-14)
 - `docs/architecture.md` section 8 is now the contract for the second instrument's S1–S4: the
   shared processor skeleton (S1a), the plugin shell (S1b), table and trace formats (S1c), the chip
