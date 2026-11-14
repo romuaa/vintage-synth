@@ -38,7 +38,7 @@ san_select() {
   local line name known
   while IFS= read -r line; do
     name=${line%%:*}
-    case $name in */*|*.*|*" "*) continue ;; esac
+    case $name in */*|*.*|*" "*|cmake_*) continue ;; esac # files, and ninja's own cmake_object_order_depends_target_* phonies
     case $name in
       *Tests|*_unit|*_render|*_trace|render_regression)
         known=0
@@ -55,8 +55,9 @@ san_select() {
 
 san_report() {
   local b=$1 listing t n bad=0
-  # The executable of every registered test: the first element of each "command" array of ctest's JSON.
-  listing=$(ctest --test-dir "$b" --show-only=json-v1 | awk '/"command": \[/ { getline; gsub(/^[ \t]*"|",?[ \t]*$/, ""); n = split($0, p, "/"); print p[n] }') \
+  # The executable of every registered test: the first element of each "command" array of ctest's JSON
+  # (printed as `"command" :`, then `[`, then the executable's path, each on its own line).
+  listing=$(ctest --test-dir "$b" --show-only=json-v1 | awk '/"command" : *$/ { getline; getline; gsub(/^[ \t]*"|",?[ \t]*$/, ""); n = split($0, p, "/"); print p[n] }') \
     || { echo "sanitizer tests: ctest could not list the tests of $b"; return 1; }
   echo "tests registered per built test target (ctest runs all of them below):"
   for t in "${SAN_TARGETS[@]}"; do

@@ -5,6 +5,19 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S1b review follow-up (2026-11-14)
+- S1c merged in (`bside_unit`, `bs_juce_free`): `tests/bside/CMakeLists.txt` holds both test structures.
+- Sanitizer target selection fixed: `ninja -t targets \| grep -q` under `pipefail` made every target look
+  missing, so the sanitizer steps skipped tests silently. One shared `scripts/sanitize-targets.sh` (preflight,
+  Linux container, CI job): required targets are an error when missing, unlisted test-looking targets are an
+  error, and each step prints the tests registered per target before ctest runs.
+- `preflight.sh` refuses `VS_PREFLIGHT_PLUGINS` other than `all` for the default and `--full` runs; the summary
+  names the plugins covered.
+- `getPresets()` throws `ConfigError` like the other preset uses (tested); `TestTonePart` applies an event at or
+  beyond the block's end after the last sample and ignores a non-finite pitch bend (both tested); the dev host
+  has no build dependency on the Vintage bundle; the CI distribution job checks both bundles in one container;
+  `--skip-gui-tests` carries a TODO for the custom editor.
+
 ### B-Side S1b — the plugin shell and gates for two plugins (2026-11-14)
 - **Skeleton tightened first** (`docs/architecture.md` 8.2.5): the plugin name comes from the
   instrument (`Derived::kName`); a missing parameter (`BoundParam::bind`) or a missing `initPresets`
