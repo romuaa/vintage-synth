@@ -933,6 +933,7 @@ private:
             uiFeed.part[p].seqStep.store (bypassedBlock && bypassFadeLeft <= 0 ? -1 : arp.lastSeqStep(), std::memory_order_relaxed);
             UiFeed::Order order = noKeysInOrder();
             const auto& keys = arp.keys();
+            // The feed holds 16 keys: with more held, the preview shows the first 16 in press order.
             const int numKeys = juce::jmin (keys.size(), UiFeed::kMaxOrderKeys);
             for (int i = 0; i < numKeys; ++i)
                 order[static_cast<size_t> (i)] = static_cast<std::uint8_t> (keys.ordered (i));
