@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <string>
 
 using namespace vs::bside;
@@ -158,4 +159,118 @@ TEST_CASE ("chip replay: the snapshot puts each field where the reference format
     CHECK (v.v[17] == 0);
     CHECK (v.v[18] == ((1000u * 0x1000u) >> 16));
     CHECK (v.v[19] == 1000u / 63u);
+}
+
+namespace
+{
+/** The 20 fields as the reference format names them, taken from DigitalState by name. */
+std::array<std::uint32_t, kStateFields> fieldsByName (const chip::DigitalState& s)
+{
+    const auto& o = s.osc;
+    const auto& e = s.env;
+    return { o[0].acc,         o[1].acc,         o[2].acc,         o[0].noise,   o[1].noise,   o[2].noise,   e[0].counter,
+             e[1].counter,     e[2].counter,     e[0].phase,       e[1].phase,   e[2].phase,   e[0].rateCounter,
+             e[1].rateCounter, e[2].rateCounter, e[0].divider,     e[1].divider, e[2].divider, s.osc3Output, s.env3Output };
+}
+
+/** Every pair of fields differs and no field is 0, except the fields `exempt` names (and env3 = rd1C,
+    the same counter by definition). */
+bool allDistinct (const std::array<std::uint32_t, kStateFields>& v, bool (*exempt) (int))
+{
+    for (int i = 0; i < kStateFields; ++i)
+    {
+        if (exempt (i))
+            continue;
+        const bool isPhase = i >= 9 && i <= 11; // 0 is a phase value like the others (attack)
+        if (v[static_cast<std::size_t> (i)] == 0 && ! isPhase)
+            return false;
+        for (int j = i + 1; j < kStateFields; ++j)
+        {
+            const bool sameByDefinition = i == 8 && j == 19;
+            if (! exempt (j) && ! sameByDefinition && v[static_cast<std::size_t> (i)] == v[static_cast<std::size_t> (j)])
+                return false;
+        }
+    }
+    return true;
+}
+
+/** Steps `c` until every field has its own value (within the exemptions), then checks the snapshot. */
+void searchAndCheck (chip::Chip& c, bool (*exempt) (int), std::uint64_t maxCycles)
+{
+    bool found = false;
+    for (std::uint64_t i = 0; i < maxCycles && ! found; ++i)
+    {
+        c.stepCycle();
+        found = allDistinct (fieldsByName (c.state()), exempt);
+    }
+    REQUIRE (found);
+    const auto expected = fieldsByName (c.state());
+    const auto v = snapshotChip (c);
+    for (int k = 0; k < kStateFields; ++k)
+    {
+        INFO ("field " << kStateFieldNames[k] << " at cycle " << c.cycle());
+        CHECK (v.v[static_cast<std::size_t> (k)] == expected[static_cast<std::size_t> (k)]);
+        CHECK (v.v[static_cast<std::size_t> (k)] <= kStateFieldMax[k]);
+    }
+}
+
+chip::Chip snapshotChipUnderTest()
+{
+    chip::Chip c;
+    chip::Config cfg;
+    cfg.authentic = true;
+    c.prepare (cfg);
+    const int freq[3] = { 0x1234, 0x2b67, 0x3a09 };
+    for (int n = 0; n < 3; ++n)
+    {
+        c.write (static_cast<std::uint8_t> (7 * n), static_cast<std::uint8_t> (freq[n] & 0xff));
+        c.write (static_cast<std::uint8_t> (7 * n + 1), static_cast<std::uint8_t> (freq[n] >> 8));
+    }
+    return c;
+}
+} // namespace
+
+TEST_CASE ("chip replay: the snapshot puts every field where the reference format says (all three phases)", "[bside][chip][replay]")
+{
+    // Envelope 1 in release, 2 in decay, 3 in a slow attack; every other field differs too. The divider
+    // fields are exempt here (attack keeps its divider at 0); the next test covers them.
+    auto c = snapshotChipUnderTest();
+    c.write (0x05, 0x00);
+    c.write (0x06, 0x02); // osc1: release 63
+    c.write (0x0c, 0x0b); // osc2: attack 9, decay 3126
+    c.write (0x0d, 0x10);
+    c.write (0x13, 0xa0); // osc3: attack 1954 (stays in attack for about 500 000 cycles)
+    c.write (0x14, 0xf0);
+    c.write (0x04, chip::ctrl::gate);
+    c.write (0x0b, chip::ctrl::gate);
+    c.write (0x12, chip::ctrl::saw | chip::ctrl::gate);
+    c.advanceCycles (255 * 9 + 600);
+    c.write (0x04, 0); // osc1 into release
+    searchAndCheck (c, [] (int k) { return k >= 15 && k <= 17; }, 3000000);
+    const auto s = c.state();
+    CHECK (s.env[0].phase == 2);
+    CHECK (s.env[1].phase == 1);
+    CHECK (s.env[2].phase == 0);
+}
+
+TEST_CASE ("chip replay: the snapshot puts every field where the reference format says (all three dividers)", "[bside][chip][replay]")
+{
+    // All three envelopes release from 0xff at different rates; low counters have divider periods of 2
+    // to 30, so the three divider counters can all be non-zero and different. The phases (all release)
+    // are exempt here; the previous test covers them.
+    auto c = snapshotChipUnderTest();
+    const int release[3] = { 3, 4, 5 };
+    for (int n = 0; n < 3; ++n)
+    {
+        c.write (static_cast<std::uint8_t> (7 * n + 5), 0x00);
+        c.write (static_cast<std::uint8_t> (7 * n + 6), static_cast<std::uint8_t> (release[n]));
+        c.write (static_cast<std::uint8_t> (7 * n + 4), static_cast<std::uint8_t> (n == 2 ? chip::ctrl::saw | chip::ctrl::gate : chip::ctrl::gate));
+    }
+    c.advanceCycles (255 * 9);
+    for (int n = 0; n < 3; ++n)
+        c.write (static_cast<std::uint8_t> (7 * n + 4), static_cast<std::uint8_t> (n == 2 ? chip::ctrl::saw : 0));
+    searchAndCheck (c, [] (int k) { return k >= 9 && k <= 11; }, 3000000);
+    const auto s = c.state();
+    for (std::size_t n = 0; n < 3; ++n)
+        CHECK (s.env[n].divider != 0);
 }
