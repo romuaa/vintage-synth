@@ -27,6 +27,12 @@ public:
     /** Track geometry in this component's coordinates (for tests). */
     juce::Rectangle<float> trackBounds() const noexcept { return track; }
     juce::Rectangle<float> thumbBounds() const;
+    /** The label, value and AUTO badge areas as drawn now (the badge is empty while no marker shows). */
+    juce::Rectangle<float> labelBounds() const noexcept;
+    juce::Rectangle<float> valueBounds() const noexcept { return valueArea; }
+    /** Width of the value-text slot of a horizontal slider (default 84 px; a short value can use less). */
+    void setValueSlotWidth (float px) { valueSlot = px; }
+    juce::Rectangle<float> badgeBounds() const noexcept;
     void cancelInteraction() override { model.cancel(); }
 
     void paint (juce::Graphics&) override;
@@ -50,7 +56,7 @@ private:
     Style style;
     bool bipolar;
     model::SliderModel model;
-    juce::Rectangle<float> track, labelArea, valueArea;
-    juce::String valueText; // prepared on change
+    juce::Rectangle<float> track, labelArea, valueArea, badgeArea;
+    float valueSlot = 84.0f;
 };
 } // namespace vs::ui

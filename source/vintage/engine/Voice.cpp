@@ -25,12 +25,6 @@ enum ModTarget
     kTargetVco2 = 2
 };
 
-enum PwmSrc
-{
-    kPwmLfo = 0,
-    kPwmManual = 1,
-    kPwmEnv1 = 2
-};
 } // namespace
 
 void Voice::prepare (float oversampledRate, std::uint32_t seed) noexcept
@@ -76,17 +70,19 @@ void Voice::reset() noexcept
 
 void Voice::setBlockParams (const PartParams& p, float vintage) noexcept
 {
-    vco1.setWave (static_cast<dsp::Wave> (p.vco1Wave));
-    vco2.setWave (static_cast<dsp::Wave> (p.vco2Wave));
-    vco1Rt.setWave (static_cast<dsp::Wave> (p.vco1Wave));
-    vco2Rt.setWave (static_cast<dsp::Wave> (p.vco2Wave));
+    // The oscillator switches, through the mapping the editor's picture uses too (OscPath.h).
+    oscConfig = oscConfigFor (p);
+    vco1.setWave (static_cast<dsp::Wave> (oscConfig.wave1));
+    vco2.setWave (static_cast<dsp::Wave> (oscConfig.wave2));
+    vco1Rt.setWave (static_cast<dsp::Wave> (oscConfig.wave1));
+    vco2Rt.setWave (static_cast<dsp::Wave> (oscConfig.wave2));
 
     vcoModTarget = p.vcoModTarget;
-    pwmSource = p.pwmSource;
-    vco1RangeOct = p.vco1Range - kVco1RangeIndexOf8ft;
-    vco2RangeOct = p.vco2Range - kVco2RangeIndexOf8ft;
-    vco2LoFreq = p.vco2Mode == 1;
-    sync = p.vcoSync == 1;
+    pwmSource = oscConfig.pwmSource;
+    vco1RangeOct = oscConfig.octave1;
+    vco2RangeOct = oscConfig.octave2;
+    vco2LoFreq = oscConfig.loFreq2;
+    sync = oscConfig.sync;
     const bool newSlope24 = p.vcfSlope == 1;
     if (newSlope24 != slope24)
     {
@@ -102,7 +98,7 @@ void Voice::setBlockParams (const PartParams& p, float vintage) noexcept
             snapSlope();
     }
     vcfEnvSource = p.vcfEnvSource;
-    env1Inverted = p.env1Polarity == 1;
+    env1Inverted = oscConfig.env1Inverted;
     env1KeyFollow = p.env1KeyFollow == 1;
     env2KeyFollow = p.env2KeyFollow == 1;
     vintageAmount = vintage;
@@ -285,18 +281,8 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
     const float dyn0 = walk0 * dynScale;
     const float dynStep = (driftWalk - walk0) * dynScale * invN;
 
-    // PWM amount = a + b * lfo + c * env1, clamped to 0..1.
-    float pwA = 1.0f, pwLfo = 0.0f, pwEnv = 0.0f;
-    if (pwmSource == kPwmLfo)
-    {
-        pwA = 0.5f;
-        pwLfo = 0.5f;
-    }
-    else if (pwmSource == kPwmEnv1)
-    {
-        pwA = env1Inverted ? 1.0f : 0.0f;
-        pwEnv = env1Inverted ? -1.0f : 1.0f;
-    }
+    // PWM amount = a + b * lfo + c * env1, clamped to 0..1 (OscPath.h, shared with the editor).
+    const PwmCoefs pwm = pwmCoefs (pwmSource, env1Inverted);
 
     // Portamento (semitones above the note, closed-form RC) and velocity (smoothed per voice).
     float glideSemis[kN], vel[kN], levelScale[kN];
@@ -359,8 +345,7 @@ bool Voice::beginBlock (const ModBlock& m) noexcept
             dt2[i] = dsp::clamp (dsp::fast::exp2 (log2F2) * invFs, kMinDt, kMaxDt);
             dt1Raw[i] = dsp::fast::exp2 (log2F1) * invFs; // clamped after cross-mod
 
-            const float amount = dsp::clamp (pwA + pwLfo * lfo[i] + pwEnv * e1[i], 0.0f, 1.0f);
-            width[i] = 0.5f - 0.45f * pwmDepth[i] * amount;
+            width[i] = pulseWidth (pwmDepth[i], pwmAmount (pwm, lfo[i], e1[i]));
         }
     }
 

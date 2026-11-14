@@ -33,6 +33,10 @@ public:
     void setAccent (juce::Colour c) { accentColour = c; repaint(); }
     void setMarkerAlpha (float a);
     void cancelInteraction() { model.cancel(); }
+    /** "1.28 kHz, VCF Resonance 5.5": the parameters' own text (screen readers, tests). */
+    juce::String valueText() const;
+    /** Typed value for the handle's first parameter; false (nothing changes) if unreadable. */
+    bool setValueFromText (const juce::String& text);
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -48,6 +52,8 @@ public:
 private:
     struct AxisBinding;
     void changed();
+    void showContextMenu();
+    void showTypedEntry();
 
     UiContext& ctx;
     std::unique_ptr<ParamHandle> xHandle, yHandle;
@@ -57,6 +63,7 @@ private:
     juce::Point<float> centre;
     juce::Colour accentColour;
     float markerAlpha = 0.0f;
+    std::unique_ptr<juce::TextEditor> entry;
 };
 
 /** Base of every graph: a panel-coloured plot area with handles as child components. */
@@ -80,6 +87,8 @@ class ResponseCurveView final : public GraphView
 {
 public:
     using Magnitude = std::function<double (double hz)>;
+    /** The frequency axis covers the high-pass's whole range (5 Hz) up to 20 kHz. */
+    static constexpr double kAxisLowHz = 5.0, kAxisHighHz = 20000.0;
 
     explicit ResponseCurveView (const Theme& t);
     /** Recomputes the curves (main, and the dashed comparison curve, may be empty). */
@@ -87,6 +96,9 @@ public:
     void setAccent (juce::Colour c);
     /** A dashed vertical marker (the high-pass corner), or NaN for none. */
     void setMarkerHz (double hz);
+    /** A short note drawn at the top right of the plot (empty: none). */
+    void setNote (const juce::String& text);
+    const juce::String& getNote() const noexcept { return note; }
     const model::LogAxis& frequencyAxis() const noexcept { return xAxis; }
     const model::LinearAxis& dbAxis() const noexcept { return yAxis; }
     /** Plot area in local coordinates. */
@@ -108,6 +120,7 @@ private:
     juce::StringArray freqLabels, dbLabels; // prepared once: paint() builds no strings
     juce::Colour accentColour;
     double markerHz = std::numeric_limits<double>::quiet_NaN();
+    juce::String note;
     int recomputes = 0;
 };
 

@@ -116,12 +116,91 @@ void GraphHandle::changed()
 
 void GraphHandle::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())
+    {
+        showContextMenu(); // never drags
+        return;
+    }
     const auto p = e.getEventRelativeTo (getParentComponent()).position;
     model.mouseDown (p.x, p.y, centre.x, fineModifier (e.mods));
 }
 
+juce::String GraphHandle::valueText() const
+{
+    juce::String t;
+    if (xHandle != nullptr)
+        t = xHandle->textFor (xHandle->value());
+    if (yHandle != nullptr)
+        t << (t.isEmpty() ? "" : ", ") << yHandle->param().getName (32) << " " << yHandle->textFor (yHandle->value());
+    return t;
+}
+
+bool GraphHandle::setValueFromText (const juce::String& text)
+{
+    // Typed values set the handle's x parameter (its first parameter).
+    auto* h = xHandle != nullptr ? xHandle.get() : yHandle.get();
+    float v = 0.0f;
+    if (h == nullptr || ! h->parse (text, v))
+        return false;
+    model.cancel();
+    model::writeOnce (*h, v);
+    changed();
+    return true;
+}
+
+void GraphHandle::showContextMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (1, "Reset to default");
+    menu.addItem (2, "Type a value...");
+    juce::Component::SafePointer<GraphHandle> self (this);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [self] (int result) {
+        if (self == nullptr || result == 0)
+            return;
+        if (result == 1)
+        {
+            self->model.doubleClick();
+            self->changed();
+        }
+        else if (result == 2)
+            self->showTypedEntry();
+    });
+}
+
+void GraphHandle::showTypedEntry()
+{
+    auto* parent = getParentComponent();
+    if (parent == nullptr)
+        return;
+    entry = std::make_unique<juce::TextEditor>();
+    entry->setFont (ctx.theme.font (metrics::kText));
+    auto* h = xHandle != nullptr ? xHandle.get() : yHandle.get();
+    entry->setText (h != nullptr ? h->textFor (h->value()) : juce::String(), false);
+    entry->selectAll();
+    entry->setBounds (juce::Rectangle<int> (100, 24).withCentre (getBounds().getCentre()).constrainedWithin (parent->getLocalBounds()));
+    entry->setTitle ("Type a value for " + getTitle());
+    juce::Component::SafePointer<GraphHandle> self (this);
+    const auto close = [self] {
+        juce::MessageManager::callAsync ([self] {
+            if (self != nullptr)
+                self->entry.reset();
+        });
+    };
+    entry->onReturnKey = [self, close] {
+        if (self != nullptr && self->entry != nullptr)
+            self->setValueFromText (self->entry->getText()); // unreadable text changes nothing
+        close();
+    };
+    entry->onEscapeKey = close;
+    entry->onFocusLost = close;
+    parent->addAndMakeVisible (*entry);
+    entry->grabKeyboardFocus();
+}
+
 void GraphHandle::mouseDrag (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())
+        return;
     const auto p = e.getEventRelativeTo (getParentComponent()).position;
     model.mouseDrag (p.x, p.y, fineModifier (e.mods));
     changed();
@@ -129,6 +208,8 @@ void GraphHandle::mouseDrag (const juce::MouseEvent& e)
 
 void GraphHandle::mouseUp (const juce::MouseEvent&)
 {
+    if (! model.isDragging())
+        return;
     model.mouseUp();
     changed();
 }
@@ -161,7 +242,16 @@ bool GraphHandle::keyPressed (const juce::KeyPress& k)
 
 std::unique_ptr<juce::AccessibilityHandler> GraphHandle::createAccessibilityHandler()
 {
-    return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::slider);
+    struct Value final : juce::AccessibilityTextValueInterface
+    {
+        explicit Value (GraphHandle& h) : handle (h) {}
+        bool isReadOnly() const override { return false; }
+        juce::String getCurrentValueAsString() const override { return handle.valueText(); }
+        void setValueAsString (const juce::String& t) override { handle.setValueFromText (t); }
+        GraphHandle& handle;
+    };
+    return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::slider, juce::AccessibilityActions{},
+                                                         juce::AccessibilityHandler::Interfaces { std::make_unique<Value> (*this) });
 }
 
 // ---- GraphView ----
@@ -188,7 +278,7 @@ std::unique_ptr<juce::AccessibilityHandler> GraphView::createAccessibilityHandle
 
 namespace
 {
-constexpr double kGridHz[] { 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 };
+constexpr double kGridHz[] { 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 };
 }
 
 ResponseCurveView::ResponseCurveView (const Theme& t) : GraphView (t), accentColour (colour (Tok::AccentGlobal))
@@ -232,10 +322,20 @@ void ResponseCurveView::setMarkerHz (double hz)
     repaint();
 }
 
+void ResponseCurveView::setNote (const juce::String& text)
+{
+    if (note != text)
+    {
+        note = text;
+        repaint();
+    }
+}
+
 void ResponseCurveView::resized()
 {
-    plot = getLocalBounds().toFloat().reduced (1.0f).withTrimmedBottom (18.0f);
-    xAxis = { plot.getX(), plot.getWidth(), 20.0, 20000.0 };
+    // Inset by a handle's radius, so a handle at either end of the axis is drawn whole.
+    plot = getLocalBounds().toFloat().reduced (static_cast<float> (metrics::kHandleRadius) + 4.0f, 1.0f).withTrimmedBottom (18.0f);
+    xAxis = { plot.getX(), plot.getWidth(), kAxisLowHz, kAxisHighHz };
     yAxis = { plot.getY(), plot.getHeight(), 24.0, -48.0 };
     rebuild();
     setMarkerHz (markerHz);
@@ -320,6 +420,13 @@ void ResponseCurveView::paint (juce::Graphics& g)
     g.fillPath (fillPath);
     g.setColour (accentColour);
     g.strokePath (mainPath, juce::PathStrokeType (2.0f));
+    if (note.isNotEmpty())
+    {
+        const auto area = juce::Rectangle<float> (plot.getRight() - 300.0f, plot.getY() + 4.0f, 296.0f, 16.0f);
+        g.setColour (colour (Tok::Warn));
+        g.setFont (theme.font (metrics::kTextSmall, true));
+        g.drawText (note, area, juce::Justification::centredRight, true);
+    }
 }
 
 // ---- ScopeView ----

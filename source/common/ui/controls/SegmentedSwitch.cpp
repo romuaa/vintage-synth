@@ -53,8 +53,6 @@ model::Key keyFor (int code, bool& known)
         return model::Key::Home;
     if (code == juce::KeyPress::endKey)
         return model::Key::End;
-    if (code == juce::KeyPress::deleteKey || code == juce::KeyPress::backspaceKey)
-        return model::Key::Reset;
     known = false;
     return model::Key::Reset;
 }
@@ -69,6 +67,7 @@ SegmentedSwitch::SegmentedSwitch (UiContext& c, const juce::String& paramId, con
     // The registry entry was made by the base; record the caption count now that it is known.
     ctx.registry.setCaptions (this, captions.size());
     jassert (captions.size() == model.numSegments()); // alias count must equal the choice count
+    refresh();
 }
 
 SegmentedSwitch::~SegmentedSwitch()
@@ -84,7 +83,7 @@ float SegmentedSwitch::shownValue() const
 
 int SegmentedSwitch::litSegment() const
 {
-    return model.indexOf (shownValue());
+    return model.indexOf (drawnValue());
 }
 
 bool SegmentedSwitch::showsMirroredValue (juce::String& why) const
@@ -163,31 +162,28 @@ void SegmentedSwitch::mouseDown (const juce::MouseEvent& e)
     if (i >= 0 && row.expanded (0.0f, 4.0f).contains (e.position))
     {
         model.press (i);
-        valueChanged();
+        refresh();
     }
 }
 
 void SegmentedSwitch::mouseUp (const juce::MouseEvent&)
 {
     model.release();
-    valueChanged();
+    refresh();
 }
 
-void SegmentedSwitch::mouseDoubleClick (const juce::MouseEvent& e)
+void SegmentedSwitch::mouseDoubleClick (const juce::MouseEvent&)
 {
-    if (e.mods.isPopupMenu())
-        return;
-    model.cancel();
-    model.doubleClick();
-    valueChanged();
+    // The second click of a double-click selects its segment like any click (mouseDown did);
+    // reset to default is on the context menu.
 }
 
 void SegmentedSwitch::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w)
 {
-    const float d = std::abs (w.deltaY) > std::abs (w.deltaX) ? w.deltaY : -w.deltaX;
-    if (std::abs (d) > 0.0f)
-        model.step (d > 0.0f ? 1 : -1, now());
-    valueChanged();
+    // As Slider: about 0.125 per notch, reversed scrolling honoured, fractions accumulate.
+    const float d = (std::abs (w.deltaY) > std::abs (w.deltaX) ? w.deltaY : -w.deltaX) * (w.isReversed ? -1.0f : 1.0f);
+    model.wheel (d * 8.0f, now());
+    refresh();
 }
 
 bool SegmentedSwitch::keyPressed (const juce::KeyPress& k)
@@ -197,7 +193,7 @@ bool SegmentedSwitch::keyPressed (const juce::KeyPress& k)
     if (! known)
         return false;
     model.key (key, now());
-    valueChanged();
+    refresh();
     return true;
 }
 
@@ -212,6 +208,7 @@ std::unique_ptr<juce::AccessibilityHandler> SegmentedSwitch::createAccessibility
 Toggle::Toggle (UiContext& c, const juce::String& paramId, const juce::String& caption, int partIndex, Placement placement)
     : BoundComponent (c, paramId, caption, partIndex, "Toggle", placement), model (handle)
 {
+    refresh();
 }
 
 Toggle::~Toggle()
@@ -226,7 +223,7 @@ float Toggle::shownValue() const
 
 bool Toggle::isOn() const
 {
-    return model::stepIndex (shownValue(), 2) == 1;
+    return model::stepIndex (drawnValue(), 2) == 1;
 }
 
 bool Toggle::showsMirroredValue (juce::String& why) const
@@ -266,13 +263,20 @@ void Toggle::mouseDown (const juce::MouseEvent& e)
         return;
     }
     model.press();
-    valueChanged();
+    refresh();
 }
 
 void Toggle::mouseUp (const juce::MouseEvent&)
 {
     model.release();
-    valueChanged();
+    refresh();
+}
+
+void Toggle::valueChanged()
+{
+    repaint();
+    if (auto* h = getAccessibilityHandler())
+        h->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
 }
 
 bool Toggle::keyPressed (const juce::KeyPress& k)
@@ -282,7 +286,7 @@ bool Toggle::keyPressed (const juce::KeyPress& k)
     {
         model.press();
         model.release();
-        valueChanged();
+        refresh();
         return true;
     }
     bool known = false;
@@ -290,7 +294,7 @@ bool Toggle::keyPressed (const juce::KeyPress& k)
     if (! known)
         return false;
     model.key (key, now());
-    valueChanged();
+    refresh();
     return true;
 }
 
@@ -303,10 +307,10 @@ std::unique_ptr<juce::AccessibilityHandler> Toggle::createAccessibilityHandler()
         {
             self->model.press();
             self->model.release();
-            self->valueChanged();
+            self->refresh();
         }
     });
-    return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::toggleButton, std::move (actions),
-                                                         juce::AccessibilityHandler::Interfaces { std::make_unique<ChoiceValue> (*this, handle) });
+    return std::make_unique<CheckableHandler> (*this, juce::AccessibilityRole::toggleButton, std::move (actions), [this] { return isOn(); },
+                                               juce::AccessibilityHandler::Interfaces { std::make_unique<ChoiceValue> (*this, handle) });
 }
 } // namespace vs::ui

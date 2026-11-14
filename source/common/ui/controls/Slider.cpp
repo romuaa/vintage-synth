@@ -31,7 +31,7 @@ Slider::Slider (UiContext& c, const juce::String& paramId, const juce::String& l
                 Placement placement)
     : BoundComponent (c, paramId, labelText, partIndex, "Slider", placement), style (s), bipolar (isBipolar), model (handle)
 {
-    valueChanged();
+    refresh();
 }
 
 Slider::~Slider()
@@ -46,7 +46,6 @@ float Slider::shownValue() const
 
 void Slider::valueChanged()
 {
-    valueText = shownText();
     repaint();
 }
 
@@ -73,8 +72,11 @@ void Slider::resized()
     else
     {
         auto top = r.removeFromTop (static_cast<float> (kLabelRow));
+        // Fixed slots, never measured: value text right (84 px), the AUTO badge left of it (48 px,
+        // only while the marker shows), the label in what is left (truncated with an ellipsis).
+        valueArea = top.removeFromRight (juce::jmin (valueSlot, top.getWidth() * 0.5f));
+        badgeArea = top.getWidth() >= 100.0f ? top.withLeft (top.getRight() - 48.0f).withSizeKeepingCentre (44.0f, 14.0f) : juce::Rectangle<float>();
         labelArea = top;
-        valueArea = top;
         r.reduce (static_cast<float> (kThumbW) * 0.5f + 2.0f, 0.0f);
         track = juce::Rectangle<float> (r.getX(), r.getCentreY() - kTrack * 0.5f, r.getWidth(), static_cast<float> (kTrack));
         model.setTrack (track.getX(), track.getWidth());
@@ -87,10 +89,23 @@ float Slider::pxOf (juce::Point<float> p) const noexcept
     return style == Style::Vertical ? track.getBottom() - p.y : p.x;
 }
 
+juce::Rectangle<float> Slider::labelBounds() const noexcept
+{
+    // While the badge shows, the label gives up the badge slot (its slot is right of the label).
+    if (markerAlpha > 0.0f && ! badgeArea.isEmpty() && style == Style::Horizontal)
+        return labelArea.withRight (juce::jmin (labelArea.getRight(), badgeArea.getX() - 2.0f));
+    return labelArea;
+}
+
+juce::Rectangle<float> Slider::badgeBounds() const noexcept
+{
+    return markerAlpha > 0.0f && style == Style::Horizontal ? badgeArea : juce::Rectangle<float>();
+}
+
 juce::Rectangle<float> Slider::thumbBounds() const
 {
     using namespace metrics;
-    const float v = shownValue();
+    const float v = drawnValue();
     if (style == Style::Vertical)
     {
         const float y = track.getBottom() - v * track.getHeight();
@@ -104,7 +119,7 @@ void Slider::paint (juce::Graphics& g)
 {
     using namespace metrics;
     const auto& theme = ctx.theme;
-    const float v = shownValue();
+    const float v = drawnValue();
     const auto acc = inactive ? accent().withAlpha (0.4f) : accent();
 
     // Label and value text.
@@ -112,11 +127,11 @@ void Slider::paint (juce::Graphics& g)
     if (! labelArea.isEmpty())
     {
         g.setColour (inactive ? colour (Tok::TextDisabled) : colour (Tok::TextSecondary));
-        drawFittedText (g, label, labelArea, style == Style::Vertical ? juce::Justification::centred : juce::Justification::centredLeft);
+        drawFittedText (g, label, labelBounds(), style == Style::Vertical ? juce::Justification::centred : juce::Justification::centredLeft);
     }
     g.setColour (textColour());
     g.setFont (theme.font (kText, true));
-    drawFittedText (g, valueText, valueArea, style == Style::Vertical ? juce::Justification::centred : juce::Justification::centredRight);
+    drawFittedText (g, drawnText(), valueArea, style == Style::Vertical ? juce::Justification::centred : juce::Justification::centredRight);
 
     // Track and fill (bipolar: from the centre).
     g.setColour (colour (Tok::BgTrack).withAlpha (inactive ? 0.4f : 1.0f));
@@ -145,11 +160,7 @@ void Slider::paint (juce::Graphics& g)
 
     if (markerAlpha > 0.0f)
     {
-        // The badge sits in the label row, left of the value text (fixed slot: never measured).
-        const juce::Rectangle<float> badge = style == Style::Horizontal && valueArea.getWidth() > 160.0f
-                                                 ? juce::Rectangle<float> (valueArea.getRight() - 128.0f, valueArea.getY() + 2.0f, 40.0f, 14.0f)
-                                                 : juce::Rectangle<float>();
-        drawExternalMarker (g, thumb, badge, markerAlpha, theme);
+        drawExternalMarker (g, thumb, badgeBounds(), markerAlpha, theme);
     }
     if (hasKeyboardFocus (false))
         drawFocusRing (g, thumb, 3.0f);
@@ -169,7 +180,7 @@ void Slider::mouseDown (const juce::MouseEvent& e)
     }
     const bool onThumb = thumbBounds().expanded (static_cast<float> (metrics::kHandleRadius) - 6.0f).contains (e.position);
     model.mouseDown (pxOf (e.position), onThumb, fineModifier (e.mods));
-    valueChanged();
+    refresh();
 }
 
 void Slider::mouseDrag (const juce::MouseEvent& e)
@@ -177,7 +188,7 @@ void Slider::mouseDrag (const juce::MouseEvent& e)
     if (! model.isDragging())
         return;
     model.mouseDrag (pxOf (e.position), fineModifier (e.mods));
-    valueChanged();
+    refresh();
 }
 
 void Slider::mouseUp (const juce::MouseEvent&)
@@ -186,7 +197,7 @@ void Slider::mouseUp (const juce::MouseEvent&)
         return;
     model.mouseUp();
     // A contested drag writes nothing here: the next tick shows whatever the parameter holds.
-    valueChanged();
+    refresh();
 }
 
 void Slider::mouseDoubleClick (const juce::MouseEvent& e)
@@ -195,7 +206,7 @@ void Slider::mouseDoubleClick (const juce::MouseEvent& e)
         return;
     model.cancel();
     model.doubleClick();
-    valueChanged();
+    refresh();
 }
 
 void Slider::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
@@ -203,7 +214,7 @@ void Slider::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDe
     // Over the control only (never scrolls a page). About 0.125 per notch on most mice.
     const float delta = (std::abs (w.deltaY) > std::abs (w.deltaX) ? w.deltaY : -w.deltaX) * (w.isReversed ? -1.0f : 1.0f);
     model.wheel (delta * 8.0f, fineModifier (e.mods), now());
-    valueChanged();
+    refresh();
 }
 
 bool Slider::keyPressed (const juce::KeyPress& k)
@@ -223,8 +234,6 @@ bool Slider::keyPressed (const juce::KeyPress& k)
         key = model::Key::Home;
     else if (code == juce::KeyPress::endKey)
         key = model::Key::End;
-    else if (code == juce::KeyPress::deleteKey || code == juce::KeyPress::backspaceKey)
-        key = model::Key::Reset;
     else if (code == juce::KeyPress::returnKey)
     {
         showTypedEntry (style == Style::Vertical ? getLocalBounds() : valueArea.toNearestInt());
@@ -233,7 +242,7 @@ bool Slider::keyPressed (const juce::KeyPress& k)
     else
         return false;
     model.key (key, fine, now());
-    valueChanged();
+    refresh();
     return true;
 }
 

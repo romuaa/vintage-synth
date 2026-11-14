@@ -116,6 +116,7 @@ public:
     void update (float peakLeft, float peakRight, double nowMs);
     float levelDb (int channel) const noexcept { return shownDb[channel & 1]; }
     int repaintCount() const noexcept { return repaints; }
+    int announcementCount() const noexcept { return announcements; }
     std::function<void()> onClick;
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override
@@ -134,6 +135,8 @@ private:
     float shownDb[2] { kFloorDb, kFloorDb }, shownHold[2] { kFloorDb, kFloorDb };
     double lastMs = 0.0;
     int repaints = 0;
+    int lastAnnounced = -1000, announcements = 0;
+    double lastAnnounceMs = -1.0e12;
 };
 
 void drawPageIcon (juce::Graphics& g, PageIcon icon, juce::Rectangle<float> area, juce::Colour c);

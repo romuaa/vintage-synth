@@ -26,10 +26,11 @@ namespace
 {
 bool sameBits (float a, float b) { return std::memcmp (&a, &b, sizeof (float)) == 0; }
 
-/** Sets a parameter's normalised value from another thread, as host automation does. */
+/** Sets a parameter's normalised value from another thread, as host automation does (JUCE's
+    VST3 wrapper calls setValueNotifyingHost, often on the audio thread). */
 void hostWrite (juce::RangedAudioParameter& p, float normalised)
 {
-    std::thread ([&p, normalised] { p.setValue (normalised); }).join();
+    std::thread ([&p, normalised] { p.setValueNotifyingHost (normalised); }).join();
 }
 
 const ui::ControlEntry* primaryOf (const ui::ControlRegistry& reg, const juce::String& id)
@@ -50,10 +51,12 @@ T& controlFor (ui::VintageEditor& ed, const juce::String& id)
     return *c;
 }
 
-/** Every binding of every parameter shows the mirror's value, the mirror holds the parameter's
-    value, the primaries show the parameter's own text, and the pictures were recomputed. */
+/** Every binding of every parameter draws the mirror's value (its prepared drawing data, not a
+    fresh read), the mirror holds the parameter's value, the primaries show the parameter's own text,
+    and the pictures were recomputed from what the engine itself reads (its block parameters). */
 void checkEverythingFollows (EditorRig& rig, const juce::String& when)
 {
+    rig.render (64, {}, 64); // the engine reads the parameters (seqlock block read)
     auto& ed = *rig.editor;
     auto& mirror = ed.getMirror();
     for (int i = 0; i < mirror.size(); ++i)
@@ -74,11 +77,15 @@ void checkEverythingFollows (EditorRig& rig, const juce::String& when)
             REQUIRE (b->shownText() == p.getCurrentValueAsText() + (label.isEmpty() ? juce::String() : " " + label));
         }
     }
+    const auto& block = rig.proc.getBlockParams();
+    const double rate = static_cast<double> (rig.proc.getUiFeed().internalRate.load());
     for (int part = 0; part < 2; ++part)
     {
+        INFO (when << ": pictures of part " << part);
         auto& page = ed.getSoundPage (part);
-        REQUIRE (page.curveSettings() == page.expectedCurveSettings());
-        REQUIRE (page.scopeSettings() == page.expectedScopeSettings());
+        const PartParams& engine = part == 0 ? block.lower : block.upper;
+        REQUIRE (page.curveSettings() == dsp::filterCurveSettings (engine.vcfCutoff, engine.vcfResonance, engine.vcfSlope, engine.hpfCutoff, rate));
+        REQUIRE (page.scopeSettings() == oscScopeSettingsFor (engine));
     }
 }
 
@@ -184,6 +191,7 @@ TEST_CASE ("Automation follow: every parameter at min, default and a random valu
     for (int i = 0; i < mirror.size(); ++i)
     {
         auto& p = mirror.parameter (i);
+        // Four values in a row, 20 ms apart (inside the marker window): each must be drawn.
         for (float v : { 0.0f, p.getDefaultValue(), uni (rng), 1.0f })
         {
             hostWrite (p, v);

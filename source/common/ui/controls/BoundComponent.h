@@ -34,6 +34,33 @@ void setHelp (juce::Component& c, const juce::String& helpId, const juce::String
 /** "Lower ", "Upper " or "" (part pages name their part in every accessibility name). */
 juce::String partPrefix (int part);
 
+/** A page (or other content) whose open gestures must end when it is hidden (9.1.2 rule 5). */
+class InteractiveContent
+{
+public:
+    virtual ~InteractiveContent() = default;
+    virtual void cancelInteraction() = 0;
+};
+
+/** Accessibility handler that reports a checkable state (toggles, rail buttons). */
+class CheckableHandler final : public juce::AccessibilityHandler
+{
+public:
+    CheckableHandler (juce::Component& c, juce::AccessibilityRole role, juce::AccessibilityActions actions, std::function<bool()> isChecked,
+                      Interfaces interfaces = {})
+        : juce::AccessibilityHandler (c, role, std::move (actions), std::move (interfaces)), checked (std::move (isChecked))
+    {
+    }
+    juce::AccessibleState getCurrentState() const override
+    {
+        auto s = juce::AccessibilityHandler::getCurrentState().withCheckable();
+        return checked && checked() ? s.withChecked() : s;
+    }
+
+private:
+    std::function<bool()> checked;
+};
+
 class BoundComponent : public juce::Component,
                        public ParamMirror::Listener,
                        public ParamMirror::IdleClient,
@@ -55,6 +82,9 @@ public:
     /** The value this control shows: the user's own during a gesture, else the mirror's. */
     virtual float shownValue() const;
     juce::String shownText() const { return handle.textFor (shownValue()); }
+    /** What paint() draws: prepared by refresh() when the value changed (tests check these). */
+    float drawnValue() const noexcept { return drawn; }
+    const juce::String& drawnText() const noexcept { return drawnString; }
     bool showsMirroredValue (juce::String& why) const override;
     float getMarkerAlpha() const noexcept { return markerAlpha; }
 
@@ -66,7 +96,10 @@ public:
     virtual void cancelInteraction() {}
 
 protected:
-    /** Called after the shown value changed: prepare drawing data and repaint. */
+    /** Prepares the drawn value and text from shownValue(), then valueChanged(). Call after every
+        change (mirror notification or own interaction). */
+    void refresh();
+    /** Called by refresh(): prepare further drawing data and repaint. */
     virtual void valueChanged() { repaint(); }
     virtual void idle (double) {}
     virtual bool isInGesture() const { return false; }
@@ -82,6 +115,8 @@ protected:
     int part;
     bool inactive = false;
     float markerAlpha = 0.0f;
+    float drawn = 0.0f;
+    juce::String drawnString;
     juce::Colour accentColour;
     std::unique_ptr<juce::TextEditor> entry;
 

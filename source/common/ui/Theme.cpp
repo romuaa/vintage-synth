@@ -20,6 +20,7 @@ juce::Colour colour (Tok t) noexcept
         case Tok::TextOnAccent: return juce::Colour (0xff16181cu);
         case Tok::Focus: return juce::Colour (0xffffffffu);
         case Tok::Warn: return juce::Colour (0xffff6b57u);
+        case Tok::Marker: return juce::Colour (0xffd59cf5u); // violet: 7.0:1 on bg.panel, distinct from both accents
     }
     return juce::Colour (0xffff00ffu);
 }

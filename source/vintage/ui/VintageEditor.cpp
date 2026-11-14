@@ -87,6 +87,7 @@ VintageEditor::VintageEditor (VintageSynthProcessor& p)
     if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
         userArea = display->userBounds.toNearestInt();
     const int percent = initialSizePercent (editorState.sizePercent.load (std::memory_order_relaxed), userArea);
+    appliedSize = editorState.sizePercent.load (std::memory_order_relaxed); // 0: chosen here, not stored
     lastSetSize = { kDesignWidth * percent / 100, kDesignHeight * percent / 100 };
     setSize (lastSetSize.getWidth(), lastSetSize.getHeight());
     constructed = true;
@@ -193,6 +194,10 @@ void VintageEditor::syncFromEditorState()
     // a session restore on any thread shows up at the next tick.
     const int page = juce::jlimit (0, static_cast<int> (kVintagePageNames.size()) - 1, editorState.page.load (std::memory_order_relaxed));
     const int part = editorState.part.load (std::memory_order_relaxed) == 1 ? 1 : 0;
+    // A session restored while the editor is open brings its window size too.
+    const int size = editorState.sizePercent.load (std::memory_order_relaxed);
+    if (constructed && size != appliedSize && size >= shell::EditorState::kMinSizePercent && size <= shell::EditorState::kMaxSizePercent)
+        setSizePercent (size);
     if (page != frame.getPage() || part != frame.getPart() || frame.currentPageComponent() == nullptr || ! frame.currentPageComponent()->isVisible())
     {
         frame.showPage (page, part);
@@ -271,6 +276,7 @@ void VintageEditor::setSizePercent (int percent)
 {
     percent = juce::jlimit (shell::EditorState::kMinSizePercent, shell::EditorState::kMaxSizePercent, percent);
     editorState.sizePercent.store (percent, std::memory_order_relaxed);
+    appliedSize = percent;
     lastSetSize = { kDesignWidth * percent / 100, kDesignHeight * percent / 100 };
     setSize (lastSetSize.getWidth(), lastSetSize.getHeight());
 }
@@ -298,6 +304,7 @@ void VintageEditor::resized()
     {
         const int percent = juce::jlimit (shell::EditorState::kMinSizePercent, shell::EditorState::kMaxSizePercent, juce::roundToInt (scale * 100.0f));
         editorState.sizePercent.store (percent, std::memory_order_relaxed);
+        appliedSize = percent;
         lastSetSize = getLocalBounds();
     }
 }

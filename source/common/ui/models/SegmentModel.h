@@ -59,6 +59,22 @@ public:
         timed.touch (target, nowMs);
         target.setValue (valueOf (i));
     }
+    /** Mouse wheel: whole notches move one segment each; fractions add up. */
+    void wheel (float notches, double nowMs)
+    {
+        if (pressed || ! std::isfinite (notches))
+            return;
+        accumulator += notches;
+        const float whole = std::trunc (accumulator);
+        if (std::fpclassify (whole) == FP_ZERO)
+            return;
+        accumulator -= whole;
+        const int next = std::clamp (index() + static_cast<int> (whole), 0, count - 1);
+        if (next == index())
+            return;
+        timed.touch (target, nowMs);
+        target.setValue (valueOf (next));
+    }
     void key (Key k, double nowMs)
     {
         if (pressed)
@@ -75,7 +91,12 @@ public:
         cancel();
         writeOnce (target, target.defaultValue());
     }
-    void idle (double nowMs) { timed.idle (target, nowMs); }
+    void idle (double nowMs)
+    {
+        timed.idle (target, nowMs);
+        if (! timed.isOpen())
+            accumulator = 0.0f;
+    }
     void cancel()
     {
         release();
@@ -88,6 +109,7 @@ private:
     int count;
     bool pressed = false;
     TimedGesture timed;
+    float accumulator = 0.0f;
 };
 
 /** A latching Off/On button: a press flips the value (one gesture: mouse-down to mouse-up). */

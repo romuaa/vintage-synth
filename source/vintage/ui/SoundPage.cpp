@@ -9,8 +9,6 @@ namespace
 using namespace metrics;
 
 juce::String prefix (int part) { return part == 0 ? kLowerPrefix : kUpperPrefix; }
-constexpr int kOctaveOf8ft1 = kVco1RangeIndexOf8ft, kOctaveOf8ft2 = kVco2RangeIndexOf8ft;
-constexpr int kPwmManual = 1;
 } // namespace
 
 /** The part's signal path (static list); its last item opens the Effects page. */
@@ -143,20 +141,25 @@ SoundPage::SoundPage (UiContext& c, int p)
             recomputeCurve();
         };
 
+#define VS_INDEX_FLOAT(member, suffix, name, mn, mx, def, kind) partIndices.push_back (ctx.mirror.indexOf (id (suffix)));
+#define VS_INDEX_CHOICE(member, suffix, name, labels, def) partIndices.push_back (ctx.mirror.indexOf (id (suffix)));
+    VS_PART_FLOAT_PARAMS (VS_INDEX_FLOAT)
+    VS_PART_CHOICE_PARAMS (VS_INDEX_CHOICE)
+#undef VS_INDEX_FLOAT
+#undef VS_INDEX_CHOICE
     for (const auto* s : { "vcf.cutoff", "vcf.resonance", "vcf.slope", "hpf.cutoff", "vco1.waveform", "vco2.waveform", "vco1.range", "vco2.range",
                            "vco2.mode", "vco2.fine_tune", "vco2.sync", "vcomod.pwm", "vcomod.pwm_source", "vco1.cross_mod" })
         indices[s] = ctx.mirror.indexOf (id (s));
     for (const auto* s : { "vcf.cutoff", "vcf.resonance", "vcf.slope", "hpf.cutoff" })
         curveInputs.push_back (index (s));
     for (const auto* s : { "vco1.waveform", "vco2.waveform", "vco1.range", "vco2.range", "vco2.mode", "vco2.fine_tune", "vco2.sync",
-                           "vcomod.pwm", "vcomod.pwm_source" })
+                           "vcomod.pwm", "vcomod.pwm_source", "env1.polarity", "vco1.cross_mod" })
         scopeInputs.push_back (index (s));
     crossModIndex = index ("vco1.cross_mod");
     for (int i : curveInputs)
         ctx.mirror.subscribe (i, this);
     for (int i : scopeInputs)
         ctx.mirror.subscribe (i, this);
-    ctx.mirror.subscribe (crossModIndex, this);
     ctx.mirror.addIdleClient (this);
 
     setSize (kDesignWidth - kRail, kDesignHeight - kTopBar - kHelpLine);
@@ -212,24 +215,25 @@ dsp::FilterCurveSettings SoundPage::expectedCurveSettings() const
     return curveFor (mirrored ("vcf.cutoff"), mirrored ("vcf.resonance"), mirrored ("vcf.slope"), mirrored ("hpf.cutoff"));
 }
 
-dsp::OscScopeSettings SoundPage::scopeFor (const std::function<float (const juce::String&)>& value) const
+PartParams SoundPage::mirroredParams() const
 {
-    dsp::OscScopeSettings s;
-    s.wave1 = model::stepIndex (value ("vco1.waveform"), static_cast<int> (kVcoWaveLabels.size()));
-    s.wave2 = model::stepIndex (value ("vco2.waveform"), static_cast<int> (kVcoWaveLabels.size()));
-    s.octave1 = model::stepIndex (value ("vco1.range"), static_cast<int> (kVco1RangeLabels.size())) - kOctaveOf8ft1;
-    s.octave2 = model::stepIndex (value ("vco2.range"), static_cast<int> (kVco2RangeLabels.size())) - kOctaveOf8ft2;
-    s.loFreq2 = model::stepIndex (value ("vco2.mode"), 2) == 1;
-    s.fineSemis = map::fineTuneSemis (ctx.mirror.parameter (index ("vco2.fine_tune")).convertFrom0to1 (value ("vco2.fine_tune")));
-    s.sync = model::stepIndex (value ("vco2.sync"), 2) == 1;
-    const bool manual = model::stepIndex (value ("vcomod.pwm_source"), static_cast<int> (kPwmSourceLabels.size())) == kPwmManual;
-    s.width = manual ? 0.5f - 0.45f * value ("vcomod.pwm") : 0.5f;
-    return s;
+    // Every per-part parameter, normalised -> plain exactly as the processor's binding reads it
+    // (the parameter's own convertFrom0to1; choices to their index).
+    PartParams p;
+    size_t k = 0;
+    const auto plain = [&] () { const int i = partIndices[k++]; return ctx.mirror.parameter (i).convertFrom0to1 (ctx.mirror.value (i)); };
+#define VS_READ_FLOAT(member, id, name, mn, mx, def, kind) p.member = plain();
+#define VS_READ_CHOICE(member, id, name, labels, def) p.member = static_cast<int> (std::lround (plain()));
+    VS_PART_FLOAT_PARAMS (VS_READ_FLOAT)
+    VS_PART_CHOICE_PARAMS (VS_READ_CHOICE)
+#undef VS_READ_FLOAT
+#undef VS_READ_CHOICE
+    return p;
 }
 
-dsp::OscScopeSettings SoundPage::expectedScopeSettings() const
+OscScopeSettings SoundPage::expectedScopeSettings() const
 {
-    return scopeFor ([this] (const juce::String& s) { return mirrored (s); });
+    return oscScopeSettingsFor (mirroredParams()); // the voice's own mapping (OscPath.h)
 }
 
 void SoundPage::mirrorChanged (int changedIndex, bool valueChanged)
@@ -242,7 +246,7 @@ void SoundPage::mirrorChanged (int changedIndex, bool valueChanged)
     if (std::find (scopeInputs.begin(), scopeInputs.end(), changedIndex) != scopeInputs.end())
         scopesDirty = true;
     if (changedIndex == crossModIndex)
-        repaint();
+        repaint (crossModCaptionArea()); // only the "off at 0" caption
 }
 
 void SoundPage::mirrorIdle (double)
@@ -280,6 +284,9 @@ void SoundPage::recomputeCurve()
     curveView.setCurves ([main] (double hz) { return dsp::filterMagnitudeDb (hz, main); },
                          [other] (double hz) { return dsp::filterMagnitudeDb (hz, other); });
     curveView.setMarkerHz (curve.hpfHz);
+    // At k >= 4 the ladder oscillates by itself: its small-signal response has no finite peak.
+    // The curve is clamped to the top of the axis and says so.
+    curveView.setNote (curve.k >= kSelfOscillationK ? juce::String ("Rings by itself at the cutoff (self-oscillation)") : juce::String());
     placeHandles();
 }
 
@@ -319,9 +326,10 @@ void SoundPage::placeHandles()
 void SoundPage::recomputeScopes()
 {
     ++scopeRecomputes;
-    dsp::renderOscScopes (scope, scopeData);
-    scope1.setSamples (scopeData.osc1.data(), dsp::OscScopes::kPoints, kVcoWaveLabels[static_cast<size_t> (scope.wave1)]);
-    scope2.setSamples (scopeData.osc2.data(), dsp::OscScopes::kPoints, kVcoWaveLabels[static_cast<size_t> (scope.wave2)]);
+    renderOscScopes (scope, scopeData);
+    const auto waveName = [] (int w) { return juce::String (kVcoWaveLabels[static_cast<size_t> (std::clamp (w, 0, 5))]); };
+    scope1.setSamples (scopeData.osc1.data(), OscScopes::kPoints, waveName (scope.config.wave1));
+    scope2.setSamples (scopeData.osc2.data(), OscScopes::kPoints, waveName (scope.config.wave2));
 }
 
 void SoundPage::resized()
@@ -347,6 +355,7 @@ void SoundPage::resized()
     fineTune.setBounds (234, 134, 224, 36);
     vco2Wave.setBounds (12, 176, 446, kLabelRow + kSegment);
 
+    sourceMix.setValueSlotWidth (36.0f); // values 0.0 ... 10.0: room for the label
     sourceMix.setBounds (12, 40, 148, 40);
 
     slope.setBounds (588, 2, 212, 24);
@@ -359,6 +368,12 @@ void SoundPage::resized()
     level.setBounds (16, 36, 80, 340);
     signalPath->setBounds (120, 40, 268, 300);
     placeHandles();
+}
+
+juce::Rectangle<int> SoundPage::crossModCaptionArea() const
+{
+    const auto link = linkPanel.getBounds();
+    return { link.getX(), link.getY() + 80, link.getWidth(), 14 };
 }
 
 void SoundPage::paint (juce::Graphics& g)
@@ -376,7 +391,7 @@ void SoundPage::paintOverChildren (juce::Graphics& g)
     g.drawText (juce::String::fromUTF8 ("2 \xe2\x86\x92 1"), juce::Rectangle<float> (link.getX(), link.getY() + 66.0f, link.getWidth(), 14.0f),
                 juce::Justification::centred, false);
     if (model::stepIndex (ctx.mirror.value (crossModIndex), 1001) == 0)
-        g.drawText ("off at 0", juce::Rectangle<float> (link.getX(), link.getY() + 80.0f, link.getWidth(), 14.0f), juce::Justification::centred, false);
+        g.drawText ("off at 0", crossModCaptionArea().toFloat(), juce::Justification::centred, false);
 
     const auto mix = mixPanel.getBounds().toFloat();
     g.drawText ("Osc 1", juce::Rectangle<float> (mix.getX() + 12.0f, mix.getY() + 84.0f, 60.0f, 14.0f), juce::Justification::centredLeft, false);

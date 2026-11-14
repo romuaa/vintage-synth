@@ -99,6 +99,7 @@ private:
     float scale = 1.0f;
     juce::Rectangle<int> lastSetSize;
     bool constructed = false;
+    int appliedSize = 0; // the EditorState size this editor has applied or stored
     int keyModeIndex = -1;
     double lastTickMs = -1.0e9, lastVBlankMs = -1.0e9, lastMeterMs = -1.0e9;
     float lastRate = 0.0f;

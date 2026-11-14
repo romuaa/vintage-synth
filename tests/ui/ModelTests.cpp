@@ -183,9 +183,9 @@ TEST_CASE ("Slider model: wheel 1 % per notch (0.1 % fine), one step for discret
 
     Recorder d (0.5f, 3); // 0, .5, 1
     SliderModel md (d);
-    md.wheel (0.2f, false, 0.0);
+    md.wheel (1.0f, false, 0.0); // one whole notch: one step (fractions: see the wheel test below)
     CHECK (d.v == Approx (1.0f));
-    md.wheel (-0.1f, false, 10.0);
+    md.wheel (-1.0f, false, 10.0);
     CHECK (d.v == Approx (0.5f));
     md.idle (400.0);
     CHECK (d.clean());
@@ -418,4 +418,36 @@ TEST_CASE ("Gesture rules hold for every interaction of every model (random inte
         CHECK (rx.clean());
         CHECK (ry.clean());
     }
+}
+
+TEST_CASE ("Wheel on discrete controls: fractions of a notch add up; one flick cannot race through every choice", "[ui][models]")
+{
+    Recorder r (0.0f, 6); // six waveforms
+    SliderModel s (r);
+    for (int i = 0; i < 3; ++i)
+        s.wheel (0.3f, false, 10.0 * i);
+    CHECK (stepIndex (r.v, 6) == 0); // 0.9 notch: nothing yet
+    CHECK (r.values == 0);
+    s.wheel (0.3f, false, 40.0);
+    CHECK (stepIndex (r.v, 6) == 1); // 1.2 notches: one step, 0.2 carried
+    s.wheel (2.0f, false, 50.0);
+    CHECK (stepIndex (r.v, 6) == 3);
+    s.idle (400.0);
+    CHECK (r.clean());
+
+    Recorder g (0.0f, 6);
+    SegmentModel m (g, 6);
+    m.wheel (0.5f, 0.0);
+    CHECK (m.index() == 0);
+    m.wheel (0.5f, 10.0);
+    CHECK (m.index() == 1);
+    m.wheel (-0.25f, 20.0);
+    CHECK (m.index() == 1);
+    m.wheel (40.0f, 30.0); // a huge delta still stops at the last segment
+    CHECK (m.index() == 5);
+    m.idle (400.0);
+    m.wheel (0.5f, 500.0); // the remainder was dropped when the gesture ended
+    CHECK (m.index() == 5);
+    m.idle (900.0);
+    CHECK (g.clean());
 }

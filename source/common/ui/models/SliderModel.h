@@ -81,7 +81,16 @@ public:
         const float base = target.value();
         float v;
         if (steps >= 2)
-            v = snap (base + (notches > 0.0f ? 1.0f : -1.0f) / static_cast<float> (steps - 1), steps);
+        {
+            // Discrete: whole notches only; a trackpad's small deltas add up (no racing through
+            // every choice on one flick, no step lost on slow scrolling).
+            wheelAccumulator += notches;
+            const float whole = std::trunc (wheelAccumulator);
+            if (std::fpclassify (whole) == FP_ZERO)
+                return;
+            wheelAccumulator -= whole;
+            v = snap (base + whole / static_cast<float> (steps - 1), steps);
+        }
         else
             v = clamp01 (base + notches * (fine ? kWheelFineStep : kWheelStep));
         timed.touch (target, nowMs);
@@ -104,7 +113,12 @@ public:
     }
 
     /** Called on every tick: ends a wheel/key gesture 300 ms after the last notch or key. */
-    void idle (double nowMs) { timed.idle (target, nowMs); }
+    void idle (double nowMs)
+    {
+        timed.idle (target, nowMs);
+        if (! timed.isOpen())
+            wheelAccumulator = 0.0f;
+    }
 
     /** Ends every open gesture (component destroyed or hidden mid-interaction). */
     void cancel()
@@ -132,5 +146,6 @@ private:
     float start = 0.0f, length = 100.0f;
     bool dragging = false, fineNow = false;
     float raw = 0.0f, anchorRaw = 0.0f, anchorPx = 0.0f, shown = 0.0f;
+    float wheelAccumulator = 0.0f;
 };
 } // namespace vs::ui::model

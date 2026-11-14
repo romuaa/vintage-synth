@@ -43,8 +43,8 @@ Editor 0 0 1360 784
     High-pass + filter 12 274 812 426
       lower.vcf.slope 588 2 212 24
       Filter response 12 36 788 300
-        Filter cutoff 460 117 28 28
-        High-pass -13 87 28 28
+        Filter cutoff 508 117 28 28
+        High-pass 0 97 28 28
       lower.vcf.cutoff 12 346 185 40
       lower.vcf.resonance 209 346 185 40
       lower.hpf.cutoff 406 346 185 40

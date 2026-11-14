@@ -68,6 +68,7 @@ public:
 
 private:
     void idle (double nowMs) override { model.idle (nowMs); }
+    void valueChanged() override;
     float shownValue() const override;
 
     model::ToggleModel model;

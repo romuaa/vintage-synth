@@ -142,5 +142,6 @@ private:
     juce::String banner;
     juce::Component::SafePointer<juce::Component> hovered;
     int limiterIndex = -1;
+    int firstPageFocusOrder = 9;
 };
 } // namespace vs::ui

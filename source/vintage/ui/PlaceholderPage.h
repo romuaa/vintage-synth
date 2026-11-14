@@ -11,7 +11,7 @@
 
 namespace vs::ui
 {
-class PlaceholderPage final : public juce::Component
+class PlaceholderPage final : public juce::Component, public InteractiveContent
 {
 public:
     struct Item
@@ -23,7 +23,7 @@ public:
     PlaceholderPage (UiContext& ctx, const juce::String& title, const juce::String& note, std::vector<Item> items);
     int numControls() const noexcept { return static_cast<int> (sliders.size()); }
     Slider& getSlider (int i) noexcept { return *sliders[static_cast<size_t> (i)]; }
-    void cancelInteraction();
+    void cancelInteraction() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;

@@ -25,7 +25,8 @@ enum class Tok
     AccentGlobal,
     TextOnAccent,
     Focus,
-    Warn
+    Warn,
+    Marker // "changed by something other than this editor" (9.1.5); never the focus colour or shape
 };
 
 /** The token's colour (9.2.3). */

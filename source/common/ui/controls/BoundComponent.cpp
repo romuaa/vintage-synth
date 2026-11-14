@@ -47,7 +47,7 @@ void BoundComponent::setInactive (bool shouldBeInactive)
     inactive = shouldBeInactive;
     auto description = getDescription().upToFirstOccurrenceOf (" (no effect in this mode)", false, false);
     setDescription (inactive ? description + " (no effect in this mode)" : description);
-    valueChanged();
+    refresh();
 }
 
 void BoundComponent::setAccent (juce::Colour c)
@@ -61,19 +61,26 @@ float BoundComponent::shownValue() const
     return ctx.mirror.value (handle.getIndex());
 }
 
+void BoundComponent::refresh()
+{
+    drawn = shownValue();
+    drawnString = handle.textFor (drawn);
+    valueChanged();
+}
+
 bool BoundComponent::showsMirroredValue (juce::String& why) const
 {
+    // What is drawn (prepared at the last notification), not a fresh read of the mirror.
     const float mirrored = ctx.mirror.value (handle.getIndex());
-    const float shown = shownValue();
-    if (! model::sameBits (shown, mirrored))
+    if (! model::sameBits (drawn, mirrored))
     {
-        why << getComponentID() << ": shows " << shown << ", parameter " << mirrored;
+        why << getComponentID() << ": draws " << drawn << ", parameter " << mirrored;
         return false;
     }
     const auto text = handle.textFor (mirrored);
-    if (shownText() != text)
+    if (drawnString != text)
     {
-        why << getComponentID() << ": text " << shownText() << " vs " << text;
+        why << getComponentID() << ": text " << drawnString << " vs " << text;
         return false;
     }
     return true;
@@ -82,7 +89,7 @@ bool BoundComponent::showsMirroredValue (juce::String& why) const
 void BoundComponent::mirrorChanged (int, bool)
 {
     markerAlpha = ctx.mirror.markerAlpha (handle.getIndex(), ctx.mirror.lastTickTime());
-    valueChanged();
+    refresh();
 }
 
 void BoundComponent::mirrorIdle (double nowMs)
@@ -93,7 +100,7 @@ void BoundComponent::mirrorIdle (double nowMs)
 void BoundComponent::typed (float normalised)
 {
     model::writeOnce (handle, normalised);
-    valueChanged();
+    refresh();
 }
 
 void BoundComponent::showContextMenu()
@@ -154,15 +161,19 @@ void drawExternalMarker (juce::Graphics& g, juce::Rectangle<float> thumb, juce::
 {
     if (alpha <= 0.0f)
         return;
-    const auto c = colour (Tok::Focus).withAlpha (alpha);
-    g.setColour (c);
+    // A dashed outline in the marker colour: never the focus ring's solid white.
+    juce::Path outline, dashed;
     if (round)
-        g.drawEllipse (thumb.expanded (1.5f), 1.5f);
+        outline.addEllipse (thumb.expanded (1.5f));
     else
-        g.drawRoundedRectangle (thumb, 3.0f, 1.5f);
+        outline.addRoundedRectangle (thumb, 3.0f);
+    const float dashes[] { 3.0f, 2.5f };
+    juce::PathStrokeType (1.5f).createDashedStroke (dashed, outline, dashes, 2);
+    g.setColour (colour (Tok::Marker).withAlpha (alpha));
+    g.fillPath (dashed);
     if (! badge.isEmpty())
     {
-        g.setColour (colour (Tok::AccentGlobal).withAlpha (alpha));
+        g.setColour (colour (Tok::Marker).withAlpha (alpha));
         g.fillRoundedRectangle (badge, badge.getHeight() * 0.5f);
         g.setColour (colour (Tok::TextOnAccent).withAlpha (alpha));
         g.setFont (theme.font (metrics::kTextSmall - 1.0f, true));

@@ -212,6 +212,15 @@ EditorFrame::EditorFrame (UiContext& c, std::vector<Page> p, juce::Component& pr
         limitChip->setOn (model::stepIndex (ctx.mirror.value (limiterIndex), 2) == 1);
     }
 
+    // Keyboard and screen-reader order (9.2.5): rail, top bar, page content, help, popover.
+    int order = 1;
+    for (auto* comp : std::initializer_list<juce::Component*> { &rail, &partSwitch, &presetArea, &meter, &master, limitChip.get(), &chevron,
+                                                                 &sizeButton })
+        comp->setExplicitFocusOrder (order++);
+    firstPageFocusOrder = order;
+    helpLine.setExplicitFocusOrder (order + 1);
+    popover.setExplicitFocusOrder (order + 2);
+
     addMouseListener (this, true); // hover help for every child
     juce::Desktop::getInstance().addFocusChangeListener (this);
     setSize (kDesignWidth, kDesignHeight); // last: resized() places every child
@@ -256,6 +265,7 @@ bool EditorFrame::isPartPage() const
 void EditorFrame::addPageComponent (int pageIndex, int partIndex, juce::Component& comp)
 {
     pageComponents.push_back ({ pageIndex, partIndex, &comp });
+    comp.setExplicitFocusOrder (firstPageFocusOrder);
     addChildComponent (comp);
     comp.setBounds (pageArea());
     // Overlays stay above the pages.
@@ -279,7 +289,14 @@ void EditorFrame::showPage (int pageIndex, int partIndex)
     part = partIndex == 1 ? 1 : 0;
     auto* shown = currentPageComponent();
     for (auto& e : pageComponents)
+    {
+        // A page that goes away ends its open gestures first (keyboard page switch mid-drag,
+        // a session restore changing the page).
+        if (e.component != shown && e.component->isVisible())
+            if (auto* content = dynamic_cast<InteractiveContent*> (e.component))
+                content->cancelInteraction();
         e.component->setVisible (e.component == shown);
+    }
     partSwitch.setPart (part);
     partSwitch.setVisible (isPartPage());
     rail.setCurrent (page, isPartPage() ? part : -1);

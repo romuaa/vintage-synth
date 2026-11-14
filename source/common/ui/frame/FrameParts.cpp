@@ -124,7 +124,7 @@ public:
     {
         juce::AccessibilityActions a;
         a.addAction (juce::AccessibilityActionType::press, [this] { choose(); });
-        return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::radioButton, std::move (a));
+        return std::make_unique<CheckableHandler> (*this, juce::AccessibilityRole::radioButton, std::move (a), [this] { return rail.current == index; });
     }
 
 private:
@@ -143,6 +143,7 @@ PageRail::PageRail (const Theme& t, std::vector<Page> p) : theme (t), pages (std
     for (int i = 0; i < static_cast<int> (pages.size()); ++i)
     {
         buttons.push_back (std::make_unique<Button> (*this, i));
+        buttons.back()->setExplicitFocusOrder (i + 1);
         addAndMakeVisible (*buttons.back());
     }
 }
@@ -154,7 +155,11 @@ void PageRail::setCurrent (int index, int part)
     current = index;
     accentPart = part;
     for (auto& b : buttons)
+    {
         b->repaint();
+        if (auto* h = b->getAccessibilityHandler())
+            h->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
+    }
 }
 
 void PageRail::resized()
@@ -359,6 +364,14 @@ void OutputMeter::update (float peakLeft, float peakRight, double nowMs)
     {
         ++repaints;
         repaint();
+    }
+    // Screen readers: at most once per second, and only when the spoken value changed.
+    const int spoken = juce::roundToInt (juce::jmax (shownDb[0], shownDb[1]));
+    if (spoken != lastAnnounced && nowMs - lastAnnounceMs >= 1000.0)
+    {
+        lastAnnounced = spoken;
+        lastAnnounceMs = nowMs;
+        ++announcements;
         if (auto* h = getAccessibilityHandler())
             h->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
     }
