@@ -6,7 +6,8 @@
 // those fields from the trace's writes and our own chip's per-step events (Chip.h, OscStepEvent) by
 // following where a table value can flow, as 8.15.2 defines the flows:
 //
-//   output (c)       a combined waveform (more than one waveform bit), an uncertain accumulator top bit
+//   output (c)       a combined-waveform table (wave::usesTable: two or more of triangle, saw and pulse, or
+//                    pulse with noise; noise with only triangle or only saw uses none), an uncertain accumulator top bit
 //                    of its own (pulse comparison, index) or of its ring source (ring set, saw clear),
 //                    or an uncertain noise output when noise is selected
 //   read value       Model A and Model B without triangle/saw: the output; Model B with triangle or saw:
@@ -15,11 +16,14 @@
 //   Model B latch    this step's shape
 //   accumulator      Model A, saw selected and an uncertain output: the pull-down of bit 23 (bit 23 only);
 //                    a sync whose source's rise (or, for the chain rule, its source's rise) is uncertain
-//                    (every bit); cleared only by the test bit (acc := 0)
-//   noise register   a write-back of an uncertain output (c step 6, or the latch's tap bits at a shift,
-//                    8.15.3, also at the write that clears the test bit); shifts at uncertain times (an
-//                    accumulator uncertain in every bit, running); cleared when a fill under the test bit
-//                    has made the register all ones (register, latch and noise output are then known)
+//                    (every bit); cleared by the test bit (acc := 0) and by a sync reset whose source's rise
+//                    is certain (acc := 0)
+//   noise register   (with its latch) a write-back of an uncertain output (c step 6, or the latch's tap bits
+//                    at a shift, 8.15.3, also at the write that clears the test bit); shifts at uncertain
+//                    times (an accumulator uncertain in every bit, running); cleared when a fill under the
+//                    test bit has made the register all ones
+//   noise output     the register's at every shift and fill; ANDed with the output at a write-back; the
+//                    output itself where step 6 copies it (pipeline in its latch step, or the test bit)
 //
 // The `.bsref` fields this exempts: accN (accumulator), noiseN (noise register), rd1B (oscillator 3's
 // read value). Envelope fields never depend on an oscillator, so they are never exempt. JUCE-free.
@@ -58,8 +62,13 @@ public:
             const bool testWas = (before & chip::ctrl::test) != 0, testIs = (value & chip::ctrl::test) != 0;
             if (! testWas && testIs)
                 accTop[i] = accAll[i] = false;
-            else if (testWas && ! testIs && chip::wave::shiftWritesBack (model, chip::wave::bits (before), chip::wave::bits (value)) && out[i])
-                noise[i] = true;
+            else if (testWas && ! testIs)
+            {
+                // The shift at the write: the latch's tap bits may take the output first (8.15.3).
+                if (chip::wave::shiftWritesBack (model, chip::wave::bits (before), chip::wave::bits (value)) && out[i])
+                    noiseReg[i] = true;
+                noiseOut[i] = noiseReg[i];
+            }
         }
     }
 
@@ -73,32 +82,39 @@ public:
         const std::uint8_t c = ev.control;
         const std::uint8_t w = wave::bits (c);
         // (a)
-        if (ev.shiftWroteBack && out[i])
-            noise[i] = true;
-        if (ev.filledToOnes)
-            noise[i] = false;
         if (accAll[i] && freq[i] != 0 && (c & ctrl::test) == 0)
-            noise[i] = true;
+            noiseReg[i] = noiseOut[i] = true; // bit-19 rises (and so shifts) at uncertain times
+        if (ev.shiftWroteBack && out[i])
+            noiseReg[i] = true;
+        if (ev.shifted || ev.filled)
+            noiseOut[i] = noiseReg[i]; // recomputed from the register
+        if (ev.filledToOnes)
+            noiseReg[i] = noiseOut[i] = false; // register, latch and noise output all ones / their output
         // (c)
         if (ev.outputComputed)
         {
             const bool own = accTop[i] || accAll[i];
             const bool src = (c & ctrl::ring) != 0 && (c & ctrl::saw) == 0 && (accTop[s] || accAll[s]);
-            const bool shapeT = wave::isCombined (w) || own || src;
+            const bool shapeT = wave::usesTable (w) || own || src;
             const bool pulseT = (c & ctrl::pulse) != 0 && (c & ctrl::test) == 0 && own;
-            const bool noiseT = (c & ctrl::noise) != 0 && noise[i];
+            const bool noiseT = (c & ctrl::noise) != 0 && noiseOut[i];
             const bool outT = shapeT || pulseT || noiseT;
             if (model == chip::Model::A && (c & ctrl::saw) != 0 && outT && ownPullDown)
                 accTop[i] = true;
             if (model == chip::Model::B && (c & (ctrl::triangle | ctrl::saw)) != 0)
             {
-                read[i] = latch[i] || pulseT || noiseT || wave::isCombined (w);
+                read[i] = latch[i] || pulseT || noiseT || wave::usesTable (w);
                 latch[i] = shapeT;
             }
             else
                 read[i] = outT;
-            if (wave::writesBack (c))
-                noise[i] = noise[i] || outT;
+            if (ev.wroteBack)
+            {
+                noiseReg[i] = noiseReg[i] || outT;
+                noiseOut[i] = noiseOut[i] || outT;
+            }
+            else if (wave::writesBack (c))
+                noiseOut[i] = outT; // noise output := output (pipeline in its latch step, or the test bit)
             out[i] = outT;
             if (model == chip::Model::A && (c & ctrl::saw) != 0 && outT)
                 pulledDownUncertain[i] = true;
@@ -118,14 +134,19 @@ public:
                 const bool riseT = sourceUncertain (kk) || ((control[kk] & ctrl::sync) != 0 && sourceUncertain (ks));
                 if (riseT)
                     accAll[t] = true;
+                else if (syncedThisStep[t])
+                    accTop[t] = accAll[t] = false; // a certain reset: the accumulator is 0, as in the reference
             }
             for (std::size_t k = 0; k < 3; ++k)
-                pulledDownUncertain[k] = false;
+                pulledDownUncertain[k] = syncedThisStep[k] = false;
         }
     }
 
+    /** A sync reset of `target` in the current step (the chip reports it before the step's oscStep events). */
+    void syncReset (int target) noexcept { syncedThisStep[static_cast<std::size_t> (target)] = true; }
+
     bool accExempt (int n) const noexcept { return accTop[static_cast<std::size_t> (n)] || accAll[static_cast<std::size_t> (n)]; }
-    bool noiseExempt (int n) const noexcept { return noise[static_cast<std::size_t> (n)]; }
+    bool noiseExempt (int n) const noexcept { return noiseReg[static_cast<std::size_t> (n)]; }
     bool readExempt() const noexcept { return read[2]; }
 
 private:
@@ -136,7 +157,7 @@ private:
     bool ownPullDown;
     std::array<std::uint8_t, 3> control {};
     std::array<std::uint16_t, 3> freq {};
-    std::array<bool, 3> accTop {}, accAll {}, noise {}, out {}, read {}, latch {}, pulledDownUncertain {};
+    std::array<bool, 3> accTop {}, accAll {}, noiseReg {}, noiseOut {}, out {}, read {}, latch {}, pulledDownUncertain {}, syncedThisStep {};
 };
 
 /** The chip sink that feeds a ShapeExemption (step events only; the chip then steps every cycle). */
@@ -145,7 +166,7 @@ struct ShapeExemptionSink
     static constexpr bool kWantsNoiseEvents = false;
     static constexpr bool kWantsStepEvents = true;
     ShapeExemption* tracker = nullptr;
-    void syncReset (const chip::SyncResetEvent&) noexcept {}
+    void syncReset (const chip::SyncResetEvent& e) noexcept { tracker->syncReset (e.target); }
     void noiseClock (const chip::NoiseClockEvent&) noexcept {}
     void noiseWriteBack (const chip::NoiseWriteBackEvent&) noexcept {}
     void oscStep (const chip::OscStepEvent& e) noexcept { tracker->oscStep (e); }

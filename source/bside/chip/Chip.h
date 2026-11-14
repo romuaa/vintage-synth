@@ -64,8 +64,8 @@
 // OSCILLATOR (each in time order), NOT by time across oscillators. Stable-sorted by cycle, the events
 // of advanceCycles equal those of the same cycles stepped one by one (tested).
 // STEP EVENTS. A sink that declares `static constexpr bool kWantsStepEvents = true` also receives
-// oscStep (OscStepEvent) once per oscillator per step (the replay's 8.15.8 exemption tracking); then
-// advanceCycles steps every cycle.
+// oscStep (OscStepEvent) once per oscillator per step, after that step's sync resets (the replay's
+// 8.15.8 exemption tracking); then advanceCycles steps every cycle.
 //
 // Between events an oscillator is a straight line: phase(n) + k x increment(n) (mod 2^56), from which
 // saw wraps, top-bit flips and pulse edges (bits 23..12 crossing PW) follow in closed form.

@@ -1137,6 +1137,72 @@ TEST_CASE ("chip 8.15.4: an attack that starts at 0xff wraps the counter to 0", 
     CHECK (c.envelope (0) == 0x01);
 }
 
+TEST_CASE ("chip 8.15.4: a release step at counter 0 wraps to 0xff when an attack phase cleared the freeze", "[bside][chip]")
+{
+    // The counter is 8 bits in every phase. Proven by committed data: d_env_cases_b, env3 00 -> ff in
+    // release at cycle 407 985 (and 447 990); d_env_rates_b, env1 and env3 at 1 108 861 and 2 060 784.
+    auto c = makeChip();
+    wr (c, 0, reg::sustainRelease, 0x00);
+    c.advanceCycles (100000);
+    REQUIRE (c.envelope (0) == 0);
+    REQUIRE (envOf (c, 0).frozen);
+    wr (c, 0, reg::attackDecay, 0xf0); // attack rate 15: no attack step for a long time
+    while (envOf (c, 0).resetPending || envOf (c, 0).dividerPipeline != 0)
+        c.stepCycle();
+    wr (c, 0, reg::control, ctrl::gate);
+    c.advanceCycles (2);
+    REQUIRE (c.envelopePhase (0) == EnvPhase::attack);
+    CHECK_FALSE (envOf (c, 0).frozen); // the attack phase clears the freeze
+    wr (c, 0, reg::control, 0);
+    c.advanceCycles (2);
+    REQUIRE (c.envelopePhase (0) == EnvPhase::release);
+    REQUIRE (c.envelope (0) == 0);
+    REQUIRE (stepsUntil (c, [] (const Chip& x) { return x.envelope (0) != 0; }, 40000) <= 40000);
+    CHECK (c.envelope (0) == 0xff);
+    CHECK (c.envelopePhase (0) == EnvPhase::release);
+}
+
+TEST_CASE ("chip 8.15.2 (c) step 6 (Smooth): the write-back ANDs the output into the noise output", "[bside][chip]")
+{
+    // With F just below 2^19 bit 19 rises every 2 steps: the pipeline alternates 2 and 1 and never shifts.
+    // Steps at 1 copy the output into the noise output (the register is kept); steps at 2 AND it into both.
+    // Without a shift nothing recomputes the noise output from the register, so the copy reaches the next
+    // output: "noise output := the register's output" in the latch step would differ wherever the register
+    // keeps a tap bit that the output had cleared (only Smooth frequencies get here; at register
+    // frequencies a shift follows every latch step).
+    Chip c;
+    Config cfg;
+    cfg.authentic = false;
+    c.prepare (cfg);
+    // Noise + ring-modulated triangle (no table): the ring keeps the triangle near its top for the first
+    // steps, so the register has not locked up to 0 yet when the first latch steps come.
+    constexpr std::uint8_t w = ctrl::noise | ctrl::triangle | ctrl::ring;
+    c.setOscillator (0, { 524287.9, 0.0f, static_cast<std::uint8_t> (w | ctrl::test), 0, 0 });
+    c.setOscillator (0, { 524287.9, 0.0f, w, 0, 0 });
+    int discriminating = 0;
+    for (int i = 0; i < 4000; ++i)
+    {
+        const auto before = oscOf (c, 0);
+        c.stepCycle();
+        const auto o = oscOf (c, 0);
+        if (i == 0)
+            continue; // step 1 comes before the first rise (pipeline still 0)
+        REQUIRE (o.noisePipeline != 0); // never a shift
+        if (o.noisePipeline == 1)
+        {
+            REQUIRE (o.noiseOutput == o.output);
+            REQUIRE (o.noise == before.noise);
+            discriminating += wave::noise (o.noise) != o.noiseOutput ? 1 : 0;
+        }
+        else
+        {
+            REQUIRE (o.noiseOutput == (before.noiseOutput & o.output));
+            REQUIRE (o.noise == (before.noise & wave::noiseKeepMask (o.output)));
+        }
+    }
+    CHECK (discriminating > 0);
+}
+
 TEST_CASE ("chip 8.15.4: rate writes change the compare position only in the matching phase", "[bside][chip]")
 {
     auto c = makeChip(); // release

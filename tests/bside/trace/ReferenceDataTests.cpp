@@ -223,8 +223,9 @@ TEST_CASE ("reference data: digital replay against our chip, exact at every chec
         {
             const auto r = replayChipExact (tr.trace, bytes, rr.reference, m);
             const char* modelName = m == vs::bside::chip::Model::A ? "A" : "B";
-            std::printf ("[replay] %-24s model %s: %6zu checkpoints, %6zu exact, %6zu exempt (%zu of them equal anyway), %zu mismatched\n",
-                         name.c_str(), modelName, r.checkpoints, r.exact, r.exempt, r.exemptButEqual, r.mismatched);
+            std::printf ("[replay] %-24s model %s: %6zu checkpoints, %6zu exact, %6zu exempt (%zu of them equal anyway), %zu mismatched;"
+                         " exempt fields (checkpoints exempt/differing): %s\n",
+                         name.c_str(), modelName, r.checkpoints, r.exact, r.exempt, r.exemptButEqual, r.mismatched, exemptFieldsText (r).c_str());
             INFO (name << " as model " << modelName);
             REQUIRE (r.error.empty());
             std::string first;
@@ -237,8 +238,11 @@ TEST_CASE ("reference data: digital replay against our chip, exact at every chec
             CHECK (r.checkpoints == rr.reference.points.size());
             CHECK (r.mismatched == 0);
             CHECK (r.fastPathDiffs == 0); // advanceCycles equals stepCycle in the full state at every checkpoint
-            if (family == "d")
-                CHECK (r.exempt == 0); // the digital traces use no combined waveform: nothing may be exempt
+            // The digital and analog traces use no combined-waveform table, and noise with only triangle or
+            // only saw (c_9_*, c_a_*) uses none either (8.15.2 (c)): there nothing may be exempt, so those two
+            // are exact tests of the noise write-back path.
+            if (family == "d" || family == "a" || name.rfind ("c_9_", 0) == 0 || name.rfind ("c_a_", 0) == 0)
+                CHECK (r.exempt == 0);
             ++f.replays;
             f.checkpoints += r.checkpoints;
             f.exact += r.exact;

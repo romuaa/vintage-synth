@@ -15,8 +15,17 @@ namespace vs::bside::chip::wave
 constexpr std::uint8_t bits (std::uint8_t control) noexcept { return static_cast<std::uint8_t> (control >> 4); }
 constexpr std::uint8_t kTri = 1, kSaw = 2, kPulse = 4, kNoise = 8;
 
-/** More than one waveform bit: the shape comes from a combined-waveform table (8.15.2 (c) step 2). */
+/** More than one waveform bit selected. */
 constexpr bool isCombined (std::uint8_t waveBits) noexcept { return (waveBits & (waveBits - 1)) != 0; }
+
+/** The shape comes from a combined-waveform table (8.15.2 (c) step 2, as amended from the reference data):
+    at least two of triangle, saw and pulse, or pulse together with noise. Noise with only triangle or only
+    saw uses no table: the output is that shape AND the noise output. */
+constexpr bool usesTable (std::uint8_t waveBits) noexcept
+{
+    const int tsp = ((waveBits & kTri) != 0 ? 1 : 0) + ((waveBits & kSaw) != 0 ? 1 : 0) + ((waveBits & kPulse) != 0 ? 1 : 0);
+    return tsp >= 2 || ((waveBits & kPulse) != 0 && (waveBits & kNoise) != 0);
+}
 
 /** The waveform index: accumulator bits 23..12, with ring (ring set, saw clear) bit 11 := own bit 23 XOR
     NOT the ring source's bit 23 (8.15.2 (c) step 1). */
@@ -62,7 +71,8 @@ constexpr std::uint32_t taps (std::uint16_t out) noexcept
 /** The register mask of the write-back: a set output bit keeps its tap bit, a clear one clears it. */
 constexpr std::uint32_t noiseKeepMask (std::uint16_t out) noexcept { return (kNoiseMask & ~kTapBits) | taps (out); }
 
-/** Combined-waveform shape for more than one waveform bit (8.15.2 (c) step 2; our own tables, 8.15.8).
+/** Combined-waveform shape for the waveform bits that use a table (usesTable; 8.15.2 (c) step 2; our own
+    tables, 8.15.8).
 
     PLACEHOLDER (S2a): for both models the bitwise AND of the selected triangle and saw shapes (0xfff when
     neither is selected); pulse and noise enter through the masks of step 3. This is the documented
@@ -81,14 +91,16 @@ constexpr std::uint16_t combined (Model model, std::uint8_t waveBits, std::uint1
     return v;
 }
 
-/** The shape of step 2 for waveform bits 1..15: triangle, saw, 0xfff for pulse or noise alone, the
-    combined table otherwise. */
+/** The shape of step 2 for waveform bits 1..15: triangle (also with noise), saw (also with noise), 0xfff
+    for pulse or noise alone, the combined table otherwise (usesTable). */
 constexpr std::uint16_t shape (Model model, std::uint8_t waveBits, std::uint16_t ix) noexcept
 {
     switch (waveBits)
     {
-        case kTri: return triangle (ix);
-        case kSaw: return saw (ix);
+        case kTri:
+        case kTri | kNoise: return triangle (ix);
+        case kSaw:
+        case kSaw | kNoise: return saw (ix);
         case kPulse:
         case kNoise: return 0xfff;
         default: return combined (model, waveBits, ix);

@@ -8,6 +8,7 @@
 #include "bside/trace/Replay.h"
 #include "bside/trace/ShapeExemption.h"
 
+#include <array>
 #include <optional>
 
 namespace vs::bside::trace
@@ -73,6 +74,8 @@ struct ExactReplayResult
     std::size_t mismatched = 0;       // at least one non-exempt field differs
     std::size_t exemptButEqual = 0;   // exempt checkpoints whose exempt fields happen to equal the reference
     std::size_t fastPathDiffs = 0;    // checkpoints where advanceCycles' full state differs from stepCycle's
+    std::array<std::size_t, kStateFields> exemptPerField {};  // checkpoints at which the field was exempt
+    std::array<std::size_t, kStateFields> differPerField {};  // ... and differed from the reference
     std::vector<Mismatch> first;      // the first non-exempt differences (at most kMaxReportedMismatches)
     std::vector<Write> writesBefore;  // up to 8 writes up to the first mismatch's checkpoint
     bool ok() const noexcept { return error.empty() && mismatched == 0 && fastPathDiffs == 0; }
@@ -83,6 +86,22 @@ struct ExactReplayResult
     ShapeExemption marks; a second chip runs the same writes through advanceCycles and must equal the
     stepped one in its full DigitalState at every checkpoint. `model` overrides the trace's model (the
     envelope traces hold for both models; docs/bside-oracle-adapter.md). Not for the audio thread. */
+/** "acc1 61/0 rd1B 100/3": per exempt field, checkpoints exempt / of them differing from the reference. */
+inline std::string exemptFieldsText (const ExactReplayResult& r)
+{
+    std::string s;
+    for (int k = 0; k < kStateFields; ++k)
+    {
+        const auto i = static_cast<std::size_t> (k);
+        if (r.exemptPerField[i] == 0)
+            continue;
+        if (! s.empty())
+            s += ", ";
+        s += std::string (kStateFieldNames[k]) + " " + std::to_string (r.exemptPerField[i]) + "/" + std::to_string (r.differPerField[i]);
+    }
+    return s.empty() ? std::string ("none") : s;
+}
+
 inline ExactReplayResult replayChipExact (const Trace& trace, std::string_view traceBytes, const Reference& reference,
                                           std::optional<chip::Model> model = std::nullopt, bool exemptOwnPullDown = true)
 {
@@ -136,10 +155,13 @@ inline ExactReplayResult replayChipExact (const Trace& trace, std::string_view t
             const auto ki = static_cast<std::size_t> (k);
             const bool ex = fieldExempt (tracker, k);
             anyExempt = anyExempt || ex;
+            if (ex)
+                ++r.exemptPerField[ki];
             if (ours.v[ki] == ref.v[ki])
                 continue;
             if (ex)
             {
+                ++r.differPerField[ki];
                 exemptDiffers = true;
                 continue;
             }
