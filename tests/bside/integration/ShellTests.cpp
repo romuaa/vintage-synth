@@ -27,17 +27,17 @@ struct Rig
     juce::ScopedJuceInitialiser_GUI init;
     bs::BSideProcessor proc;
 
-    explicit Rig (bool prepare = true)
+    explicit Rig (bool prepared = true)
     {
-        if (prepare)
-            this->prepare();
+        if (prepared)
+            prepare();
     }
 
-    void prepare (double rate = kRate, int block = kBlock)
+    void prepare (double rate = kRate, int maxBlock = kBlock)
     {
         proc.setNonRealtime (false);
-        proc.setPlayConfigDetails (0, 2, rate, block);
-        proc.prepareToPlay (rate, block);
+        proc.setPlayConfigDetails (0, 2, rate, maxBlock);
+        proc.prepareToPlay (rate, maxBlock);
     }
 
     void set (const juce::String& id, float plain)
