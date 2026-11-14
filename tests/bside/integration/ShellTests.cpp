@@ -337,7 +337,7 @@ TEST_CASE ("B-Side: program, tone and bank files carry B-Side's identity and ref
     dir.deleteRecursively();
 }
 
-#if defined(__APPLE__)
+#if defined(VS_SEQ_COUNT_ALLOCATIONS) && VS_SEQ_COUNT_ALLOCATIONS // macOS without AddressSanitizer
 TEST_CASE ("B-Side: processBlock does not allocate (arp, effects, key modes, bypass, program change request)", "[bside][shell][realtime]")
 {
     Rig rig;
