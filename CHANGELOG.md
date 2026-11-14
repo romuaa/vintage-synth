@@ -5,6 +5,22 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side reference data, review round 1 (2026-11-14)
+- **Data set extended and split** (71 traces, 3.83 MB): every combined waveform in its own `c_*`
+  trace from a test-bit reset; new digital traces (deselected-waveform fade, pulse width and frequency
+  extremes, ring with pulse/noise, sync from/to frozen or test-held voices, gate edges swept over
+  every rate-counter position at divider periods 1 and 2, more envelope cases, seeded random
+  catch-alls); new analog traces (filter modes, routing and oscillator-3 off, envelope and waveform
+  converters); Model A filter segments 1.2 s. Envelope traces for Model B only (the script proves
+  the Model A copies identical).
+- **Rate field one to one:** the pending rate-counter reset is bit 7 of `div` (no format change).
+- `source/bside/trace/AnalogMeasure.*`: **one shared analog estimator** (corner, plateau, resonance
+  peak, tone level) with tests; Model A corners now within 2.4 %, peaks within 0.14 dB of 4-second
+  measurements.
+- Reference resampler alias-free in 0..24 kHz (stopband 24 kHz, was 28 kHz); reference conventions
+  (time base, scale, power-on, run-past-end) written down in `docs/bside-oracle-adapter.md`; the
+  decision rows rewritten one per question, with precise delays and the board filter's quantisation.
+
 ### B-Side reference data (2026-11-14)
 - The reference-emulator adapter exists (outside the repository, `docs/bside-oracle-adapter.md`) and
   wrote the **first reference data set**: 29 synthetic traces in `tests/bside/reference/` with their

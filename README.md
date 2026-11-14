@@ -204,7 +204,7 @@ output stage, bypass, presets, state) is a shared skeleton in `source/common/she
 **Exitium B-Side** exists as a second VST3 plugin (`source/bside/`, built unless `-DVS_BUILD_BSIDE=OFF`)
 with the shared parameters, 64 programs, state, the arpeggiator and the effects around a placeholder
 test-tone part. It makes no chip sound yet; the chip model follows in S2 to S4. The first reference
-data for it (digital state at chosen cycles and audio features of 29 synthetic register traces,
+data for it (digital state at chosen cycles and audio features of 71 synthetic register traces,
 generated with a reference emulator outside this repository) is committed in `tests/bside/reference/`.
 
 ## License

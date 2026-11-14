@@ -53,12 +53,29 @@ integers, one `frame` line per hop) and, for every segment the trace's analysis 
 1/12-octave averaged spectrum (120 bins from 20 Hz, 0.1 dB). The feature extraction is the same
 one the repository's render-regression harness uses, so both sides measure alike.
 
-**Output reference point.** The adapter takes the chip's output after its board filter, before the
-emulator's own playback stage (no added background noise, no soft limiter, no 16-bit rounding), as
-floats scaled so that 1.0 is that stage's 16-bit full scale. It resamples the per-cycle output to
-48 kHz itself (a linear-phase filter flat to 20 kHz, at least 120 dB down from 28 kHz, exact rate).
-Output sample i lies at chip cycle i x clock / 48000; a trace renders ceil (end x 48000 / clock)
-samples.
+**Reference conventions** (our side copies these; they define the data, they are not claims about
+the hardware):
+
+- *Output point and scale:* the chip's output after its board filter, before the emulator's own
+  playback stage (no added background noise, no soft limiter, no 16-bit rounding), as floats:
+  board-filter output x 3/2 (Model A) or x 5/2 (Model B) / 32768, so 1.0 is that stage's 16-bit full
+  scale.
+- *Time base:* input sample k of the resampler is the output produced by the chip's step k + 1 (the
+  step from cycle k to cycle k + 1). Output sample i is the band-limited value at input position
+  i x clock / 48000, computed in exact rational arithmetic. Input positions before 0 take the value of
+  step 1 (no step at the start). A trace renders ceil (end x 48000 / clock) output samples; to do
+  so the chip runs on past `end`, without writes, for half the kernel width + 2 cycles (964 cycles at
+  985 248 Hz, 1 000 at 1 022 727 Hz).
+- *Resampler:* linear-phase Kaiser-windowed sinc, flat to 20 kHz (< 0.001 dB), at least 120 dB down
+  from 24 kHz (nothing aliases into 0 .. 24 kHz), DC gain exactly 1; 20 .. 24 kHz is its transition
+  band (-6 dB at 22 kHz).
+- *Power-on:* the state of the emulator object right after construction, model and clock set and
+  reset: accumulators 0x555555, noise registers 0x7ffffe, envelope counters 0xaa in release at
+  rate 0, rate counters at position 0 with a reset pending, analog states at zero. Our chip's
+  `reset()` reproduces it (`docs/decisions.md`).
+- *Fields:* `rateN` is the rate counter's position (0 .. 32766) on its 32 767-state sequence; `divN`
+  bits 0..6 are the exponential divider counter and bit 7 the rate counter's pending reset (the
+  15-bit rate field has no room for it; `source/bside/trace/ReferenceFormat.h`).
 
 **Analysis plan.** The trace format carries none, so the plan is derived from the trace alone
 (`source/bside/trace/SpecAnalysis.h`, `segmentPlan()`): the write cycles split the render into
@@ -102,13 +119,19 @@ Only on the development Mac, deliberately, and reviewed like a golden re-bless:
    builds the adapter, writes the traces, runs the adapter on each, replaces
    `tests/bside/reference/` and writes its `MANIFEST`. An optional self-check proves, on every
    trace, that the adapter's cycle loop is the emulator's own (sample for sample and state for state).
+   An output-folder option writes everything elsewhere instead, so a reviewer can regenerate and
+   compare without touching the checkout. The script also renders the Model A copies of the
+   envelope traces (committed for Model B only) and fails unless every state line is identical.
 3. Review the diff; run `bside_trace` (ctest label `trace`): it checks that every file is listed in
    the MANIFEST with its SHA-256, that each reference and spec is canonical and belongs to its trace,
    and that each spec follows the segment plan. Commit the data in its own commit.
 
-The traces are synthetic register scripts (no recorded music): `d_*` pin the digital state (writes
-of 00 to register 0x15, which these traces never use otherwise, are "probes" that only place a
-checkpoint), `a_*` are the analog measurements of 8.9.4 (`*_bypass` twins repeat a trace with the
-voices not routed to the filter, so a filter response is the ratio of two spectra with the same
-excitation). Each trace's comments say what it pins. Analog references exist for the 50 Hz clock
+The traces are synthetic register scripts (no recorded music): `d_*` pin the digital state with at
+most one waveform bit at a time (writes of 00 to register 0x15, which these traces never use
+otherwise, are "probes" that only place a checkpoint; `d_random*` are seeded random catch-alls with
+a checkpoint every 1 000 cycles); `c_*` hold one combined-waveform case each, from a test-bit reset,
+so a difference there stays in its own file; `a_*` are the analog measurements of 8.9.4 (`*_bypass`
+twins repeat a trace with the voices not routed to the filter, so a filter response is the ratio of
+two spectra with the same excitation; `source/bside/trace/AnalogMeasure.h` is the one estimator both
+sides use). Each trace's comments say what it pins. Analog references exist for the 50 Hz clock
 only; the reference's filter scales with the configured clock (`docs/decisions.md`).
