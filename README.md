@@ -7,7 +7,8 @@ naming and design.
 > **Status: in development (pre-release).** Milestone M3 is done: two 16-voice parts (Lower and
 > Upper) with Whole, Dual and Split modes and stereo output. Arpeggiator, sequencer and effects in
 > the plugin, presets and the custom UI come in later milestones (see [Roadmap](#roadmap)). The
-> plugin currently shows JUCE's generic parameter editor.
+> plugin shows its own editor (M7a: frame, Sound page, live automation; the other pages are
+> placeholders listing their parameters until M7b–M7e).
 
 ## Features
 
@@ -177,7 +178,7 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 | M4 | Arpeggiator and 16-step sequencer | Module done, not connected |
 | M5 | Chorus, delay and reverb | Blocks done, not connected |
 | M6 | Presets, patch banks, golden-render regression tests | |
-| M7 | Custom UI | |
+| M7 | Custom UI | M7a done (frame, Sound page, live automation); M7b–M7f next |
 | M8 | Hardening, signing, installers, release | |
 
 A second instrument is planned in this repository: **B-Side**, a polyphonic synth modelled on a classic 3-voice
@@ -190,8 +191,10 @@ output stage, bypass, presets, state) is a shared skeleton in `source/common/she
 Copyright © Exitium. Licensed under the **GNU Affero General Public License v3.0**; see [LICENSE](LICENSE).
 Built with [JUCE](https://juce.com) (AGPLv3). Every binary release comes with its complete source code.
 
-Third-party components: [JUCE](https://juce.com) (AGPLv3), Catch2 (BSL-1.0, tests only) and the
-Steinberg VST3 SDK as bundled with JUCE (MIT). CI uses pluginval (GPLv3), the VST3 SDK validator (MIT),
+Third-party components: [JUCE](https://juce.com) (AGPLv3), Catch2 (BSL-1.0, tests only), the
+Steinberg VST3 SDK as bundled with JUCE (MIT), and the Inter typeface embedded in the editor, which
+keeps its own licence (SIL Open Font License 1.1; `resources/fonts/inter/OFL.txt`, source and
+checksums in `resources/fonts/inter/SOURCE.txt`). CI uses pluginval (GPLv3), the VST3 SDK validator (MIT),
 Trivy (Apache-2.0), ccache and sccache as separate tools; none of them is linked into or shipped
 with the plugin.
 

@@ -3,6 +3,27 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## M7a results: editor foundation and Sound page (2026-11-14)
+
+| Decision | Why |
+|---|---|
+| **The top bar's preset area is the existing preset bar** (bank, slot, name with `*`, `<` `>`, Load/Save/Init menus) until M7e builds `PresetActions` and the `<` name `>` Save design. (review) | The browser and `PresetActions` are M7e's scope; the bar keeps every file flow working now and its tests unchanged (`getBar()`). |
+| **"Upper is not heard in Whole mode" is shown at the right of the help row, not over the page.** (review) | The wireframe layout has no free row; a banner over the page covered panel headers. The help row is always visible and still shows the hovered control's help on its left. |
+| **Both parts' part pages exist at once; the edited part's is shown.** | Bindings register once at construction (9.1.5), so switching parts rebinds nothing. Costs about 40 more components. |
+| **The session saves `UiState` only for an instrument that names its pages** (`setUiPageNames`); the skeleton always removes the child before restoring parameters. | B-Side's saved state stays unchanged until it has its own editor (S6). |
+| **Sounding keys come from an optional `soundingNotes` of the part type** (checked at compile time). | B-Side's placeholder part need not implement it; its masks stay 0. |
+| **The limiter reduction published per block is the limiter's gain at the block end**, not the minimum over the block's samples. (review) | The per-sample minimum would have to be tracked inside the limiter's loop (an engine change); the popover's meter is a display. A short peak inside a long block can be under-shown. |
+| **The feed's sequencer step, step count, held-key order and live cutoff stay unpublished** (−1 / 0 / none / NaN) until M7d and M7f. | They need the `ArpSeq` accessors (M7d) and the per-voice cutoff store (U4, M7f, benchmarked). |
+| **Budget 9.5 "mirror tick ≤ 50 µs" is measured for the mirror itself (0.7 µs for all 172 changed).** The whole editor update for all 172 (every binding's text and both Sound pages' pictures) is about 126 µs, and only in a tick where they all change. (review) | The pictures are recomputed once per tick, after all notifications, and only when an input changed. |
+| **The window size is saved only when the user chooses one** (Size menu, corner, host resize), not the automatic first-open size. | Then a session opened on a smaller screen still fits it. |
+| **Typed text a parameter cannot read changes nothing:** a choice needs one of its labels, a number needs a digit (or a word the parameter itself shows, such as "Off"). | `getValueForText` returns a value for any text; the contract says unreadable text changes nothing. |
+| **Only Inter Regular and SemiBold are embedded (831 KB).** Values use Inter's default (proportional) figures: JUCE 9's font API has no OpenType feature switch for tabular figures; values are right-aligned so they do not jump much. (review, M7f) | Keeps the binary small; the contract asked for tabular figures. |
+| **The oscilloscopes show two cycles of each oscillator; with Sync, two cycles of oscillator 2 with oscillator 1 at its octave ratio** (at least four points per cycle). | Sync is about the restarts; without sync the shape is what matters. |
+| **The filter-curve test skips points predicted below −100 dB** (26 of 396). | There the float filter's own rounding dominates (engineering notes, "measure above the float floor"). |
+| **The Link panel says "off at 0" while Cross mod is 0** (9.3.9 note). | Short enough for the 76 px panel. |
+| **Placeholder pages label their sliders with the host parameter names** ("ENV-1 Attack"). | They are temporary; the real pages use the contract's labels. |
+| **Files differ slightly from 9.1.1:** `frame/FrameParts.*` holds PartSwitch, PageRail, HelpLine, HelpBubble, OutputMeter; `frame/EditorFrame.*` holds the top bar and the OutputPopover; the typed-value field is part of `controls/BoundComponent`. | Fewer small files; names and responsibilities as in 9.2.2. |
+
 ## M7 editor contract (2026-11-14)
 
 Contract: `docs/architecture.md` section 9. Open owner questions U1–U7 are in 9.8.

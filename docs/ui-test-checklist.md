@@ -1,9 +1,9 @@
 # Manual test checklist (plugin host)
 
 Hands-on checks in JUCE's AudioPluginHost (`scripts/dev-host.sh`, see README "Try it in a plugin
-host"), before testing in real DAWs. Until M7 the plugin shows JUCE's generic parameter editor; the
-general sections apply to both, "Custom editor" to the M7 editor (contract: `docs/architecture.md`
-section 9). Each line is one check with its expected result.
+host"), before testing in real DAWs. From M7a the plugin shows its own editor (contract:
+`docs/architecture.md` section 9); the general sections apply to every editor, "Custom editor" to
+the M7 one. Each line is one check with its expected result.
 
 The host has no CPU meter: use Activity Monitor, and `voice_bench` for budgeting.
 
@@ -13,6 +13,26 @@ The host has no CPU meter: use Activity Monitor, and `voice_bench` for budgeting
 - Quit the host while the editor is open: clean quit.
 
 ## Custom editor (M7)
+First clickable build (M7a, owner review point 1). Start it with `scripts/dev-host.sh`:
+- The editor opens on the Sound page at 100 % (or the largest menu size that fits the screen); the
+  Size menu (top right) and the corner resizer keep the proportions; text stays sharp at 200 %;
+  close and reopen the session: page, edited part and size come back.
+- LOWER / UPPER: the frame line, headers, sliders and curve turn orange / teal and the text says
+  "Editing: LOWER/UPPER"; with key mode Whole, editing Upper shows the warning at the right of the
+  help row.
+- Sound page: oscillator octave and waveform switches change the pictures above them (Pulse with
+  PWM source Manual shows the width; Sync shows the restarts); the filter curve follows cutoff,
+  resonance, steepness and high-pass; drag the cutoff dot (left/right cutoff, up/down resonance,
+  Shift fine) and the high-pass dot; double-click a dot resets it; the dashed curve is the other
+  steepness. Play a resonant saw sweep: the peak you hear is where the curve shows it.
+- Signal path: "Effects > Out" opens the Effects page.
+- Every other page lists its parameters with plain sliders (placeholders until M7b–M7e): each one
+  moves the sound like the generic editor did.
+- Output: the meter moves with the sound and turns red above -0.1 dBFS; LIMIT and the chevron
+  open the output popover (limiter switch, ceiling, reduction meter); Esc or a click outside closes it.
+- Host automation of cutoff with the Sound page open: slider, handle and curve move together and
+  show the AUTO marker; a program change moves everything at once without markers.
+
 Live automation and program changes:
 - Draw host automation for cutoff, a switch (VCF slope) and a sequencer step; play it back with the
   editor open on that page: slider, graph handle and curve, switch and step move with the sound,

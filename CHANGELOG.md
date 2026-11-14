@@ -5,6 +5,36 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M7a — custom editor: foundation, frame, Sound page (2026-11-14)
+- The plugin opens its own editor (`source/vintage/ui/`): a 1360 × 784 canvas scaled as a whole,
+  75–200 % at a fixed aspect (corner resizer and a Size menu), page rail, top bar (part switch with
+  "Editing: LOWER/UPPER", the preset bar, output meter, Master, LIMIT chip and output popover with
+  limiter switch, ceiling and reduction meter), help line and hover bubbles (texts embedded from
+  `docs/ui/help-texts.md`), dark theme tokens, embedded Inter font.
+- **Sound page** for both parts (orange Lower, teal Upper): oscillators with live oscilloscope
+  pictures from the voice's own oscillators, link (sync, cross mod), mix, high-pass + filter with a
+  draggable response curve computed from the engine's own filter maths (cutoff/resonance handle,
+  high-pass handle, dashed other slope), amp with the part's signal path. Envelopes, LFO, Play,
+  Arp + Seq, Effects and Browser are placeholder pages that list their parameters with plain
+  sliders, so all 172 parameters are reachable now (real pages: M7b–M7e).
+- **Live automation:** the editor polls every parameter on a vblank-driven tick (30 Hz timer
+  fallback) and registers no parameter listener; every control, handle and picture follows host
+  automation, MIDI, program changes and session restores within one tick; host gestures for every
+  interaction; an "AUTO" marker shows changes by anything other than the editor.
+- Shared component library `source/common/ui/` (JUCE-free interaction models, mirror, gestures,
+  controls, graphs, frame, help texts, control registry) for both instruments.
+- Processor: the block algorithm gains step 9, publishing the audio → editor feed
+  (`common/engine/UiFeed.h`: peaks, limiter gain, held and sounding keys per part, tempo, block
+  count); the session saves the editor's UI state as one `UiState` child (page, edited part, size, …;
+  9.1.3). Proven: raw render output byte-identical at block sizes 512 and 61, parameter list
+  identical, saved state identical except the new child, pre-M7 sessions load with defaults;
+  `voice_bench` processor path +0.75 %, full plugin path +0.9 % (best of 3, within noise).
+- Tests (`tests/ui/`): models and gestures, help texts, UI feed (incl. a seqlock stress), UI state,
+  filter curve vs the real filter and oscilloscope equality, registry completeness, automation
+  follow for every parameter, contested drags, editor closed mid-drag, open/close and two instances,
+  a text layout snapshot of the Sound page; hidden `[.uishots]` (PNGs) and `[.uibench]` (budgets).
+- The Inter font (SIL OFL 1.1) is in `resources/fonts/inter/` with its licence and source record.
+
 ### B-Side S1a — shared processor skeleton (2026-11-14)
 - Refactor, no behaviour change: everything instrument-independent in Vintage's processor moved
   into `source/common/shell/` (`docs/architecture.md` 8.2) so the second instrument can reuse it.
