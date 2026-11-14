@@ -13,6 +13,50 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | Write-back mode (noise plus another waveform) is never jumped. | The write-back depends on every cycle's output. | It costs about 8 ns per cycle (reviewer's measurement), about 0.8 % of a core per chip in that mode at the 50 Hz clock: count it in the S4 CPU budget (a voice that locked its noise up stays expensive until the waveform changes) and expect long traces with such writes to replay slowly. |
 | The mutation runs found untested rules (sync chain rotations, write-back under the test bit, snapshot field order). | Row tests used one orientation and fields with equal or zero values. | Test every rotation of a three-way rule; give every field in a mapping test its own non-zero value so a swap shows. |
 | An equivalence test against the code's own per-cycle step cannot catch a wrong definition. | Both paths share `stepCycle`. | The fast path is proven by the equivalence test; the definition by the 8.4.3 row tests and by an independent stepper written from the contract by someone else. Check the equivalence test with mutations of the fast path (S2a: 7 mutations, 5 caught, the 2 others proven equivalent). |
+## B-Side reference data (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| `ctest -L trace` found none of the new tests. | `catch_discover_tests (... PROPERTIES LABELS "bside;trace")` passes the properties on unquoted: `trace` became a property name. | One label per discovered executable (or none); `ctest -L` is a regular expression, so a common prefix works for grouping. |
+| A noise-register test that ran combination after combination tested an empty register. | Combined waveforms lock the noise register at 0; a short test pulse leaves one bit, which takes hundreds of shifts to spread. | Refill before each case (test pulse, then about 40 000 cycles of noise at the top frequency) and check the starting value in the reference. |
+| The first spectra could not tell a filter corner within 5 %. | One 16384-point window of a noise excitation varies by several dB per bin. | Measure a filter as the ratio to a twin trace with the same writes and the filter bypassed: the excitation is deterministic, so its ripple cancels. |
+| The reference emulator's "48 kHz" output is 48 012 Hz. | Its resampler truncates cycles per sample to 1/1024. | Never take a reference's sample rate on trust: measure the output rate (count samples per second of input) before comparing spectra. |
+| Hashed text files would fail on a Windows checkout. | Git for Windows converts LF to CRLF on checkout by default, which changes every SHA-256 the MANIFEST and the references record. | `.gitattributes`: `tests/bside/reference/** -text`. Any committed file whose bytes are hashed needs it. |
+| A decision row described a mechanism by its source comment, and the data said otherwise (ring fold, read-back "delay"). | The comment and the code differ in a detail (NOT of the source bit; a latch, not a one-cycle delay). | Validate every stated rule against the committed data with a small model before writing it down; the reviewer's models at 0 mismatches are the standard. |
+| An emulator quirk that hardware cannot have (a held oscillator syncing every cycle) could enter the reference silently. | A flag not cleared in one write timing. | Name such artefacts, make the generator refuse traces that reach them, and keep our chip free of them. |
+| A gate sweep "over every offset" never met one pipeline state. | Successive trials shifted by one cycle against the rate counter, but the divider counter's parity was locked to the trial length. | Sweep both clocks of a two-clock state: here half the trials wait one extra rate period. Check coverage in the data (count the states met), not in the generator. |
+| An "evidence" citation showed nothing (a fade of a value that was already 0). | Written from the source's rules, not read back from the trace. | Quote the trace's own values at the cited cycles, and design the trace so the effect is large (deselect at a high output). |
+| A field encoding read the same for two different states. | "position + pending" maps (p, pending) and (p + 1, not pending) to one value. | Prove an encoding one to one (or state-equivalent) before using it; spare bits of another field are better than a lossy fold. |
+| Probe writes. | The reference holds the state only at checkpoints; `check N` is uniform and costly. | A write that changes nothing (00 to the unused cutoff low bits) places a checkpoint at any cycle. Digital traces only: in analog traces every write splits a spectral segment. |
+
+## M7a: editor foundation (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Opening the editor crashed in one test only (two processors, then the editor). | The frame called `setSize` first in its constructor; `resized()` ran before child members created later in the body existed. Whether it crashed depended on the heap. | **Call `setSize` last in a component's constructor.** |
+| `lldb` could not attach in the agent sandbox. | Sandbox. | Read the stack from the crash report macOS writes (`~/Library/Logs/DiagnosticReports/<binary>-*.ips`, JSON after the first line). |
+| A freshly written golden file never matched. | `juce::File::replaceWithText` writes CRLF line ends by default, on every platform. | Pass `"\n"` as the line ending, and compare without `\r` (a Windows checkout may convert). |
+| The full editor update took 445 µs for a program change. | Each Sound page recomputed its curve and scopes once per changed input (4 + 9 inputs). | Mark pictures dirty in the notification; recompute once after all notifications of a tick (an idle hook of the mirror). |
+| Editor tests saw no meter update. | The constructor's first tick used the real clock; the test's own clock started far below it. | Treat a clock that goes backwards as "due now"; tests drive `tick (ms)` themselves. |
+| A prose line of `help-texts.md` parsed as an entry. | It starts with "- \`" and contains "\`: " later. | An entry's id is one token (letters, digits, `.`, `_`, `<>`). |
+| `= default` comparison of a struct with float members failed to build. | `-Wfloat-equal` (an error) applies to defaulted `operator==` too. | Compare floats bitwise with `std::bit_cast`. |
+| A test proved nothing about what the controls draw (a reviewer's mutation that stopped notifications passed). | The binding check compared a fresh read of the mirror with the mirror. | Check the **prepared drawing state** (`drawnValue`, `drawnText`, set only on notification), and compare pictures with what the engine itself read (`getBlockParams`), not with the page's own mapping. |
+| Off-screen components return no accessibility handler. | JUCE creates handlers for components with a native window only. | Tests call `createAccessibilityHandler()` directly. |
+| Counting repaints without a window. | `repaint()` goes nowhere off screen. | Install a recording `juce::CachedComponentImage` on the top component: every child's repaint arrives as `invalidate (area)`. |
+| A refactor of the voice's oscillator code needed proof beyond the existing renders (they barely use PWM). | Coverage. | A temporary probe script copied into both builds' script folders, bit-compared, then removed. |
+| The worktree guard refused shell commands whose text contained an ordinary English word that is also a git subcommand. | It scans the command text. | Put larger edits into a script file in the scratch folder and run that. |
+## B-Side S1d: tables in presets and state (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The hand-over test saw torn programs (about 50 per 1.5 s run) with a plausible-looking protocol. | The writer read the committed index and then the claim; the audio thread stores the committed index and then clears the claim, so a writer could read a stale index, then a cleared claim, and reuse a buffer that was in use. | The writer reads the claim before the committed index. Rule: when one thread publishes A then clears B, the other must read B then A. |
+| Review mutants of the hand-over (claim cleared before the index is stored, no re-check of `published`) passed a two-thread stress test. | A stress test only finds races the scheduler happens to produce. | The protocol's steps go through a hook, and `HandoverModelTests` explores every interleaving with state-hash pruning (24 564 states, 10 s) and must catch four broken variants. Rule: a lock-free protocol gets an exhaustive step test, not only a stress test. |
+| A legitimate table of 1024 tab-only lines made a 64-program bank of 26 MB; `saveBankFile` wrote it and `loadBankFile` refused it. | The table reader accepts tabs; the JSON writer escaped a tab as six bytes; the file cap was computed for quotation marks. | Short escapes for the control characters; the worst byte is found by code in the cap test; every save refuses output over the reader's cap. Rule: compute a cap from the worst input the reader accepts, by enumeration, and have the writer check its own output against it. |
+| A hostile test session with a million escaped line ends took 9 s in `setStateInformation`. | JUCE's XML decoder, before our code runs (our part took 0 ms). | Not ours to bound; measure our part separately (decode time subtracted). |
+| Every preset file read allocated and zeroed the whole file cap. | `readPresetFile` resized its buffer to `maxBytes + 1`; harmless at 1 MB, 12 MB per read with B-Side's cap. | Size the buffer from the file and grow to the cap. |
+| Removing duplicate children one by one from the front is quadratic. | `ValueTree` erases at the front by shifting. | `takeChildren` walks from the back. |
+| An error message cut at 1024 bytes could end inside a UTF-8 character. | A byte cut of a string that quotes user text. | `truncateUtf8` backs up to the character start. |
+| macOS `timeout` does not exist. | Not installed. | `perl -e 'alarm N; exec @ARGV'`. |
 
 ## B-Side S1b: plugin shell and gates for two plugins (2026-11-14)
 
@@ -194,6 +238,7 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | JUCE 9 warns (→ error) on `JUCE_DISPLAY_SPLASH_SCREEN`. | Don't define it. |
 | `AudioFormat::createWriterFor(OutputStream*, …)` is deprecated (→ error). | Use the `AudioFormatWriterOptions` overload. |
 | `-Wimplicit-int-float-conversion` in a test. | Warnings are errors in tests too; cast explicitly. |
+| GCC (Linux step only) fails with `-Wshadow` on a constructor parameter that has the name of a member of a JUCE base class; Clang accepts it. | Name constructor parameters so they cannot collide with base-class members (found in M7a's `CheckableHandler`); run the Linux step before handing over. |
 | Hosting a VST3 in a console test app. | `juce_add_console_app` + `JUCE_PLUGINHOST_VST3=1` + `juce_audio_processors_headless`; register formats with `addHeadlessDefaultFormatsToManager`. |
 
 ### Testing a loaded VST3

@@ -1,9 +1,9 @@
 # B-Side: the reference-emulator adapter interface
 
-Status: **interface only.** Nothing is downloaded, built or generated (owner decision Q4 is
-pending, `docs/architecture.md` 8.9.5). This file is the contract for the adapter that will live
+Status: **built; first reference data committed** (2026-11-14, `tests/bside/reference/`, owner
+decision Q4 in `docs/architecture.md` 8.12). This file is the contract for the adapter, which lives
 **outside** this repository, under the reference emulator's licence. The repository holds only the
-neutral formats, our replay driver, the comparer and the generated reference data.
+neutral formats, our replay driver, the comparer, the spec analysis and the generated reference data.
 
 ## What the adapter is
 
@@ -53,6 +53,46 @@ integers, one `frame` line per hop) and, for every segment the trace's analysis 
 1/12-octave averaged spectrum (120 bins from 20 Hz, 0.1 dB). The feature extraction is the same
 one the repository's render-regression harness uses, so both sides measure alike.
 
+**Reference conventions** (our side copies these; they define the data, they are not claims about
+the hardware):
+
+- *Output point and scale:* the chip's output after its board filter, before the emulator's own
+  playback stage (no added background noise, no soft limiter, no 16-bit rounding), as floats:
+  board-filter output x 3/2 (Model A) or x 5/2 (Model B) / 32768, so 1.0 is that stage's 16-bit full
+  scale.
+- *Time base:* input sample k of the resampler is the output produced by the chip's step k + 1 (the
+  step from cycle k to cycle k + 1). Output sample i is the band-limited value at input position
+  i x clock / 48000, computed in exact rational arithmetic. Input positions before 0 take the value of
+  step 1 (no step at the start). A trace renders n = ceil (end x 48000 / clock) output samples; to
+  do so the chip runs q + h + 2 input samples (cycles) in all, without writes after `end`, where
+  q = floor ((n - 1) x clock / 48000) and h is the kernel half-width (962 at 985 248 Hz, 998 at
+  1 022 727 Hz): 943 .. 963 cycles past `end` at 985 248 Hz, 979 .. 999 at 1 022 727 Hz.
+- *Resampler:* linear-phase Kaiser-windowed sinc, flat to 20 kHz (< 0.001 dB), at least 120 dB down
+  from 24 kHz (nothing aliases into 0 .. 24 kHz), DC gain exactly 1; 20 .. 24 kHz is its transition
+  band (-6 dB at 22 kHz). The shared frame analysis counts frequencies below 20 kHz only
+  (`kSpecBandLimitHz`), so that band never enters a comparison.
+- *Known reference artefact (rejected):* the test bit written in the very cycle an oscillator's top
+  bit rose leaves the reference's rise flag set while the bit is held, and the held oscillator keeps
+  resetting its sync target. Our chip does not reproduce it; the adapter rejects (exit 3) any trace
+  that reaches it, so no reference contains it.
+- *One model for the envelope traces:* the `d_env_*` traces set no waveform bit; their references hold
+  for both models (proven at every regeneration). A Model A replay passes the committed trace bytes
+  unchanged and configures the chip as Model A in its setup callable.
+- *Power-on:* the state of the emulator object right after construction, model and clock set and
+  reset: accumulators 0x555555, noise registers 0x7ffffe, envelope counters 0xaa in release at
+  rate 0, rate counters at position 0 with a reset pending, analog states at zero. Our chip's
+  `reset()` reproduces it (`docs/decisions.md`).
+- *Fields:* `rateN` is the rate counter's position (0 .. 32766) on its 32 767-state sequence; `divN`
+  bits 0..6 are the exponential divider counter and bit 7 the rate counter's pending reset (the
+  15-bit rate field has no room for it; `source/bside/trace/ReferenceFormat.h`).
+
+**Analysis plan.** The trace format carries none, so the plan is derived from the trace alone
+(`source/bside/trace/SpecAnalysis.h`, `segmentPlan()`): the write cycles split the render into
+gaps; each gap that leaves at least 14 whole frames after 8 frames of settling (200 ms) is a
+segment `s00`, `s01`, ... (at most 64). A trace meant for analog measurements therefore places
+its writes at the boundaries of the segments it wants and nowhere else. `analyseRender()` builds
+the whole spec; the adapter and our own tests call the same code.
+
 The audio itself is never stored. Delay estimation (8.9.4: one constant delay within +-256
 samples, by cross-correlation) therefore happens where both signals exist: inside the adapter when
 it measures the reference, and in our own tests when they render ours; `estimateDelay()`
@@ -75,3 +115,32 @@ it measures the reference, and in our own tests when they render ours; `estimate
   `tests/bside/reference/MANIFEST` records hashes only.
 - Regenerating reference data is reviewed like a golden re-bless.
 - Our analog constants are fitted to the generated data, never copied from the emulator's source.
+
+## Regenerating the reference data
+
+Only on the development Mac, deliberately, and reviewed like a golden re-bless:
+
+1. Commit the repository change first: the adapter compiles this repository's `source/bside/`
+   (trace reader, writers, spec analysis) from the checkout and refuses uncommitted sources, so the
+   MANIFEST can name the commit (`sources-commit`).
+2. Run the adapter's one-command regeneration script (kept with the adapter, outside this
+   repository) with the checkout's path. It checks the emulator pin (commit and archive SHA-256),
+   builds the adapter, writes the traces, runs the adapter on each, replaces
+   `tests/bside/reference/` and writes its `MANIFEST`. An optional self-check proves, on every
+   trace, that the adapter's cycle loop is the emulator's own (sample for sample and state for state).
+   An output-folder option writes everything elsewhere instead, so a reviewer can regenerate and
+   compare without touching the checkout. The script also renders the Model A copies of the
+   envelope traces (committed for Model B only) and fails unless every state line is identical.
+3. Review the diff; run `bside_trace` (ctest label `trace`): it checks that every file is listed in
+   the MANIFEST with its SHA-256, that each reference and spec is canonical and belongs to its trace,
+   and that each spec follows the segment plan. Commit the data in its own commit.
+
+The traces are synthetic register scripts (no recorded music): `d_*` pin the digital state with at
+most one waveform bit at a time (writes of 00 to register 0x15, which these traces never use
+otherwise, are "probes" that only place a checkpoint; `d_random*` are seeded random catch-alls with
+a checkpoint every 1 000 cycles); `c_*` hold one combined-waveform case each, from a test-bit reset,
+so a difference there stays in its own file; `a_*` are the analog measurements of 8.9.4 (`*_bypass`
+twins repeat a trace with the voices not routed to the filter, so a filter response is the ratio of
+two spectra with the same excitation; `source/bside/trace/AnalogMeasure.h` is the one estimator both
+sides use). Each trace's comments say what it pins. Analog references exist for the 50 Hz clock
+only; the reference's filter scales with the configured clock (`docs/decisions.md`).

@@ -60,14 +60,26 @@ set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetBar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/InstrumentEditor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/ShellSupport.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/ShellSupport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/Theme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/HelpTexts.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/ParamMirror.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/BoundComponent.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/Slider.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/SegmentedSwitch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/GraphView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/FrameParts.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/EditorFrame.cpp)
 set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/presets/VintagePresets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/params/ParameterLayout.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Modulation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Voice.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Part.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Part.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/VintageEditor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/SoundPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/PlaceholderPage.cpp)
 set(VS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${VS_VINTAGE_SOURCES})
 
 target_sources(VintageSynth PRIVATE ${VS_PLUGIN_SOURCES})
@@ -127,6 +139,17 @@ endfunction()
 
 vs_configure_plugin(VintageSynth VintageSynthFactoryData)
 
+# Editor data (docs/architecture.md 9.1.1): the help texts (docs/ui/help-texts.md, the single
+# source) and the embedded Inter font (resources/fonts/inter, SIL OFL 1.1: see SOURCE.txt there).
+juce_add_binary_data(VintageUiData
+    HEADER_NAME UiData.h
+    NAMESPACE   vs_ui
+    SOURCES     ${CMAKE_CURRENT_SOURCE_DIR}/docs/ui/help-texts.md
+                ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/inter/Inter-Regular.ttf
+                ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/inter/Inter-SemiBold.ttf)
+set_target_properties(VintageUiData PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(VintageSynth PRIVATE VintageUiData)
+
 # ---- Exitium B-Side (docs/architecture.md 8.1) ----
 # BS_SOURCES: the .cpp files of source/bside/. S1c adds source/bside/program/ and source/bside/trace/
 # (JUCE-free), S2 adds source/bside/chip/; they join this list. BS_PLUGIN_SOURCES is what the plugin and
@@ -151,6 +174,11 @@ if(VS_BUILD_BSIDE)
     set(BS_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/PluginProcessor.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/presets/BSidePresets.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/presets/BSideTables.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/text/TextScanner.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/program/Program.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/program/TableReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/program/TableWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/params/ParameterLayout.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/TestTonePart.cpp)
     set(BS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${BS_SOURCES})

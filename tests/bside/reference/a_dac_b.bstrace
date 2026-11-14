@@ -1,0 +1,72 @@
+bside-trace 1
+# Envelope and waveform converters: oscillator 1 triangle 440 Hz (frequency 0x1d45) direct,
+# volume 15; segments s00..s15: sustain 15 down to 0 (decay rate 0: the counter steps down
+# to each level). s16..s19: sustain 15 again, saw 110 Hz, saw 1000 Hz, triangle 110 Hz,
+# pulse 50 % 110 Hz (the converter shapes appear as harmonics).
+clock 985248
+model B
+8 00 45
+8 01 1d
+8 02 00
+8 03 08
+8 05 00
+8 06 f0
+8 18 0f
+8 04 11
+# sustain 15
+24642 06 f0
+# sustain 14
+640422 06 e0
+# sustain 13
+1256202 06 d0
+# sustain 12
+1871982 06 c0
+# sustain 11
+2487762 06 b0
+# sustain 10
+3103542 06 a0
+# sustain 9
+3719322 06 90
+# sustain 8
+4335102 06 80
+# sustain 7
+4950882 06 70
+# sustain 6
+5566662 06 60
+# sustain 5
+6182442 06 50
+# sustain 4
+6798222 06 40
+# sustain 3
+7414002 06 30
+# sustain 2
+8029782 06 20
+# sustain 1
+8645562 06 10
+# sustain 0
+9261342 06 00
+# saw 110 Hz
+9877122 06 f0
+9877122 04 20
+9877122 00 52
+9877122 01 07
+9877122 04 21
+# saw 1000 Hz
+10492902 06 f0
+10492902 04 20
+10492902 00 86
+10492902 01 42
+10492902 04 21
+# triangle 110 Hz
+11108682 06 f0
+11108682 04 10
+11108682 00 52
+11108682 01 07
+11108682 04 11
+# pulse 110 Hz
+11724462 06 f0
+11724462 04 40
+11724462 00 52
+11724462 01 07
+11724462 04 41
+end 12340232

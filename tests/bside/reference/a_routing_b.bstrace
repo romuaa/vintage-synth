@@ -1,0 +1,48 @@
+bside-trace 1
+# Filter routing and the oscillator-3-off bit: oscillator 1 triangle 220 Hz, oscillator 2
+# 880 Hz, oscillator 3 3520 Hz (frequencies 0x0e9d, 0x3a73, 0xe9cd), sustain 15; low-pass at
+# cutoff 136 (well below the two upper tones), volume 15.
+# Segments s00..s07: routing bits 0..7 (bit n-1 = oscillator n through the filter);
+# s08: routing 0 with oscillator 3 off; s09: routing 4 with oscillator 3 off.
+clock 985248
+model B
+8 00 9d
+8 01 0e
+8 05 00
+8 06 f0
+8 04 11
+8 07 73
+8 08 3a
+8 0c 00
+8 0d f0
+8 0b 11
+8 0e cd
+8 0f e9
+8 13 00
+8 14 f0
+8 12 11
+8 15 00
+8 16 11
+8 18 1f
+# routing 0
+24642 17 00
+# routing 1
+640422 17 01
+# routing 2
+1256202 17 02
+# routing 3
+1871982 17 03
+# routing 4
+2487762 17 04
+# routing 5
+3103542 17 05
+# routing 6
+3719322 17 06
+# routing 7
+4335102 17 07
+# routing 0, oscillator 3 off
+4950882 17 00
+4950882 18 9f
+# routing 4, oscillator 3 off
+5566662 17 04
+end 6182432

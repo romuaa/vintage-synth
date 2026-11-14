@@ -15,8 +15,10 @@
 //     rate1 rate2 rate3 div1 div2 div3 rd1B rd1C
 //
 // Field meaning and range: accN 24-bit accumulator; noiseN 23-bit shift register; envN 8-bit
-// envelope counter; phaseN envelope phase (0 attack, 1 decay/sustain, 2 release); rateN 15-bit
-// rate counter; divN exponential divider counter (0..255); rd1B, rd1C the two read registers.
+// envelope counter; phaseN envelope phase (0 attack, 1 decay/sustain, 2 release); rateN the rate
+// counter's position, 0 .. 32766, on its 32 767-state sequence (15 bits); divN 8 bits: bits 0..6 the
+// exponential divider counter, bit 7 the rate counter's pending reset (no room for it in rateN);
+// rd1B, rd1C the two read registers. See docs/bside-oracle-adapter.md, "Reference conventions".
 //
 // .bsspec: the audio features of the trace's output at 48 kHz, in the render-regression
 // feature layout (23 bands, 25 ms frames, 0.1 dB integers), plus the 1/12-octave averaged

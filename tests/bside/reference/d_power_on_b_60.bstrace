@@ -1,0 +1,9 @@
+bside-trace 1
+# Power-on state and idle evolution: no write except one probe at cycle 0.
+# Pins the state after reset (accumulators, noise registers, envelope counters, phase,
+# rate counters) and how the idle envelope counters run down after power-on.
+clock 1022727
+model B
+check 2000
+0 15 00
+end 60000

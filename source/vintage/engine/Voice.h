@@ -6,6 +6,7 @@
 #include "vintage/dsp/Filters.h"
 #include "vintage/dsp/Oscillator.h"
 #include "vintage/engine/Modulation.h"
+#include "vintage/engine/OscPath.h"
 #include "vintage/params/PartParamList.h"
 
 #include <array>
@@ -96,6 +97,8 @@ public:
     int getFadeRemaining() const noexcept { return fadeRemaining; }
 
     bool isActive() const noexcept { return env2.isActive(); }
+    /** The oscillator configuration the last setBlockParams applied (tests: the editor's picture). */
+    const OscConfig& getOscConfig() const noexcept { return oscConfig; }
 
     /**
         Samples until this voice's drift walk retargets, if that matters for rendering (sounding,
@@ -125,12 +128,10 @@ public:
     {
         const auto k = static_cast<size_t> (i);
 
-        // VCO-2 (master) first, then VCO-1 with audio-rate cross-mod and sync.
-        float wrap2 = -1.0f, unused = -1.0f;
-        const float o2 = vco2.process (dt2[k], width[k], -1.0f, wrap2);
-        // Exponential FM: 2^(log2F1 + depth * o2) = 2^log2F1 * 2^(depth * o2).
-        const float dt1 = dsp::clamp (crossModOn ? dt1Raw[k] * dsp::fast::exp2 (crossModOct * o2) : dt1Raw[k], kMinDt, kMaxDt);
-        const float o1 = vco1.process (dt1, width[k], sync ? wrap2 : -1.0f, unused);
+        // VCO-2 (master) first, then VCO-1 with audio-rate cross-mod and sync (OscPath.h, shared
+        // with the editor's oscilloscope picture).
+        float o1, o2;
+        oscPairSample (vco1, vco2, dt1Raw[k], dt2[k], width[k], crossModOn, crossModOct, sync, o1, o2);
 
         const float mixed = o1 + (o2 - o1) * sourceMix;
         const float hp = hpf.processG (mixed, hpfG);
@@ -154,11 +155,8 @@ public:
             return rtHist[K];
 
         // Increments at the real-time rate are twice those at this rate (exact: invFs halves).
-        float wrap2 = -1.0f, unused = -1.0f;
-        const float o2 = vco2Rt.process (dsp::clamp (2.0f * dt2[k], kMinDt, kMaxDt), width[k], -1.0f, wrap2);
-        const float raw1 = 2.0f * dt1Raw[k];
-        const float dt1 = dsp::clamp (crossModOn ? raw1 * dsp::fast::exp2 (crossModOct * o2) : raw1, kMinDt, kMaxDt);
-        const float o1 = vco1Rt.process (dt1, width[k], sync ? wrap2 : -1.0f, unused);
+        float o1, o2;
+        oscPairSample (vco1Rt, vco2Rt, 2.0f * dt1Raw[k], dsp::clamp (2.0f * dt2[k], kMinDt, kMaxDt), width[k], crossModOn, crossModOct, sync, o1, o2);
 
         // The part's HPF coefficient is G = g / (1 + g), g = tan (theta) at this rate; the
         // real-time rate needs tan (2 theta) = 2 g / (1 - g^2). (The VCF coefficients of this voice
@@ -250,7 +248,7 @@ private:
     void restartFromIdle() noexcept;
     void mirrorRealTimePair() noexcept;
 
-    static constexpr float kMinDt = 1.0e-7f, kMaxDt = 0.45f; // phase increment limits (cycles/sample)
+    static constexpr float kMinDt = osc::kMinDt, kMaxDt = osc::kMaxDt; // phase increment limits (cycles/sample)
 
     float fs = 96000.0f;
     float invFs = 1.0f / 96000.0f;
@@ -316,6 +314,7 @@ private:
     float vintageAmount = 0.0f;
     int vcoModTarget = 1, pwmSource = 0, vco1RangeOct = 0, vco2RangeOct = 0, vcfEnvSource = 0;
     bool vco2LoFreq = false, sync = false, slope24 = true, env1Inverted = false;
+    OscConfig oscConfig;
     bool crossModOn = false; // this sub-block
     // VCF slope crossfade: the output is stage 2 + (stage 4 - stage 2) * slopeMix. While not
     // fading, slopeMix is 1 (-24 dB) or 0 (-12 dB) and the plain tap is used (bit-identical).

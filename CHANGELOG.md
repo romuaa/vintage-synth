@@ -30,6 +30,130 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   all three together, no write-back under the test bit, every snapshot field (incl. the dividers) with
   its own value. Four rows in `docs/decisions.md` are now marked known open deviations (attack from 0xff,
   write and pipeline delays, test-bit noise reset, oscillator-3 read with no waveform).
+### B-Side reference data: contract 8.15 and owner decision (2026-11-14, `bside/reference-data`)
+- `docs/architecture.md` 8.15 "Amendments from the reference data": the per-cycle specification of
+  the chip's digital core (step order, envelope pipelines and precedence, lost gate-off, sync after
+  all outputs, ring fold XOR NOT source, Model B read latch from 0x555, test bit, noise fill and
+  fade constants), the known reference artefacts and the analog reference conventions (985 248 Hz
+  only, -40 dBFS floor, band 22 to 20 kHz). Earlier contract rows it replaces point to it. An
+  independent per-cycle model written from the text matches every checkpoint of every committed
+  `d_*` trace.
+- Owner decision "follow, own tables": the digital core follows the reference's per-cycle
+  behaviour; combined-waveform shapes and analog constants stay our own fits. B-Side is therefore
+  tied to GPL-compatible licensing (`docs/decisions.md`). Open: how combined-waveform checkpoints
+  are compared (8.15.8).
+- `main` (B-Side S1d) merged in; the reference data set itself is unchanged (76 traces, 3.93 MB).
+
+### B-Side reference data, review round 2 (2026-11-14)
+- Gap traces: lost gate-off and a step executed in another phase (`d_env_lost_gate_off_b`), the Model B
+  read-back latch (`d_read_latch_*`), the envelope converter at all 256 counter values
+  (`a_env_dac_*`); gate-sweep probes thinned from 7 to 5 cycles per edge. 76 traces, 3.93 MB.
+- Shared frame analysis counts bins below 20 kHz only (band 22 = 16..20 kHz on both sides); the
+  `.bsspec` files are regenerated with it. The estimator checks that its plateau iteration converged
+  and searches the resonance peak from an octave below the corner.
+- The adapter rejects traces that reach a known reference artefact (sync from an oscillator whose
+  test bit was set in the cycle its top bit rose); none of the committed traces does.
+- Decision rows corrected: ring fold (own top bit XOR NOT source), sync after all outputs, the
+  Model B read latch, envelope precedence, lost gate-off, exact run-past-end formula, -40 dBFS
+  comparison floor, how Model-B-only envelope traces are replayed for Model A.
+
+### B-Side reference data, review round 1 (2026-11-14)
+- **Data set extended and split** (71 traces, 3.83 MB): every combined waveform in its own `c_*`
+  trace from a test-bit reset; new digital traces (deselected-waveform fade, pulse width and frequency
+  extremes, ring with pulse/noise, sync from/to frozen or test-held voices, gate edges swept over
+  every rate-counter position at divider periods 1 and 2, more envelope cases, seeded random
+  catch-alls); new analog traces (filter modes, routing and oscillator-3 off, envelope and waveform
+  converters); Model A filter segments 1.2 s. Envelope traces for Model B only (the script proves
+  the Model A copies identical).
+- **Rate field one to one:** the pending rate-counter reset is bit 7 of `div` (no format change).
+- `source/bside/trace/AnalogMeasure.*`: **one shared analog estimator** (corner, plateau, resonance
+  peak, tone level) with tests; Model A corners now within 2.4 %, peaks within 0.14 dB of 4-second
+  measurements.
+- Reference resampler alias-free in 0..24 kHz (stopband 24 kHz, was 28 kHz); reference conventions
+  (time base, scale, power-on, run-past-end) written down in `docs/bside-oracle-adapter.md`; the
+  decision rows rewritten one per question, with precise delays and the board filter's quantisation.
+
+### B-Side reference data (2026-11-14)
+- The reference-emulator adapter exists (outside the repository, `docs/bside-oracle-adapter.md`) and
+  wrote the **first reference data set**: 29 synthetic traces in `tests/bside/reference/` with their
+  `.bsref` (digital state at 10 904 checkpoints: power-on, every waveform and combination, test bit
+  and noise register reset, sync and ring, every envelope rate, envelope quirks, both read registers,
+  both models, both clocks) and `.bsspec` (filter corner at 16 cutoff values, resonance 0-15,
+  Model A distortion at three drive levels, voice DC steps, noise at 8 frequencies; both models;
+  `*_bypass` twins for filter responses), and a `MANIFEST` of hashes. 2.08 MB.
+- `source/bside/trace/SpecAnalysis.*` (JUCE-free): the measurement side of the spec format (frames
+  as the render harness, 1/12-octave segment spectra, the segment plan derived from a trace's writes,
+  since the trace format has no analysis plan). The adapter compiles it, so both sides measure alike;
+  `render_regression` checks it against the harness (at most one 0.1 dB rounding step per cell).
+- `bside_trace` (ctest label `trace`): MANIFEST hashes, canonical files, reference and spec belong to
+  their trace, segment plan; the replay and analog-tolerance tests report themselves skipped until
+  the chip exists. `bside_trace` is now a required sanitizer target.
+- Contract questions from the data (combined waveforms in the digital state, rate-counter wrap,
+  divider rule, pipelines, test-bit noise fill, power-on state, board high-pass, clock-scaled
+  reference filter) are in `docs/decisions.md` (review) for the owner and the S2/S3 contract.
+
+### M7a — custom editor: foundation, frame, Sound page (2026-11-14)
+- The plugin opens its own editor (`source/vintage/ui/`): a 1360 × 784 canvas scaled as a whole,
+  75–200 % at a fixed aspect (corner resizer and a Size menu), page rail, top bar (part switch with
+  "Editing: LOWER/UPPER", the preset bar, output meter, Master, LIMIT chip and output popover with
+  limiter switch, ceiling and reduction meter), help line and hover bubbles (texts embedded from
+  `docs/ui/help-texts.md`), dark theme tokens, embedded Inter font.
+- **Sound page** for both parts (orange Lower, teal Upper): oscillators with live oscilloscope
+  pictures from the voice's own oscillators, link (sync, cross mod), mix, high-pass + filter with a
+  draggable response curve computed from the engine's own filter maths (cutoff/resonance handle,
+  high-pass handle, dashed other slope), amp with the part's signal path. Envelopes, LFO, Play,
+  Arp + Seq, Effects and Browser are placeholder pages that list their parameters with plain
+  sliders, so all 172 parameters are reachable now (real pages: M7b–M7e).
+- **Live automation:** the editor polls every parameter on a vblank-driven tick (30 Hz timer
+  fallback) and registers no parameter listener; every control, handle and picture follows host
+  automation, MIDI, program changes and session restores within one tick; host gestures for every
+  interaction; an "AUTO" marker shows changes by anything other than the editor.
+- Shared component library `source/common/ui/` (JUCE-free interaction models, mirror, gestures,
+  controls, graphs, frame, help texts, control registry) for both instruments.
+- Processor: the block algorithm gains step 9, publishing the audio → editor feed
+  (`common/engine/UiFeed.h`: peaks, limiter gain, held and sounding keys per part, tempo, block
+  count); the session saves the editor's UI state as one `UiState` child (page, edited part, size, …;
+  9.1.3). Proven: raw render output byte-identical at block sizes 512 and 61, parameter list
+  identical, saved state identical except the new child, pre-M7 sessions load with defaults;
+  `voice_bench` processor path +0.75 %, full plugin path +0.9 % (best of 3, within noise).
+- Tests (`tests/ui/`): models and gestures, help texts, UI feed (incl. a seqlock stress), UI state,
+  filter curve vs the real filter and oscilloscope equality, registry completeness, automation
+  follow for every parameter, contested drags, editor closed mid-drag, open/close and two instances,
+  a text layout snapshot of the Sound page; hidden `[.uishots]` (PNGs) and `[.uibench]` (budgets).
+- The Inter font (SIL OFL 1.1) is in `resources/fonts/inter/` with its licence and source record;
+  the release checklist ships its licence text with every binary.
+- The local macOS gate runs pluginval with its editor tests; CI still skips pluginval's GUI tests on
+  Windows and Linux.
+- After review: the oscilloscopes run the voice's own oscillator configuration, pulse-width mapping
+  and per-sample code (`vintage/engine/OscPath.h`, shared with `Voice`; audio byte-identical); the
+  filter graph spans 5 Hz–20 kHz and states self-oscillation; the external-change marker has its own
+  colour and a dashed outline; hidden pages end their gestures; accessibility basics (focus order,
+  checked states, handle values, quiet meter); discrete wheel adds up fractions; segment
+  double-click selects; Delete/Backspace no longer reset; a restored session applies its window
+  size; duplicate `UiState`/`Preset` children of a hostile session are all removed.
+### B-Side S1d: patch tables in presets and state (2026-11-14, `bside/s1d-preset-tables`)
+- `presets::Tone` and `Program` carry table lines; `Instrument` gets an optional table validator, canonicaliser
+  and limits (lines, bytes, file cap, JSON values). Vintage sets none: its program, tone and bank files and its
+  saved state are byte-identical to `origin/main` (hidden `[.presetdump]` test, `diff -r`).
+- Program files `"tables": {"lower": [...], "upper": [...]}`, tone files `"table": [...]`; a table the reader
+  rejects rejects the whole file, message prefixed by part and program name. Tables are stored, saved and
+  restored **verbatim** (comments, spacing, label names); the canonical form is only used to compare tables
+  (the modified marker) and, inside the reader, to compile.
+- The JSON writer writes tab, line feed, carriage return, backspace and form feed with the short escapes
+  (a tab was six bytes; a legitimate table of tab-only lines made a 26 MB bank that `loadBankFile` refused).
+  B-Side caps, from the worst case found by code (worst byte costs 2 bytes written for 1; 31-tab lines):
+  12 MiB per file and 160 000 JSON values; the constructed worst bank is 9 884 536 bytes and 136 327 values
+  (27 % headroom). Every save refuses a file larger than the instrument's own reader accepts (nothing written).
+- Session state: child `Tables` (`lower`, `upper`, the user's text); a malformed table gives that part an
+  empty table and `PresetManager::tableError(part)`; all duplicate `Tables` and `Preset` children are removed.
+- `PresetManager`: `TableSink` (owned by the manager; `prepareTable` before the hold, `publishTable` and
+  `emptyTable` inside it: the table part of the hold only swaps strings with the held ones and copies a program into a free buffer, `noexcept`; the parameter writes of an apply are as before), `setTable`, `currentTable`,
+  `tableError`; the host is told "non-parameter state changed" when a table changes. Error messages are cut
+  between UTF-8 characters.
+- B-Side: `bside/program/ProgramHandover.h` (four buffers per part, wait-free audio side, protocol for two parts
+  in one seqlock window documented and tested) behind `BSideProcessor::tableHandover(part)`. Its step hook
+  lets `HandoverModelTests` explore every interleaving (24 564 states) and catch four broken variants.
+- `readPresetFile` sizes its buffer from the file size instead of the cap.
 
 ### B-Side S1b review follow-up (2026-11-14)
 - S1c merged in (`bside_unit`, `bs_juce_free`): `tests/bside/CMakeLists.txt` holds both test structures.

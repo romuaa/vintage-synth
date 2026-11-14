@@ -38,9 +38,16 @@ Locations Locations::userDefault (const juce::String& product)
     return l;
 }
 
-PresetManager::PresetManager (juce::AudioProcessorValueTreeState& state, Schema s, Bank factoryBank, ApplyGate& g, Locations loc)
-    : apvts (state), schema (std::move (s)), factory (std::move (factoryBank)), gate (g), locations (std::move (loc))
+PresetManager::PresetManager (juce::AudioProcessorValueTreeState& state, Schema s, Bank factoryBank, ApplyGate& g, Locations loc,
+                              std::unique_ptr<TableSink> tableSink)
+    : apvts (state), schema (std::move (s)), factory (std::move (factoryBank)), gate (g), locations (std::move (loc)),
+      sink (std::move (tableSink))
 {
+    if (schema.instrument().hasTables())
+    {
+        tables.assign (static_cast<size_t> (schema.numTones()), {});
+        tableErrors.assign (static_cast<size_t> (schema.numTones()), {});
+    }
     jassert (schema.isValid());
     jassert (static_cast<int> (factory.programs.size()) == schema.bankSize());
 
@@ -155,7 +162,8 @@ void PresetManager::parameterValueChanged (int parameterIndex, float newValue)
         modified.store (true, std::memory_order_relaxed);
 }
 
-void PresetManager::applyIndices (const std::vector<int>& indices, const std::vector<float>& values)
+void PresetManager::applyIndices (const std::vector<int>& indices, const std::vector<float>& values,
+                                  std::vector<TableUpdate>* tableUpdates)
 {
     jassert (onMessageThread());
     // Under the writer lock: 1. hold the audio thread's parameter values  2. have it release every
@@ -178,6 +186,8 @@ void PresetManager::applyIndices (const std::vector<int>& indices, const std::ve
         p->setValueNotifyingHost (p->convertTo0to1 (target));
         p->endChangeGesture();
     }
+    if (tableUpdates != nullptr)
+        commitTables (*tableUpdates); // same hold: a block reads the parameters and the tables as one set
     resyncLastValues();
     gate.endHold();
     applying.fetch_sub (1, std::memory_order_acq_rel);
@@ -192,6 +202,133 @@ void PresetManager::withParametersHeld (const std::function<void()>& restore)
     resyncLastValues();
     gate.endHold();
     applying.fetch_sub (1, std::memory_order_acq_rel);
+}
+
+juce::String PresetManager::partLabel (int tone) const
+{
+    auto key = schema.toneKey (tone);
+    return key.isEmpty() ? juce::String ("Table") : key.substring (0, 1).toUpperCase() + key.substring (1) + " table";
+}
+
+PresetManager::TableUpdate PresetManager::prepareTable (int tone, const std::vector<std::string>& lines, const juce::String& context) const
+{
+    TableUpdate u;
+    u.tone = tone;
+    const auto& inst = schema.instrument();
+    const auto fail = [&] (const juce::String& why)
+    {
+        u.lines.clear();
+        u.prepared.reset();
+        u.error = context.isNotEmpty() ? context + ": " + why : why;
+        return u;
+    };
+    if (auto e = validateTableLines (inst, lines); e.isNotEmpty())
+        return fail (e);
+    if (sink != nullptr && ! lines.empty()) // no table: the sink's ready-made empty one is published
+    {
+        // Before any hold: this may allocate and may fail, and then the table is rejected as a whole, so the
+        // saved state and the audio side cannot disagree.
+        try
+        {
+            u.prepared = sink->prepareTable (tone, lines);
+        }
+        catch (...)
+        {
+            u.prepared.reset();
+        }
+        if (u.prepared == nullptr)
+            return fail ("The table could not be prepared for playing.");
+    }
+    u.lines = lines; // verbatim
+    return u;
+}
+
+bool PresetManager::sameTable (const std::vector<std::string>& a, const std::vector<std::string>& b) const
+{
+    if (a == b)
+        return true;
+    const auto& canonicalise = schema.instrument().canonicaliseTable;
+    if (! canonicalise || a.empty() || b.empty())
+        return false;
+    try
+    {
+        const auto ca = canonicalise (a), cb = canonicalise (b);
+        return ! ca.empty() && ca == cb;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+void PresetManager::notifyNonParameterState()
+{
+    if (onMessageThread())
+        apvts.processor.updateHostDisplay (juce::AudioProcessor::ChangeDetails().withNonParameterStateChanged (true));
+}
+
+void PresetManager::commitTables (std::vector<TableUpdate>& updates) noexcept
+{
+    for (auto& u : updates)
+    {
+        if (u.tone < 0 || u.tone >= static_cast<int> (tables.size()))
+            continue;
+        {
+            const juce::ScopedLock sl (lock);
+            tables[static_cast<size_t> (u.tone)].swap (u.lines); // no allocation: the old text ends up in `u`
+            std::swap (tableErrors[static_cast<size_t> (u.tone)], u.error);
+        }
+        if (sink != nullptr) // the table was prepared before the hold; publishing copies into a free buffer
+            sink->publishTable (u.tone, u.prepared != nullptr ? *u.prepared : sink->emptyTable (u.tone));
+    }
+}
+
+std::vector<std::string> PresetManager::currentTable (int part) const
+{
+    const juce::ScopedLock sl (lock);
+    return part >= 0 && part < static_cast<int> (tables.size()) ? tables[static_cast<size_t> (part)] : std::vector<std::string>();
+}
+
+juce::String PresetManager::tableError (int part) const
+{
+    const juce::ScopedLock sl (lock);
+    return part >= 0 && part < static_cast<int> (tableErrors.size()) ? tableErrors[static_cast<size_t> (part)] : juce::String();
+}
+
+juce::String PresetManager::setTable (int part, const std::vector<std::string>& lines)
+{
+    jassert (onMessageThread());
+    if (! hasTables())
+        return "This instrument has no tables.";
+    if (part < 0 || part >= schema.numTones())
+        return "No such part.";
+    auto u = prepareTable (part, lines, partLabel (part));
+    if (u.error.isNotEmpty())
+        return u.error;
+    bool textChanged = false, contentChanged = false;
+    {
+        const juce::ScopedLock w (writer); // writers are serialised: nobody else changes the tables while we compare
+        std::vector<std::string> old;
+        {
+            const juce::ScopedLock sl (lock);
+            old = tables[static_cast<size_t> (part)];
+        }
+        textChanged = old != u.lines;
+        contentChanged = ! sameTable (old, u.lines); // two parses, outside `lock` (host threads read names under it)
+        std::vector<TableUpdate> updates;
+        updates.push_back (std::move (u)); // allocated before the hold
+        applying.fetch_add (1, std::memory_order_acq_rel);
+        gate.beginHold();
+        commitTables (updates);
+        gate.endHold();
+        applying.fetch_sub (1, std::memory_order_acq_rel);
+        if (contentChanged)
+            modified.store (true, std::memory_order_relaxed);
+    }
+    if (textChanged)
+        notifyNonParameterState();
+    broadcaster.sendSynchronousChangeMessage();
+    return {};
 }
 
 void PresetManager::notifyHost()
@@ -212,10 +349,15 @@ void PresetManager::applyProgram (const Program& program, int slot, bool markMod
     for (int t = 0; t < schema.numTones(); ++t)
         for (int k = 0; k < schema.toneSize(); ++k)
             indices.push_back (schema.toneParam (t, k));
+    std::vector<TableUpdate> tableUpdates;
+    if (hasTables())
+        for (int t = 0; t < schema.numTones(); ++t)
+            tableUpdates.push_back (prepareTable (t, static_cast<size_t> (t) < program.data.size() ? program.data[static_cast<size_t> (t)] : std::vector<std::string>(),
+                                                  partLabel (t) + " of \"" + program.meta.name + "\""));
     {
-        // Parameters and the program's name change together for anyone saving state meanwhile.
+        // Parameters, tables and the program's name change together for anyone saving state meanwhile.
         const juce::ScopedLock w (writer);
-        applyIndices (indices, program.values);
+        applyIndices (indices, program.values, &tableUpdates);
         setCurrent (slot, program.meta, markModified, slot < 0);
     }
     if (tellHost)
@@ -235,11 +377,22 @@ void PresetManager::applyTone (const Tone& tone, int part)
         indices.push_back (i);
         values[static_cast<size_t> (i)] = tone.values[static_cast<size_t> (k)];
     }
+    std::vector<TableUpdate> tableUpdates;
+    if (hasTables())
+        tableUpdates.push_back (prepareTable (part, tone.data, partLabel (part) + " of \"" + tone.meta.name + "\""));
+    bool tableChanged = false;
     {
         const juce::ScopedLock w (writer);
-        applyIndices (indices, values);
+        if (hasTables())
+        {
+            const juce::ScopedLock sl (lock);
+            tableChanged = tables[static_cast<size_t> (part)] != tableUpdates.front().lines;
+        }
+        applyIndices (indices, values, &tableUpdates);
         modified.store (true, std::memory_order_relaxed); // the sound no longer is the loaded program
     }
+    if (tableChanged)
+        notifyNonParameterState(); // a parameter change tells the host itself; a table is not a parameter
     broadcaster.sendSynchronousChangeMessage();
 }
 
@@ -305,6 +458,8 @@ Program PresetManager::captureProgram() const
         p.values[static_cast<size_t> (i)] = schema.sanitise (i, static_cast<double> (raw[static_cast<size_t> (i)]->load (std::memory_order_relaxed)));
     const juce::ScopedLock sl (lock);
     p.meta = current;
+    if (hasTables())
+        p.data = tables;
     return p;
 }
 
@@ -342,6 +497,10 @@ void PresetManager::setBank (Bank b, const juce::File& userFile)
 // ---------------------------------------------------------------------------------------------
 juce::String PresetManager::writeFile (const juce::File& file, const std::string& text) const
 {
+    // Never write what this instrument's own reader would refuse (a save that cannot be loaded again).
+    if (text.size() > schema.instrument().fileCap())
+        return errorFor (file, "Not saved: the file would be " + juce::String (static_cast<juce::int64> (text.size())) + " bytes, more than the "
+                                   + juce::String (static_cast<juce::int64> (schema.instrument().fileCap())) + " bytes this instrument reads");
     if (! file.getParentDirectory().createDirectory())
         return errorFor (file, "The folder could not be created");
     // Written to a uniquely named temporary file next to the target and moved over it, so a failed
@@ -357,7 +516,7 @@ juce::String PresetManager::writeFile (const juce::File& file, const std::string
 juce::String PresetManager::loadProgramFile (const juce::File& file)
 {
     std::string data;
-    if (auto e = readPresetFile (file, kMaxFileBytes, true, data); e.isNotEmpty())
+    if (auto e = readPresetFile (file, schema.instrument().fileCap(), true, data); e.isNotEmpty())
         return e;
     const auto parsed = parseProgram (schema, data);
     if (! parsed.ok)
@@ -387,7 +546,7 @@ juce::String PresetManager::loadToneFile (const juce::File& file, int part)
     if (part < 0 || part >= schema.numTones())
         return "No such part.";
     std::string data;
-    if (auto e = readPresetFile (file, kMaxFileBytes, true, data); e.isNotEmpty())
+    if (auto e = readPresetFile (file, schema.instrument().fileCap(), true, data); e.isNotEmpty())
         return e;
     const auto parsed = parseTone (schema, data);
     if (! parsed.ok)
@@ -409,7 +568,7 @@ juce::String PresetManager::saveToneFile (const juce::File& file, int part, cons
 juce::String PresetManager::loadBankFile (const juce::File& file)
 {
     std::string data;
-    if (auto e = readPresetFile (file, kMaxFileBytes, true, data); e.isNotEmpty())
+    if (auto e = readPresetFile (file, schema.instrument().fileCap(), true, data); e.isNotEmpty())
         return e;
     const auto parsed = parseBank (schema, data);
     if (! parsed.ok)
@@ -547,6 +706,66 @@ juce::ValueTree PresetManager::createSessionInfo() const
     return t;
 }
 
+juce::ValueTree PresetManager::createTablesInfo() const
+{
+    if (! hasTables())
+        return {};
+    juce::ValueTree t (kTablesInfoType);
+    const juce::ScopedLock sl (lock);
+    for (int tone = 0; tone < schema.numTones(); ++tone)
+    {
+        const auto text = joinTableLines (tables[static_cast<size_t> (tone)]);
+        t.setProperty (juce::Identifier (schema.toneKey (tone)), juce::String::fromUTF8 (text.data(), static_cast<int> (text.size())), nullptr);
+    }
+    return t;
+}
+
+PresetManager::PreparedTables PresetManager::prepareTablesInfo (const juce::ValueTree& info) const
+{
+    PreparedTables out;
+    if (! hasTables())
+        return out;
+    const auto& inst = schema.instrument();
+    out.items.resize (static_cast<size_t> (schema.numTones()));
+    for (int tone = 0; tone < schema.numTones(); ++tone)
+    {
+        auto& item = out.items[static_cast<size_t> (tone)];
+        item.tone = tone;
+        if (! info.isValid() || ! info.hasType (kTablesInfoType))
+            continue; // a session saved before tables existed, or without any: no table
+        const juce::Identifier key (schema.toneKey (tone));
+        if (! info.hasProperty (key))
+            continue;
+        const auto value = info.getProperty (key);
+        const auto context = juce::String ("The session's ") + partLabel (tone).toLowerCase();
+        if (! value.isString())
+        {
+            item.error = context + " is not text.";
+            continue;
+        }
+        std::vector<std::string> lines;
+        if (auto e = splitTableText (inst, value.toString(), lines); e.isNotEmpty())
+        {
+            item.error = context + ": " + e;
+            continue;
+        }
+        auto u = prepareTable (tone, lines, context);
+        item.lines = std::move (u.lines);
+        item.error = std::move (u.error);
+        item.prepared = std::move (u.prepared);
+    }
+    return out;
+}
+
+void PresetManager::restoreTables (PreparedTables&& prepared)
+{
+    if (! hasTables())
+        return;
+    // Called inside the hold: the updates are complete (one per tone, made by prepareTablesInfo), so only swaps happen here.
+    if (prepared.items.size() == static_cast<size_t> (schema.numTones()))
+        commitTables (prepared.items);
+}
+
 void PresetManager::restoreSessionInfo (const juce::ValueTree& info)
 {
     // The sound itself came with the parameters; this only restores what the preset bar and the
@@ -620,7 +839,7 @@ void PresetManager::resolvePendingBank()
     if (file != juce::File())
     {
         std::string data;
-        if (readPresetFile (file, kMaxFileBytes, false, data).isEmpty())
+        if (readPresetFile (file, schema.instrument().fileCap(), false, data).isEmpty())
         {
             auto parsed = parseBank (schema, data);
             if (parsed.ok)
