@@ -63,12 +63,21 @@ the hardware):
 - *Time base:* input sample k of the resampler is the output produced by the chip's step k + 1 (the
   step from cycle k to cycle k + 1). Output sample i is the band-limited value at input position
   i x clock / 48000, computed in exact rational arithmetic. Input positions before 0 take the value of
-  step 1 (no step at the start). A trace renders ceil (end x 48000 / clock) output samples; to do
-  so the chip runs on past `end`, without writes, for half the kernel width + 2 cycles (964 cycles at
-  985 248 Hz, 1 000 at 1 022 727 Hz).
+  step 1 (no step at the start). A trace renders n = ceil (end x 48000 / clock) output samples; to
+  do so the chip runs q + h + 2 input samples (cycles) in all, without writes after `end`, where
+  q = floor ((n - 1) x clock / 48000) and h is the kernel half-width (962 at 985 248 Hz, 998 at
+  1 022 727 Hz): 943 .. 963 cycles past `end` at 985 248 Hz, 979 .. 999 at 1 022 727 Hz.
 - *Resampler:* linear-phase Kaiser-windowed sinc, flat to 20 kHz (< 0.001 dB), at least 120 dB down
   from 24 kHz (nothing aliases into 0 .. 24 kHz), DC gain exactly 1; 20 .. 24 kHz is its transition
-  band (-6 dB at 22 kHz).
+  band (-6 dB at 22 kHz). The shared frame analysis counts frequencies below 20 kHz only
+  (`kSpecBandLimitHz`), so that band never enters a comparison.
+- *Known reference artefact (rejected):* the test bit written in the very cycle an oscillator's top
+  bit rose leaves the reference's rise flag set while the bit is held, and the held oscillator keeps
+  resetting its sync target. Our chip does not reproduce it; the adapter rejects (exit 3) any trace
+  that reaches it, so no reference contains it.
+- *One model for the envelope traces:* the `d_env_*` traces set no waveform bit; their references hold
+  for both models (proven at every regeneration). A Model A replay passes the committed trace bytes
+  unchanged and configures the chip as Model A in its setup callable.
 - *Power-on:* the state of the emulator object right after construction, model and clock set and
   reset: accumulators 0x555555, noise registers 0x7ffffe, envelope counters 0xaa in release at
   rate 0, rate counters at position 0 with a reset pending, analog states at zero. Our chip's

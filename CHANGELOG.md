@@ -5,6 +5,19 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side reference data, review round 2 (2026-11-14)
+- Gap traces: lost gate-off and a step executed in another phase (`d_env_lost_gate_off_b`), the Model B
+  read-back latch (`d_read_latch_*`), the envelope converter at all 256 counter values
+  (`a_env_dac_*`); gate-sweep probes thinned from 7 to 5 cycles per edge. 76 traces, 3.93 MB.
+- Shared frame analysis counts bins below 20 kHz only (band 22 = 16..20 kHz on both sides); the
+  `.bsspec` files are regenerated with it. The estimator checks that its plateau iteration converged
+  and searches the resonance peak from an octave below the corner.
+- The adapter rejects traces that reach a known reference artefact (sync from an oscillator whose
+  test bit was set in the cycle its top bit rose); none of the committed traces does.
+- Decision rows corrected: ring fold (own top bit XOR NOT source), sync after all outputs, the
+  Model B read latch, envelope precedence, lost gate-off, exact run-past-end formula, -40 dBFS
+  comparison floor, how Model-B-only envelope traces are replayed for Model A.
+
 ### B-Side reference data, review round 1 (2026-11-14)
 - **Data set extended and split** (71 traces, 3.83 MB): every combined waveform in its own `c_*`
   trace from a test-bit reset; new digital traces (deselected-waveform fade, pulse width and frequency
