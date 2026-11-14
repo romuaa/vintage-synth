@@ -5,6 +5,68 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side reference data: contract 8.15 and owner decision (2026-11-14, `bside/reference-data`)
+- `docs/architecture.md` 8.15 "Amendments from the reference data": the per-cycle specification of
+  the chip's digital core (step order, envelope pipelines and precedence, lost gate-off, sync after
+  all outputs, ring fold XOR NOT source, Model B read latch from 0x555, test bit, noise fill and
+  fade constants), the known reference artefacts and the analog reference conventions (985 248 Hz
+  only, -40 dBFS floor, band 22 to 20 kHz). Earlier contract rows it replaces point to it. An
+  independent per-cycle model written from the text matches every checkpoint of every committed
+  `d_*` trace.
+- Owner decision "follow, own tables": the digital core follows the reference's per-cycle
+  behaviour; combined-waveform shapes and analog constants stay our own fits. B-Side is therefore
+  tied to GPL-compatible licensing (`docs/decisions.md`). Open: how combined-waveform checkpoints
+  are compared (8.15.8).
+- `main` (B-Side S1d) merged in; the reference data set itself is unchanged (76 traces, 3.93 MB).
+
+### B-Side reference data, review round 2 (2026-11-14)
+- Gap traces: lost gate-off and a step executed in another phase (`d_env_lost_gate_off_b`), the Model B
+  read-back latch (`d_read_latch_*`), the envelope converter at all 256 counter values
+  (`a_env_dac_*`); gate-sweep probes thinned from 7 to 5 cycles per edge. 76 traces, 3.93 MB.
+- Shared frame analysis counts bins below 20 kHz only (band 22 = 16..20 kHz on both sides); the
+  `.bsspec` files are regenerated with it. The estimator checks that its plateau iteration converged
+  and searches the resonance peak from an octave below the corner.
+- The adapter rejects traces that reach a known reference artefact (sync from an oscillator whose
+  test bit was set in the cycle its top bit rose); none of the committed traces does.
+- Decision rows corrected: ring fold (own top bit XOR NOT source), sync after all outputs, the
+  Model B read latch, envelope precedence, lost gate-off, exact run-past-end formula, -40 dBFS
+  comparison floor, how Model-B-only envelope traces are replayed for Model A.
+
+### B-Side reference data, review round 1 (2026-11-14)
+- **Data set extended and split** (71 traces, 3.83 MB): every combined waveform in its own `c_*`
+  trace from a test-bit reset; new digital traces (deselected-waveform fade, pulse width and frequency
+  extremes, ring with pulse/noise, sync from/to frozen or test-held voices, gate edges swept over
+  every rate-counter position at divider periods 1 and 2, more envelope cases, seeded random
+  catch-alls); new analog traces (filter modes, routing and oscillator-3 off, envelope and waveform
+  converters); Model A filter segments 1.2 s. Envelope traces for Model B only (the script proves
+  the Model A copies identical).
+- **Rate field one to one:** the pending rate-counter reset is bit 7 of `div` (no format change).
+- `source/bside/trace/AnalogMeasure.*`: **one shared analog estimator** (corner, plateau, resonance
+  peak, tone level) with tests; Model A corners now within 2.4 %, peaks within 0.14 dB of 4-second
+  measurements.
+- Reference resampler alias-free in 0..24 kHz (stopband 24 kHz, was 28 kHz); reference conventions
+  (time base, scale, power-on, run-past-end) written down in `docs/bside-oracle-adapter.md`; the
+  decision rows rewritten one per question, with precise delays and the board filter's quantisation.
+
+### B-Side reference data (2026-11-14)
+- The reference-emulator adapter exists (outside the repository, `docs/bside-oracle-adapter.md`) and
+  wrote the **first reference data set**: 29 synthetic traces in `tests/bside/reference/` with their
+  `.bsref` (digital state at 10 904 checkpoints: power-on, every waveform and combination, test bit
+  and noise register reset, sync and ring, every envelope rate, envelope quirks, both read registers,
+  both models, both clocks) and `.bsspec` (filter corner at 16 cutoff values, resonance 0-15,
+  Model A distortion at three drive levels, voice DC steps, noise at 8 frequencies; both models;
+  `*_bypass` twins for filter responses), and a `MANIFEST` of hashes. 2.08 MB.
+- `source/bside/trace/SpecAnalysis.*` (JUCE-free): the measurement side of the spec format (frames
+  as the render harness, 1/12-octave segment spectra, the segment plan derived from a trace's writes,
+  since the trace format has no analysis plan). The adapter compiles it, so both sides measure alike;
+  `render_regression` checks it against the harness (at most one 0.1 dB rounding step per cell).
+- `bside_trace` (ctest label `trace`): MANIFEST hashes, canonical files, reference and spec belong to
+  their trace, segment plan; the replay and analog-tolerance tests report themselves skipped until
+  the chip exists. `bside_trace` is now a required sanitizer target.
+- Contract questions from the data (combined waveforms in the digital state, rate-counter wrap,
+  divider rule, pipelines, test-bit noise fill, power-on state, board high-pass, clock-scaled
+  reference filter) are in `docs/decisions.md` (review) for the owner and the S2/S3 contract.
+
 ### M7a — custom editor: foundation, frame, Sound page (2026-11-14)
 - The plugin opens its own editor (`source/vintage/ui/`): a 1360 × 784 canvas scaled as a whole,
   75–200 % at a fixed aspect (corner resizer and a Size menu), page rail, top bar (part switch with

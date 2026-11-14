@@ -150,6 +150,10 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
   `host_smoke` and `host_smoke_bside`).
 - **BSideTests** (`tests/bside/`) test Exitium B-Side's shell: the skeleton contract, parameters,
   programs, state, bypass, the guard, the arpeggiator and no allocation in `processBlock`.
+- **bside_trace** (ctest label `trace`) checks the committed chip reference data
+  (`tests/bside/reference/`: register traces with the reference emulator's digital state and audio
+  features, `docs/bside-oracle-adapter.md`); the replay against our chip reports itself skipped
+  until the chip exists.
 - **pluginval** at strictness 10 runs in CI on macOS and Windows x64:
   `pluginval --strictness-level 10 --validate-in-process --skip-gui-tests "<path>/Exitium Vintage Synth.vst3"`.
 
@@ -200,7 +204,9 @@ is done: the instrument-independent processor (MIDI, key modes, arpeggiator/sequ
 output stage, bypass, presets, state) is a shared skeleton in `source/common/shell/`. Step S1b is done:
 **Exitium B-Side** exists as a second VST3 plugin (`source/bside/`, built unless `-DVS_BUILD_BSIDE=OFF`)
 with the shared parameters, 64 programs, state, the arpeggiator and the effects around a placeholder
-test-tone part. It makes no chip sound yet; the chip model follows in S2 to S4.
+test-tone part. It makes no chip sound yet; the chip model follows in S2 to S4. The first reference
+data for it (digital state at chosen cycles and audio features of 76 synthetic register traces,
+generated with a reference emulator outside this repository) is committed in `tests/bside/reference/`.
 
 ## License
 

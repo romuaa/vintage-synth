@@ -859,17 +859,17 @@ Reference behaviours (unit gates, from public technical documentation; where a d
 |---|---|
 | 1 | Accumulator: + F every cycle, wraps at 2^24. Output frequency = F × clock / 2^24. |
 | 2 | Saw output = accumulator bits 23..12. |
-| 3 | Triangle output = bits 22..11 of (accumulator XOR (top bit ? all ones : 0)). With ring on, the top bit used for the fold is the own top bit XOR the ring source's top bit. |
+| 3 | Triangle output = bits 22..11 of (accumulator XOR (top bit ? all ones : 0)). With ring on, the top bit used for the fold is the own top bit XOR the ring source's top bit. Superseded by 8.15 (8.15.2 (c): XOR NOT the source's top bit). |
 | 4 | Pulse output = 0xFFF when accumulator bits 23..12 ≥ PW, else 0. The test bit forces it high (confirm). |
-| 5 | Noise: 23-bit shift register clocked on every rising edge of accumulator bit 19; new bit 0 = bit 22 XOR bit 17; output bits 11..4 = register bits 20, 18, 14, 11, 9, 5, 2, 0; output bits 3..0 = 0. |
-| 6 | Sync: a rising edge of the source's top bit resets the target's accumulator to 0 in the same cycle. Sources (also for ring): 1 ← 3, 2 ← 1, 3 ← 2. Chains (a source reset in the same cycle): confirm. |
-| 7 | Test bit: accumulator held at 0 while set; the noise register is reset (value and timing: confirm). |
+| 5 | Noise: 23-bit shift register clocked on every rising edge of accumulator bit 19; new bit 0 = bit 22 XOR bit 17; output bits 11..4 = register bits 20, 18, 14, 11, 9, 5, 2, 0; output bits 3..0 = 0. Timing (shift 2 cycles after the rise) and feedback: superseded by 8.15 (8.15.2 (a), 8.15.3). |
+| 6 | Sync: a rising edge of the source's top bit resets the target's accumulator to 0 in the same cycle. Sources (also for ring): 1 ← 3, 2 ← 1, 3 ← 2. Chains (a source reset in the same cycle): confirm. Superseded by 8.15 (8.15.2 (d)). |
+| 7 | Test bit: accumulator held at 0 while set; the noise register is reset (value and timing: confirm). Superseded by 8.15 (8.15.2 (a), 8.15.5: the register is not reset; it fills). |
 | 8 | Combined waveforms (several waveform bits): the chip's combined output per model (8.4.5). A combination with noise also writes the combined output back into the noise register's output bits, so noise can lock up (silent) until the test bit resets it. |
 | 9 | Envelope rate periods in cycles, nibble 0..15: 9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19532, 31251. At about 1 MHz: attack 2 ms … 8 s; decay and release 3 × those. |
-| 10 | Attack: counter + 1 per period up to 0xFF, then decay. Decay and release: − 1 per (period × divider); divider 1 above 0x5D, 2 from 0x5D, 4 from 0x36, 8 from 0x1A, 16 from 0x0E, 30 from 0x06 (exact threshold timing: confirm); the counter stops at 0 and does not wrap. Sustain level = nibble × 0x11; lowering it during sustain lets the counter decay to the new level, raising it does not raise the counter. |
-| 11 | Rate counter: 15 bits, compared for equality with the period and reset on a match. After a change to a period below the current count the envelope waits until the counter wraps (up to 32 768 cycles, about 33 ms): the **envelope delay quirk**. |
+| 10 | Attack: counter + 1 per period up to 0xFF, then decay. Decay and release: − 1 per (period × divider); divider 1 above 0x5D, 2 from 0x5D, 4 from 0x36, 8 from 0x1A, 16 from 0x0E, 30 from 0x06 (exact threshold timing: confirm; the divider period is a state: superseded by 8.15.4); the counter stops at 0 and does not wrap. Sustain level = nibble × 0x11; lowering it during sustain lets the counter decay to the new level, raising it does not raise the counter. |
+| 11 | Rate counter: 15 bits, compared for equality with the period and reset on a match. After a change to a period below the current count the envelope waits until the counter wraps (up to 32 768 cycles, about 33 ms): the **envelope delay quirk**. Superseded by 8.15.4 (32 767 states). |
 | 12 | Gate: a rising edge starts attack, a falling edge starts release, from the current counter. |
-| 13 | Read registers: 0x1B = oscillator 3 output bits 11..4; 0x1C = oscillator 3 envelope counter. |
+| 13 | Read registers: 0x1B = oscillator 3 output bits 11..4; 0x1C = oscillator 3 envelope counter. Timing and the Model B latch: superseded by 8.15 (8.15.2 (c), 8.15.4). |
 | 14 | Oscillator 3 off: oscillator 3 is not mixed to the output unless it is routed through the filter. |
 
 #### 8.4.4 Output path (modelled, compared within tolerances)
@@ -884,7 +884,7 @@ oscillator output → waveform DAC → × envelope (envelope DAC) → filter or 
 | Filter | 2-pole state-variable; non-linear integrators (distortion, stronger with several signals summed); cutoff curve non-linear in FC, shifted by `chip.variation` | 2-pole state-variable, cutoff close to linear in FC; clean |
 | Resonance | 16 steps, per-model damping law | same |
 | No waveform selected | the DAC input holds its last value and fades (the reference emulator's model) | same |
-| Board filter | 1-pole high-pass about 16 Hz and 1-pole low-pass about 16 kHz (typical coupling and output network of a host board) | same |
+| Board filter | 1-pole high-pass about 16 Hz and 1-pole low-pass about 16 kHz (typical coupling and output network of a host board); superseded by 8.15.7 | same |
 
 - `chip.volume_dc` Off: the voice DC is removed before the volume stage (volume writes do not
   click). On: as modelled. Never affects the digital state.
@@ -1279,7 +1279,7 @@ Global, appended last: `chip.clock` (Chip Clock: 50 Hz system, 60 Hz system; def
 #### 8.9.1 Layers
 | Layer | What | Needs reference data |
 |---|---|---|
-| Digital unit gates | every row of 8.4.3; closed form = a naive **per-cycle stepper** written by the test agent from 8.4.3 alone, for 10^8 random cycles with random writes, both models | no |
+| Digital unit gates | every row of 8.4.3; closed form = a naive **per-cycle stepper** written by the test agent from 8.4.3 alone (superseded by 8.15: from 8.4.3 and 8.15), for 10^8 random cycles with random writes, both models | no |
 | Program engine | every command and rule of 8.6; tick timing exact to the cycle; golden write traces (8.9.6) | no |
 | Trace replay | our chip against the reference emulator: digital state exact at checkpoints, read registers exact, output within 8.9.4 | yes |
 | Analog | filter curves, resonance, Model A distortion, DAC kinks, voice DC, noise spectrum | yes |
@@ -1310,9 +1310,9 @@ reference emulator), then one line per checkpoint:
 state <cycle> <acc1> <acc2> <acc3> <noise1> <noise2> <noise3> <env1> <env2> <env3>
       <phase1> <phase2> <phase3> <rate1> <rate2> <rate3> <div1> <div2> <div3> <rd1B> <rd1C>
 ```
-(hex; one line in the file). `.bsspec`: the trace's output at 48 kHz reduced to the render-regression
-feature format, plus a 1/12-octave averaged spectrum per marked segment for the analog
-measurements. Never audio.
+(hex; one line in the file; field meanings and power-on values: 8.15.1). `.bsspec`: the trace's
+output at 48 kHz reduced to the render-regression feature format, plus a 1/12-octave averaged
+spectrum per marked segment for the analog measurements. Never audio.
 
 #### 8.9.4 Replay and tolerances
 The driver resets our chip (model and clock from the trace), advances to each write's cycle,
@@ -1328,7 +1328,7 @@ decimates to 48 kHz, estimates one constant delay against the reference by cross
 | Model A distortion: harmonics 2–5 at three drive levels | ±3 dB |
 | Voice DC step on a volume write (Model A) | ±1 dB |
 | Noise third-octave spectrum | ±1.5 dB |
-| Scripted traces: band energy per third-octave per 25 ms frame | ±3 dB per cell with ≤ 5 % outliers, mean deviation ≤ 1 dB; level ±0.5 dB |
+| Scripted traces: band energy per third-octave per 25 ms frame | ±3 dB per cell with ≤ 5 % outliers, mean deviation ≤ 1 dB; level ±0.5 dB (quiet cells and band 22: superseded by 8.15.7) |
 
 #### 8.9.5 Reference emulator (oracle) workflow — needs owner approval (Q4)
 - Never linked into, vendored in or shipped with the plugin; no CMake target of this repository
@@ -1402,6 +1402,217 @@ same traces are replay inputs, which proves the program engine and the chip toge
 | 8.8 | `Instrument` also carries an optional canonicaliser and the limits `maxTableLines`, `maxTableBytes`, `maxFileBytes`, `maxJsonValues` (0 = the common default). A table line holds no LF, CR or NUL. The manager owns a table sink: `prepareTable` (before the hold; may allocate or fail, a failure is treated like an invalid table), `publishTable` and `emptyTable` (inside the hold; copy or swap only, `noexcept`). |
 | 8.8 | B-Side limits: 1024 lines and 32 768 bytes per table, file cap 12 MiB, 160 000 JSON values. The worst legitimate bank (64 programs, two maximal tables, every byte costing two written bytes) is 9.9 MB and 136 327 values. The cap is checked before parsing, and **no save function writes a file its reader would refuse**. |
 | 8.8 | Session: of several `Tables` (or `Preset`) children the first is used and all are removed. A malformed table gives that part an empty table and an error available from `PresetManager::tableError(part)` until the next apply or `setTable` for that part. `setTable` is the editor's entry point (message thread; tells the host that non-parameter state changed). |
+
+### 8.15 Amendments from the reference data
+Reference behaviour of the digital core, measured from the reference emulator through the trace
+interface (`tests/bside/reference/`). **These rules win over 8.4.3, 8.4.4, 8.9.3 and 8.9.4 where
+they differ.** Values marked † are constants of the reference, tuned to one chip revision per
+model: approximate on real hardware, exact for the bit-exact rule. Validated by an independent
+per-cycle model written from this text: 0 mismatches at every checkpoint of every committed `d_*`
+trace (both models); the `c_*` traces agree wherever no combined-waveform shape enters (8.15.8).
+
+#### 8.15.1 Time, fields, power-on
+- The state at cycle c is the state after c steps. A write at cycle c applies between step c and
+  step c+1; writes with equal cycles apply in file order. A periodic checkpoint at c is taken before
+  that cycle's writes; an after-write checkpoint is taken right after its write, with no step in
+  between.
+- Fields (reference conventions):
+  - `acc`: 24-bit accumulator.
+  - `noise`: 23-bit register, bit k as in 8.4.3 row 5.
+  - `env`: counter.
+  - `phase`: 0 attack, 1 decay/sustain, 2 release.
+  - `rate`: position 0 … 32 766 of the rate counter (one to one).
+  - `div`: divider counter in bits 0–6, pending rate reset in bit 7.
+  - `rd1B`: oscillator 3's read value, bits 11..4.
+  - `rd1C`: oscillator 3's envelope sample.
+- Power-on, which is also `reset()`:
+  - Oscillators: accumulators 0x555555; noise register 0x7ffffe; noise latch = register;
+    first-shift flag set; noise pipeline 0; rise flags clear; fill and fade timers stopped; output
+    and read value 0; pulse comparison high; Model B triangle/saw latch 0x555.
+  - Registers: F, PW and control all 0.
+  - Envelopes: counter 0xaa; phase release; target phase release; all pipelines 0; position 0 with
+    a reset pending; divider counter 0, period 1, no period change pending; not frozen; gate 0;
+    attack, decay, sustain and release all 0; read sample 0.
+  - Analog states 0.
+
+#### 8.15.2 One step
+One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b) envelope step for
+1, 2, 3; (c) outputs for 1, then 2, then 3; (d) sync for 1, 2, 3.
+
+**(a) Oscillator advance**
+- If the test bit is set:
+  - If the fill timer is running, decrement it. When it reaches 0: register := register OR
+    (register << 1) OR 1 (23 bits); latch := register; update the noise output; if the register is
+    not all ones, restart the timer with the fill interval †.
+  - Set the first-shift flag. The pulse comparison reads high.
+  - The accumulator, rise flag and noise pipeline do not change. Our chip clears the rise flag
+    here; see the artefact in 8.15.6.
+- Otherwise:
+  - acc := (acc + F) mod 2^24.
+  - The rise flag := bit 23 went from 0 to 1 in this addition.
+  - If bit 19 went from 0 to 1: noise pipeline := 2. Otherwise, if the noise pipeline is above 0,
+    decrement it:
+    - reaching 1 (phase 1): latch := register; clear the first-shift flag;
+    - reaching 0 (phase 2): a noise shift (8.15.3), with old waveform = new waveform = the current
+      one.
+
+**(b) Envelope step:** 8.15.4.
+
+**(c) Output of oscillator n** (source s = 3, 1, 2 for n = 1, 2, 3)
+- If any waveform bit is set:
+  1. Index := acc bits 23..12. If ring = 1 and saw = 0, index bit 11 := acc bit 23 XOR NOT (source
+     acc bit 23). The source's accumulator is read as it is at this point of the step, so for n = 1
+     it comes before oscillator 3's output (and any pull-down), and for n = 2 and 3 after their
+     sources' outputs.
+  2. Shape: triangle = (index < 0x800 ? index : index XOR 0xfff) << 1 (12 bits); saw = index; pulse
+     or noise alone = 0xfff; combinations: the per-model combined-waveform tables (our own fits,
+     8.15.8).
+  3. out := shape AND (pulse selected ? the pulse comparison of the previous step, high under
+     test : 0xfff) AND (noise selected ? noise output : 0xfff).
+  4. Model A, saw bit set: if out bit 11 is 0, clear acc bit 23 and the rise flag.
+  5. Read value. Model A: out. Model B with a triangle or saw bit set: (latch AND the same two
+     masks, then the combined table if any); then latch := this step's shape. The latch is updated
+     only in such steps. Model B otherwise: out.
+  6. Noise and another waveform bit together (write-back): if the noise pipeline is not 1 and the
+     test bit is clear, the register's bits 20, 18, 14, 11, 9, 5, 2, 0 are ANDed with out bits
+     11..4, and noise output := noise output AND out. Otherwise (in this case only), noise
+     output := out. With noise alone or no noise bit, the noise output is not changed here.
+- If no waveform bit is set: out and the read value hold. If the fade timer is running, decrement
+  it. When it reaches 0: out := out AND (out >> 1); read value := out; if out is not 0, restart the
+  timer with the fade interval †.
+- Last, in either case: pulse comparison := (acc bits 23..12 ≥ PW). It is used in the next step.
+
+**(d) Sync**, for n = 1, 2, 3 in turn:
+- If n's rise flag is set (as it stands after part (c)), n's target (2, 3, 1) has its sync bit
+  set, and NOT (n has its own sync bit set AND n's source's rise flag is set), then target
+  acc := 0.
+- So on Model A a top bit pulled down in (c) never syncs. If a source is itself reset by its own
+  source in the same cycle its top bit rises, its target is not reset.
+
+#### 8.15.3 Noise register
+- Output: noise output bits 11..4 = register bits 20, 18, 14, 11, 9, 5, 2, 0; bits 3..0 = 0. It is
+  recomputed at every shift and every fill, and changed by write-back as in (c) step 6.
+- Shift, from the latch: if write-back applies for the pair (old, new), first the latch's tap bits
+  (20, 18, 14, 11, 9, 5, 2, 0) are replaced by out bits 11..4. Then register := ((latch << 1) AND
+  0x7fffff) OR ((latch bit 22 OR first-shift flag) XOR latch bit 17).
+- Write-back applies unless any of these holds:
+  - old ≤ 8;
+  - new < 8;
+  - new = 8 and old ≠ 0xf;
+  - Model A, and (old AND 3, new AND 3) is (1, 2) or (2, 1);
+  - old = 0xc or new = 0xc.
+
+  These are bits 7..4 of the control register, as hex. Combined cases only; reference behaviour,
+  followed (8.15.8).
+
+#### 8.15.4 Envelope (identical for both models)
+- Rate match positions (= the periods of 8.4.3 row 9 minus 1), rates 0–15: 8, 31, 62, 94, 148,
+  219, 266, 312, 391, 976, 1953, 3125, 3906, 11719, 19531, 31250.
+- Per step:
+  1. The read sample := counter (0x1C shows oscillator 3's).
+  2. If a period change is pending, apply it.
+  3. If the phase pipeline is above 0, decrement it. Then by target phase:
+     - attack: on reaching 1, the compare position := the decay rate's; on reaching 0,
+       phase := attack, compare := attack rate, the counter is unfrozen;
+     - decay/sustain: on reaching 0, phase := decay/sustain, compare := decay rate;
+     - release: if (phase is attack and the pipeline reached 0) or (phase is decay/sustain and it
+       reached 1), phase := release, compare := release rate. Otherwise nothing.
+  4. Counter step. If the step pipeline is above 0, decrement it. If it reaches 0, this cycle is a
+     counter step (skip 5 and 6). Unless frozen:
+     - In the current phase (not the one it was scheduled in): attack: counter := counter + 1
+       mod 256; if it becomes 0xff, target := decay/sustain and the phase pipeline := 3. This
+       replaces any pending release, so a gate-off can be lost.
+     - Decay/sustain or release: counter := counter − 1; if it becomes 0, frozen.
+     - Then, if the counter is now 0xff or 0x00, 0x5d, 0x36, 0x1a, 0x0e or 0x06, a period change
+       to 1, 1, 2, 4, 8, 16 or 30 is pending for the next step.
+  5. Divider pipeline. Otherwise, if the divider pipeline is above 0, decrement it. If it reaches
+     0: divider counter := 0; if (phase is decay/sustain and counter ≠ sustain level) or phase is
+     release, the step pipeline := 1. Skip 6.
+  6. Rate reset. Otherwise, if a rate reset is pending: position := 0; clear the pending flag. If
+     the phase is attack: divider counter := 0 and step pipeline := 2. Otherwise, unless frozen:
+     divider counter + 1; if it equals the period, divider pipeline := 2 (1 when the period is 1).
+  7. If position ≠ the compare position: position := (position + 1) mod 32 767. Otherwise set the
+     pending flag; the position stays.
+- Precedence: at most one of counter step, end of the divider pipeline, or rate reset happens per
+  cycle, in that order; a pending reset waits. Pipelines that were decremented without completing
+  do not use up the cycle.
+- Writes:
+  - Gate 0→1: target := attack, phase pipeline := 2. If a reset is pending or the divider pipeline
+    is 2: step pipeline := 2 when (the period is 1 or the divider pipeline is 2), else 4.
+    Otherwise, if the divider pipeline is 1: phase pipeline := 3.
+  - Gate 1→0: target := release; phase pipeline := 3 if the step pipeline is above 0, else 2.
+  - Attack/decay write: store both nibbles; in attack, compare := attack rate; in decay/sustain,
+    compare := decay rate.
+  - Sustain/release write: sustain level := nibble × 0x11; in release, compare := release rate.
+  - Other edges and equal values do nothing.
+- Consequences (informative):
+  - A gate-on takes effect 2 cycles later (3 if the divider pipeline is in its last cycle).
+  - A gate-off takes effect 1 cycle later from decay/sustain and 2 from attack, plus 1 with a step
+    pending.
+  - A pipelined step acts in the phase current when it executes, not the one it was scheduled in
+    (`d_env_lost_gate_off_b`); a gate-off can be lost when the pending attack step reaches 0xff
+    (same trace).
+  - Steps come 2 cycles after a reset in attack, and 2 (divider period 1) or 3 cycles otherwise.
+  - Raising the sustain level above the counter during decay lets it decay to 0.
+  - The delay quirk waits up to 32 767 cycles.
+  - The counter can wrap from 0xff to 0x00 in attack.
+
+#### 8.15.5 Writes to oscillator registers
+- F and PW apply from the next step.
+- Control:
+  - Waveform bits change: if the new value is 0, start the fade timer with the hold time †.
+  - Test 0→1: acc := 0; noise pipeline := 0; latch := register; start the fill timer with the hold
+    time †.
+  - Test 1→0: a noise shift at once, with old = the previous waveform and new = the written one.
+    The first-shift flag is set if any step ran under the test bit.
+  - The read value changes only in the next step.
+- Constants †: test hold time 50 000 (A) / 986 000 (B) and fill interval 15 000 / 314 300; fade
+  hold time 54 000 / 800 000 and fade interval 1 400 / 50 000.
+
+#### 8.15.6 Known reference artefacts (not reproduced; traces must avoid them)
+- Writing the test bit in the cycle an oscillator's top bit rises leaves the reference's rise flag
+  set while the bit is held, and the held oscillator then resets its sync target. The adapter's
+  regeneration must reject traces that do this (it does: exit 3; no committed trace reaches it).
+- The board high-pass dead band: −50.8 / −46.4 dBFS residual (Model A / B) after a DC step.
+- The reference's filter scales with the clock (8.15.7).
+
+#### 8.15.7 Analog reference conventions
+- Output: board-filter output × 3/2 (A) or 5/2 (B) / 32 768.
+- Resampler: input sample k = the output of step k+1; positions before 0 take step 1's value; flat
+  to 20 kHz, ≥ 120 dB down from 24 kHz.
+- n = ceil(end × 48 000 / clock) output samples. The chip runs, with no writes, up to q + half + 2
+  samples: half = 962 (985 248 Hz) or 998 (1 022 727 Hz), q = floor((n−1) × clock / 48 000), which
+  is 943–963 or 979–999 cycles past `end`.
+- Board filters: high-pass ≈ 1.2 Hz, low-pass ≈ 15.4 kHz at 985 248 Hz †.
+- Analog references exist, and are valid, at 985 248 Hz only; our filter is clock-independent.
+- Measurements use `AnalogMeasure.h` only.
+- Per-frame comparison: band 0 and the frame level are ignored where both sides are below
+  −40 dBFS. Band 22 is compared up to 20 kHz on both sides, through one shared function
+  (`SpecAnalysis`, `kSpecBandLimitHz`).
+- The voice-DC gate uses the first frame after each volume write.
+
+#### 8.15.8 Owner decision (2026-11-14): follow, own tables
+- **The digital core follows the reference emulator's per-cycle behaviour** as specified in 8.15.1–
+  8.15.5 (written from the reference data, with the emulator's source open). Its † timing
+  constants are followed as stated.
+- **Combined-waveform shapes** (the per-model tables of 8.15.2 (c) steps 2 and 5) **and all analog
+  constants** (8.4.4, 8.15.7) are our own fits to generated data, never copied from the emulator's
+  tables or source (Q5 stands for them).
+- **Licence consequence (accepted by the owner):** B-Side is tied to GPL-compatible licensing for
+  good (the reference is GPL-2.0-or-later; this project is AGPLv3, which is compatible).
+- **The bit-exact rule (8.4.3) with our own tables:** a field is *shape-dependent* from the cycle a
+  combined-waveform table value first reaches it until the state it reached is overwritten:
+  `rd1B` while oscillator 3 selects a combined waveform (and, on Model B, while the read latch
+  still holds a value taken from one); a voice's `noise` field from a combined-waveform write-back
+  until the test bit has refilled the register; on Model A an oscillator's `acc` and `phase`
+  fields from a sync whose source top bit came through the pull-down until that oscillator's next
+  test-bit reset. Shape-dependent fields are **exempt** from the exact comparison at those
+  checkpoints; every other field at every checkpoint stays exact. The replay marks them from the
+  trace's writes and our own chip's events, reports how many checkpoints were exempt per trace,
+  and fails a `d_*` trace with any exemption (those traces use no combined waveform). What the
+  exemption leaves unproven is covered by the shape fit itself: the combined-waveform outputs are
+  compared with the reference per waveform, model and pulse width within the fit tolerance set
+  with the tables (S2b), and by the audio comparisons of 8.9.4.
 
 ## 9. M7 — custom editor
 
