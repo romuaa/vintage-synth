@@ -123,7 +123,7 @@ Format (one entry per line, nothing else on the line):
 
 - `ui.part`: Chooses which part the Sound, Envelopes and LFO pages edit. The page is tinted in that part's colour.
 - `ui.page`: Opens a page. Each page does one job; your sound is not changed by switching pages.
-- `ui.preset`: The current program. A dot means it was changed since it was loaded.
+- `ui.preset`: Click the program name to pick another, listed by category. A dot means it was changed since it was loaded.
 - `ui.output`: The output level and limiter. Click to open the output settings.
 - `ui.fx_power`: Switches this effect on or off by setting its level. Switching it on again brings back the last level.
 - `ui.load_program`: Loads the selected program: both sounds and all settings. Volume and limiter stay as they are.
@@ -131,4 +131,14 @@ Format (one entry per line, nothing else on the line):
 - `ui.load_tone_lower`: Puts the chosen sound into your Lower part. Nothing else changes.
 - `ui.load_tone_upper`: Puts the chosen sound into your Upper part. Nothing else changes.
 - `ui.search`: Type part of a name or category. Programs that do not match are dimmed.
+- `ui.bank`: The bank shown in the grid. Choose the factory bank or load a bank file of your own.
+- `ui.category`: Shows one category of the bank. Other programs are dimmed; All shows everything.
+- `ui.program_cell`: One program. Click selects it; double-click or Enter loads it, and the arrow keys move.
+- `ui.save`: Stores the sound in its slot of your bank. In the factory bank it asks where to save instead.
+- `ui.save_as`: Saves the sound as a program file, as a copy of the bank, or into a slot of your own bank.
+- `ui.init`: Sets every parameter to its default. The slot keeps its place and counts as changed.
+- `ui.import_bank`: Loads a bank file and shows it in the grid. The first program is loaded.
+- `ui.export_bank`: Saves the bank shown as a file you can keep or share.
+- `ui.save_tone`: Saves the sound of the part you are editing as a tone file.
+- `ui.load_tone_file`: Loads a tone file into the part you are editing. Nothing else changes.
 - `ui.size`: Sets the window size. Saved with your session.

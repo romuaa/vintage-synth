@@ -141,6 +141,7 @@ private:
     int page = 0, part = 0;
     juce::String banner;
     juce::Component::SafePointer<juce::Component> hovered;
+    juce::String hoveredLabel;
     int limiterIndex = -1;
     int firstPageFocusOrder = 9;
 };

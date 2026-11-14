@@ -5,7 +5,7 @@
 #include "vintage/ui/EffectsPage.h"
 #include "vintage/ui/EnvelopesPage.h"
 #include "vintage/ui/LfoPage.h"
-#include "vintage/ui/PlaceholderPage.h"
+#include "vintage/ui/BrowserPage.h"
 #include "vintage/ui/PlayPage.h"
 #include "vintage/ui/SoundPage.h"
 
@@ -32,18 +32,8 @@ std::vector<EditorFrame::Page> vintagePages()
         { kVintagePageNames[3], "Play", PageIcon::Play, false, "Play: how the two parts share the keyboard, and how each part is played. Drag the split marker on the keyboard." },
         { kVintagePageNames[4], "Arp + Seq", PageIcon::ArpSeq, false, "Arp + Seq: pick a pattern or paint steps; the picture shows what the arpeggiator and the sequencer will play." },
         { kVintagePageNames[5], "Effects", PageIcon::Effects, false, "Effects: chorus, delay and reverb on both parts, in signal order. Drag the dots on the pictures." },
-        { kVintagePageNames[6], "Browser", PageIcon::Browser, false, "Browser: programs and banks (until M7e: the preset bar at the top)." },
+        { kVintagePageNames[6], "Browser", PageIcon::Browser, false, "Browser: pick a program from the grid, load it or just one of its sounds, and save your own." },
     };
-}
-
-/** The parameter's name without the part prefix ("Lower VCF Cutoff" -> "VCF Cutoff"). */
-juce::String shortName (juce::RangedAudioParameter& p)
-{
-    auto n = p.getName (64);
-    for (const char* pre : { "Lower ", "Upper " })
-        if (n.startsWith (pre))
-            return n.substring (6);
-    return n;
 }
 } // namespace
 
@@ -73,6 +63,9 @@ VintageEditor::VintageEditor (VintageSynthProcessor& p)
     frame.onPageChosen = [this] (int page) { selectPage (page, frame.getPart()); };
     frame.onPartChosen = [this] (int part) { selectPage (frame.getPage(), part); };
     frame.onSizeMenu = [this] { showSizeMenu(); };
+    bar.smartSave = true;         // Save: in place for a user bank, else Save as (9.3.7)
+    bar.setCompactLayout (true);  // the program name gets the room
+    bar.onOpenBrowser = [this] { selectPage (static_cast<int> (VintagePage::Browser), frame.getPart()); };
 
     keyModeIndex = mirror.indexOf ("key.mode");
     if (keyModeIndex >= 0)
@@ -118,8 +111,6 @@ VintageEditor::~VintageEditor()
     effectsPage->cancelInteraction();
     if (arpSeq != nullptr)
         arpSeq->cancelInteraction();
-    for (auto& ph : placeholders)
-        ph->cancelInteraction();
     frame.cancelInteraction();
     mirror.unsubscribe (this);
     mirror.endAllGestures();
@@ -128,21 +119,6 @@ VintageEditor::~VintageEditor()
 
 void VintageEditor::buildPages()
 {
-    const auto prefix = [] (int part) { return juce::String (part == 0 ? kLowerPrefix : kUpperPrefix); };
-    const auto partItems = [&] (const std::vector<juce::String>& suffixes, int part) {
-        std::vector<PlaceholderPage::Item> items;
-        for (const auto& s : suffixes)
-            items.push_back ({ prefix (part) + s, shortName (mirror.parameter (mirror.indexOf (prefix (part) + s))), part });
-        return items;
-    };
-    const auto addPlaceholder = [&] (VintagePage page, int part, const juce::String& title, const juce::String& note,
-                                     std::vector<PlaceholderPage::Item> items) {
-        registry.setContext (kVintagePageNames[static_cast<size_t> (page)], part);
-        placeholders.push_back (std::make_unique<PlaceholderPage> (ctx, title, note, std::move (items)));
-        placeholderRefs.push_back ({ page, part, placeholders.back().get() });
-        frame.addPageComponent (static_cast<int> (page), part, *placeholders.back());
-    };
-
     for (int part = 0; part < 2; ++part)
     {
         registry.setContext (kVintagePageNames[0], part);
@@ -170,18 +146,10 @@ void VintageEditor::buildPages()
     registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::Effects)], -1);
     effectsPage = std::make_unique<EffectsPage> (ctx, editorState);
     frame.addPageComponent (static_cast<int> (VintagePage::Effects), -1, *effectsPage);
-    addPlaceholder (VintagePage::Browser, -1, "Browser",
-                    "Placeholder until M7e: load, save and initialise programs with the preset bar at the top of the window.", {});
+    registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::Browser)], -1);
+    browser = std::make_unique<BrowserPage> (ctx, static_cast<VintageSynthProcessor&> (processor).getPresets(), [this] { return frame.getPart(); });
+    frame.addPageComponent (static_cast<int> (VintagePage::Browser), -1, *browser);
     registry.setContext ("frame", -1);
-}
-
-PlaceholderPage& VintageEditor::getPlaceholder (VintagePage page, int part)
-{
-    for (const auto& r : placeholderRefs)
-        if (r.page == page && (r.part == part || r.part < 0))
-            return *r.component;
-    jassertfalse;
-    return *placeholderRefs.front().component;
 }
 
 void VintageEditor::selectPage (int page, int part)

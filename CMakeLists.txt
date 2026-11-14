@@ -58,6 +58,7 @@ set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetFiles.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/FactoryBank.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetBar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/InstrumentEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/ShellSupport.cpp
@@ -92,7 +93,7 @@ set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/ArpSeqPage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/EnvelopesPage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/LfoPage.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/PlaceholderPage.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/BrowserPage.cpp)
 set(VS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${VS_VINTAGE_SOURCES})
 
 target_sources(VintageSynth PRIVATE ${VS_PLUGIN_SOURCES})

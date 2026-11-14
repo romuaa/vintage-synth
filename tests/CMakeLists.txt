@@ -94,7 +94,8 @@ target_sources(VintageSynthTests PRIVATE
     preset_unit/FactoryRender.cpp
     preset_unit/PresetDump.cpp
     preset_unit/PresetTableFormatTests.cpp
-    preset_unit/PresetTableManagerTests.cpp)
+    preset_unit/PresetTableManagerTests.cpp
+    preset_unit/PresetBrowserApiTests.cpp)
 target_compile_definitions(VintageSynthTests PRIVATE VS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 # M7a custom editor (docs/architecture.md 9.6): models, help texts, UI feed, UI state, filter curve,
@@ -113,6 +114,8 @@ target_sources(VintageSynthTests PRIVATE
     ui/EnvLfoModelTests.cpp
     ui/EnvLfoPageTests.cpp
     ui/EnvLfoReviewTests.cpp
+    ui/BrowserModelTests.cpp
+    ui/BrowserPageTests.cpp
     ui/UiShots.cpp)
 target_compile_definitions(VintageSynthTests PRIVATE
     VS_UI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ui/golden"

@@ -31,7 +31,7 @@ class EffectsPage;
 class ArpSeqPage;
 class EnvelopesPage;
 class LfoPage;
-class PlaceholderPage;
+class BrowserPage;
 
 /** The embedded Inter faces (resources/fonts/inter, SIL OFL 1.1). */
 struct VintageFontSource
@@ -51,6 +51,8 @@ public:
 
     // ---- Introspection for tests ----
     const presets::PresetBar& getBar() const noexcept { return bar; }
+    presets::PresetBar& getBar() noexcept { return bar; }
+    BrowserPage& getBrowserPage() noexcept { return *browser; }
     const ControlRegistry& getRegistry() const noexcept { return registry; }
     ParamMirror& getMirror() noexcept { return mirror; }
     EditorFrame& getFrame() noexcept { return frame; }
@@ -60,7 +62,6 @@ public:
     ArpSeqPage& getArpSeqPage() noexcept { return *arpSeq; }
     EnvelopesPage& getEnvelopesPage (int part) noexcept { return *envelopes[part & 1]; }
     LfoPage& getLfoPage (int part) noexcept { return *lfo[part & 1]; }
-    PlaceholderPage& getPlaceholder (VintagePage page, int part = 0);
     const HelpTexts& getHelpTexts() const noexcept { return help; }
     const Theme& getTheme() const noexcept { return theme; }
     /** Selects a page and the edited part as the rail and the part switch do (UI state). */
@@ -102,14 +103,7 @@ private:
     std::unique_ptr<ArpSeqPage> arpSeq;
     std::unique_ptr<EnvelopesPage> envelopes[2];
     std::unique_ptr<LfoPage> lfo[2];
-    std::vector<std::unique_ptr<PlaceholderPage>> placeholders;
-    struct PlaceholderRef
-    {
-        VintagePage page;
-        int part;
-        PlaceholderPage* component;
-    };
-    std::vector<PlaceholderRef> placeholderRefs;
+    std::unique_ptr<BrowserPage> browser;
 
     float scale = 1.0f;
     juce::Rectangle<int> lastSetSize;
