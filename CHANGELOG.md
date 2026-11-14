@@ -5,6 +5,30 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2a fidelity pass — the digital core follows the per-cycle specification 8.15 (2026-11-14)
+- `source/bside/chip/` rewritten to `docs/architecture.md` 8.15 (which wins over 8.4.3): power-on state
+  (accumulators 0x555555, noise 0x7ffffe, envelopes 0xaa in release with a reset pending, Model B read
+  latch 0x555); step order (a) oscillator advance, (b) envelopes, (c) outputs 1, 2, 3, (d) sync; the noise
+  register's latch and 2-step pipeline after a bit-19 rise, the first-shift flag, the fill under the test
+  bit and the shift when it is cleared, the write-back table of 8.15.3; the triangle `<< 1` shape, the ring
+  fold with XOR NOT, the pulse comparison of the previous step, the Model A top-bit pull-down, the Model B
+  read latch, the hold and fade of a deselected output; envelope phase, counter and divider pipelines with
+  their precedence, the 32 767-position rate counter, the divider period as a state, lost gate-offs, the
+  gate and rate-write rules; the timing constants per model. `stepCycle` stays normative; `advanceCycles`
+  is rebuilt on the new state (per-oscillator jumps between sync-relevant rises, envelope jumps between
+  non-trivial steps) and proven equal to it. The combined-waveform table stays the AND placeholder.
+- `bside_trace` replays every committed trace through the chip (`replayChipExact`, `ShapeExemption.h`):
+  exact at every checkpoint with the 8.15.8 exemption (shape-dependent fields marked from the writes and
+  the chip's per-step events, counted per trace; a `d_*` trace with any exemption fails); the envelope
+  traces also as Model A; a second chip driven by `advanceCycles` must equal the stepped one in its full
+  state at every checkpoint. Result: 76 traces, 81 replays, 0 mismatches (`d_*` 20 075 checkpoints all
+  exact, `c_*` 921 exact and 4 315 exempt, `a_*` 902 exact). The analog test stays skipped (no audio path).
+- Tests: the row tests are rewritten per 8.15 rule (the 8.4.3 expectations that 8.15 contradicts are
+  replaced); the naive stepper (`ChipStepperTests.cpp`) is rewritten from 8.15 and compares every state
+  field; the five formerly ambiguous cases are kept as regression sequences; the equivalence tests compare
+  the full new state and the fill events.
+- Judgement calls and the specification gaps found: `docs/decisions.md`, "B-Side S2a fidelity pass".
+
 ### B-Side S2a — the chip's digital core (2026-11-14)
 - Digital unit gate by an independent test agent: `tests/bside/unit/ChipStepperTests.cpp`, a naive per-cycle
   stepper written from 8.4.1-8.4.3 alone, compared field by field with `stepCycle` and `advanceCycles` after
@@ -35,6 +59,7 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   all three together, no write-back under the test bit, every snapshot field (incl. the dividers) with
   its own value. Four rows in `docs/decisions.md` are now marked known open deviations (attack from 0xff,
   write and pipeline delays, test-bit noise reset, oscillator-3 read with no waveform).
+
 ### B-Side reference data: contract 8.15 and owner decision (2026-11-14, `bside/reference-data`)
 - `docs/architecture.md` 8.15 "Amendments from the reference data": the per-cycle specification of
   the chip's digital core (step order, envelope pipelines and precedence, lost gate-off, sync after

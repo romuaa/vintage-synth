@@ -3,7 +3,30 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## B-Side S2a fidelity pass: the digital core follows 8.15 (2026-11-14, all review)
+
+The core now implements `docs/architecture.md` 8.15 as written; every committed trace replays with 0
+mismatches (`bside_trace`), and the eight developer-only tune traces (outside the repository) replay
+exact at every checkpoint. The judgement calls below are where 8.15 is silent or where the replay
+needed a reading; rows marked **contract gap** need a decision or a contract amendment.
+
+| Decision | Why |
+|---|---|
+| **Contract gap: the exemption of 8.15.8 is implemented from its definition, not its list.** A field is exempt from the cycle a combined-waveform table value can reach it until the state it reached is overwritten (`source/bside/trace/ShapeExemption.h` follows each flow of 8.15.2: output, read value, Model B latch, Model A pull-down, sync, ring index, noise write-back, shift timing). Beyond the list of 8.15.8 this also exempts **the pulled-down oscillator's own accumulator** (Model A, saw combined with another waveform; until its next test-bit reset) and what reads it in the same rules (the ring-modulated output of the next oscillator, hence rd1B). | The list alone fails five Model A traces: `c_3_a`, `c_6_a`, `c_7_a` (acc3 ours 0x801c96, reference 0x1c96 at cycle 1 162: our placeholder table keeps bit 11 where the reference's pulls the top bit down), `c_ring_3_a` (acc3 from cycle 1 040), `c_ring_order_a` (acc2 and rd1B from cycle 2 563). With the definition: 0 mismatches, 4 315 of 5 236 `c_*` checkpoints exempt, none in `d_*` and `a_*`. 8.15.8 also says "an oscillator's acc and phase fields": the `.bsref` `phase` fields are envelope phases, which no oscillator reaches, so only `acc` is exempted. |
+| **Contract gap: the noise output at power-on is the output of the power-on register** (0x7ffffe gives 0xfe0). 8.15.1 lists "output and read value 0" but not the noise output, which 8.15.3 recomputes only at a shift or fill. | It only matters for noise selected before the first shift, write-back or fill; no committed trace distinguishes it (the mutation run shows which tests do). |
+| **Contract gap: the envelope counter is 8 bits in decay and release too.** A release or decay step at counter 0 is possible when an attack phase has cleared the freeze before any attack step (gate on, then off within the pipeline); the counter then wraps to 0xff. 8.15.4 step 4 says "counter - 1" without a width (attack says "mod 256"). | The register is 8 bits; the independent stepper reached this corner 5 to 11 times per 10^7 random cycles. No committed trace covers it; worth a trace at the next regeneration. |
+| **Model B read value with a combined triangle/saw: the latch (which holds this step's shape, after the table) is masked by this step's pulse and noise masks; the table is not applied a second time.** 8.15.2 (c) step 5 writes "latch AND the same two masks, then the combined table if any". | The order only matters for combined waveforms, whose read values are exempt (8.15.8). To settle with the fitted tables (S2b), which must say what "the table applied to a latched value" means. |
+| **Combined-waveform placeholder restated for the new step structure:** the shape of a combination is the AND of the selected triangle and saw shapes (0xfff when neither is selected); pulse and noise enter through the masks of step 3, as for single waveforms. | 8.15.8: our own tables come with S2b; the AND keeps the documented first-order behaviour (a waveform pulls bits low) and keeps every flow of 8.15.2 exercised. |
+| **Events:** a fill step under the test bit is reported as a `NoiseClockEvent` with `fill = true`; changes made by a write (the shift when the test bit is cleared, the accumulator reset when it is set) carry no event, because a renderer splits its sample at the write and reads the state there. An optional `oscStep` event per oscillator per step (sinks that declare `kWantsStepEvents`) feeds the exemption tracker; with it `advanceCycles` steps every cycle. | Keeps the event contract of the first version (self-contained, a sink never reads the chip) and gives the replay the per-step facts 8.15.8 asks for without a second copy of the rules. |
+| **Fast path:** `advanceCycles` steps every cycle while an oscillator writes back into its noise register or, on Model A, combines its saw with another waveform, and steps each cycle in which a top bit rises while its target has the sync bit; otherwise it jumps (at most 4 096 cycles) oscillator by oscillator (accumulator in closed form, noise pipeline, fill and fade timers event by event, output, read value, Model B latch and pulse comparison from the last two cycles) and envelope by envelope (runs of pure rate-counter increments, `envStep` for every other cycle). Proven equal in the full state: the random equivalence tests, the independent stepper, and every checkpoint of every committed trace. | 8.4.2 asks for a closed form. Cost (scratch benchmark, loaded machine): 21 to 45 ns per internal sample at 96 kHz with three sounding voices, 2 to 4 times the first version, because the pipelined envelope has 3 non-trivial cycles per rate period (`docs/engineering-notes.md`). |
+
 ## B-Side S2a: chip digital core (2026-11-14, all review)
+
+**Superseded by the fidelity pass above** (2026-11-14): the core now follows `docs/architecture.md`
+8.15. The rows below describe the first version; the four KNOWN OPEN DEVIATION rows, the divider,
+sustain, freeze, rate-counter and sync-chain rows are settled by 8.15 (8.15.2, 8.15.4, 8.15.5). The
+rows on read registers at other addresses, `setFilter`, program-engine input and the event contract
+still hold.
 
 Contract: `docs/architecture.md` 8.4.1–8.4.3, 8.4.7. The normative cycle definition as built is the
 header of `source/bside/chip/Chip.h`. Where 8.4.3 says "confirm" or is silent, the core implements the

@@ -3,6 +3,14 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S2a fidelity pass (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The exemption of 8.15.8, implemented as its list of fields, failed three Model A `c_*` traces (`c_3_a`, `c_6_a`, `c_7_a`: acc3 from cycle 1 162; `c_ring_3_a`: acc3 from 1 040; `c_ring_order_a`: acc2 and rd1B from 2 563). | The list names the sync target of a pulled-down oscillator, not the pulled-down oscillator itself, nor the ring-modulated output that reads it. | Mark exempt fields by following every flow of the per-cycle rules from a combined-waveform table value (`ShapeExemption.h`), not by a list; run the literal list against the data too and report the difference as a contract gap. |
+| The naive stepper's counter went to -1 where the chip's wrapped to 0xff. | A release step at counter 0 is possible when an attack phase cleared the freeze before any attack step; 8.15.4 writes "counter - 1" without the width. | Give every counter of a naive model the hardware's width; a random driver reaches such corners (5 to 11 times per 10^7 cycles here). |
+| The fast path became 2 to 4 times slower (21 to 45 ns per internal sample at 96 kHz against 10 to 12, scratch benchmark on a loaded machine). | The pipelined envelope makes 3 of every 9 cycles of a rate-0 envelope non-trivial (pending, reset, divider pipeline), and every such cycle is a real envelope step. | Acceptable for S2a (about 0.2 to 0.5 % of a core per chip); a closed form for the steady sustain and frozen loops is the first optimisation if `chip_bench` (S4) needs it. |
+
 ## B-Side S2a: chip digital core (2026-11-14)
 
 | Problem | Cause | Fix / rule |
