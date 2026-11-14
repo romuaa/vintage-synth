@@ -44,6 +44,7 @@ namespace
 std::atomic<std::size_t> gLive { 0 };
 std::atomic<std::size_t> gPeak { 0 };
 
+#if ! BS_FUZZ_ASAN
 void* countedAlloc (std::size_t n)
 {
     void* p = std::malloc (n + 16);
@@ -66,6 +67,8 @@ void countedFree (void* p) noexcept
     gLive.fetch_sub (*reinterpret_cast<std::size_t*> (base), std::memory_order_relaxed);
     std::free (base);
 }
+#endif
+
 
 /** Bytes allocated at the same time, at most, since construction (above what was live before). */
 struct AllocScope

@@ -388,25 +388,25 @@ TEST_CASE ("messages: a quoted token is cut on a character boundary", "[bside][t
     std::string name = "a";
     for (int i = 0; i < 20; ++i)
         name += "\xc3\xa9"; // 41 bytes of e-acute
-    const auto q = quoted (name);
+    const auto q = vs::bside::text::quoted (name);
     int l = 0, c = 0;
     const char* why = nullptr;
     CHECK_FALSE (findInvalidByte (q, l, c, why));
     CHECK (q.size() <= 24 + 6);
     CHECK (q.find ("...'") != std::string::npos);
-    CHECK (quoted ("short") == "'short'");
-    CHECK (quoted (std::string (24, 'x')) == "'" + std::string (24, 'x') + "'");
-    CHECK (quoted (std::string (25, 'x')) == "'" + std::string (24, 'x') + "...'");
+    CHECK (vs::bside::text::quoted ("short") == "'short'");
+    CHECK (vs::bside::text::quoted (std::string (24, 'x')) == "'" + std::string (24, 'x') + "'");
+    CHECK (vs::bside::text::quoted (std::string (25, 'x')) == "'" + std::string (24, 'x') + "...'");
     // Three- and four-byte sequences at the cut.
     for (const std::string cp : { "\xe2\x82\xac", "\xf0\x9f\x8e\xb9" })
     {
         std::string s;
         while (s.size() < 40)
             s += cp;
-        CHECK_FALSE (findInvalidByte (quoted (s), l, c, why));
-        CHECK_FALSE (findInvalidByte (quoted ("x" + s), l, c, why));
-        CHECK_FALSE (findInvalidByte (quoted ("xx" + s), l, c, why));
-        CHECK_FALSE (findInvalidByte (quoted ("xxx" + s), l, c, why));
+        CHECK_FALSE (findInvalidByte (vs::bside::text::quoted (s), l, c, why));
+        CHECK_FALSE (findInvalidByte (vs::bside::text::quoted ("x" + s), l, c, why));
+        CHECK_FALSE (findInvalidByte (vs::bside::text::quoted ("xx" + s), l, c, why));
+        CHECK_FALSE (findInvalidByte (vs::bside::text::quoted ("xxx" + s), l, c, why));
     }
     // And through a real message.
     const auto r = readBody ("[wave1]\n" + name + "\n");
