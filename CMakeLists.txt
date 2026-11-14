@@ -57,14 +57,26 @@ set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetBar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/InstrumentEditor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/ShellSupport.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/ShellSupport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/Theme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/HelpTexts.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/ParamMirror.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/BoundComponent.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/Slider.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/SegmentedSwitch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/GraphView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/FrameParts.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/EditorFrame.cpp)
 set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/presets/VintagePresets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/params/ParameterLayout.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Modulation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Voice.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Part.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Part.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/VintageEditor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/SoundPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/PlaceholderPage.cpp)
 set(VS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${VS_VINTAGE_SOURCES})
 
 target_sources(VintageSynth PRIVATE ${VS_PLUGIN_SOURCES})
@@ -82,6 +94,17 @@ juce_add_binary_data(VintageSynthFactoryData
     SOURCES     ${VS_FACTORY_PRESETS})
 set_target_properties(VintageSynthFactoryData PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(VintageSynth PRIVATE VintageSynthFactoryData)
+
+# Editor data (docs/architecture.md 9.1.1): the help texts (docs/ui/help-texts.md, the single
+# source) and the embedded Inter font (resources/fonts/inter, SIL OFL 1.1: see SOURCE.txt there).
+juce_add_binary_data(VintageUiData
+    HEADER_NAME UiData.h
+    NAMESPACE   vs_ui
+    SOURCES     ${CMAKE_CURRENT_SOURCE_DIR}/docs/ui/help-texts.md
+                ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/inter/Inter-Regular.ttf
+                ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/inter/Inter-SemiBold.ttf)
+set_target_properties(VintageUiData PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(VintageSynth PRIVATE VintageUiData)
 
 target_include_directories(VintageSynth PRIVATE source)
 

@@ -36,6 +36,9 @@ public:
 
     int getOversamplingFactor() const noexcept { return lowerPart.getOversamplingFactor(); }
 
+    /** The custom editor (docs/architecture.md 9; vintage/ui/VintageEditor.cpp). */
+    juce::AudioProcessorEditor* createEditor() override;
+
     static constexpr std::uint32_t kLowerSeed = 0x1001u, kUpperSeed = 0x2001u;
 
     // State identity (used by the skeleton's get/setStateInformation).

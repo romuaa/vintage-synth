@@ -2,6 +2,7 @@
 
 #include "vintage/dsp/Drift.h"
 #include "vintage/presets/VintagePresets.h"
+#include "vintage/ui/PageList.h"
 
 #include <cmath>
 
@@ -12,6 +13,7 @@ VintageSynthProcessor::VintageSynthProcessor() : Base (createParameterLayout())
     lowerBinding.bind (apvts, kLowerPrefix);
     upperBinding.bind (apvts, kUpperPrefix);
     vintage.bind (apvts, ParamID::vintage);
+    setUiPageNames (ui::kVintagePageNames); // the session saves the editor's UI state (9.1.3)
 
     // Presets (after the parameters exist: the schema's defaults are their values right now).
     auto schema = makeVintageSchema (*this);
