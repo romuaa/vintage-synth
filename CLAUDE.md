@@ -13,13 +13,7 @@ reference panel's arrangement (owner decision).
 
 ## Open decisions (do not assume — ask if work depends on them)
 
-- **M7 editor (`docs/architecture.md` 9.8):** U1 window size and resizing; U2 font (licence);
-  U3 dark only or also light; U4 static graphs with live markers or animated; U5 delay/reverb
-  on/off as a level-0 switch or new parameters; U6 value display 0–10 or percent; U7 help
-  bubbles. Agents build against the recommended defaults in 9.8 until decided. The round-3
-  wireframes in `docs/ui/wireframes/` still await the owner's final look.
-
-When a new one comes up, list it here; once decided, move it to "Decisions".
+None right now. When a new one comes up, list it here; once decided, move it to "Decisions".
 
 ## Decisions
 
@@ -89,6 +83,11 @@ When a new one comes up, list it here; once decided, move it to "Decisions".
   possible (its own alias budgets, 8.4.5, approved). **Reference emulator approved as a developer
   tool only:** built outside the repository (`~/Library/Caches/bside-oracle/`), never linked or
   shipped, never named in the repository; only generated reference data is committed.
+- **M7 editor (owner, 2026-11-14; `docs/architecture.md` 9.8):** round-3 wireframes approved;
+  fixed aspect, 75–200 % (1360×784 at 100 %); embedded font Inter (SIL OFL 1.1, its licence file
+  kept in the repository); dark theme only; static graphs with live markers; delay/reverb on/off
+  as a level-0 switch (no new parameters); values shown as hosts show them (0–10); help bubbles
+  after 600 ms plus the help line.
 - **M7 UI (owner, 2026-11-14):** the tabbed wireframes are approved as the direction, with a
   colour tint per part, Shape split into LFO and Envelope pages, and hover help on every control.
 - **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new

@@ -37,6 +37,7 @@ Contract: `docs/architecture.md` section 9. Open owner questions U1–U7 are in 
 | **As simple as possible; graphs for visualisation and intuition.** A new user must be able to see how to set up the arpeggiator without a manual. | Owner's requirement. |
 | **The UI follows automation live.** Sliders, graphs and switches move when host automation, MIDI control or a program change alters a parameter; nothing on screen may show a stale value. | Owner's requirement: an automation track must be seamlessly visible in the synth UI. Implementation note for M7: the editor reads parameter values on a UI timer (never from the audio thread), including the graphs derived from them. |
 | **Round-2 wireframes approved as the direction (2026-11-14),** with three changes: a colour tint per part so it is obvious which part is being edited; the Shape page split into LFO and Envelope pages; hover help texts on every control. | Owner's review of the drafts. |
+| **Round-3 wireframes approved; all recommended options of the editor contract (9.8, U1–U7) chosen (owner, 2026-11-14):** fixed-aspect scaling 75–200 %, embedded Inter font (SIL OFL 1.1), dark only, static graphs with live markers, level-0 power switch for delay and reverb, 0–10 value text, help bubbles after 600 ms. | Owner: "approved, all recommended". |
 
 ## B-Side S1 contract (2026-11-14)
 
