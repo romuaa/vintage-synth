@@ -114,6 +114,17 @@ Contract: `docs/architecture.md` section 9. Open owner questions U1–U7 are in 
 | **Round-2 wireframes approved as the direction (2026-11-14),** with three changes: a colour tint per part so it is obvious which part is being edited; the Shape page split into LFO and Envelope pages; hover help texts on every control. | Owner's review of the drafts. |
 | **Round-3 wireframes approved; all recommended options of the editor contract (9.8, U1–U7) chosen (owner, 2026-11-14):** fixed-aspect scaling 75–200 %, embedded Inter font (SIL OFL 1.1), dark only, static graphs with live markers, level-0 power switch for delay and reverb, 0–10 value text, help bubbles after 600 ms. | Owner: "approved, all recommended". |
 
+### After the first hands-on check of M7a (owner, 2026-11-14)
+- **The frame and the Sound page are approved.** The placeholder pages (parameters as plain
+  sliders) are "messy and hard to understand"; the owner looked at the round-3 wireframes again
+  and confirmed them, so Play, Arp + Seq and the other pages are built as drawn. Rule for every
+  page: no page may be a bare list of sliders; each has its picture and purpose-built controls.
+- **Clicking the program name opens a list of the bank's programs grouped by purpose** (owner
+  request). Contract: architecture 9.3.8. The groups are the programs' `category` values; the
+  factory bank's categories (Bass, Brass, Keys, Lead, Pad, Strings, Sound FX, ...) are kept
+  as they are. (review: the owner's examples were Horns, Keys, Leads, Noise, Radical, Strings;
+  rename factory categories only if the owner asks after seeing the menu.)
+
 ## B-Side S1 contract (2026-11-14)
 
 Contract: `docs/architecture.md` section 8. All (review); the owner decisions it waits for are
