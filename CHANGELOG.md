@@ -5,6 +5,25 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M7b — Envelopes and LFO pages (2026-11-14)
+- **Envelopes page** for both parts: two ADSR pictures drawn from the engine's own envelope code
+  (the real RC curves), each with four draggable handles (peak = attack, sustain start = decay and
+  sustain, sustain end = sustain, release end = release; time labels under them), the four sliders,
+  key follow, Envelope 1's direction (an inverted Envelope 1 shows a mirrored ghost under the axis),
+  and "what the envelope does" (filter amount and source, pitch bend, velocity amounts). The panel
+  titles name what each envelope drives and follow the filter source.
+- **LFO page** for both parts: the LFO's waveform from the engine's own LFO on a time axis with a
+  delay handle (end of the fade-in) and a cycle handle (sets the rate), waveform, rate and delay
+  controls, and the four "the LFO moves ..." panels (pitch, pulse width, filter, volume); the pulse
+  width controls dim while neither oscillator is set to Pulse.
+- New shared pieces: `EnvelopeView`, `LfoView`, JUCE-free `EnvelopeModel.h` and `LfoModel.h`;
+  `Panel::setText` repaints only its header.
+- Tests (`tests/ui/EnvLfoModelTests.cpp`, `EnvLfoPageTests.cpp`): handle maths and label spreading,
+  window choice, the envelope shape against a 48 kHz `Envelope`, the LFO preview against a direct
+  `Lfo` run, automation follow of every control, handle and picture (host writes from another thread,
+  programs, Init, tones, session restore), handle gestures, titles, ghost, dimming, repaint scope,
+  paint-allocation stability, layout snapshots (100 % and 150 %, both parts).
+
 ### M7a — custom editor: foundation, frame, Sound page (2026-11-14)
 - The plugin opens its own editor (`source/vintage/ui/`): a 1360 × 784 canvas scaled as a whole,
   75–200 % at a fixed aspect (corner resizer and a Size menu), page rail, top bar (part switch with

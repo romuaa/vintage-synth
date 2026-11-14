@@ -3,6 +3,21 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## M7b results: Envelopes and LFO pages (2026-11-14)
+
+| Decision | Why |
+|---|---|
+| **The Envelopes page follows the wireframe: "what it does" sits under a divider inside each envelope's panel,** not as a third panel (the contract's table lists it as its own panel). The titles are the derived ones of 9.3.2. (review) | The wireframe is the owner-approved direction; the table groups parameters, not rectangles. |
+| **Envelope shape = the real RC curve of `dsp::Envelope`, run once per segment at 256 samples per segment** (the display rate that makes the segment's time 256 samples). As a fraction of its segment the curve does not depend on the time, only on the sustain, so the picture is cheap and exact; the handles sit on the segment ends (the decay end is 99 % of the way to the sustain, so up to 1 % of the level above the plateau handle). | 9.4. The test compares every segment end and the middle of long segments with an `Envelope` rendered at 48 kHz (0.5 %). |
+| **When Envelope 1 is Inverted the axis moves to the middle of the picture** (level range 1 … -1), the shape stays above it at half the height, and a faint mirrored ghost is drawn below. The handles follow. (review) | A true mirror needs the same height under the axis as above it; clipping the ghost or drawing it at another scale would misstate what the filter does. Envelope 2 has no inverted mode and never shows a ghost. |
+| **Time labels under the envelope handles are the parameters' own text, spread so they never overlap** (`spreadLabels`). | The slider values are one row below; the labels sit at the handles as 9.3.2 asks. |
+| **The LFO picture's point i is the value at time (i + 1) / 1000 of the window,** so the fade-in ends exactly on the delay handle and a whole cycle ends exactly on the cycle handle (tested). The preview runs at 1000 / window Hz with the engine's own `Lfo`, so the 1 ms edge smoother of the real LFO acts on square and saw edges only in the 0.5 s window. | The contract fixes 1000 points over the window; the offset makes handle and curve agree. |
+| **The LFO window is kept while a handle is dragged; a delay dragged past the window stops at its edge,** and the window is chosen again at mouse-up. | 9.3.3: the picture must not rescale under the pointer. |
+| **Pulse width controls dim (display only) when neither oscillator's waveform is Pulse** (9.3.9), with "(no effect in this mode)" in their accessibility description. | Contract. |
+| **`Panel::setText` repaints only the header strip** (shared change). | A title that follows a parameter (Envelope panels) must not repaint the panel's controls and pictures. |
+| **The contract's paint budget "≤ 8 allocations per component" cannot hold for any component that draws text:** the software renderer allocates about 35 times per `drawText` and 5-30 per path fill (measured). The tests assert that repeated paints cost the same and that nothing is built in `paint()` by construction (strings, paths and the stroked outlines are prepared on change). (review) | The budget needs a different measure (a count of our own calls) or a different number; left for M7f. |
+| **Parameter text of times is odd for non-round values** ("158.489 ms", "63.0957 ms": `juce::String (float, 0)` prints as many decimals as needed in `formatSeconds`, `ParamFactory.cpp`). Not changed here (shared display text, also shown by hosts); the sliders' value slot truncates it. (review) | Found while building the pages; a one-line fix to `formatSeconds` is for the orchestrator, because it changes what hosts display. |
+
 ## M7a results: editor foundation and Sound page (2026-11-14)
 
 | Decision | Why |

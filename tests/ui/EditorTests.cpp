@@ -173,7 +173,7 @@ TEST_CASE ("Registry: every parameter has exactly one primary control; secondari
                 CHECK (e.captions == (e.choices > 0 ? e.choices : steps));
             }
         }
-        CHECK (secondaries == 2 * 3); // the filter graph's cutoff, resonance and high-pass, per part
+        CHECK (secondaries == 2 * (3 + 10 + 2)); // per part: the filter graph's 3, the two envelope pictures' 5 each, the LFO picture's 2
     }
 }
 
