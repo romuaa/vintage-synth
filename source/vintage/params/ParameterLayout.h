@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "common/params/FxArpParams.h"
+#include "common/params/GlobalParams.h"
 #include "common/params/ParamFactory.h"
 #include "vintage/params/PartMappings.h"
 #include "vintage/params/PartParamList.h"
@@ -11,24 +12,13 @@ namespace vs
 {
 namespace ParamID
 {
-// Global (non-part) parameters. Dotted, stable IDs. Frozen after v1.0 — append only.
-inline constexpr const char* masterVolume = "master.volume";
-inline constexpr const char* vintage = "global.vintage";
-// M3 (appended after vintage, in this order).
-inline constexpr const char* keyMode = "key.mode";
-inline constexpr const char* keySplitPoint = "key.split_point";
-inline constexpr const char* mixBalance = "mix.balance";
-// Wave 4: output soft limiter (appended after the arp/seq step parameters, in this order). Session
-// settings like master.volume: not part of a program (vintage/presets/VintagePresets.cpp).
-inline constexpr const char* masterLimiter = "master.limiter";
-inline constexpr const char* masterLimiterCeiling = "master.limiter.ceiling";
+// This instrument's own global parameter (the shared ones are in common/params/GlobalParams.h).
+// Dotted, stable IDs. Frozen after v1.0 — append only.
+inline constexpr const char* vintage = "global.vintage"; // appended after the upper part
 } // namespace ParamID
 
-/** "Key Mode" choices; order == vs::KeyMode. */
-inline constexpr std::array<const char*, 3> kKeyModeLabels { "Whole", "Dual", "Split" };
-inline constexpr int kDefaultSplitPoint = 60; // C4
-inline constexpr float kDefaultLimiterCeilingDb = -1.0f;
-
+/** Vintage's host-facing parameter list. Order is part of the contract: master volume, lower
+    part, upper part, global.vintage, key/mix, effects, arp/seq, limiter (never reorder). */
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 /** Cached raw-value pointers for one part. Bound once, read once per block (lock-free). */

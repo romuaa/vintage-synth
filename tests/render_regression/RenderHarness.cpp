@@ -1,7 +1,7 @@
 #include "RenderHarness.h"
 
 #include "common/presets/FactoryBank.h"
-#include "vintage/PluginProcessor.h"
+#include "common/presets/PresetManager.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_dsp/juce_dsp.h>
@@ -187,14 +187,14 @@ Script parseScript (const std::string& text)
 
 // ------------------------------------------------------------------ rendering
 
-std::vector<float> renderScript (const Script& script, int blockSize)
+std::vector<float> renderScript (const Script& script, int blockSize, const ProcessorFactory& factory)
 {
-    return renderScriptStereo (script, blockSize)[0];
+    return renderScriptStereo (script, blockSize, factory)[0];
 }
 
-std::vector<std::vector<float>> renderScriptChannels (const Script& script, int blockSize)
+std::vector<std::vector<float>> renderScriptChannels (const Script& script, int blockSize, const ProcessorFactory& factory)
 {
-    auto both = renderScriptStereo (script, blockSize);
+    auto both = renderScriptStereo (script, blockSize, factory);
     if (script.channels == 1)
         both.resize (1);
     return both;
@@ -243,10 +243,14 @@ bool isBlockEvent (Event::Kind k)
 }
 } // namespace
 
-std::vector<std::vector<float>> renderScriptStereo (const Script& script, int blockSize)
+std::vector<std::vector<float>> renderScriptStereo (const Script& script, int blockSize, const ProcessorFactory& factory)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
-    vs::VintageSynthProcessor proc;
+    Instance instance = factory ? factory() : makeDefaultInstance();
+    if (instance.processor == nullptr || instance.presets == nullptr)
+        throw std::runtime_error ("render harness: the factory made no processor");
+    juce::AudioProcessor& proc = *instance.processor;
+    presets::PresetManager& presetManager = *instance.presets;
     ScriptPlayHead playHead;
     playHead.sampleRate = script.sampleRate;
     proc.setPlayHead (&playHead);
@@ -254,7 +258,7 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
     proc.prepareToPlay (script.sampleRate, blockSize);
     // Offline there is no other thread to wait for: a program change is requested and the audio side
     // (this thread, the next block) honours it, so the render does not depend on timing.
-    proc.getPresets().getGate().setTimeouts (0, 0);
+    presetManager.getGate().setTimeouts (0, 0);
 
     const auto total = static_cast<int> (std::llround (script.length * script.sampleRate));
     const auto sampleOf = [&] (const Event& e) { return static_cast<int> (std::llround (e.time * script.sampleRate)); };
@@ -266,14 +270,17 @@ std::vector<std::vector<float>> renderScriptStereo (const Script& script, int bl
     juce::AudioBuffer<float> buffer (2, blockSize);
 
     const auto applyParam = [&] (const Event& e) {
-        auto* p = dynamic_cast<juce::RangedAudioParameter*> (proc.getState().getParameter (e.id));
+        juce::RangedAudioParameter* p = nullptr;
+        for (auto* candidate : proc.getParameters())
+            if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (candidate); ranged != nullptr && ranged->paramID == juce::String (e.id))
+                p = ranged;
         if (p == nullptr)
             throw std::runtime_error ("script: unknown parameter id: " + e.id);
         p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (e.value)));
     };
 
     const auto applyProgram = [&] (const Event& e) {
-        auto& presets = proc.getPresets();
+        auto& presets = presetManager;
         int slot = presets.getSchema().instrument().slotFromFileName (juce::String (e.id));
         if (slot < 0 || e.id.size() != 2)
         {

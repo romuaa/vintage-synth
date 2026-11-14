@@ -3,6 +3,15 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S1a: shared processor skeleton (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The contract's CRTP base read `Part` and `InstrumentParams` as member types of the derived class. | The base stores both (parameter sets, part references in member declarations), and the derived class is still incomplete where the base's members are declared. | Pass them as template arguments: `BiTimbralProcessor<Derived, Part, InstrumentParams>`. Only function bodies (instantiated later) may use the derived class's members. |
+| Proving "no behaviour change" needs a dump tool that the old commit does not have. | A tool added to the tree would itself change the commit under test. | Keep the tool outside the repository and inject it into both builds with `-DCMAKE_PROJECT_VintageSynth_INCLUDE=<file>` and `cmake_language(DEFER … CALL …)` (it runs after `tests/` defined `vs_test_core`). Copy the baseline binaries aside before the source changes. |
+| The unit-test binary reports a different assertion count on every run. | Threaded preset tests loop on timing. | Never use the assertion count as evidence of "the same tests ran"; compare test-case counts and the bit dumps. |
+| The worktree guard refused `cd <worktree> && git …` and commit commands with a quoted message. | It cannot verify compound commands that run git. | Run git as plain, separate commands from the worktree; write the commit message to a scratch file and use `git commit -F`. |
+
 ## M6b: factory bank (2026-11-13)
 
 | Problem | Cause | Fix / rule |

@@ -1,20 +1,10 @@
 #pragma once
 
-#include "common/presets/PresetBar.h"
-#include "vintage/PluginProcessor.h"
+#include "common/shell/InstrumentEditor.h"
 
 namespace vs
 {
-/** Placeholder editor until the custom UI (M7): the preset bar above JUCE's generic parameter editor. */
-class VintageSynthEditor final : public juce::AudioProcessorEditor
-{
-public:
-    explicit VintageSynthEditor (VintageSynthProcessor& owner);
-    void resized() override;
-    const presets::PresetBar& getBar() const noexcept { return bar; }
-
-private:
-    presets::PresetBar bar;
-    juce::GenericAudioProcessorEditor parameters;
-};
+/** Placeholder editor until the custom UI (M7): the shared preset bar above JUCE's generic
+    parameter editor (common/shell/InstrumentEditor). M7 replaces this alias with its own class. */
+using VintageSynthEditor = shell::InstrumentEditor;
 } // namespace vs

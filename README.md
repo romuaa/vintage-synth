@@ -181,7 +181,9 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 | M8 | Hardening, signing, installers, release | |
 
 A second instrument is planned in this repository: **B-Side**, a polyphonic synth modelled on a classic 3-voice
-sound chip from early-1980s home computers, as its own plugin sharing the common engine code.
+sound chip from early-1980s home computers, as its own plugin sharing the common engine code. Step S1a
+is done: the instrument-independent processor (MIDI, key modes, arpeggiator/sequencer, effects,
+output stage, bypass, presets, state) is a shared skeleton in `source/common/shell/`.
 
 ## License
 

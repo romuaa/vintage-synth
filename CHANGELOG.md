@@ -5,6 +5,24 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S1a — shared processor skeleton (2026-11-14)
+- Refactor, no behaviour change: everything instrument-independent in Vintage's processor moved
+  into `source/common/shell/` (`docs/architecture.md` 8.2) so the second instrument can reuse it.
+  `shell::BiTimbralProcessor` (CRTP base: block chunking, MIDI, Program Change hand-over, key router
+  and both arp/seq instances, transport, the seqlock parameter read and preset release, key modes,
+  mixer, effects, output stage, bypass, tail, programs, presets, state), `shell::InstrumentEditor`
+  (preset bar above the generic editor) and shared helpers. The shared global parameters are
+  appended by `addMasterVolume`, `addKeyMixParameters` and `addLimiterParameters`
+  (`common/params/GlobalParams`). `VintageSynthProcessor` supplies its parts, per-part parameters,
+  Vintage amount, synth tail, preset schema and state identity through per-block hooks.
+- The render-regression harness renders through a processor factory (Vintage's default in
+  `tests/render_regression/VintageInstance.cpp`).
+- Proven unchanged on this Mac: the raw output of every render script and the stress script at
+  block sizes 512 and 61 is byte-identical, as are the parameter list (IDs, names, ranges,
+  defaults, steps, display texts), saved states, the `state_m5.bin` fixture load, and saved
+  program, tone and bank files; `voice_bench`/`fx_bench` within noise. No test changed.
+- The docs check's include rule also names `bside/` and states that it covers `common/shell/`.
+
 ### M7 editor contract (2026-11-14)
 - `docs/architecture.md` section 9 is the contract for the custom editor (M7a–M7f): architecture and
   threading, the live-automation rule, the shared component library, theme and scaling, page

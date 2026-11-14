@@ -105,8 +105,11 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
   owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
-- **B-Side S1 contract is written** (architecture section 8, 2026-11-14), Q1–Q8 decided. **Next:** S1a, the shared processor skeleton (no agent may edit Vintage's
-  processor or editor in parallel), then S1b/S1c.
+- **B-Side S1a is merged to `main`** (owner approved 2026-11-14): the shared processor skeleton
+  `source/common/shell/` (pure refactor; raw renders, parameter list, states and preset files
+  byte-identical, shown by the author and again by an independent reviewer). Contract as built:
+  architecture 8.2.5. **Next:** S1b (plugin shell; first tighten the skeleton per 8.2.5), S1c
+  (table and trace readers, in progress on `bside/s1c-formats`), and M7a (editor foundation).
 - **M7 editor contract is written** (architecture section 9, wireframes and help texts in
   `docs/ui/`). M7 code starts only after S1a has merged (both touch the editor); M7a first.
 - **M7 UI direction (owner, 2026-11-14):** a tabbed workspace, one purpose per full page (Sound,
@@ -130,6 +133,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
      banks incl. the strict JSON reader and file dialogs (2026-11-13).
   4. Wave 4a: factory bank and its tests, output trim and soft limiter, VCF slope crossfade,
      the rule that parameters missing from a session load at their defaults (2026-11-14).
+  5. S1a: the shared processor skeleton, a header-only CRTP template that MSVC has never
+     compiled (highest portability risk on this list) (2026-11-14).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -157,13 +162,18 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 ## Layout
 
 ```
-source/common/    shared by all instruments; must not include anything from source/vintage/
+source/common/    shared by all instruments; must not include anything from source/vintage/ or source/bside/
   dsp/            FastMath, DspUtil, BlepTable (JUCE-free)
   engine/         NoteEvent, EventParser, VoiceAllocator, KeyRouter, PartMixer (JUCE-free), Oversampler
-  fx/             Chorus, Delay, Reverb (JUCE-free)
+  fx/             Chorus, Delay, Reverb, SoftLimiter (JUCE-free)
   seq/            arpeggiator and step sequencer (JUCE-free)
-  params/         parameter factories, effect and arp/seq parameters + bindings, shared Mappings.h
-source/vintage/   this instrument: PluginProcessor.*
+  params/         parameter factories, shared globals (GlobalParams: master volume, key/mix, limiter),
+                  effect and arp/seq parameters + bindings, shared Mappings.h
+  presets/        preset model, strict JSON, files, manager, factory bank, preset bar
+  shell/          BiTimbralProcessor (CRTP skeleton: MIDI, key modes, arp/seq, mixer, effects, output
+                  stage, bypass, programs, state), InstrumentEditor (preset bar + generic editor)
+source/vintage/   this instrument: PluginProcessor.* (VintageSynthProcessor : shell::BiTimbralProcessor),
+                  PluginEditor.h (alias of shell::InstrumentEditor until M7)
   dsp/            Oscillator, Filters, Envelope, Lfo, Drift (JUCE-free)
   engine/         Voice, Part, Modulation (shared per-part modulation)
   params/         PartParamList.h (X-macro list of all per-part params), PartMappings.h,
@@ -228,6 +238,10 @@ must build for all five targets (mac universal, win x64, win ARM64, Linux x86_64
   block-size test only proves something if voices are reused.
 - GCC rejects float `==`/`!=` (`-Wfloat-equal` is an error); Clang and MSVC accept it. Use `std::fpclassify`.
 - Rosetta isn't installed: the x86_64 slice is checked with `lipo` only, never run locally.
+- Shared processor code is reached only through per-block hooks; instrument types are template
+  arguments of `BiTimbralProcessor`, not member types of the derived class.
+- Agents must never unpack, link or build inside the main checkout or a folder they did not create
+  (stray links inside `external/JUCE` and `external/Catch2` have appeared twice).
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
 

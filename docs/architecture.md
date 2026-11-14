@@ -764,6 +764,17 @@ includes and type names.
    `fx_bench` within ±3 % of before (best of 3); identity, latency and tail unchanged.
 6. Docs check: `source/common/shell` includes nothing from an instrument directory.
 
+#### 8.2.5 As built (2026-11-14; where the code differs from 8.2.1–8.2.2, this subsection wins)
+| Point | As built |
+|---|---|
+| Template | `shell::BiTimbralProcessor<Derived, PartT, InstrumentParamsT>` (the part and parameter types are template arguments: `Derived` is incomplete where the base declares its members) |
+| Block parameters | `BlockParams : SharedParams, InstrumentParams`; an instrument's parameter struct must not reuse a shared field name (`masterDb`, `balance`, `limiterOn`, `limiterCeilingDb`, `mode`, `splitPoint`, `fx`, `arp`) |
+| Construction | The base constructor takes the complete parameter layout, which **must** contain every shared parameter (master volume, key/mix, effects, arp/seq, limiter: use the shared appenders). `Derived` **must** call `initPresets (schema, bank, productFolder)` at the end of its constructor |
+| Hooks in `Derived` (private, `friend Base`) | `kStateTag`, `kStateVersion`, `static migrateState`, `readInstrumentParams`, `applyInstrumentParams`, `partPan` (noexcept, once per block), `prepareParts (hostRate, maxBlock, osFactor, realtimeOsFactor)` (reads the parameters through `getBlockParams()`), `synthTailSeconds()`, `part (int)` |
+| Editor | The base's `createEditor()` returns `shell::InstrumentEditor`; an instrument with its own editor overrides it (M7) |
+| Render harness | Each render executable defines `makeDefaultInstance()`; `voice_bench` stays Vintage-specific |
+| **To do in S1b, before B-Side builds on the skeleton** | (1) the plugin name comes from the instrument (`Derived::kName`), not from the build's plugin macro, so a second instrument in a test build reports its own name; (2) a missing shared parameter or a missing `initPresets` call fails clearly at construction in every build type, not by a null dereference later; (3) `static_assert` that the per-block hooks are `noexcept` |
+
 ### 8.3 S1b: B-Side plugin shell
 - `BSideProcessor : shell::BiTimbralProcessor<BSideProcessor>` with a placeholder part
   `TestTonePart`: one sine per note (VoiceAllocator, Poly, 16 voices), 5 ms linear attack and
