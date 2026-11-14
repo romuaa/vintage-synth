@@ -105,6 +105,12 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
   owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
+- **B-Side S1b is merged to `main`** (plugin shell): a second plugin "Exitium B-Side" (test-tone
+  part, shared parameters, presets, state; no chip model yet), `VS_BUILD_BSIDE` (default ON), the
+  local gate, `host_smoke`, the dev host (`scripts/dev-host.sh --plugin bside`) and the CI
+  workflow extended to two plugins. Vintage proven unchanged (build commands, dumps, bundle).
+  **Next on B-Side:** the oracle adapter and reference data, the preset-model extension (8.8),
+  then S2 (chip digital core, program engine).
 - **B-Side S1c (JUCE-free part) is merged to `main`** (owner approved 2026-11-14): patch table
   reader, writer and compiler (`source/bside/program/`), trace, reference and spec formats with
   replay driver and comparer (`source/bside/trace/`), shared scanner (`source/bside/text/`), test
@@ -142,6 +148,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   5. S1a: the shared processor skeleton, a header-only CRTP template that MSVC has never
      compiled (highest portability risk on this list) (2026-11-14).
   6. S1c: the B-Side table and trace readers and `bside_unit` (2026-11-14).
+  7. S1b: B-Side itself, the two-plugin CMake and `build.yml` rewrite (never run), the shared
+     `vs_juce_modules` library on MSVC, `scripts/sanitize-targets.sh` on a runner (2026-11-14).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -185,11 +193,14 @@ source/vintage/   this instrument: PluginProcessor.* (VintageSynthProcessor : sh
   engine/         Voice, Part, Modulation (shared per-part modulation)
   params/         PartParamList.h (X-macro list of all per-part params), PartMappings.h,
                   ParameterLayout (assembles the layout), StateVersion.h
-source/bside/     second instrument (JUCE-free parts so far): text/ (strict-reader plumbing), program/
-                  (patch table reader, writer, compiled Program), trace/ (trace, reference and spec
-                  formats, replay driver, comparer); must not include anything from source/vintage/
-tests/bside/      bside_unit (Catch2, no JUCE; ctest label "bside"); `bside_unit "[.fuzz-long]"` is
-                  the hidden 10^6-case fuzz run (allocation bounds measured only without ASan)
+source/bside/     Exitium B-Side (second plugin): PluginProcessor.*, engine/TestTonePart (placeholder until
+                  S2/S4), params/, presets/ (JUCE-bound); text/ program/ trace/ are JUCE-free (strict
+                  readers, patch tables, trace formats); chip/ comes with S2. Vintage and B-Side never
+                  include each other
+tests/bside/      bside_unit (JUCE-free, ctest label "bside") always; with VS_BUILD_BSIDE also
+                  bs_test_core + BSideTests. `bside_unit "[.fuzz-long]"` is the hidden 10^6-case fuzz run
+presets/bside/factory/  B-Side factory programs (JSON, embedded)
+scripts/sanitize-targets.sh  the one list of sanitizer test targets (preflight, Linux container, CI)
 tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
 tests/benchmarks/ voice_bench (CPU cost per voice)
 tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)
@@ -254,6 +265,10 @@ must build for all five targets (mac universal, win x64, win ARM64, Linux x86_64
   arguments of `BiTimbralProcessor`, not member types of the derived class.
 - Agents must never unpack, link or build inside the main checkout or a folder they did not create
   (stray links inside `external/JUCE` and `external/Catch2` have appeared twice).
+- Never link `vs_test_core` and `bs_test_core` into one executable. A new test executable must be
+  added to `scripts/sanitize-targets.sh`.
+- Never `grep -q` on the right side of a pipe under `pipefail` (the left side dies with SIGPIPE and
+  the pipeline "fails"); capture the output first. `VS_PREFLIGHT_PLUGINS` is for `--quick`/`--only`.
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
 
