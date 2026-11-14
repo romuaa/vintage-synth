@@ -105,6 +105,13 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
   owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
+- **M7a (editor foundation) is ready on `m7/a-merge`, awaiting the owner's hands-on check and
+  merge approval:** the custom editor frame (page rail, part switch with tint, preset bar, output
+  meter and limiter popover, help line and bubbles, 75–200 % scaling), the Sound page with live
+  pictures, placeholder pages for the rest, live automation by polling (no parameter listeners),
+  the audio → editor feed and the `UiState` session child. Reviewed, re-checked, full gate passed
+  with S1b merged in. **Next:** M7b–M7e (Envelopes + LFO, Play + Effects, Arp + Seq, Browser) in
+  parallel; only the page list in `VintageEditor::buildPages` is a serial edit.
 - **B-Side S1b is merged to `main`** (plugin shell): a second plugin "Exitium B-Side" (test-tone
   part, shared parameters, presets, state; no chip model yet), `VS_BUILD_BSIDE` (default ON), the
   local gate, `host_smoke`, the dev host (`scripts/dev-host.sh --plugin bside`) and the CI
@@ -150,6 +157,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   6. S1c: the B-Side table and trace readers and `bside_unit` (2026-11-14).
   7. S1b: B-Side itself, the two-plugin CMake and `build.yml` rewrite (never run), the shared
      `vs_juce_modules` library on MSVC, `scripts/sanitize-targets.sh` on a runner (2026-11-14).
+  8. M7a: the custom editor, the shared UI library, the embedded font and help-text data,
+     pluginval with its editor tests (CI still passes `--skip-gui-tests`) (2026-11-14).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -179,18 +188,24 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 ```
 source/common/    shared by all instruments; must not include anything from source/vintage/ or source/bside/
   dsp/            FastMath, DspUtil, BlepTable (JUCE-free)
-  engine/         NoteEvent, EventParser, VoiceAllocator, KeyRouter, PartMixer (JUCE-free), Oversampler
+  engine/         NoteEvent, EventParser, VoiceAllocator, KeyRouter, PartMixer, UiFeed (audio → editor)
+                  (JUCE-free), Oversampler
   fx/             Chorus, Delay, Reverb, SoftLimiter (JUCE-free)
   seq/            arpeggiator and step sequencer (JUCE-free)
+  ui/             editor library for both instruments: models/ (JUCE-free interaction models),
+                  ParamMirror (polls parameters per frame), controls/, graphs/, frame/, Theme,
+                  HelpTexts, ControlRegistry
   params/         parameter factories, shared globals (GlobalParams: master volume, key/mix, limiter),
                   effect and arp/seq parameters + bindings, shared Mappings.h
   presets/        preset model, strict JSON, files, manager, factory bank, preset bar
   shell/          BiTimbralProcessor (CRTP skeleton: MIDI, key modes, arp/seq, mixer, effects, output
-                  stage, bypass, programs, state), InstrumentEditor (preset bar + generic editor)
+                  stage, bypass, programs, state), InstrumentEditor (preset bar + generic editor),
+                  EditorState (JUCE-free; saved as the `UiState` child of a session)
 source/vintage/   this instrument: PluginProcessor.* (VintageSynthProcessor : shell::BiTimbralProcessor),
-                  PluginEditor.h (alias of shell::InstrumentEditor until M7)
+                  ui/ (VintageEditor, PageList, SoundPage, PlaceholderPage; one file pair per page)
   dsp/            Oscillator, Filters, Envelope, Lfo, Drift (JUCE-free)
-  engine/         Voice, Part, Modulation (shared per-part modulation)
+  engine/         Voice, Part, Modulation (shared per-part modulation), OscPath (the oscillator
+                  path shared by Voice and the editor's oscilloscope)
   params/         PartParamList.h (X-macro list of all per-part params), PartMappings.h,
                   ParameterLayout (assembles the layout), StateVersion.h
 source/bside/     Exitium B-Side (second plugin): PluginProcessor.*, engine/TestTonePart (placeholder until
@@ -201,6 +216,9 @@ tests/bside/      bside_unit (JUCE-free, ctest label "bside") always; with VS_BU
                   bs_test_core + BSideTests. `bside_unit "[.fuzz-long]"` is the hidden 10^6-case fuzz run
 presets/bside/factory/  B-Side factory programs (JSON, embedded)
 scripts/sanitize-targets.sh  the one list of sanitizer test targets (preflight, Linux container, CI)
+resources/fonts/inter/  the embedded UI font with its licence (OFL.txt) and source record
+docs/ui/         wireframes and help-texts.md (the single source of the editor's help texts)
+tests/ui/        editor tests (part of VintageSynthTests); hidden "[.uishots]" and "[.uibench]"
 tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
 tests/benchmarks/ voice_bench (CPU cost per voice)
 tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)
@@ -269,6 +287,8 @@ must build for all five targets (mac universal, win x64, win ARM64, Linux x86_64
   added to `scripts/sanitize-targets.sh`.
 - Never `grep -q` on the right side of a pipe under `pipefail` (the left side dies with SIGPIPE and
   the pipeline "fails"); capture the output first. `VS_PREFLIGHT_PLUGINS` is for `--quick`/`--only`.
+- GCC's `-Wshadow` is an error and also fires for a constructor parameter that shadows a member of
+  a JUCE base class; only the Linux step shows it.
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
 
