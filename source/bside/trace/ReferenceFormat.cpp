@@ -17,11 +17,6 @@ using namespace vs::bside::text;
 
 const char* kHex = "0123456789abcdef";
 
-std::string quoted (std::string_view s)
-{
-    return "'" + std::string (s.substr (0, 24)) + (s.size() > 24 ? "...'" : "'");
-}
-
 bool isLowerHexString (const std::string& s, std::size_t a, std::size_t b)
 {
     if (s.size() != a && s.size() != b)
@@ -600,6 +595,8 @@ bool writeReference (const Reference& r, std::string& out)
         }
         s += '\n';
     }
+    if (s.size() > kMaxReferenceBytes)
+        return false; // the reader would refuse it
     out = std::move (s);
     return true;
 }
@@ -675,6 +672,8 @@ bool writeSpec (const Spec& s, std::string& out)
             o += " " + std::to_string (v);
         o += '\n';
     }
+    if (o.size() > kMaxSpecBytes)
+        return false; // the reader would refuse it
     out = std::move (o);
     return true;
 }

@@ -89,15 +89,28 @@ std::string cmdText (const Cmd& c, int release)
     }
     return {};
 }
-} // namespace
-
-bool writeTable (const Program& p, std::string& out)
+std::string rowText (const Program& p, int lane, int k)
 {
-    out.clear();
-    if (! validate (p))
-        return false;
-    std::string s = "bside-table 1\n";
+    const auto& li = p.lanes[lane];
+    const auto& row = p.rows[li.firstRow + k];
+    std::string s = "    ";
+    for (int c = 0; c < row.numCmds; ++c)
+    {
+        if (c > 0)
+            s += ", ";
+        s += cmdText (p.cmds[row.firstCmd + c], li.release);
+    }
+    const auto lastOp = static_cast<Op> (p.cmds[row.firstCmd + row.numCmds - 1].op);
+    const int defaultDelay = (lastOp == Op::jump || lastOp == Op::repeat) ? 0 : 1;
+    if (row.delay != defaultDelay)
+        s += " ticks " + std::to_string (row.delay);
+    return s;
+}
 
+/** The canonical text of a structurally valid program. */
+std::string render (const Program& p)
+{
+    std::string s = "bside-table 1\n";
     const auto& r = p.restart;
     std::string rs;
     if (r.mode != 0)
@@ -135,22 +148,29 @@ bool writeTable (const Program& p, std::string& out)
         {
             if (target[k])
                 s += labelName (k, li.release) + ":\n";
-            const auto& row = p.rows[li.firstRow + k];
-            s += "    ";
-            for (int c = 0; c < row.numCmds; ++c)
-            {
-                if (c > 0)
-                    s += ", ";
-                s += cmdText (p.cmds[row.firstCmd + c], li.release);
-            }
-            const auto lastOp = static_cast<Op> (p.cmds[row.firstCmd + row.numCmds - 1].op);
-            const int defaultDelay = (lastOp == Op::jump || lastOp == Op::repeat) ? 0 : 1;
-            if (row.delay != defaultDelay)
-                s += " ticks " + std::to_string (row.delay);
-            s += '\n';
+            s += rowText (p, lane, k) + '\n';
         }
     }
-    out = std::move (s);
+    return s;
+}
+} // namespace
+
+std::size_t canonicalRowBytes (const Program& p, int lane, int row)
+{
+    return rowText (p, lane, row).size();
+}
+
+std::size_t canonicalTextBytes (const Program& p)
+{
+    return render (p).size();
+}
+
+bool writeTable (const Program& p, std::string& out)
+{
+    out.clear();
+    if (! validate (p))
+        return false;
+    out = render (p);
     return true;
 }
 } // namespace vs::bside::program

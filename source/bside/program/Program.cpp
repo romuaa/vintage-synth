@@ -167,37 +167,53 @@ int findZeroDelayLoop (const Program& p, int lane) noexcept
     const auto rowAt = [&] (int r) -> const Row& { return p.rows[li.firstRow + r]; };
     const auto lastCmd = [&] (int r) -> const Cmd& { return p.cmds[rowAt (r).firstCmd + rowAt (r).numCmds - 1]; };
     const auto inGraph = [&] (int r) { return rowAt (r).delay == 0 && ! isTickBound (static_cast<Op> (lastCmd (r).op)); };
-    // Every row has one successor: the jump target, or the next row. A `repeat` row counts as falling
-    // through: its jump edge is taken at most `count` times in a row, so it cannot make the loop endless.
-    const auto successor = [&] (int r) {
-        const auto& c = lastCmd (r);
-        if (static_cast<Op> (c.op) == Op::jump)
-            return static_cast<int> (c.a);
-        return r + 1;
-    };
 
+    // Edges of a row: `jump` goes to its target; `repeat` to its target and to the next row (it may
+    // jump back or fall through); everything else to the next row. Depth-first search with three
+    // colours over the delay-0 rows that do not stop the lane; an edge back to a row on the current
+    // path is a loop. At most two edges per row, so at most 2 * 64 steps.
     int colour[kMaxRowsPerLane] = {}; // 0 new, 1 on the current path, 2 done
+    int stackRow[kMaxRowsPerLane];
+    int stackEdge[kMaxRowsPerLane];
     for (int start = 0; start < n; ++start)
     {
-        if (colour[start] != 0)
+        if (colour[start] != 0 || ! inGraph (start))
             continue;
-        int r = start;
-        int found = -1;
-        while (r >= 0 && r < n && inGraph (r) && colour[r] != 2)
+        int sp = 0;
+        stackRow[0] = start;
+        stackEdge[0] = 0;
+        colour[start] = 1;
+        while (sp >= 0)
         {
-            if (colour[r] == 1)
+            const int r = stackRow[sp];
+            const auto& c = lastCmd (r);
+            const auto op = static_cast<Op> (c.op);
+            int next = -1;
+            const int edge = stackEdge[sp]++;
+            if (op == Op::jump)
+                next = edge == 0 ? c.a : -1;
+            else if (op == Op::repeat)
+                next = edge == 0 ? c.a : edge == 1 ? r + 1 : -1;
+            else
+                next = edge == 0 ? r + 1 : -1;
+            if (edge >= 2 || (edge == 1 && op != Op::repeat))
             {
-                found = r;
-                break;
+                colour[r] = 2;
+                --sp;
+                continue;
             }
-            colour[r] = 1;
-            r = successor (r);
+            if (next < 0 || next >= n || ! inGraph (next))
+                continue;
+            if (colour[next] == 1)
+                return next;
+            if (colour[next] == 0)
+            {
+                ++sp;
+                stackRow[sp] = next;
+                stackEdge[sp] = 0;
+                colour[next] = 1;
+            }
         }
-        if (found >= 0)
-            return found;
-        // Close the path.
-        for (int k = start; k >= 0 && k < n && colour[k] == 1; k = successor (k))
-            colour[k] = 2;
     }
     return -1;
 }
@@ -255,6 +271,36 @@ bool validate (const Program& p, std::string* why)
     for (int lane = 0; lane < kNumLanes; ++lane)
         if (findZeroDelayLoop (p, lane) >= 0)
             return fail ("rows with delay 0 form a loop", lane);
+    // Everything the text format limits, so that a valid program always has a readable canonical text.
+    for (int lane = 0; lane < kNumLanes; ++lane)
+    {
+        const auto& li = p.lanes[lane];
+        bool target[kMaxRowsPerLane] = {};
+        int labels = 0;
+        const auto mark = [&] (int row) {
+            if (! target[row])
+            {
+                target[row] = true;
+                ++labels;
+            }
+        };
+        for (int k = 0; k < li.numRows; ++k)
+        {
+            const auto& row = p.rows[li.firstRow + k];
+            const auto& last = p.cmds[row.firstCmd + row.numCmds - 1];
+            if (static_cast<Op> (last.op) == Op::jump || static_cast<Op> (last.op) == Op::repeat)
+                mark (last.a);
+        }
+        if (li.release != kNoRelease)
+            mark (li.release);
+        if (labels > kMaxLabelsPerLane)
+            return fail ("more jump targets than a lane may have labels", lane);
+        for (int k = 0; k < li.numRows; ++k)
+            if (canonicalRowBytes (p, lane, k) > static_cast<std::size_t> (kMaxLineBytes))
+                return fail ("canonical text of a row is longer than a line may be", lane);
+    }
+    if (canonicalTextBytes (p) > kMaxTextBytes)
+        return fail ("canonical text is longer than a table may be");
     return true;
 }
 } // namespace vs::bside::program

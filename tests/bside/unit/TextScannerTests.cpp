@@ -88,7 +88,8 @@ TEST_CASE ("text: numbers", "[bside][text]")
     CHECK (parseDecimal ("-1", 10, v) == NumberResult::notNumber);
     CHECK (parseDecimal ("+1", 10, v) == NumberResult::notNumber);
     CHECK (parseDecimal ("1 ", 10, v) == NumberResult::notNumber);
-    CHECK (parseDecimal ("00000000000000000000001", 10, v) == NumberResult::outOfRange); // 23 digits: never wraps
+    CHECK (parseDecimal ("00000000000000000000001", 10, v) == NumberResult::ok); // leading zeros are free
+    CHECK (parseDecimal ("10000000000000000000000", 10, v) == NumberResult::outOfRange); // 23 digits: never wraps
     CHECK (parseDecimal ("99999999999999999999", ~0ull, v) == NumberResult::outOfRange);
     CHECK (parseDecimal ("1099511627776", 1ull << 40, v) == NumberResult::ok);
     CHECK (v == (1ull << 40));

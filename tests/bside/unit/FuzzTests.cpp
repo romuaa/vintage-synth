@@ -9,6 +9,7 @@
 // table cases is BS_FUZZ_CASES (default 1,000,000), the other formats get a tenth of it each.
 
 #include "FuzzSupport.h"
+#include "RowsPerTick.h"
 #include "TableTestUtil.h"
 
 #include "bside/trace/ReferenceFormat.h"
@@ -18,10 +19,26 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstddef>
 #include <cstdlib>
 #include <new>
 
 // ---- counting allocator for the whole test executable ----
+// Replacing the global operator new would hide small under-runs and new/delete mismatches from
+// AddressSanitizer, so under ASan it is NOT replaced: the allocation bound is measured only in
+// builds without it (the Release and Debug builds of ctest and of the hidden long run); in the
+// sanitizer builds the bound assertions pass trivially (the peak reads 0) and ASan does its own job.
+#if defined(__SANITIZE_ADDRESS__)
+ #define BS_FUZZ_ASAN 1
+#elif defined(__has_feature)
+ #if __has_feature(address_sanitizer)
+  #define BS_FUZZ_ASAN 1
+ #endif
+#endif
+#ifndef BS_FUZZ_ASAN
+ #define BS_FUZZ_ASAN 0
+#endif
+
 namespace
 {
 std::atomic<std::size_t> gLive { 0 };
@@ -59,6 +76,7 @@ struct AllocScope
 };
 } // namespace
 
+#if ! BS_FUZZ_ASAN
 void* operator new (std::size_t n)
 {
     if (void* p = countedAlloc (n))
@@ -84,6 +102,7 @@ void operator delete[] (void* p, std::size_t) noexcept { countedFree (p); }
 #endif
 void operator delete (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
 void operator delete[] (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
+#endif
 
 using namespace bst;
 using namespace vs::bside::trace;
@@ -163,6 +182,10 @@ void tableCase (const std::string& input, Stats& st)
     {
         std::string why;
         REQUIRE (prog::validate (r.program, &why));
+        {
+            Rng rowsRng (input.size() + 1);
+            REQUIRE (maxRowsPerTick (r.program, rowsRng, 3) <= prog::kMaxRowsPerTick);
+        }
         std::string text;
         REQUIRE (prog::writeTable (r.program, text));
         const auto again = prog::readTable (text);
@@ -178,6 +201,52 @@ void tableCase (const std::string& input, Stats& st)
         REQUIRE (r.program == prog::emptyProgram());
         checkErrors (r.errors, input);
     }
+}
+
+/** Hostile Program bytes: whatever validate() accepts must write to text that reads back to the same bytes. */
+void programCase (const prog::Program& base, std::uint64_t seed, Stats& st)
+{
+    Rng rng (seed);
+    prog::Program p = base;
+    auto* bytes = reinterpret_cast<unsigned char*> (&p);
+    const int usedRows = static_cast<int> (base.numRows), usedCmds = static_cast<int> (base.numCmds);
+    const std::size_t rowsAt = offsetof (prog::Program, rows), cmdsAt = offsetof (prog::Program, cmds);
+    for (int k = 0, n = 1 + static_cast<int> (rng.below (6)); k < n; ++k)
+    {
+        std::size_t at = 0;
+        switch (rng.below (4))
+        {
+            case 0: at = rng.below (static_cast<std::uint32_t> (rowsAt)); break;
+            case 1: at = rowsAt + rng.below (static_cast<std::uint32_t> (std::max (1, usedRows * 4 + 8))); break;
+            case 2: at = cmdsAt + rng.below (static_cast<std::uint32_t> (std::max (1, usedCmds * 8 + 16))); break;
+            default: at = rng.below (static_cast<std::uint32_t> (sizeof (prog::Program))); break;
+        }
+        const auto how = rng.below (4);
+        bytes[at] = how == 0 ? static_cast<unsigned char> (rng.below (256)) : how == 1 ? static_cast<unsigned char> (bytes[at] + 1)
+                    : how == 2 ? static_cast<unsigned char> (bytes[at] - 1) : static_cast<unsigned char> (bytes[at] ^ (1u << rng.below (8)));
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    std::string why;
+    const bool valid = prog::validate (p, &why);
+    const double ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now() - t0).count();
+    st.note (sizeof (p), ms, 0, valid);
+    REQUIRE (ms < kMaxMillisecondsPerInput);
+    if (! valid)
+    {
+        REQUIRE (! why.empty());
+        std::string out = "x";
+        REQUIRE_FALSE (prog::writeTable (p, out));
+        REQUIRE (out.empty());
+        return;
+    }
+    std::string text;
+    REQUIRE (prog::writeTable (p, text));
+    const auto again = prog::readTable (text);
+    INFO ("seed " << seed << "\n" << text << again.message());
+    REQUIRE (again.ok);
+    REQUIRE (again.program == p);
+    Rng rowsRng (seed);
+    REQUIRE (maxRowsPerTick (p, rowsRng, 3) <= prog::kMaxRowsPerTick);
 }
 
 void traceCase (const std::string& input, Stats& st)
@@ -389,6 +458,19 @@ void runAll (std::uint64_t tableCases, std::uint64_t otherCases)
 {
     const auto tables = tableCorpus();
     timedFuzz ("table", [&] { return fuzz (tables, tableCases, 1, tableCase); });
+    {
+        std::vector<prog::Program> programs;
+        for (const auto& t : tables)
+            if (const auto r = prog::readTable (t); r.ok && r.program.numRows > 0)
+                programs.push_back (r.program);
+        REQUIRE (! programs.empty());
+        timedFuzz ("program", [&] {
+            Stats st;
+            for (std::uint64_t i = 0; i < otherCases * 2; ++i)
+                programCase (programs[i % programs.size()], 600000000 + i, st);
+            return st;
+        });
+    }
     const auto traces = corpusOf (randomTrace, 24, 11, "bside-trace 1\nclock 985248\nmodel A\nend 0\n");
     timedFuzz ("trace", [&] { return fuzz (traces, otherCases, 7000000, traceCase); });
     const auto refs = corpusOf (randomReference, 16, 12, "bside-ref 1\n");
@@ -426,7 +508,7 @@ TEST_CASE ("fuzz: pathological inputs at the limits", "[bside][fuzz]")
         tableCase (t, st);
     }
     // A trace and a spec at their sizes.
-    traceCase ("bside-trace 1\nclock 985248\nmodel A\ncheck 1\nend 1000001\n", st);
+    traceCase ("bside-trace 1\nclock 985248\nmodel A\ncheck 1\nend 50000\n", st);
     traceCase ("bside-trace 1\nclock 985248\nmodel A\ncheck 1\nend 1099511627776\n", st);
     traceCase ("bside-trace 1\nclock 985248\nmodel A\n" + repeatLine ("0 00 00", 20000) + "end 0\n", st);
     traceCase (std::string (200000, '9'), st);
@@ -438,6 +520,11 @@ TEST_CASE ("fuzz: pathological inputs at the limits", "[bside][fuzz]")
 
 TEST_CASE ("fuzz: the allocation counter itself works", "[bside][fuzz]")
 {
+    if (BS_FUZZ_ASAN)
+    {
+        SUCCEED ("not replaced under AddressSanitizer (see the top of this file)");
+        return;
+    }
     AllocScope scope;
     {
         std::vector<char> v (100000);

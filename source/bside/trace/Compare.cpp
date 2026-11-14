@@ -2,17 +2,33 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 
 namespace vs::bside::trace
 {
 namespace
 {
+/** Fixed-point text of a number, independent of the C locale (no printf). */
 std::string fixed (double v, int digits = 1)
 {
-    char buf[48];
-    std::snprintf (buf, sizeof buf, "%.*f", digits, v);
-    return buf;
+    if (std::isnan (v))
+        return "nan";
+    if (std::isinf (v))
+        return v < 0 ? "-inf" : "inf";
+    unsigned long long scale = 1;
+    for (int i = 0; i < digits; ++i)
+        scale *= 10;
+    const double scaled = std::round (std::abs (v) * static_cast<double> (scale));
+    if (scaled > 9.0e15)
+        return v < 0 ? "-huge" : "huge";
+    const auto n = static_cast<unsigned long long> (scaled);
+    std::string out = (v < 0 && n != 0) ? "-" : "";
+    out += std::to_string (n / scale);
+    if (digits > 0)
+    {
+        auto frac = std::to_string (n % scale);
+        out += "." + std::string (static_cast<std::size_t> (digits) - frac.size(), '0') + frac;
+    }
+    return out;
 }
 
 Verdict make (bool pass, double dev, double allowed, std::string what)
@@ -111,6 +127,17 @@ Verdict checkNoiseSpectrum (const SpecSegment& measured, const SpecSegment& refe
 ScriptedResult compareScripted (const Spec& ref, const Spec& cand)
 {
     ScriptedResult r;
+    std::string why;
+    if (! validateSpec (ref, &why))
+    {
+        r.report = "FAIL the reference spec is not valid: " + why + "\n";
+        return r;
+    }
+    if (! validateSpec (cand, &why))
+    {
+        r.report = "FAIL the measured spec is not valid: " + why + "\n";
+        return r;
+    }
     if (ref.frames != cand.frames || ref.frames < 1)
     {
         r.report = "FAIL frame count differs: reference " + std::to_string (ref.frames) + ", measured " + std::to_string (cand.frames) + "\n";

@@ -65,7 +65,7 @@ inline int hexValue (char c) noexcept { return isDigit (c) ? c - '0' : (c | 0x20
 
 enum class NumberResult { ok, notNumber, outOfRange };
 
-/** Decimal digits only (no sign, no spaces), at most 19 digits, value <= maxValue. */
+/** Decimal digits only (no sign, no spaces), at most 19 significant digits (leading zeros are free), value <= maxValue. */
 NumberResult parseDecimal (std::string_view t, std::uint64_t maxValue, std::uint64_t& out) noexcept;
 /** Hex digits only (either case), 1..maxDigits digits, value <= maxValue. */
 NumberResult parseHex (std::string_view t, size_t maxDigits, std::uint64_t maxValue, std::uint64_t& out) noexcept;
@@ -98,6 +98,20 @@ struct Cursor
         return s.substr (from, i - from);
     }
 };
+
+/** `s` in single quotes for a message: at most 24 bytes, cut on a character boundary ("..." marks a cut). */
+inline std::string quoted (std::string_view s)
+{
+    std::size_t n = s.size();
+    const bool cut = n > 24;
+    if (cut)
+    {
+        n = 24;
+        while (n > 0 && (static_cast<unsigned char> (s[n]) & 0xc0u) == 0x80u) // do not stop inside a UTF-8 sequence
+            --n;
+    }
+    return "'" + std::string (s.substr (0, n)) + (cut ? "...'" : "'");
+}
 
 /** The token at the cursor, or (when it is empty, e.g. at ',' or '#') the single character there; for messages. */
 inline std::string_view tokenOrChar (Cursor& c) noexcept

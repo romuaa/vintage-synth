@@ -139,12 +139,27 @@ constexpr bool isTickBound (Op op) noexcept
 
 /** Whether every field is inside the ranges of the contract and the layout is consistent
     (lanes in order and contiguous, targets inside their lane, unused storage zero, no zero-delay
-    loop). Fills `why` (if given) with the first problem. A program produced by the reader always passes. */
+    loop) and the program can be written as text the reader accepts: at most 16 jump targets and
+    release per lane, canonical lines of at most 200 bytes, canonical text of at most 32 KB.
+    Fills `why` (if given) with the first problem. A program produced by the reader always passes,
+    and a program that passes always writes to text that reads back to the same bytes. */
 bool validate (const Program& p, std::string* why = nullptr);
 
 /** A cycle of rows that all have delay 0 and do not stop the lane: the row where it is detected
     (lowest row index on the path), or -1. Rows of the lane must be valid. */
 int findZeroDelayLoop (const Program& p, int lane) noexcept;
+
+/** Most rows one lane can execute within one tick, for any table the reader accepts or validate()
+    accepts: the rows that execute without a delay form an acyclic graph (a repeat counts as an edge
+    in both directions), so one tick runs a path of distinct rows, ending at the first row that waits,
+    stops or sweeps. The runtime's per-tick row cap is a backstop that never triggers. */
+constexpr int kMaxRowsPerTick = kMaxRowsPerLane;
+
+/** Bytes of the canonical line of a row (indent, commands, ticks), without the line end. The
+    program must be structurally valid. */
+std::size_t canonicalRowBytes (const Program& p, int lane, int row);
+/** Bytes of the whole canonical text. The program must be structurally valid. */
+std::size_t canonicalTextBytes (const Program& p);
 
 /** Canonical text of a program (8.6.5). Returns false (and leaves `out` empty) for a program that
     does not validate. Deterministic; no comments; label names are generated: `release` and `r<row>`. */

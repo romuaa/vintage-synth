@@ -8,11 +8,6 @@ using namespace vs::bside::text;
 
 const char* kHex = "0123456789abcdef";
 
-std::string quoted (std::string_view s)
-{
-    return "'" + std::string (s.substr (0, 24)) + (s.size() > 24 ? "...'" : "'");
-}
-
 std::uint64_t periodicCount (const Trace& t) noexcept
 {
     return (t.check > 0 && t.endCycle > 0) ? (t.endCycle - 1) / t.check : 0;
@@ -361,6 +356,8 @@ bool writeTrace (const Trace& t, std::string& out)
         s += '\n';
     }
     s += "end " + std::to_string (t.endCycle) + "\n";
+    if (s.size() > kMaxTraceBytes)
+        return false; // the reader would refuse it
     out = std::move (s);
     return true;
 }

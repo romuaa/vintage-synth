@@ -143,7 +143,7 @@ TEST_CASE ("table round trip: random valid tables", "[bside][table][roundtrip]")
         ++accepted;
         checkRoundTrip (text);
     }
-    CHECK (accepted > 150); // the generator mostly produces valid tables
+    CHECK (accepted > 100); // the generator mostly produces valid tables
 }
 
 TEST_CASE ("table writer: refuses a program that does not validate", "[bside][table][roundtrip]")

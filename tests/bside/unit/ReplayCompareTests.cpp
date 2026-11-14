@@ -6,9 +6,11 @@
 
 #include "bside/trace/Compare.h"
 #include "bside/trace/Replay.h"
+#include "bside/trace/Sha256.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <clocale>
 #include <cmath>
 
 using namespace vs::bside::trace;
@@ -72,6 +74,14 @@ StateVector snapshot (const StubChip& c)
     return s;
 }
 
+/** The trace file's bytes (here the canonical text, standing for the file the adapter read). */
+std::string bytesOf (const Trace& t)
+{
+    std::string text;
+    REQUIRE (writeTrace (t, text));
+    return text;
+}
+
 /** What a reference emulator's adapter does, with the stub as the "emulator". */
 Reference generate (const Trace& t, bool bug = false)
 {
@@ -80,7 +90,7 @@ Reference generate (const Trace& t, bool bug = false)
     StubChip chip;
     chip.bug = bug;
     Reference r;
-    r.traceSha256 = std::string (64, '1');
+    r.traceSha256 = sha256Hex (bytesOf (t));
     r.adapter = std::string (40, '2');
     r.emulator = std::string (40, '3');
     for (const auto& cp : schedule)
@@ -116,7 +126,7 @@ TEST_CASE ("replay: a faithful chip matches its own reference", "[bside][replay]
     const auto t = sampleTrace();
     const auto ref = generate (t);
     StubChip chip;
-    const auto r = replay (chip, t, ref, setup, snapshot);
+    const auto r = replay (chip, t, bytesOf (t), ref, setup, snapshot);
     INFO (describe (r));
     CHECK (r.ok);
     CHECK (r.error.empty());
@@ -132,7 +142,7 @@ TEST_CASE ("replay: a deviating chip is caught at the first differing checkpoint
     const auto ref = generate (t);
     StubChip chip;
     chip.bug = true;
-    const auto r = replay (chip, t, ref, setup, snapshot);
+    const auto r = replay (chip, t, bytesOf (t), ref, setup, snapshot);
     REQUIRE_FALSE (r.ok);
     REQUIRE (! r.first.empty());
     // The first span longer than 1000 cycles: from the writes at cycle 0 to the periodic checkpoint at 5000.
@@ -143,7 +153,10 @@ TEST_CASE ("replay: a deviating chip is caught at the first differing checkpoint
     CHECK (r.mismatchedPoints > 0);
     CHECK (r.first.size() <= kMaxReportedMismatches);
     const auto text = describe (r);
-    CHECK (text.find ("(cycle 5000): acc1") != std::string::npos);
+    CHECK (text.find ("(cycle 5000): acc1 ours 0x") != std::string::npos);
+    CHECK (text.find (", expected 0x") != std::string::npos);
+    CHECK (hexText (0) == "0x0");
+    CHECK (hexText (0xff00) == "0xff00");
     CHECK (text.find ("checkpoints differ") != std::string::npos);
 }
 
@@ -155,7 +168,7 @@ TEST_CASE ("replay: at most eight differences are listed", "[bside][replay]")
         for (auto& v : p.state.v)
             v ^= 1; // every field of every checkpoint differs
     StubChip chip;
-    const auto r = replay (chip, t, ref, setup, snapshot);
+    const auto r = replay (chip, t, bytesOf (t), ref, setup, snapshot);
     REQUIRE_FALSE (r.ok);
     CHECK (r.first.size() == kMaxReportedMismatches);
     CHECK (r.mismatchedPoints == ref.points.size());
@@ -167,11 +180,24 @@ TEST_CASE ("replay: a reference that does not belong to the trace is refused, no
     auto ref = generate (t);
     ref.points.pop_back();
     StubChip chip;
-    const auto r = replay (chip, t, ref, setup, snapshot);
+    const auto r = replay (chip, t, bytesOf (t), ref, setup, snapshot);
     CHECK_FALSE (r.ok);
     CHECK (r.compared == 0);
     CHECK (r.error.find ("checkpoints") != std::string::npos);
     CHECK (describe (r).find ("replay did not run") == 0);
+    CHECK (chip.writesSeen == 0);
+}
+
+TEST_CASE ("replay: a reference made from other trace bytes is refused", "[bside][replay]")
+{
+    const auto t = sampleTrace();
+    const auto ref = generate (t);
+    StubChip chip;
+    auto other = bytesOf (t) + "# not the file the reference was made from\n";
+    const auto r = replay (chip, t, other, ref, setup, snapshot);
+    CHECK_FALSE (r.ok);
+    CHECK (r.compared == 0);
+    CHECK (r.error.find ("different trace") != std::string::npos);
     CHECK (chip.writesSeen == 0);
 }
 
@@ -193,7 +219,7 @@ TEST_CASE ("replay: random traces, with and without periodic checkpoints", "[bsi
         t.endCycle = c + static_cast<std::uint64_t> (rng.range (0, 6000));
         const auto ref = generate (t);
         StubChip chip;
-        const auto r = replay (chip, t, ref, setup, snapshot);
+        const auto r = replay (chip, t, bytesOf (t), ref, setup, snapshot);
         INFO (describe (r));
         CHECK (r.ok);
         CHECK (r.compared == ref.points.size());
@@ -350,6 +376,46 @@ TEST_CASE ("compare: scripted traces", "[bside][compare]")
         CHECK_FALSE (r.pass);
         CHECK (r.report.find ("frame count differs") != std::string::npos);
     }
+}
+
+TEST_CASE ("compare: inconsistent specs are refused, not read out of bounds", "[bside][compare]")
+{
+    const auto good = flatSpec (2, -300, -400);
+    auto shortBands = good;
+    shortBands.bandTenthDb.resize (kSpecBands); // 23 entries for 2 frames
+    auto r = compareScripted (good, shortBands);
+    CHECK_FALSE (r.pass);
+    CHECK (r.report.find ("measured spec is not valid") != std::string::npos);
+    r = compareScripted (shortBands, good);
+    CHECK_FALSE (r.pass);
+    CHECK (r.report.find ("reference spec is not valid") != std::string::npos);
+    auto shortLevel = good;
+    shortLevel.levelTenthDb.pop_back();
+    CHECK_FALSE (compareScripted (good, shortLevel).pass);
+    auto zero = good;
+    zero.frames = 0;
+    CHECK_FALSE (compareScripted (zero, zero).pass);
+}
+
+TEST_CASE ("compare: report text does not depend on the C locale", "[bside][compare]")
+{
+    const char* const names[] = { "de_DE.UTF-8", "fr_FR.UTF-8", "de_DE", "fr_FR", "de_DE.ISO8859-1" };
+    std::string saved = std::setlocale (LC_ALL, nullptr);
+    bool switched = false;
+    for (const auto* n : names)
+        if (std::setlocale (LC_ALL, n) != nullptr)
+        {
+            switched = true;
+            break;
+        }
+    const auto v = checkFilterCorner (1051.0, 1000.0);
+    const auto w = checkWithinDb ("x", -3.14159, 2.5, 1.0);
+    std::setlocale (LC_ALL, saved.c_str());
+    INFO ("locale switched: " << switched);
+    CHECK (v.what.find ("1051.0 Hz against 1000.0 Hz, off by 5.10 %") != std::string::npos);
+    CHECK (w.what.find ("-3.14 dB against 2.50 dB, off by 5.64 dB") != std::string::npos);
+    CHECK (checkWithinDb ("x", 0.0, 0.0, 1.0).what.find ("0.00 dB against 0.00 dB") != std::string::npos);
+    CHECK (checkWithinDb ("x", -0.001, 0.0, 1.0).what.find ("-0.00") == std::string::npos);
 }
 
 TEST_CASE ("compare: delay estimation", "[bside][compare]")

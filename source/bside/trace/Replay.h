@@ -9,6 +9,9 @@
 //   void advanceCycles (std::uint64_t cycles) noexcept;       // digital state only
 //   void write (std::uint8_t reg, std::uint8_t value) noexcept; // at the current cycle
 //   std::uint64_t cycle() const noexcept;
+// The reference must belong to the trace: replay() checks the checkpoint schedule and the
+// reference's SHA-256 against `traceBytes`, the exact bytes of the trace file the reference was
+// generated from (the original file, not a re-written one), and refuses to run otherwise.
 // The caller supplies two callables:
 //   setup (chip, trace)   configures model and clock from the trace and resets the chip (cycle 0)
 //   snapshot (chip)       returns a StateVector in the field order of the .bsref format
@@ -17,6 +20,7 @@
 #include "bside/trace/TraceFormat.h"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace vs::bside::trace
@@ -41,11 +45,11 @@ struct ReplayResult
 constexpr std::size_t kMaxReportedMismatches = 8;
 
 template <class Chip, class Setup, class Snapshot>
-ReplayResult replay (Chip& chip, const Trace& trace, const Reference& reference, Setup&& setup, Snapshot&& snapshot)
+ReplayResult replay (Chip& chip, const Trace& trace, std::string_view traceBytes, const Reference& reference, Setup&& setup, Snapshot&& snapshot)
 {
     ReplayResult result;
     std::string why;
-    if (! referenceMatchesTrace (reference, trace, nullptr, &why))
+    if (! referenceMatchesTrace (reference, trace, &traceBytes, &why))
     {
         result.error = why;
         return result;
@@ -87,7 +91,18 @@ ReplayResult replay (Chip& chip, const Trace& trace, const Reference& reference,
     return result;
 }
 
-/** "checkpoint 12 (cycle 4096): acc1 ours 00ff00, expected 00fe00; ..." */
+/** "checkpoint 12 (cycle 4096): acc1 ours 0xff00, expected 0xfe00; ...": the cycle is decimal, the fields hex. */
+inline std::string hexText (std::uint32_t v)
+{
+    std::string s;
+    do
+    {
+        s.insert (s.begin(), "0123456789abcdef"[v & 15u]);
+        v >>= 4;
+    } while (v != 0);
+    return "0x" + s;
+}
+
 inline std::string describe (const ReplayResult& r)
 {
     if (! r.error.empty())
@@ -98,7 +113,7 @@ inline std::string describe (const ReplayResult& r)
         if (! s.empty())
             s += "; ";
         s += "checkpoint " + std::to_string (m.checkpoint) + " (cycle " + std::to_string (m.cycle) + "): " + kStateFieldNames[m.field]
-             + " ours " + std::to_string (m.ours) + ", expected " + std::to_string (m.expected);
+             + " ours " + hexText (m.ours) + ", expected " + hexText (m.expected);
     }
     if (r.mismatchedPoints > 0)
         s += " [" + std::to_string (r.mismatchedPoints) + " of " + std::to_string (r.compared) + " checkpoints differ]";

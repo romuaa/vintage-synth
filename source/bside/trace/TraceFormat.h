@@ -2,7 +2,7 @@
 
 // The register trace file (.bstrace, docs/architecture.md 8.9.2): a list of chip register writes
 // at exact cycles. A bounded, strict reader of untrusted input (same style as the table reader):
-// at most 16 MB, 10^6 writes, cycles up to 2^40, 64 bytes per statement (256 per line, comment included); one pass, no recursion, no
+// at most 16 MB, 100 000 writes, cycles up to 2^40, 64 bytes per statement (256 per line, comment included); one pass, no recursion, no
 // exception leaves readTrace(); the first 8 problems are reported as
 // "line L, column C: <what> (expected <what>)".
 //
@@ -26,7 +26,10 @@
 namespace vs::bside::trace
 {
 constexpr std::size_t kMaxTraceBytes = 16u * 1024u * 1024u;
-constexpr std::size_t kMaxWrites = 1000000;
+/** The limits are tied together: a reference file holds one line per checkpoint (writes + periodic
+    checkpoints + 1) and must fit kMaxReferenceBytes (ReferenceFormat.h), so a trace at its limits
+    still has a reference the reader accepts. The contract's 10^6 writes would need a 214 MB reference. */
+constexpr std::size_t kMaxWrites = 100000;
 constexpr std::uint64_t kMaxCycle = 1ull << 40;
 /** The statement part of a line (the bytes before a '#') is at most 64 bytes; with its comment the
     whole line at most 256 (the contract's own example has longer lines with comments). */
@@ -36,7 +39,10 @@ constexpr std::uint32_t kMinClockHz = 1000;
 constexpr std::uint32_t kMaxClockHz = 100000000;
 constexpr std::uint8_t kMaxWritableRegister = 0x18;
 /** Periodic checkpoints (every `check` cycles) a trace may ask for. */
-constexpr std::uint64_t kMaxPeriodicCheckpoints = 1000000;
+constexpr std::uint64_t kMaxPeriodicCheckpoints = 49999;
+
+/** The longest canonical write line is "<13 digits> rr vv\n" = 20 bytes. */
+static_assert (kMaxWrites * 20 + 512 <= kMaxTraceBytes, "writeTrace output must fit what readTrace accepts");
 
 enum class Model : std::uint8_t { A, B };
 

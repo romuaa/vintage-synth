@@ -244,9 +244,13 @@ TEST_CASE ("table: flow commands, labels and delays", "[bside][table]")
         CHECK (rowOf (p, Wave1, 5).delay == 0);
         CHECK (rowOf (p, Wave1, 6).delay == 1);
     }
-    SECTION ("a finite zero-delay repeat loop is allowed")
+    SECTION ("a zero-delay repeat loop is rejected, finite or not")
     {
-        CHECK (readBody ("[wave1]\nx:\npitch +1 ticks 0\nrepeat x 3\npitch +2\n").ok);
+        CHECK_FALSE (readBody ("[wave1]\nx:\npitch +1 ticks 0\nrepeat x 3\npitch +2\n").ok);
+    }
+    SECTION ("a repeat that goes back to a row with a delay is allowed")
+    {
+        CHECK (readBody ("[wave1]\nx:\npitch +1\npitch +2 ticks 0\nrepeat x 3\npitch +3\n").ok);
     }
     SECTION ("a loop containing a row with ticks is allowed")
     {

@@ -23,7 +23,7 @@ itself skipped, never passed.
 
 ## Input: `.bstrace`
 
-Format, bounds and error messages: `source/bside/trace/TraceFormat.h`. The adapter must reject a
+Format, bounds and error messages: `source/bside/trace/TraceFormat.h` (at most 100 000 writes and 49 999 periodic checkpoints, so a reference has at most 150 000 `state` lines). The adapter must reject a
 file this repository's reader would reject (the same grammar, the same bounds), and must not
 interpret anything beyond it. `clock` and `model` select the reference emulator's clock and chip
 revision. The writes are applied at their exact cycles, in file order for equal cycles.
@@ -63,7 +63,7 @@ it measures the reference, and in our own tests when they render ours; `estimate
 1. `readTrace`, `readReference`, `readSpec` (bounded, strict, no exception escapes).
 2. `referenceMatchesTrace()`: same checkpoint count and cycles as the trace's schedule, and the
    SHA-256 of the trace bytes.
-3. `replay()` (`Replay.h`): resets our chip from the trace, advances to each cycle, writes,
+3. `replay()` (`Replay.h`): checks the reference against the trace bytes (SHA-256) and schedule, resets our chip from the trace, advances to each cycle, writes,
    compares the 20 fields at every checkpoint **exactly**.
 4. `Compare.h`: the audio tolerances of 8.9.4 (corner +-5 %, resonance +-1 dB, distortion +-3 dB,
    voice DC +-1 dB, noise third-octave +-1.5 dB, scripted traces 3 dB per cell with at most 5 %

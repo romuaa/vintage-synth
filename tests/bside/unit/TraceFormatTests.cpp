@@ -172,22 +172,22 @@ TEST_CASE ("trace bounds: lines, writes, size, checkpoints", "[bside][trace][bou
         CHECK (readTrace (withHeader ("#" + std::string (255, 'x') + "\nend 0\n")).ok);
         expectTraceError (withHeader ("#" + std::string (256, 'x') + "\nend 0\n"), 4, 257, "line too long");
     }
-    SECTION ("10^6 writes")
+    SECTION ("100 000 writes")
     {
         std::string body;
-        body.reserve (12000000);
-        for (int i = 0; i < 1000000; ++i)
+        body.reserve (1200000);
+        for (int i = 0; i < 100000; ++i)
             body += "0 00 00\n";
         // 8 MB: inside the 16 MB file limit.
         auto r = readTrace (withHeader (body + "end 0\n"));
         INFO (r.message());
         REQUIRE (r.ok);
-        CHECK (r.trace.writes.size() == 1000000);
+        CHECK (r.trace.writes.size() == 100000);
         body += "0 00 00\n";
         r = readTrace (withHeader (body + "end 0\n"));
         REQUIRE_FALSE (r.ok);
         CHECK (r.errors.total() == 1);
-        CHECK (r.errors.stored()[0].line == 3 + 1000000 + 1);
+        CHECK (r.errors.stored()[0].line == 3 + 100000 + 1);
         CHECK (r.errors.stored()[0].what.find ("too many writes") != std::string::npos);
     }
     SECTION ("16 MB file")
@@ -204,10 +204,10 @@ TEST_CASE ("trace bounds: lines, writes, size, checkpoints", "[bside][trace][bou
     }
     SECTION ("periodic checkpoints")
     {
-        // check 1 up to cycle 1,000,001 gives exactly 1,000,000 periodic checkpoints (cycles 1 .. 10^6)
+        // check 1 up to cycle 50,000 gives exactly 49,999 periodic checkpoints (cycles 1 .. 49,999)
         std::string head = "bside-trace 1\nclock 985248\nmodel B\ncheck 1\n";
-        CHECK (readTrace (head + "end 1000001\n").ok);
-        expectTraceError (head + "end 1000002\n", 5, 5, "periodic checkpoints");
+        CHECK (readTrace (head + "end 50000\n").ok);
+        expectTraceError (head + "end 50001\n", 5, 5, "periodic checkpoints");
         CHECK (readTrace ("bside-trace 1\nclock 985248\nmodel B\ncheck 1073741824\nend 1099511627776\n").ok);
         CHECK (readTrace ("bside-trace 1\nclock 985248\nmodel B\ncheck 1073741824\nend 1099511627776\n").ok);
     }

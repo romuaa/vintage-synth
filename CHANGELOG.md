@@ -18,6 +18,11 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   for every command and error class, the four example tables, bounds tests for every limit, round
   trips, and a deterministic fuzz test (short in the normal run; 10^6 cases hidden under
   `[.fuzz-long]`).
+- Review follow-up: the canonical text always reads back (reader rejects rows whose canonical form is over
+  200 bytes; `validate()` checks every text limit); every cycle of rows without delay is an error and an
+  accepted table runs at most 64 rows per tick; trace limits lowered to 100 000 writes so a reference
+  file always fits its 16 MB limit and every writer refuses what its reader would; C1 controls and the
+  byte order mark are rejected with their own messages; `replay()` verifies the trace SHA-256.
 - `docs/bside-oracle-adapter.md`: the interface of the external reference-emulator adapter
   (nothing is downloaded or generated). `docs-check` now also keeps `source/bside/{text,program,trace}`
   JUCE-free and `source/bside` free of `vintage/` includes.

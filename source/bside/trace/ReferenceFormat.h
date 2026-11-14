@@ -49,6 +49,9 @@ constexpr std::size_t kMaxReferenceBytes = 16u * 1024u * 1024u;
 constexpr std::size_t kMaxReferenceLineBytes = 256;
 constexpr std::size_t kMaxCheckpoints = kMaxWrites + static_cast<std::size_t> (kMaxPeriodicCheckpoints) + 1;
 constexpr int kStateFields = 20;
+/** The longest canonical state line: "state " + 13 digits + 20 fields of 1-6 digits (67 in all) + 20
+    spaces + newline = 107 bytes; the header is under 300 bytes. */
+static_assert (kMaxCheckpoints * 107 + 300 <= kMaxReferenceBytes, "writeReference output must fit what readReference accepts");
 
 struct StateVector
 {
@@ -97,6 +100,8 @@ constexpr int kSpecMinTenthDb = -1200;
 constexpr int kSpecMaxTenthDb = 300;
 constexpr std::size_t kMaxSpecBytes = 16u * 1024u * 1024u;
 constexpr std::size_t kMaxSpecLineBytes = 1024;
+/** A frame line is at most 6 + 24 * 6 + 1 = 151 bytes; a segment line under 800. */
+static_assert (static_cast<std::size_t> (kSpecMaxFrames) * 151 + kSpecMaxSegments * 800 + 400 <= kMaxSpecBytes, "writeSpec output must fit what readSpec accepts");
 
 struct SpecSegment
 {

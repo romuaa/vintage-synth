@@ -50,6 +50,7 @@ const char* laneKindName (LaneKind k) noexcept
     return k == LaneKind::Wave ? "wave" : k == LaneKind::Pulse ? "pulse" : "filter";
 }
 
+bool isNoteLetter (char c) noexcept { return (c >= 'a' && c <= 'g') || (c >= 'A' && c <= 'G'); }
 bool isNameStart (char c) noexcept { return c >= 'a' && c <= 'z'; }
 bool isNameChar (char c) noexcept { return isNameStart (c) || isDigit (c) || c == '_'; }
 
@@ -115,12 +116,6 @@ struct Fail
         return false;
     }
 };
-
-std::string quoted (std::string_view s)
-{
-    // Keep messages short and printable: the text was checked to be valid UTF-8 without control characters.
-    return "'" + std::string (s.substr (0, 24)) + (s.size() > 24 ? "...'" : "'");
-}
 
 struct RowOut
 {
@@ -207,7 +202,7 @@ private:
     Fail& fail;
     bool hasTicks = false;
 
-    /** A token; '#' inside a note name ("=C#6") belongs to it, anywhere else '#' starts a comment. */
+    /** A token; the '#' of a note name ("=C#6": directly after the note letter) belongs to it, anywhere else '#' starts a comment. */
     std::string_view raw() noexcept
     {
         const size_t from = cur.i;
@@ -216,7 +211,7 @@ private:
             const char ch = cur.s[cur.i];
             if (ch == ' ' || ch == '\t' || ch == ',')
                 break;
-            if (ch == '#' && ! (cur.s[from] == '=' && cur.i - from == 2))
+            if (ch == '#' && ! (cur.s[from] == '=' && cur.i - from == 2 && isNoteLetter (cur.s[from + 1])))
                 break;
             ++cur.i;
         }
@@ -1010,6 +1005,28 @@ private:
         }
         if (! errors.empty())
             return;
+
+        // The canonical text must read back (the writer's spelling is longer than some inputs).
+        for (int l = 0; l < kNumLanes; ++l)
+            for (int k = 0; k < p.lanes[l].numRows; ++k)
+            {
+                const auto bytes = canonicalRowBytes (p, l, k);
+                if (bytes > static_cast<std::size_t> (kMaxLineBytes))
+                {
+                    const auto& row = s->lanes[l].rows[k];
+                    errors.add (row.line, row.col, "the canonical form of this row is " + std::to_string (bytes) + " bytes long",
+                                "a row whose canonical line (4 spaces, ', ' between commands, numbers in register units) is at most "
+                                    + std::to_string (kMaxLineBytes) + " bytes");
+                }
+            }
+        if (! errors.empty())
+            return;
+        if (const auto total = canonicalTextBytes (p); total > kMaxTextBytes)
+        {
+            errors.add (1, 1, "the canonical form of the table is " + std::to_string (total) + " bytes long",
+                        "a table whose canonical text is at most " + std::to_string (kMaxTextBytes) + " bytes");
+            return;
+        }
         result.program = p;
         result.ok = true;
     }

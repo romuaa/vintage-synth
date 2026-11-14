@@ -80,6 +80,10 @@ bool findInvalidByte (std::string_view t, int& line, int& column, const char*& w
         }
         if (value < minValue || value > 0x10ffffu || (value >= 0xd800u && value <= 0xdfffu))
             return fail (i, "invalid UTF-8");
+        if (value == 0xfeffu)
+            return fail (i, "byte order mark (U+FEFF)");
+        if (value >= 0x80u && value <= 0x9fu)
+            return fail (i, "C1 control character");
         i += extra + 1;
     }
     return false;
@@ -108,6 +112,8 @@ NumberResult parseDecimal (std::string_view t, std::uint64_t maxValue, std::uint
     for (const char c : t)
         if (! isDigit (c))
             return NumberResult::notNumber;
+    while (t.size() > 1 && t.front() == '0') // leading zeros do not count towards the digit limit
+        t.remove_prefix (1);
     if (t.size() > 19)
         return NumberResult::outOfRange;
     std::uint64_t v = 0;
