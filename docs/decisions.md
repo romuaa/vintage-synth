@@ -3,6 +3,19 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## M7d results: Arp + Seq page (2026-11-14)
+
+| Decision | Why |
+|---|---|
+| **The preview runs the engine's own `seq::ArpSeq` offline** (`models/ArpPreviewModel.h`) with the settings from `ArpParamBinding::read`; the test compares it note for note with what the real processor delivers to the part. The Arpeggiator view previews with the mode forced to Arp, so it is meaningful while the mode is Off or Sequencer. | The contract (9.4): the picture cannot disagree with the sound, and there is no second implementation of the pattern logic. |
+| **The feed now carries `seqStep` and the held-key order** (the `ArpSeq` accessors `lastSeqStep()` and `keys()`); `stepCount` stays 0 (nothing reads it). `seqStep` is −1 unless the mode is Sequencer and a pattern plays. | Only what the page needs; one counter less in the audio thread. |
+| **The preview plays held keys at velocity 0.8** (the feed carries key order, not velocities), like the example chord. (review) | Velocity only shades the bars; it does not change which notes play or when. |
+| **Hold sits in the "Timing and feel" panel in both views** (the contract's table), not in the pattern panel as in the Arp wireframe. | One panel, one place for it; the table is the specification. |
+| **Pitch bars are orange and velocity bars teal, as in the Seq wireframe;** the legend under the grid says so. The Plays-through switch shows Lower and Upper in their part colours. | The wireframe's reading aid; the part colours keep their meaning on the one switch that names parts. |
+| **When both parts play the arpeggio (Dual, Both) each note in the preview is split in two halves, Lower above Upper.** | Two identical bars on top of each other would hide one part. |
+| **The pattern cards and the large mode switch use new additive hooks of `SegmentedSwitch`** (`setSegmentPainter`, `setLargeStyle`); with no painter nothing changes. | The contract asks for icon cards and a 22 px mode switch; one control type stays one class. |
+| **Paint allocations (9.5 "at most 8 per component") cannot be met with JUCE's CoreGraphics context:** a bar that only fills rectangles costs 34 to 72 allocations inside the renderer. The test checks that every repeated paint costs exactly the same (our code allocates nothing: strings and paths are prepared when a value changes), within 96 per leaf component. (review) | The number in 9.5 was an estimate; what protects the audio and the user is "nothing of ours allocates and the cost does not grow". |
+
 ## M7a results: editor foundation and Sound page (2026-11-14)
 
 | Decision | Why |
