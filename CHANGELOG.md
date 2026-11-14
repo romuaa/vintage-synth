@@ -5,6 +5,21 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S1d: patch tables in presets and state (2026-11-14, `bside/s1d-preset-tables`)
+- `presets::Tone` and `Program` carry table lines; `Instrument` gets an optional table validator, canonicaliser
+  and limits (lines, bytes, file cap, JSON values). Vintage sets none: its program, tone and bank files and its
+  saved state are byte-identical to `origin/main` (new hidden `[.presetdump]` test, `diff -r`).
+- Program files `"tables": {"lower": [...], "upper": [...]}`, tone files `"table": [...]`; a table the reader
+  rejects rejects the whole file, message prefixed by part and program name. B-Side's caps: 12 MiB per file,
+  160 000 JSON values (the largest legitimate bank is 9.75 MB and 136 327 values).
+- Session state: child `Tables` (`lower`, `upper`, canonical text); a malformed table gives that part an empty
+  table and `PresetManager::tableError(part)`; all duplicate `Tables` and `Preset` children are removed.
+- `PresetManager`: `TableSink` (owned by the manager), `setTable`, `currentTable`, `tableError`. Tables are
+  published inside the same ApplyGate hold as the parameters. B-Side: `bside/program/ProgramHandover.h`
+  (four buffers per part, wait-free audio side) behind `BSideProcessor::tableHandover(part)`.
+- `readPresetFile` sizes its buffer from the file size instead of the cap (a 12 MiB cap no longer costs 12 MiB
+  per file read).
+
 ### B-Side S1b review follow-up (2026-11-14)
 - S1c merged in (`bside_unit`, `bs_juce_free`): `tests/bside/CMakeLists.txt` holds both test structures.
 - Sanitizer target selection fixed: `ninja -t targets \| grep -q` under `pipefail` made every target look

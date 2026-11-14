@@ -3,6 +3,16 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S1d: tables in presets and state (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The hand-over test saw torn programs (about 50 per 1.5 s run) with a plausible-looking protocol. | The writer read the committed index and then the claim; the audio thread stores the committed index and then clears the claim, so a writer could read a stale index, then a cleared claim, and reuse a buffer that was in use. | The writer reads the claim before the committed index. Rule: when one thread publishes A then clears B, the other must read B then A. The stress test in `tests/bside/unit/HandoverTests.cpp` finds the wrong order every run. |
+| A hostile test session with a million escaped line ends took 9 s in `setStateInformation`. | JUCE's XML decoder, before our code runs (our part took 0 ms). | Not ours to bound; measure our part separately (decode time subtracted). Sessions are only as safe as the host's blob handling. |
+| Every preset file read allocated and zeroed the whole file cap. | `readPresetFile` resized its buffer to `maxBytes + 1`; harmless at 1 MB, 12 MB per read with B-Side's cap. | Size the buffer from the file and grow to the cap. |
+| Removing duplicate children one by one from the front is quadratic. | `ValueTree` erases at the front by shifting. | `takeChildren` walks from the back. |
+| macOS `timeout` does not exist. | Not installed. | `perl -e 'alarm N; exec @ARGV'`. |
+
 ## B-Side S1b: plugin shell and gates for two plugins (2026-11-14)
 
 | Problem | Cause | Fix / rule |

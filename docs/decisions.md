@@ -3,6 +3,20 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## B-Side S1d: tables in presets and state (2026-11-14, all review)
+
+| Decision | Reason |
+|---|---|
+| **The hand-over uses four buffers per part, not three** (contract 8.6.7 says three). (review) | The audio thread has a committed buffer and, during its seqlock window, a candidate claim; with the published one these can be three different buffers, leaving the writer none. Four buffers (32 KB per part) make the writer's pick always possible. Audio side: one atomic load per block when nothing changed. |
+| **Tables are held and saved in canonical form** (comments, spacing and label names are not kept when a program is applied, captured, saved or stored in a session). (review) | The session must be canonical (8.8); keeping authored text only in files would make a table change under a session round trip. An editor that wants to keep the user's text (S6) keeps it itself (8.13 already says so). Bank slots keep the authored lines until the slot is applied. |
+| **`Instrument` also has `canonicaliseTable`, `maxTableLines`, `maxTableBytes`, `maxFileBytes`, `maxJsonValues`** next to the contract's validator. (review) | Canonical form needs the writer; bounds must be checked before any copy, by the generic reader. |
+| **A table is lines joined by LF; a line may not contain LF, CR or NUL.** | Keeps lines and text in one-to-one correspondence, so line numbers in messages match the file and a JSON `\n` cannot smuggle a second line past the line count. |
+| **Program files of an instrument with tables always write `"tables"` (empty lists for no table); tone files `"table"`.** Without tables nothing is written and the keys are ignored on reading. (review) | Fixed layout; empty = missing on reading, as the contract says. |
+| **B-Side file cap 12 MiB, 160 000 JSON values.** (review) | Worst case of 64 programs with two tables of 1024 lines and 32 768 bytes each, every line `#` plus 30 quotation marks (escaped in JSON): 9.75 MB and 136 327 values measured; about 20 % headroom. Time to parse and check it: 0.02 s. |
+| **A part's table error from a session is kept until the next apply or `setTable` replaces that part's table.** | The editor needs something to show; no new state of its own. |
+| **Applying (message thread) compiles inside the hold.** | One table compiles in well under a millisecond; the hold already waits for the audio thread. |
+| **All duplicate `Preset` children are removed too** (shared `takeChildren`, linear time). | Only the first was removed; a hostile session could keep growing the saved state. Normal sessions are unaffected. |
+
 ## B-Side S1c: table and trace formats (2026-11-14, all review)
 
 Where the contract (8.6.5, 8.9.2–8.9.4) was silent, ambiguous or inconsistent, the reader implements
