@@ -23,8 +23,11 @@ public:
         if (upper == header)
             return;
         header = upper;
+        setTitle (t); // the accessibility name follows the header
         repaint (getLocalBounds().removeFromTop (metrics::kHeader));
     }
+    /** The header text as drawn (upper case). */
+    const juce::String& getHeaderText() const noexcept { return header; }
     /** Body area below the header, in this panel's coordinates. */
     juce::Rectangle<int> body() const { return getLocalBounds().withTrimmedTop (metrics::kHeader).reduced (metrics::kPad, 8); }
 
