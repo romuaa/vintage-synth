@@ -103,7 +103,15 @@ void SegmentedSwitch::resized()
 {
     auto r = getLocalBounds().toFloat();
     labelArea = label.isNotEmpty() ? r.removeFromTop (static_cast<float> (metrics::kLabelRow)) : juce::Rectangle<float>();
-    row = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), static_cast<float> (metrics::kSegment)));
+    row = cardLayout ? r : r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), static_cast<float> (metrics::kSegment)));
+}
+
+void SegmentedSwitch::setSegmentPainter (SegmentPainter p, bool cards)
+{
+    painter = std::move (p);
+    cardLayout = cards;
+    resized();
+    repaint();
 }
 
 juce::Rectangle<float> SegmentedSwitch::segmentBounds (int index) const
@@ -134,9 +142,12 @@ void SegmentedSwitch::paint (juce::Graphics& g)
             g.setColour (acc);
             g.fillRoundedRectangle (seg, 3.0f);
         }
+        if (painter)
+            painter (g, seg, i, on);
         g.setColour (on ? colour (Tok::TextOnAccent) : textColour());
         g.setFont (ctx.theme.font (kText, on));
-        drawFittedText (g, captions[i], seg.reduced (2.0f, 0.0f), juce::Justification::centred);
+        drawFittedText (g, captions[i], cardLayout ? seg.withTrimmedTop (seg.getHeight() - 20.0f).reduced (2.0f, 0.0f) : seg.reduced (2.0f, 0.0f),
+                        juce::Justification::centred);
         if (i > 0 && ! on && i - 1 != lit)
         {
             g.setColour (colour (Tok::BgTrack));

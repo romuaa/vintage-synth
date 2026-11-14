@@ -7,6 +7,8 @@
 #include "common/ui/controls/BoundComponent.h"
 #include "common/ui/models/SegmentModel.h"
 
+#include <functional>
+
 namespace vs::ui
 {
 class SegmentedSwitch final : public BoundComponent
@@ -25,6 +27,13 @@ public:
     model::SegmentModel& getModel() noexcept { return model; }
     bool showsMirroredValue (juce::String& why) const override;
     void cancelInteraction() override { model.cancel(); }
+
+    /** Optional decoration of a segment (pattern icons, per-segment colours): called after the
+        lit fill and before the caption, with the segment's area. `cards`: the segments are as tall
+        as the control (below the label) and the caption sits at the bottom of each, leaving the
+        rest to the painter. Called from paint(): it must not allocate. */
+    using SegmentPainter = std::function<void (juce::Graphics&, juce::Rectangle<float> segment, int index, bool lit)>;
+    void setSegmentPainter (SegmentPainter painter, bool cards = false);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -45,6 +54,8 @@ private:
     juce::StringArray captions;
     model::SegmentModel model;
     juce::Rectangle<float> labelArea, row;
+    SegmentPainter painter;
+    bool cardLayout = false;
 };
 
 class Toggle final : public BoundComponent
