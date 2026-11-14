@@ -12,14 +12,18 @@ add_executable(render_regression
     VintageInstance.cpp
     RenderRegressionTests.cpp
     BitDump.cpp
-    StateDump.cpp)
+    StateDump.cpp
+    SpecParityTests.cpp)
 
 target_include_directories(render_regression PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(render_regression PRIVATE
     VS_RR_SCRIPT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scripts"
     VS_RR_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+# bs_juce_free (tests/bside): SpecParityTests checks that B-Side's JUCE-free spec features measure like
+# this harness.
 target_link_libraries(render_regression PRIVATE
     vs_test_core
+    bs_juce_free
     Catch2::Catch2WithMain)
 set_target_properties(render_regression PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
