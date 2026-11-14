@@ -1356,14 +1356,613 @@ same traces are replay inputs, which proves the program engine and the chip toge
 | S5 | Shared Chip layout (one chip per part, up to three notes, one per oscillator, shared filter; an allocator voice limit ≤ 16); chord-into-one-voice (`key1`–`key3`); Look-ahead restart (latency = `gateoff` ticks, changed only at prepare); kit mode (key ranges → sub-tables); optional global tick phase |
 | S6 | Table editor UI, Hz display of the cutoff, presets and factory bank, release together with Exitium Vintage Synth's M7–M8 |
 
-### 8.12 Pending owner decisions (defaults agents build against)
-| Q | Decision | Default until decided |
+### 8.12 Owner decisions (2026-11-14)
+| Q | Decision |
+|---|---|
+| Q1 | Plugin identity: code `Bsy1`, bundle ID `com.exitium.bside` — approved |
+| Q2 | Two parts (Lower/Upper, Whole/Dual/Split) like Vintage |
+| Q3 | Default chip model for Init: Model B |
+| Q4 | Reference emulator approved as a developer tool: downloaded and built outside the repository, never linked or shipped; the adapter lives outside the repository; generated reference data (state checkpoints and spectral features, no audio) may be committed. **Choose the one regarded as the most faithful replica of the chip.** |
+| Q5 | Analog constants and combined waveforms fitted by our own model, never copied |
+| Q6 | B-Side alias budgets of 8.4.5 approved, with the instruction to mimic the original chip as closely as possible: authenticity outranks cleanliness wherever the two conflict in Authentic settings |
+| Q7 | Note-off handled at its sample |
+| Q8 | Default restart policy: Clean |
+
+## 9. M7 — custom editor
+
+The custom editor of Exitium Vintage Synth, replacing the preset bar + generic editor. Built on a
+component library that the second instrument (section 8, S6) reuses.
+
+| Input | Where |
+|---|---|
+| Owner decisions (tabbed workspace, sliders not knobs, graphs, part tint, hover help, live automation, own layout) | `docs/decisions.md`, "M7 UI direction" (2026-11-12 and 2026-11-14) |
+| Approved wireframes, round 3: **the direction, not a pixel specification** (their overlaps, percent captions and side notes are not requirements) | `docs/ui/wireframes/*.png` |
+| Help texts: single source, one per parameter | `docs/ui/help-texts.md` |
+| Judgement calls of this contract, marked (review) | `docs/decisions.md`, "M7 editor contract" |
+
+Items marked **(Un)** depend on an open owner question (9.8); until it is answered, build the
+recommended option.
+
+| Term | Meaning |
+|---|---|
+| edited part | Lower or Upper: what the part pages edit (UI state, not a parameter) |
+| part page | Sound, Envelopes, LFO: shows `<p>.*` parameters of the edited part (`<p>` = `lower` or `upper`) |
+| global page | Play, Arp + Seq, Effects, Browser: shows global parameters and both parts side by side |
+| primary control | the one control that places a parameter (9.3.10 counts these) |
+| secondary binding | a graph handle or shortcut that writes a parameter whose primary control is on the same page or frame |
+| tick | one pass of the parameter mirror (9.1.5), at most 60 per second |
+
+### 9.1 Architecture
+
+#### 9.1.1 Files
+```
+source/common/ui/            vs::ui, JUCE (juce_gui_basics only); shared with B-Side; includes nothing from an instrument
+  Theme.*                    tokens (9.2.3), fonts, LookAndFeel
+  ParamMirror.*, ParamHandle.h   automation-follow and gestures (9.1.5)
+  models/                    JUCE-free interaction logic of every control and graph (value <-> position, drag, wheel, keys)
+  controls/                  Slider, SegmentedSwitch, Toggle, StepTypeToggle, ValueEntry
+  graphs/                    GraphView (base), ResponseCurveView, EnvelopeView, LfoView, PianoRollView, ScopeView
+  KeyboardStrip.*, StepGrid.*
+  frame/                     EditorFrame, TopBar, PartSwitch, PageRail, HelpLine, HelpBubble, OutputMeter, OutputPopover
+  HelpTexts.*, ControlRegistry.*
+source/common/engine/UiFeed.h      JUCE-free: audio thread -> editor data (9.1.4)
+source/common/shell/EditorState.h  JUCE-free: non-parameter UI state saved with the session (9.1.3)
+source/common/presets/PresetActions.*  the file dialogs and save/load flows, moved out of PresetBar (PresetBar keeps using them)
+source/vintage/ui/           VintageEditor (createEditor), one file per page, page registry, display models
+source/vintage/dsp/FilterResponse.h   JUCE-free small-signal response of the voice filter (9.4)
+```
+- New `.cpp` files: `common/ui` → `VS_COMMON_SOURCES`, `vintage/ui` → `VS_VINTAGE_SOURCES`.
+- Binary data target `VintageUiData`: `docs/ui/help-texts.md` and the font files (U2).
+- `shell::InstrumentEditor` (S1a: preset bar + generic editor) stays as the fallback B-Side uses
+  until S6. Vintage's `createEditor` returns `ui::VintageEditor`.
+- Docs check (S1b extends it): `common/ui/models`, `UiFeed.h`, `EditorState.h` include no JUCE header.
+
+#### 9.1.2 Editor ↔ processor boundary
+| Data | Path | Thread |
 |---|---|---|
-| Q1 | Plugin identity: code `Bsy1`, bundle ID `com.exitium.bside` | as proposed |
-| Q2 | Two parts (Lower/Upper, Whole/Dual/Split) like Vintage | two parts |
-| Q3 | Default chip model for Init | Model B |
-| Q4 | Reference emulator: approval to download and build it outside the repository, its licence, the external adapter, committing generated reference data | nothing downloaded; tests needing data are skipped |
-| Q5 | Analog constants and combined waveforms fitted by our own model, never copied from the reference emulator | own model |
-| Q6 | B-Side alias budgets (8.4.5) | as in 8.4.5 |
-| Q7 | Note-off handled at its sample (not at the next tick) | at its sample |
-| Q8 | Default restart policy | Clean |
+| Parameter values (read) | `ParamMirror` polls `RangedAudioParameter::getValue()` of every parameter (9.1.5) | message |
+| Parameter values (write) | `ParamHandle`: `beginChangeGesture` → `setValueNotifyingHost` … → `endChangeGesture` | message |
+| Display text, parsing, default | the parameter's own `getCurrentValueAsText`, `getText`, `getValueForText`, `getDefaultValue`, `getLabel` (`ParamFactory.cpp` text functions): **never a second mapping** | message |
+| Programs, banks, tones, files | `PresetManager` + `PresetActions`; change notifications through `PresetManager::changes()` | message |
+| UI state (page, edited part, …) | `EditorState` owned by the processor (9.1.3) | message (editor), any (state save/restore) |
+| Meters, held/sounding keys, sequencer step, host tempo | `UiFeed` owned by the processor (9.1.4) | audio writes, message reads |
+| Host context menu of a parameter | `getHostContext()->getContextMenuForParameter` (where the host provides one) | message |
+
+Rules:
+1. The editor registers **no** parameter, APVTS or processor listeners. (Listener callbacks run on
+   whatever thread changes a parameter, often the audio thread; polling keeps the audio thread free
+   of editor work.)
+2. The editor never calls the processor's test hooks or "read between blocks" accessors
+   (`getLowerPart`, `getBlockParams`, `getLimiter`, `getArpSeq`, …) and never touches an engine object.
+3. The processor never calls the editor. Nothing the audio thread does depends on whether an
+   editor exists.
+4. The editor takes no lock the audio thread takes (the audio thread takes none). It may take
+   `PresetManager`'s locks through its public API, as the preset bar does.
+5. Everything the editor owns stops in its destructor before members are destroyed: vblank/timer,
+   open gestures (ended), file choosers (SafePointer pattern of `PresetBar`), popovers.
+
+#### 9.1.3 Non-parameter UI state (`shell::EditorState`)
+"Panel Mode is UI state" generalised: what the editor shows is saved with the session, is not a
+parameter, not automatable, not part of a program, tone or bank, and never marks the program modified.
+
+```cpp
+namespace vs::shell
+{
+struct EditorState // all members std::atomic, relaxed; any thread
+{
+    std::atomic<int> page { 0 };        // index into the instrument's page list (Vintage: 0 Sound … 6 Browser)
+    std::atomic<int> part { 0 };        // edited part: 0 Lower, 1 Upper
+    std::atomic<int> arpView { 0 };     // view shown while arp.mode is Off: 0 Arpeggiator, 1 Sequencer
+    std::atomic<int> sizePercent { 0 }; // 75 … 200; 0 = not chosen yet (fit to screen, 9.2.4)
+    std::atomic<float> fxLastLevel[2] { 0.35f, 0.35f }; // delay, reverb level restored by the power switch (9.3.6)
+};
+}
+```
+- Saved by `getStateInformation` as a child `<UiState page="sound" part="lower" arpView="arp"
+  size="100" delayLast="0.35" reverbLast="0.35"/>` of the state tree (page and view by name, so
+  reordering pages never breaks a session). Read by `setStateInformation` into the atomics; an
+  unknown or invalid attribute takes its default; a missing child (any session before M7) means all
+  defaults. `stateVersion` stays 1 (pre-release). The editor reads `EditorState` when it opens and
+  writes it on every change.
+- Not saved: the browser's selection and search text, popover open/closed, scroll positions.
+- This is the only change to the saved state in M7. S1a's identical-state proof (8.2.4 item 3) is
+  S1a's; M7a lists the added child and adds a test that the Wave 4 fixture loads with defaults.
+
+#### 9.1.4 Audio → editor feed (`UiFeed`)
+```cpp
+namespace vs
+{
+/** Written by the audio thread once per host block, read by the editor. Owned by the processor
+    (lives as long as it). Every member is lock-free (static_asserted). Relaxed order except the
+    held-order seqlock. JUCE-free: source/common/engine/UiFeed.h */
+struct UiFeed
+{
+    // Output after the limiter and clamp, peak |x| per channel since the editor last took it.
+    std::atomic<float> peak[2] { 0.0f, 0.0f };
+    // Smallest limiter gain since the editor last took it (1 = no reduction).
+    std::atomic<float> limiterGainMin { 1.0f };
+    std::atomic<std::uint32_t> blockCount { 0 };   // +1 per processed block (bypassed blocks too)
+    std::atomic<float> internalRate { 96000.0f };  // real-time voice rate (host rate x real-time os factor); set in prepareToPlay
+    std::atomic<float> hostBpm { 120.0f };         // tempo the arp/seq used in the last block
+    std::atomic<bool> hostPlaying { false };
+
+    struct Part
+    {
+        std::atomic<std::uint64_t> held[2] { 0, 0 };     // keys the player holds that route to this part (bit n%64 of word n/64)
+        std::atomic<std::uint64_t> sounding[2] { 0, 0 }; // notes of this part's sounding voices (after the arp/seq)
+        std::atomic<std::int32_t> seqStep { -1 };        // 0..15: step that fired last while mode is Sequencer; -1 otherwise
+        std::atomic<std::uint32_t> stepCount { 0 };      // steps fired by this part's arp/seq since reset
+        // Held-key order for the arpeggiator preview (seqlock; up to 16 keys in press order).
+        std::atomic<std::uint32_t> orderSeq { 0 };       // odd while being written
+        std::atomic<std::uint64_t> order[2] { ~0ull, ~0ull }; // byte i = i-th key in press order, 0xFF = none
+        std::atomic<float> liveCutoffLog2 { NAN };       // (U4 only) newest sounding voice's cutoff, log2 Hz
+    } part[2];
+};
+}
+```
+| Item | Writer (audio thread, end of `processBlock` / `processBlockBypassed`) | Reader (editor) |
+|---|---|---|
+| `peak[c]` | block peak `p`; `if (p > peak.load()) peak.store (p)` | `exchange (0)` at most 30 times per second; a lost update can only hide a peak not larger than one already shown |
+| `limiterGainMin` | block minimum `g`; `if (g < cur) store (g)` | `exchange (1)` |
+| `held`, `sounding` | built from the router's key owners and the part's voices (128 + 16 checks per part), two relaxed stores per mask | relaxed loads; a mask may mix two blocks (display only) |
+| `seqStep`, `stepCount` | from `ArpSeq` accessors (below) | relaxed |
+| `order` | only when the held order changed: `orderSeq` +1 (odd), release fence, store words, `orderSeq` +1 (even, release) | acquire `s1`; if odd retry; load words; acquire fence; `s2`; use if `s1 == s2`, else retry up to 3 times, then keep the previous order |
+| `internalRate` | `prepareToPlay` | relaxed |
+
+- Write cost: about 30 atomic operations and 300 simple checks per block, no allocation, no
+  system call. `voice_bench`/`fx_bench` within ±1 %; render regression and every audio test unchanged
+  (the feed is write-only for the engine).
+- Placement: M7a adds "9. publish the UI feed (reads only)" after step 8 of 8.2.3, in its own
+  contract commit once S1a has merged (8.2 is S1a's contract while S1a runs). In the bypassed path
+  peaks are 0 and `seqStep` −1.
+- Additive JUCE-free accessors in `common/seq/ArpSeq.h` (M7d): `int lastSeqStep() const noexcept`
+  (index of the Sequencer step that fired last, −1 when not in Sequencer mode or nothing fired since a
+  restart) and `const KeyState& keys() const noexcept`. No behaviour change.
+- `liveCutoffLog2` exists only if the owner chooses live markers (U4): each voice keeps the last
+  sample's `log2Fc` (one store per sub-block, outside the per-sample loop; benchmark it, see
+  engineering notes M6b).
+
+#### 9.1.5 The live-automation rule
+**Every slider, switch, graph handle and derived picture shows the parameter's current value within
+one tick, whatever changed it, and is drawn from that same value.**
+
+| Change source | Path to the screen |
+|---|---|
+| Host automation, host MIDI-learn, host-side parameter edits | parameter atomic → mirror tick |
+| MIDI Program Change, host program list, preset bar/browser, Init, tone loads | `PresetManager` writes with `setValueNotifyingHost` on the message thread → mirror tick; name and modified dot via `changes()` and the existing 30 ms poll |
+| Session restore (`setStateInformation`, any thread) | parameter atomics → mirror tick; `EditorState` re-read on `PresetManager::sessionRestored` |
+| This editor (another control of the same parameter) | the writing control updates at once; every other binding at the next tick |
+
+`ParamMirror` (one per editor):
+- One entry per host parameter of the instrument (172), built once: parameter pointer, last value,
+  gesture depth, time of the last external change, and a fixed list of subscribers (the components
+  bound to it; registered at construction, never during a tick).
+- `tick()`: for each entry load `getValue()` (normalised); if it differs bitwise from the last value,
+  store it and notify the subscribers, which update their prepared drawing data and call `repaint()`.
+  A burst of changes between two ticks is coalesced into one notification with the latest value;
+  every subscriber of a program change is notified within the same tick, so JUCE paints the result
+  as one frame.
+- Driven by a `juce::VBlankAttachment` on the editor, at most one tick per 15 ms (≤ 66 Hz). If no
+  vblank arrived for 100 ms while the editor is showing, a 30 Hz `juce::Timer` drives it instead
+  (hosts and window systems that throttle vblank). Hidden or minimised: no ticks, nothing runs.
+- Tests call `tick()` directly; nothing else is needed to bring the screen up to date.
+- Cost: ≤ 50 µs per tick with all 172 parameters changed (measured in the UI bench).
+
+Gestures (`ParamHandle`; hosts record automation only between begin and end):
+| Interaction | Begin | Values | End |
+|---|---|---|---|
+| Drag (slider, handle, step bar) | mouse-down | each drag move | mouse-up |
+| Click on a segment, toggle, track position | mouse-down | once | mouse-up |
+| Double-click / menu "Reset to default" | before | default value | after |
+| Typed value | on Enter | parsed value (`getValueForText`; unreadable text changes nothing) | after |
+| Wheel, arrow keys | first notch / key | per notch / key | 300 ms after the last one |
+| Multi-parameter drag (cutoff + resonance, painting steps) | each parameter when first touched | per move | all at mouse-up |
+
+- Never a value without a gesture; never two begins without an end (depth counter, asserted); the
+  editor's destructor ends any open gesture.
+- **User drags while the host plays automation of the same parameter:** during the gesture the
+  control shows the user's value. If the parameter takes another value (a host in Read mode keeps
+  writing), the control shows the external-change marker. At mouse-up nothing is written; the next
+  tick shows whatever value the parameter then has. (Hosts in Touch/Latch mode stop reading during
+  the gesture; that is the host's job.)
+- **External-change marker** (the wireframes' "automated" badge): VST3 does not tell a plugin which
+  parameters have automation, so the marker means "changed by something other than this editor in
+  the last 1.5 s" (host automation, MIDI control). A tick in which more than 8 parameters change
+  (program load, session restore, Init) sets no markers. Shown as a ring on the thumb or handle and
+  a small "AUTO" badge, fading out over 0.5 s.
+
+#### 9.1.6 Threading summary
+| Thread | Allowed in M7 code |
+|---|---|
+| audio | writing `UiFeed` (9.1.4) only. Nothing else in M7 runs on it. |
+| message | everything in the editor: mirror ticks, gestures, painting, previews (9.4), `PresetManager` calls, file dialogs (async) |
+| any (host) | `get/setStateInformation` touching `EditorState` atomics |
+| other threads | none: the editor starts no threads |
+
+### 9.2 Component library (`source/common/ui`)
+
+#### 9.2.1 Interaction rules shared by every control
+| Rule | Specification |
+|---|---|
+| Logic in models | every control's value ↔ position, drag, wheel, key and hit-test logic is a JUCE-free model class (`models/`); the component forwards events and paints. Tests drive the models (no display, no mouse) |
+| Value text | `param.getCurrentValueAsText()`, then `" " + getLabel()` if the label is not empty. Panel parameters therefore show 0.0–10.0 (the wireframes' percent captions are illustrations) |
+| Drag | relative; full track length = full range. Fine: Shift, or Cmd (macOS) / Ctrl (Windows, Linux): ×0.1. Click on the track jumps there |
+| Wheel | over the control only (never scrolls a page): 1 % of the range per notch, 0.1 % fine; discrete parameters one step per notch |
+| Double-click | reset to `getDefaultValue()` (also context menu "Reset to default") |
+| Typed entry | click on the value text, or Enter when focused: a text field; Enter applies through `getValueForText`, Esc cancels |
+| Context menu (right-click / Ctrl-click) | the host's menu for the parameter where provided, plus "Reset to default" and "Type a value…" |
+| Keys (focused) | arrows ±1 % (fine ±0.1 %) or ±1 step; Page Up/Down ±10 %; Home/End min/max; Delete/Backspace default; Enter typed entry |
+| Inactive | (9.3.9) dimmed (`text.disabled`, track at 40 %), still editable; accessibility description ends "(no effect in this mode)" |
+| Hover | after 600 ms a help bubble (9.2.2); the help line updates at once on hover and focus |
+| External change | marker of 9.1.5 |
+
+#### 9.2.2 Components
+| Component | Binds | Behaviour | Accessibility (`juce::AccessibilityHandler`) |
+|---|---|---|---|
+| `Slider` (horizontal, vertical; unipolar or bipolar from centre) | 1 float or integer parameter | label, value text, track and thumb in the part accent; bipolar for pan, balance, fine tune | role slider; name = label; value interface reads/sets text through the parameter |
+| `SegmentedSwitch` | 1 choice or stepped integer (≤ 16 steps) | one segment per value; captions = choice labels unless the page lists aliases (alias count must equal the choice count; test); optional icons (arp pattern cards); arrow keys | role group of radio buttons, each with the full choice text |
+| `Toggle` | 1 Off/On choice | latching button | role toggle button |
+| `StepTypeToggle` | 1 Note/Rest/Tie choice | two latching buttons R and T; pressing the lit one returns to Note | two toggle buttons "Rest", "Tie" |
+| `GraphView` (base) | handles with an x and/or y parameter each | axes, cached background grid (per size and scale), handles with 10 px hit radius, hover, drag with the fine modifier, double-click resets the handle's parameters, Tab moves focus between handles, arrows move them | role group; each handle its own child handler, role slider, named ("Filter cutoff") |
+| `ResponseCurveView` | via page | log-frequency axis 20 Hz–20 kHz, dB axis −48…+24 dB; curve from a magnitude function (9.4) | — |
+| `EnvelopeView` | via page | ADSR with handles (9.3.2) | — |
+| `LfoView` | via page | waveform on a time axis, delay and cycle handles (9.3.3) | — |
+| `PianoRollView` | display only | note bars over beats (9.3.5) | role image with a text summary ("C4 E4 G4 C5, 16 steps") |
+| `ScopeView` | display only | one or two cycles of a waveform (9.4) | role image, text = waveform name |
+| `KeyboardStrip` | `key.split_point` handle | keys coloured by owning part, split marker, held/sounding dots from the feed | split marker = slider with the note name as value |
+| `StepGrid` | 16 × 3 step parameters + `seq.length` | pitch bars, velocity bars, R/T toggles, length flag, playing-step highlight (9.3.5) | each bar a slider ("Step 6 pitch"), toggles as above |
+| `PageRail` | `EditorState::page` | icon + text buttons, current page lit | role radio group; Ctrl/Cmd+1…7 select pages |
+| `PartSwitch` | `EditorState::part` | LOWER / UPPER segments, "Editing: LOWER" text beside it | radio group; name "Edited part" |
+| `TopBar` | `master.volume` | part switch (part pages) or "Showing: whole instrument" (global pages), preset `<` name `>` with modified dot, Save, output meter, Master slider, LIMIT chip | — |
+| `OutputMeter` | feed | two peak bars, −48…0 dBFS, peak hold 1 s, fall 20 dB/s, red above −0.1 dBFS | role progress bar, value "−12 dB" |
+| `OutputPopover` | `master.limiter`, `master.limiter.ceiling` | opened by the LIMIT chip or the chevron; Off/On switch, ceiling slider, reduction meter 0–12 dB (feed); closes on Esc or click outside | role dialog |
+| `HelpLine` | help texts | bottom row: "Label: text" of the hovered or focused control, else the page's one-line hint | live region (announced on focus change) |
+| `HelpBubble` | help texts | after 600 ms hover, beside the control, max 320 px wide; hidden while dragging | not focusable; same text is the control's accessibility description |
+
+#### 9.2.3 Theme tokens (dark; U3)
+| Token | Value | Use | Contrast (WCAG 2) |
+|---|---|---|---|
+| `bg.window` | `#16181C` | window, rail | — |
+| `bg.panel` | `#23262C` | panels | — |
+| `bg.track` | `#3A3F48` | slider tracks, empty segments | — |
+| `tint.lower` / `tint.upper` | `#3A3024` / `#1F3438` | panel headers and frame line of a part page | text on them 10.7 / 10.9 |
+| `text.primary` | `#E8EAED` | labels, values | 12.6 on panel, 14.8 on window |
+| `text.secondary` | `#A9AFB8` | captions, axis labels | 6.9 on panel |
+| `text.disabled` | `#737985` | inactive (exempt from 4.5:1) | 3.5 on panel |
+| `accent.lower` | `#F2A23A` (orange) | Lower: thumbs, fills, selected segments | 7.2 on panel, 5.0 on track |
+| `accent.upper` | `#3FB8C9` (teal) | Upper | 6.4 on panel, 4.5 on track |
+| `accent.global` | `#C9D1DB` | global pages' selections | 9.8 on panel |
+| `text.onAccent` | `#16181C` | text on a lit segment | 8.5 / 7.5 / 11.5 on the three accents |
+| `focus` | `#FFFFFF` 2 px ring + 1 px `bg.window` outer ring | keyboard focus | 15.2 on panel |
+| `warn` | `#FF6B57` | clip mark, errors | 5.4 on panel |
+| `cat.0` … `cat.11` | a 12-colour categorical set (M7f picks it; each ≥ 3:1 on `bg.panel`) | program categories | — |
+
+- **Part identity never rests on colour alone:** the words "Editing: LOWER/UPPER", the lit
+  segment text, the panel header text "LOWER PART"/"UPPER PART" on Play, and the part name in every
+  accessibility name. Orange and teal stay distinct (yellow vs blue) for red-green colour vision
+  deficiencies but have almost the same lightness (simulated contrast 1.1–1.3), so no information
+  depends on telling them apart in greyscale. Categories likewise show their name (filter chips,
+  detail panel, accessibility).
+- Typography (logical px): 11 axis and small captions; 13 labels and values (tabular figures);
+  15 panel headers (caps, letter spacing 0.04 em); 18 "Editing: …"; 22 the Arp + Seq mode switch.
+  Minimum 11 at 100 % (never below 8.25 px at 75 %). Font: U2.
+- Spacing: 4 px base grid; gutters 12, panel padding 12, control row height 32, segment height 28,
+  slider track 6, thumb 14 × 20, panel corner radius 6.
+
+#### 9.2.4 Size and scaling
+| Item | Rule |
+|---|---|
+| Design size | 1360 × 784 logical px at 100 %: top bar 48, help line 24, page rail 112, content area 1248 × 712 |
+| Resizing (U1) | fixed aspect ratio; 75–200 % (1020 × 588 … 2720 × 1568); corner resizer plus a "Size" menu (75, 90, 100, 125, 150, 175, 200 %); the size is UI state (9.1.3) |
+| First open | the saved size; else 100 % if it fits in 90 % of the display's user area, else the largest menu size that fits |
+| Layout | computed from the grid only, never from measured text (labels are truncated with an ellipsis), so it is identical on every platform and testable (9.6) |
+| Drawing | vector only; no bitmaps except background grids cached per size and scale; no OpenGL |
+| HiDPI | macOS: backing scale is automatic. Windows and Linux: the host's VST3 content scale (`setScaleFactor`) multiplies our size; per-monitor DPI changes repaint at the new scale |
+| Host refuses a size | accept the size the host sets (`checkSizeConstraint` keeps the aspect); the Size menu is the dependable path in hosts without resizable plugin windows |
+| Linux / X11 | DPI from the host's scale or `Xft.dpi`, often absent: default 100 %, the Size menu fixes it; resizing through the embedding varies by host; tests run under xvfb; Wayland-only sessions run the host under XWayland |
+
+#### 9.2.5 Keyboard focus and accessibility
+- Tab order: page rail → top bar (part switch, preset, Save, output, Master) → page content in
+  reading order (panel by panel, left to right, top to bottom; inside a graph its handles) →
+  output popover when open. Shift+Tab reverses. Esc closes a popover or text field.
+- Every control has an accessibility handler with role, name ("Lower VCF cutoff" style: part + label),
+  value text from the parameter and description = its help text. Page changes announce the page name.
+- The whole editor is usable with keyboard alone (9.6 manual check with the platform screen reader).
+
+### 9.3 Pages
+Columns: **ID** (`<p>` = edited part), **Control** (9.2.2), **Captions** (only where they differ
+from the choice labels), **Graph** (secondary bindings). All value text from the parameter (9.2.1).
+
+#### 9.3.1 Sound (part page; 15 per part)
+| Panel | Label | ID | Control | Captions / notes |
+|---|---|---|---|---|
+| Oscillator 1 | Octave (feet) | `<p>.vco1.range` | segmented | |
+| | Waveform | `<p>.vco1.waveform` | segmented | scope above (9.4) |
+| Link | Sync | `<p>.vco2.sync` | toggle | label "Sync", arrow text "2 → 1" (oscillator 2 restarts oscillator 1) |
+| | Cross mod | `<p>.vco1.cross_mod` | vertical slider | "2 → 1" |
+| Oscillator 2 | Octave (feet) | `<p>.vco2.range` | segmented | |
+| | Pitch mode | `<p>.vco2.mode` | segmented | "Normal", "Low freq" |
+| | Fine tune | `<p>.vco2.fine_tune` | bipolar slider | |
+| | Waveform | `<p>.vco2.waveform` | segmented | scope above |
+| Mix | Osc 1 ↔ Osc 2 | `<p>.mixer.source_mix` | slider | |
+| High-pass + filter | Steepness | `<p>.vcf.slope` | segmented | |
+| | Cutoff | `<p>.vcf.cutoff` | slider | graph handle A x |
+| | Resonance | `<p>.vcf.resonance` | slider | graph handle A y |
+| | High-pass | `<p>.hpf.cutoff` | slider | graph handle B x |
+| | Key follow | `<p>.vcf.key_follow` | slider | |
+| Amp | Level | `<p>.vca.level` | vertical slider | beside it a static signal-path list; its "Effects" item opens the Effects page |
+
+Filter graph (`ResponseCurveView`): curve = `FilterResponse` (9.4) of the current values at middle C
+without modulation; a dashed grey curve shows the other slope.
+| Handle | Drag x | Drag y | Notes |
+|---|---|---|---|
+| A (on the curve at the cutoff) | `vcf.cutoff` = `map::cutoffFromHz (hzAtX)` | `vcf.resonance`: up = more, 200 px = full range | fine modifier on both |
+| B (high-pass corner) | `hpf.cutoff` = `map::hpfFromHz (hzAtX)`, clamped 5 Hz–2.56 kHz | — | |
+
+#### 9.3.2 Envelopes (part page; 16 per part)
+Envelope 1 panel title is derived: "Envelope 1 (filter, pitch)" when `vcf.env_source` = ENV-1, else
+"Envelope 1 (pitch)". Envelope 2: "Envelope 2 (loudness, filter)" or "Envelope 2 (loudness)".
+| Panel | Label | ID | Control | Captions / graph |
+|---|---|---|---|---|
+| Envelope 1 | Attack, Decay, Sustain, Release | `<p>.env1.attack` `.decay` `.sustain` `.release` | 4 sliders | handles below |
+| | Key follow | `<p>.env1.key_follow` | toggle | |
+| | Direction | `<p>.env1.polarity` | segmented | "Normal", "Inverted"; when Inverted a mirrored ghost of the shape is drawn under the axis |
+| What the envelopes do | Opens the filter by | `<p>.vcf.env_mod` | slider | |
+| | Filter is moved by | `<p>.vcf.env_source` | segmented | "Envelope 1", "Envelope 2" |
+| | Bends the pitch by | `<p>.vcomod.env_mod` | slider | note "Envelope 1 · oscillators: see LFO page, Pitch goes to" |
+| | Playing softer closes the filter by | `<p>.vel.vcf` | slider | |
+| Envelope 2 | Attack, Decay, Sustain, Release | `<p>.env2.attack` `.decay` `.sustain` `.release` | 4 sliders | handles below |
+| | Key follow | `<p>.env2.key_follow` | toggle | |
+| | Playing softer makes it quieter by | `<p>.vel.vca` | slider | |
+
+(The code drives the pitch with Envelope 1 only, through its polarity; the filter with ENV-1 incl.
+polarity or ENV-2; the VCA always with ENV-2. The wireframe's "Envelope 1 opens the filter" title
+was only true for `env_source` = ENV-1, hence the derived titles.)
+
+`EnvelopeView` per envelope; the x axis is the sliders' own scale (logarithmic time), not seconds:
+slot width `S = 0.8 W / 3`; attack, decay, release each span `S × (0.1 + 0.9 v)` (`v` = normalised
+parameter); the sustain plateau is fixed at `0.2 W`; y is level 0…1 (linear, as `sustain`).
+| Handle | Drag x | Drag y |
+|---|---|---|
+| Peak (end of attack) | `envN.attack`: `v = ((x − x0) / S − 0.1) / 0.9` | — |
+| Sustain start (end of decay) | `envN.decay` (x relative to the peak) | `envN.sustain` |
+| Sustain end | — | `envN.sustain` |
+| Release end | `envN.release` (x relative to the plateau end) | — |
+Time labels under the handles are the parameters' text.
+
+#### 9.3.3 LFO (part page; 9 per part)
+| Panel | Label | ID | Control | Captions / graph |
+|---|---|---|---|---|
+| LFO | Waveform | `<p>.lfo.waveform` | segmented | |
+| | Rate | `<p>.lfo.rate` | slider | cycle handle x |
+| | Delay before it starts | `<p>.lfo.delay` | slider | delay handle x |
+| The pitch (vibrato) | Amount | `<p>.vcomod.lfo_mod` | slider | |
+| | Pitch goes to | `<p>.vcomod.target` | segmented | "Osc 1", "Both", "Osc 2"; note "also for the Envelope 1 pitch amount" |
+| The pulse width | Amount | `<p>.vcomod.pwm` | slider | |
+| | Driven by | `<p>.vcomod.pwm_source` | segmented | "LFO", "Manual", "Env 1" |
+| The filter (wah) | Amount | `<p>.vcf.lfo_mod` | slider | |
+| The volume (tremolo) | Amount | `<p>.vca.lfo_mod` | segmented | 0, 1, 2, 3 |
+
+`LfoView`: linear time axis; window = the smallest of 0.5, 1, 2, 5, 10, 20 s that holds the delay
+plus two cycles (20 s at most), chosen when not dragging and kept during a drag.
+| Handle | Drag x |
+|---|---|
+| Delay (end of the fade-in) | `lfo.delay` = `map::lfoDelayFromSec (t)`, 0–5 s |
+| Cycle (right end of the first whole cycle after the delay) | `lfo.rate` = `map::lfoRateFromHz (1 / cycleSec)`, 0.05–40 Hz |
+The mod wheel's vibrato amount is on Play (`mod.wheel_vco`).
+
+#### 9.3.4 Play (global page; 4 global + 8 per part, both parts side by side)
+| Panel | Label | ID | Control | Captions / graph |
+|---|---|---|---|---|
+| Keyboard layout | Whole / Dual / Split | `key.mode` | segmented | with a sentence explaining the chosen mode |
+| | Split key | `key.split_point` | `KeyboardStrip` marker | value = note name; drag snaps to keys |
+| | Balance Lower ↔ Upper | `mix.balance` | bipolar slider | |
+| Character | Vintage | `global.vintage` | slider | |
+| Lower part / Upper part (once each) | Voices | `<p>.assign.mode` | segmented | |
+| | Unison voices | `<p>.assign.unison_voices` | segmented | |
+| | Unison detune | `<p>.unison.detune` | slider | |
+| | Glide time | `<p>.porta.time` | slider | |
+| | Glide | `<p>.porta.mode` | segmented | "Always", "Legato only" |
+| | Pitch bend range | `<p>.bend.range` | slider (stepped) | |
+| | Mod wheel vibrato | `<p>.mod.wheel_vco` | slider | |
+| | Pan | `<p>.mix.pan` | bipolar slider | |
+
+`KeyboardStrip`: shows C1–C7 (MIDI 24–96, `noteName`, middle C = C4); shifts by octaves so the split
+key is always visible with one octave to spare. Whole: all keys Lower; Dual: two stacked bars over
+every key; Split: keys `< split_point` Lower, the rest Upper (the `KeyRouter` rule). Dots on keys
+from `UiFeed::part[p].held` (filled) and `.sounding` (ring).
+
+#### 9.3.5 Arp + Seq (global page; 58)
+| Panel | Label | ID | Control | Captions / graph |
+|---|---|---|---|---|
+| Top | Off / Arpeggiator / Sequencer | `arp.mode` | segmented (large) | sentence for the mode |
+| | Plays through | `arp.target` | segmented | Lower and Upper segments in their accents, Both split in two colours |
+| 1 Pick a pattern (Arp view) | Pattern | `arp.pattern` | segmented, icon cards | "Up", "Down", "Up + Down", "Random", "As played" |
+| | Octaves | `arp.octaves` | segmented | 1–4 |
+| 2 Timing and feel (one panel, shown in both views) | Rate | `arp.rate` | segmented | "1/4", "1/8", "1/8 triplet", "1/16", "1/16 triplet", "1/32" |
+| | Gate | `arp.gate` | slider | |
+| | Swing | `arp.swing` | slider | |
+| | Hold | `arp.hold` | toggle | "Hold (keep playing)" |
+| | Tempo when the host is stopped | `arp.tempo` | slider | while the host plays: inactive, caption "host: 128 bpm" (feed) |
+| Steps (Seq view) | Length | `seq.length` | slider | `StepGrid` length flag (x, snaps to steps) |
+| | Step NN pitch | `seq.stepNN.note` | `StepGrid` pitch bar | drag y, 3 px per semitone, Shift snaps to octaves; double-click 0 |
+| | Step NN type | `seq.stepNN.type` | `StepTypeToggle` | |
+| | Step NN velocity | `seq.stepNN.velocity` | `StepGrid` velocity bar | click/drag y sets the value at the pointer |
+
+- View: Arpeggiator or Sequencer follows `arp.mode`; while it is Off the view is
+  `EditorState::arpView` (the last non-Off mode), dimmed, with "Off: choose Arpeggiator or Sequencer
+  to hear it".
+- **Painting steps:** a drag that crosses columns sets each crossed step's bar to the pointer's
+  value (gestures per 9.1.5). Steps beyond `seq.length` are dimmed and editable.
+- **Playing step:** the column `UiFeed::part[t].seqStep` is highlighted while `arp.mode` is
+  Sequencer and `blockCount` advanced in the last 200 ms (`t` = target part; for Both, Lower,
+  or Upper if Lower is silent). Updated at the tick rate.
+- **Arpeggiator preview** (`PianoRollView`, 9.4): what the engine will play for the notes the player
+  holds on a target part (from `UiFeed` held order, if any key is held now or was within 2 s) or
+  else an example chord C4 E4 G4 pressed in that order, velocity 0.8. Shown over
+  `max (4 beats, 8 steps)`; for Both in Dual or Split, Lower's and Upper's notes in their colours.
+  The roll states its source ("example chord C E G" / "your keys").
+
+#### 9.3.6 Effects (global page; 11)
+| Panel | Label | ID | Control | Captions / graph |
+|---|---|---|---|---|
+| Chorus | Mode | `fx.chorus.mode` | segmented | "Off", "I", "II" |
+| | Mix | `fx.chorus.mix` | slider | inactive while Off |
+| Delay | Ping-pong | `fx.delay.ping_pong` | toggle (Off/On segments) | |
+| | Time | `fx.delay.time` | slider | picture handle x (first echo) |
+| | Repeats (feedback) | `fx.delay.feedback` | slider | picture handle y (second echo's height) |
+| | Darkening (damping) | `fx.delay.damping` | slider | |
+| | Level (0 = off) | `fx.delay.level` | slider | power switch (below) |
+| Reverb | Pre-delay | `fx.reverb.predelay` | slider | picture handle x (start of the tail) |
+| | Decay time | `fx.reverb.decay` | slider | picture handle x (RT60 point) |
+| | Darkening (damping) | `fx.reverb.damping` | slider | |
+| | Level (0 = off) | `fx.reverb.level` | slider | power switch |
+
+**Delay and reverb on/off without new parameters (U5):** the engine already treats level 0 as off
+(bit-exact bypass). Each panel header has a power switch, a secondary binding of the level: it is lit
+while the level is above 0; switching off stores the level in `EditorState::fxLastLevel` and sets 0;
+switching on sets the stored level (0.35 if none). While off, the header says OFF and the picture is
+grey. Chorus needs no switch (its mode has Off).
+
+#### 9.3.7 Browser (global page; no parameters)
+| Element | Behaviour | API |
+|---|---|---|
+| Bank chooser | "Factory (read-only)", the current user bank, "Load bank file…"; Missing/Pending bank shown as in the preset bar | `bankName`, `bankStatus`, `PresetActions` |
+| Grid 8 × 8 (A–H × 1–8) | name, slot, category stripe; click selects, double-click or Enter loads, arrows move the selection; current program outlined, modified dot on it | new `Meta slotMeta (int slot) const` (copy, any thread) and `std::uint32_t bankGeneration() const` (bumped by every bank change: the grid refreshes when it changes) |
+| Categories | chips "All" + the distinct `category` values of the current bank, in order of first appearance (empty → "Uncategorised"); colour `cat.(index mod 12)`; one chip active at a time | from `slotMeta` |
+| Search | case-insensitive substring of name or category; non-matching cells dimmed to 30 % (positions never move) | — |
+| Selected program panel | name, slot, category (text + colour), author; Load program; tone loading (below); Save, Save as…, Init; Import… / Export bank… | `selectProgram`, `initialise`, `PresetActions` |
+| **Load tone** | segmented "Take its: Lower tone \| Upper tone" (`ui.tone_source`; default Lower; when the selected program's `key.mode` is Whole its Upper tone is marked "(not heard in this program)"), then "→ Lower" / "→ Upper" | new `juce::String applyToneFromSlot (int slot, int sourceTone, int targetPart)` = `applyTone (toneOf (schema, program, sourceTone), targetPart)` |
+| Save | user bank and a slot: `storeInBank (currentIndex)`; factory bank or detached: opens "Save as…" (program file or a user bank slot) | existing |
+| Tone files | "Save tone…" / "Load tone file…" for the edited part | existing `saveToneFile` / `loadToneFile` |
+- The top bar's `<` `>`, name and Save are the same flows on every page.
+- `PresetActions` takes over `PresetBar`'s menus and async file choosers unchanged; `PresetBar` calls
+  it and keeps its tests (it is still B-Side's bar until S6).
+
+#### 9.3.8 Frame, top bar, output popover and help (3 parameters)
+| Element | ID | Control |
+|---|---|---|
+| Master | `master.volume` | slider in the top bar (value text "−6.0 dB") |
+| Limiter Off / On | `master.limiter` | segmented, in the output popover (the LIMIT chip shows the state and opens the popover; it writes nothing) |
+| Ceiling | `master.limiter.ceiling` | slider in the output popover; inactive while the limiter is Off |
+
+- Part pages: frame line, panel headers and accents in the edited part's tint; "Editing: LOWER" in
+  18 px beside the part switch. Global pages: neutral tint, "Showing: whole instrument" and both part
+  colour chips. Editing Upper while `key.mode` is Whole shows a banner "Upper is not heard in Whole
+  mode — switch to Dual or Split on the Play page".
+- Help texts: `HelpTexts` parses the embedded `docs/ui/help-texts.md` (lines starting with
+  ``- `id`: ``; `<part>.` → both prefixes; `NN` → 01–16 with the step number substituted into the
+  text). The help line shows "Label: text"; for steps "Step 6 type: …".
+
+#### 9.3.9 Inactive rules (display only; values stay editable)
+| Control(s) | Inactive when |
+|---|---|
+| `<p>.assign.unison_voices`, `<p>.unison.detune` | `<p>.assign.mode` ≠ Unison |
+| `<p>.porta.mode` | `<p>.porta.time` = 0 (Off) |
+| `<p>.vcomod.pwm`, `<p>.vcomod.pwm_source` | neither oscillator's waveform is Pulse |
+| `<p>.vco1.cross_mod` slider | never (but the Link panel notes "no effect while 0") |
+| `key.split_point` | `key.mode` ≠ Split |
+| `mix.balance` | `key.mode` = Whole |
+| `fx.chorus.mix` | `fx.chorus.mode` = Off |
+| delay / reverb controls except Level and the power switch | the level is 0 |
+| `master.limiter.ceiling` | `master.limiter` = Off |
+| `arp.tempo` | the host transport plays (`UiFeed::hostPlaying`) |
+| every Arp + Seq control except `arp.mode` | `arp.mode` = Off |
+| part pages for Upper | `key.mode` = Whole (banner, controls stay normal) |
+
+#### 9.3.10 Completeness (172 of 172)
+| Where | Scope | Primary controls | Count |
+|---|---|---|---|
+| Sound | per part, × 2 | 9.3.1 | 15 × 2 = 30 |
+| Envelopes | per part, × 2 | 9.3.2 | 16 × 2 = 32 |
+| LFO | per part, × 2 | 9.3.3 | 9 × 2 = 18 |
+| Play | global + both parts | 9.3.4 | 4 + 8 × 2 = 20 |
+| Arp + Seq | global | 9.3.5: 9 `arp.*`, `seq.length`, 16 × 3 steps | 58 |
+| Effects | global | 9.3.6 | 11 |
+| Top bar | global | `master.volume` | 1 |
+| Output popover | global | `master.limiter`, `master.limiter.ceiling` | 2 |
+| **Total** | | per-part 48 × 2 = 96, global 76 | **172** |
+Every per-part suffix appears on exactly one of Sound, Envelopes, LFO, Play (15 + 16 + 9 + 8 = 48).
+Enforced by the registry test (9.6); a new parameter without a primary control or help text fails it.
+
+### 9.4 Derived pictures (the picture cannot disagree with the sound)
+Every picture is computed on the message thread, only when one of its inputs changed (mirror tick),
+by the engine's own JUCE-free code with the parameters' own mappings.
+| Picture | Computed by | Inputs | Test (9.6) |
+|---|---|---|---|
+| Filter curve | new `dsp::FilterResponse::magnitudeDb (hz, …)` in `vintage/dsp/FilterResponse.h`: the exact small-signal (tanh ≈ identity) transfer of `OtaLadder` and `OnePoleHighPass` at `z = e^{jω}` at `UiFeed::internalRate`: per stage `H1 = g (1 + z⁻¹) / ((1 + g) − (1 − g) z⁻¹)` with `g = tan (π fc / fs)`, `LP = H1^n / (1 + k H1⁴)` (n = 4 or 2), × `comp = 1 + 0.5 k`, × the HPF's TPT response | `fc = map::cutoffHz (cutoff)` clamped like `Voice` (`2^3` Hz … `0.42 fs`), `k = map::resonanceK`, slope, `map::hpfHz`; middle C, no modulation | magnitude vs the real filter driven at −60 dBFS (linear region), 30 Hz … fs/4, 3 cutoffs × 3 resonances (k < 3.8) × 2 slopes × HPF off/on: within 0.2 dB |
+| Oscillator scopes | `dsp::Oscillator` instances run offline (VCO-2 first, VCO-1 synced to its wrap exactly as `Voice::renderSample`), two cycles of VCO-2 at a display rate, after `kLatency` warm-up | waveforms, ranges (octave ratio), sync, Manual pulse width `0.5 − 0.45 × pwm` | scope samples equal a direct run of the same objects |
+| Envelope shapes | `dsp::Envelope` run per segment at a display rate of 256 samples per segment, sustain from the parameter | the four times via `map::envTimeSec` | the drawn level at each segment end equals an `Envelope` rendered at 48 kHz at the same instants (± 0.5 %) |
+| LFO waveform | `dsp::Lfo` (fixed preview seed) at 1000 points over the window, `trigger()` at 0 | `map::lfoRateHz`, `map::lfoDelaySec`, waveform | drawn points equal a direct `Lfo` run |
+| Arp preview | two `seq::ArpSeq` instances (one per target part) run offline: settings from `ArpParamBinding::read`, transport playing at 120 bpm from ppq 0, 48 kHz, the preview notes as note-ons at offset 0, chunks of 4096 into a preallocated output (`kRecommendedCapacity`) | every `arp.*`/`seq.*` parameter; held order from the feed | the preview's notes, step positions and lengths equal the events the **processor** delivers to the part for the same chord and settings (rendered offline) |
+| Delay picture | echoes at `n × map::delayTimeSec`, heights `map::delayFeedback^n`, alternating L/R with ping-pong | delay parameters | value checks |
+| Reverb picture | pre-delay gap `map::reverbPreDelaySec`, then a −60 dB line at `map::reverbDecaySec` | reverb parameters | value checks |
+| Live cutoff marker (U4) | `UiFeed::part[p].liveCutoffLog2` drawn on the frequency axis | feed | marker equals the stored value |
+
+### 9.5 Performance and safety budgets
+| Budget | Limit | Measured by |
+|---|---|---|
+| Mirror tick, all 172 changed | ≤ 50 µs | UI bench (hidden test `[.uibench]`) |
+| Full page paint at 100 % / 200 % | ≤ 4 ms / ≤ 10 ms (reference Mac) | UI bench, software renderer |
+| Repaint rate | parameters: once per changed tick (≤ 66 Hz); meters ≤ 30 Hz and only when a bar moves ≥ 0.5 dB; nothing repaints at rest | review + bench counter |
+| Editor CPU, idle (no changes, no audio) | ≤ 0.5 % of a core | manual (Activity Monitor), checklist |
+| Editor CPU, 16 parameters automated + arp + meters | ≤ 3 % of a core at 100 %, ≤ 6 % at 200 % | manual, checklist |
+| Editor open | ≤ 250 ms to first paint | UI bench |
+| Memory per open editor | ≤ 30 MB (grid caches) | manual |
+| Audio thread | feed only (9.1.4): `voice_bench`/`fx_bench` ±1 %, no allocation (existing `processBlock` allocation test) | existing gates |
+| Paint | our code allocates nothing in `paint()`: strings, paths and preview data are prepared on value change; a repeated paint with unchanged values makes the same small number of (renderer-internal) allocations every time, ≤ 8 per component | allocation test with `tests/seq_unit/AllocationCounter.h` |
+| Open/close | 200 editor open/close cycles: no leak (JUCE leak detector in debug, ASan on Linux), no growth of processor-side state | test |
+| Multiple instances | no static mutable state in `common/ui` except an immutable shared font holder (`juce::SharedResourcePointer`); two processors with two open editors stay independent | test |
+
+### 9.6 Testing
+| Test | What it proves | Runs |
+|---|---|---|
+| Help texts | parser rules; every one of the 172 IDs resolves to exactly one text; no text names an unknown ID; ≤ 2 sentences, ≤ 170 characters | all five targets |
+| Registry completeness | an editor (not on screen) for Lower and for Upper: the primary placements equal the parameter list, each exactly once (9.3.10); every secondary binding's parameter has its primary on the same page or frame; segment alias counts equal choice counts | all five (Linux under xvfb) |
+| Automation follow | for every parameter: set min, default and a random value from a background thread (`setValue`, as host automation does), `tick()`, then every binding of it shows `getValue()` and `getCurrentValueAsText()`; graph handles sit where the page mapping puts that value; derived pictures were recomputed; the same after `selectProgram`, `initialise`, tone loads and `setStateInformation` | all five |
+| Gestures | through the models: begin before the first value, end after the last, counts balanced, for every interaction row of 9.1.5; multi-parameter drags; editor destroyed mid-drag ends the gesture; contested drag (host keeps writing) shows the marker and writes nothing at mouse-up | all five |
+| Models | value ↔ position mappings, fine drag, wheel, keys, snapping, envelope/LFO/step-grid handle maths | all five (JUCE-free) |
+| UiFeed | peak and gain-min protocols; seqlock under a writer thread for 10⁶ iterations with a checksum invariant; `seqStep` equals the sequencer's step; held/sounding masks for Whole/Dual/Split; audio unchanged (render regression, block-size tests) | all five, plus both sanitizer runs |
+| UI state | round trip; defaults for a missing or garbled child; the Wave 4 fixture loads; UI state never marks modified, is not in programs | all five |
+| Derived pictures | the 9.4 column "Test" | all five |
+| Layout snapshot | per page × part × scale (100 %, 150 %): the component bounds tree as text equals a golden file in `tests/ui/golden/` exactly (layout never depends on text metrics, 9.2.4) | all five |
+| Paint allocations, open/close, two instances | 9.5 | all five; open/close also under Linux ASan/UBSan (the editor tests are skipped only under **macOS** ASan, where CoreGraphics reports, as today) |
+| `host_smoke` | additionally opens the plugin's own view through the VST3 host, resizes to 75 % and 200 %, closes | all five |
+| pluginval strictness 10 | its editor tests (open, close, parameter changes with the editor open) | macOS locally; Windows and Linux x86_64 in CI (Linux: drop `--skip-gui-tests` and run under xvfb when CI returns) |
+
+- **Image snapshot tests: no.** Glyph rasterisation (CoreText, DirectWrite, FreeType), antialiasing
+  and the renderers differ per platform and per OS update; a tolerance loose enough to pass
+  everywhere would miss real regressions, a strict one would fail on every machine. The layout
+  snapshot (exact, text-free) and the binding tests cover what can break silently. A hidden test
+  `[.uishots]` writes every page × part at 100 % and 200 % to PNG for human review (macOS), never compared.
+- Manual: `docs/ui-test-checklist.md` "Custom editor" (owner, in hosts).
+
+### 9.7 Milestones
+M7 code starts only after **S1a has merged** (both touch the editor and the processor's block).
+| Step | Scope | Acceptance gates | Agents (model) | Depends on |
+|---|---|---|---|---|
+| **M7a** | 9.1 (feed + step 9 contract commit, `EditorState`, mirror, gestures), `Theme`, models, Slider, SegmentedSwitch, Toggle, GraphView, ResponseCurveView, ScopeView, frame (top bar, rail, part switch, help line/bubble, meter, popover), `HelpTexts`, `ControlRegistry`, `FilterResponse`, **Sound page**, Size menu; other pages are placeholders that list their parameters with plain sliders so all 172 are reachable from day one | 9.6 rows: help texts, registry (complete via placeholders), automation follow, gestures, models, feed, UI state, filter curve, layout snapshot for Sound; 9.5 tick and paint budgets; `realtime-review` of the feed; preflight full | implementer **opus**; test agent **sonnet** (writes 9.6 tests from this contract, not from the code); fresh reviewer **opus** | S1a merged |
+| **M7b** | Envelopes + LFO pages, EnvelopeView, LfoView | their rows of 9.6 and 9.4 | implementer **sonnet**; reviewer **sonnet** | M7a |
+| **M7c** | Play + Effects pages, KeyboardStrip, effect pictures, power switches | their rows | implementer **sonnet**; reviewer **sonnet** | M7a |
+| **M7d** | Arp + Seq page, StepGrid, StepTypeToggle, PianoRollView, ArpSeq accessors | preview == processor test; seqStep feed; gestures of painting; `realtime-review` of the accessors | implementer **sonnet**; reviewer **opus** (preview equivalence, feed) | M7a |
+| **M7e** | Browser, `PresetActions` extraction, `slotMeta`/`bankGeneration`/`applyToneFromSlot` | preset tests unchanged + new API tests; tone-source flows; save flows from the browser and top bar | implementer **sonnet**; reviewer **opus** (files are untrusted input) | M7a |
+| **M7f** | Polish: font (U2), final colours incl. `cat.*`, theme (U3), live markers (U4) if chosen, accessibility pass, HiDPI and Linux checks, budgets 9.5 measured, placeholder pages removed, docs (README, checklist, CHANGELOG) | all of 9.6 green; budgets met; manual checklist run by the orchestrator where possible | implementer **sonnet**; independent reviewer **opus** | M7b–M7e |
+- M7b, M7c, M7d and M7e run **in parallel** after M7a: each adds new files only. A change to an
+  M7a file (e.g. a new `GraphView` hook) is requested from the orchestrator and made in one serial
+  step, so no two agents edit the same file.
+- **Owner review points:** (1) end of M7a: the first clickable build (Sound page, frame, live
+  automation, size); (2) end of M7b–M7e: all pages; (3) end of M7f: visual polish and hands-on in DAWs.
+  The owner's answers to 9.8 are needed before M7f, U1 and U2 ideally before M7a.
+
+### 9.8 Owner decisions (2026-11-14)
+**The owner approved the round-3 wireframes and chose the recommended option in every row below.**
+
+| Q | Question | Options | Recommendation |
+|---|---|---|---|
+| U1 | Window size and resizing | (a) fixed aspect, 75–200 % by corner and Size menu; (b) a few fixed sizes only; (c) free aspect (layout reflows) | **(a)**: one layout to test, works in every host, crisp at any size |
+| U2 | Font (embedded, so text looks the same everywhere; licence must allow bundling with an AGPLv3 binary) | Inter (SIL OFL 1.1); Atkinson Hyperlegible (SIL OFL 1.1, designed for low vision); Noto Sans (SIL OFL 1.1); DejaVu Sans (permissive Bitstream Vera licence); Roboto (Apache 2.0); or the system font (no file, looks different per platform) | **Inter** (OFL 1.1): clear at small sizes, tabular figures for values. OFL fonts may be bundled with any software, including AGPLv3; the font keeps its own licence file in the repository. Nothing is downloaded until you choose |
+| U3 | Theme | dark only; dark + light | **dark only** for v1.0 (tokens make light possible later) |
+| U4 | Graphs and modulation | (a) static setting only; (b) static plus a live marker where the sound is now (filter cutoff of the newest note, playing step, keys); (c) fully animated curves | **(b)**: the picture stays readable and draggable, and you still see the sound move; (c) costs CPU and makes handles move under the mouse |
+| U5 | Delay and reverb on/off | (a) power switch that sets the level to 0 and back (no new parameters, 9.3.6); (b) new parameters `fx.delay.on`, `fx.reverb.on` (174 parameters; programs without them load as On) | **(a)**: the engine already treats level 0 as off; no state or program change |
+| U6 | Value display of 0–10 panel parameters | (a) as the host shows them today, 0.0–10.0; (b) percent (changes the parameters' text in hosts too) | **(a)**: one text everywhere |
+| U7 | Help bubbles | (a) on, after 600 ms hover, plus the help line; (b) help line only; (c) a switch | **(a)** for now; add a switch if it gets in the way |

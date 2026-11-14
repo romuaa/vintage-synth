@@ -23,6 +23,13 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   program, tone and bank files; `voice_bench`/`fx_bench` within noise. No test changed.
 - The docs check's include rule also names `bside/` and states that it covers `common/shell/`.
 
+### M7 editor contract (2026-11-14)
+- `docs/architecture.md` section 9 is the contract for the custom editor (M7a–M7f): architecture and
+  threading, the live-automation rule, the shared component library, theme and scaling, page
+  specifications placing all 172 parameters, derived pictures, budgets and tests. The approved
+  wireframes are in `docs/ui/wireframes/`, the help texts (checked against the engine) in
+  `docs/ui/help-texts.md`; the manual checklist has a "Custom editor" section. Documentation only.
+
 ### B-Side S1 contract (2026-11-14)
 - `docs/architecture.md` section 8 is now the contract for the second instrument's S1–S4: the
   shared processor skeleton (S1a), the plugin shell (S1b), table and trace formats (S1c), the chip
