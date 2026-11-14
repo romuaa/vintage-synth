@@ -1,0 +1,16 @@
+Inter typeface, embedded in the plugin's editor (docs/architecture.md 9.8, U2).
+
+Licence:  SIL Open Font License 1.1 (OFL.txt in this folder, the release's LICENSE.txt unmodified).
+          The font keeps its own licence; it is not covered by the project's AGPLv3.
+Version:  4.1 (font version 4.001, git-9221beed3)
+Upstream: https://github.com/rsms/inter (the font author's repository), release v4.1
+Archive:  https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+          SHA-256 9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e (downloaded 2026-11-14)
+
+Files taken unmodified from the archive (only the two weights the editor uses):
+  extras/ttf/Inter-Regular.ttf   411640 bytes  SHA-256 40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82
+  extras/ttf/Inter-SemiBold.ttf  419744 bytes  SHA-256 78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3
+  LICENSE.txt -> OFL.txt           4380 bytes  SHA-256 262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a
+
+To update: download the new release archive from the URL above, verify it, copy the same files,
+and update this file (version, URLs, hashes) in the same commit.

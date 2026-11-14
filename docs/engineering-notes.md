@@ -3,6 +3,22 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## M7a: editor foundation (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Opening the editor crashed in one test only (two processors, then the editor). | The frame called `setSize` first in its constructor; `resized()` ran before child members created later in the body existed. Whether it crashed depended on the heap. | **Call `setSize` last in a component's constructor.** |
+| `lldb` could not attach in the agent sandbox. | Sandbox. | Read the stack from the crash report macOS writes (`~/Library/Logs/DiagnosticReports/<binary>-*.ips`, JSON after the first line). |
+| A freshly written golden file never matched. | `juce::File::replaceWithText` writes CRLF line ends by default, on every platform. | Pass `"\n"` as the line ending, and compare without `\r` (a Windows checkout may convert). |
+| The full editor update took 445 µs for a program change. | Each Sound page recomputed its curve and scopes once per changed input (4 + 9 inputs). | Mark pictures dirty in the notification; recompute once after all notifications of a tick (an idle hook of the mirror). |
+| Editor tests saw no meter update. | The constructor's first tick used the real clock; the test's own clock started far below it. | Treat a clock that goes backwards as "due now"; tests drive `tick (ms)` themselves. |
+| A prose line of `help-texts.md` parsed as an entry. | It starts with "- \`" and contains "\`: " later. | An entry's id is one token (letters, digits, `.`, `_`, `<>`). |
+| `= default` comparison of a struct with float members failed to build. | `-Wfloat-equal` (an error) applies to defaulted `operator==` too. | Compare floats bitwise with `std::bit_cast`. |
+| A test proved nothing about what the controls draw (a reviewer's mutation that stopped notifications passed). | The binding check compared a fresh read of the mirror with the mirror. | Check the **prepared drawing state** (`drawnValue`, `drawnText`, set only on notification), and compare pictures with what the engine itself read (`getBlockParams`), not with the page's own mapping. |
+| Off-screen components return no accessibility handler. | JUCE creates handlers for components with a native window only. | Tests call `createAccessibilityHandler()` directly. |
+| Counting repaints without a window. | `repaint()` goes nowhere off screen. | Install a recording `juce::CachedComponentImage` on the top component: every child's repaint arrives as `invalidate (area)`. |
+| A refactor of the voice's oscillator code needed proof beyond the existing renders (they barely use PWM). | Coverage. | A temporary probe script copied into both builds' script folders, bit-compared, then removed. |
+| The worktree guard refused shell commands whose text contained an ordinary English word that is also a git subcommand. | It scans the command text. | Put larger edits into a script file in the scratch folder and run that. |
 ## B-Side S1d: tables in presets and state (2026-11-14)
 
 | Problem | Cause | Fix / rule |
@@ -196,6 +212,7 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | JUCE 9 warns (→ error) on `JUCE_DISPLAY_SPLASH_SCREEN`. | Don't define it. |
 | `AudioFormat::createWriterFor(OutputStream*, …)` is deprecated (→ error). | Use the `AudioFormatWriterOptions` overload. |
 | `-Wimplicit-int-float-conversion` in a test. | Warnings are errors in tests too; cast explicitly. |
+| GCC (Linux step only) fails with `-Wshadow` on a constructor parameter that has the name of a member of a JUCE base class; Clang accepts it. | Name constructor parameters so they cannot collide with base-class members (found in M7a's `CheckableHandler`); run the Linux step before handing over. |
 | Hosting a VST3 in a console test app. | `juce_add_console_app` + `JUCE_PLUGINHOST_VST3=1` + `juce_audio_processors_headless`; register formats with `addHeadlessDefaultFormatsToManager`. |
 
 ### Testing a loaded VST3

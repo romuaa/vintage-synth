@@ -10,6 +10,7 @@
 #include "common/engine/NoteEvent.h"
 #include "common/params/FxArpParams.h"
 #include "common/params/ParamFactory.h"
+#include "common/shell/EditorState.h"
 
 #include <cstring>
 #include <memory>
@@ -37,6 +38,14 @@ juce::ValueTree takeChildren (juce::ValueTree& state, const char* type);
     while reconnecting its parameters; this makes the rule explicit and independent of that
     internal. Tested in OutputStageTests, "State: a parameter missing ...".) */
 void addMissingParameters (juce::ValueTree& state, const juce::Array<juce::AudioProcessorParameter*>& params);
+
+/** The editor's non-parameter UI state (docs/architecture.md 9.1.3), a child of the state tree:
+    <UiState page="sound" part="lower" arpView="arp" size="100" delayLast="0.35" reverbLast="0.35"/>. */
+inline constexpr const char* kUiStateType = "UiState";
+juce::ValueTree createUiState (const EditorState& state, std::span<const char* const> pageNames);
+/** Reads `child` into `state`; an invalid child (a session saved before M7) or an unknown or
+    invalid attribute gives the default. Any thread (atomics only). */
+void restoreUiState (EditorState& state, const juce::ValueTree& child, std::span<const char* const> pageNames);
 
 /** Reports a setup mistake (ConfigError, ParamFactory.h) and aborts the process. Used by the plugin
     entry point only: an exception cannot be allowed to cross the plugin's C boundary into a host
