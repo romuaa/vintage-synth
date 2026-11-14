@@ -54,6 +54,45 @@ where a row here is worded differently.
 - Consequence the owner should know: on Model A, hard sync from an oscillator that plays a
   combined waveform may fire at different moments than in the reference, as far as our fitted
   shape differs from it. If that turns out audible on real tunes, the remedy is "follow fully".
+## M7c results: Play and Effects pages (2026-11-14, all review)
+- **Keyboard strip.** Six octaves C to C (73 keys), default C1 to C7; the window shifts by whole
+  octaves so the split key keeps an octave of room (`KeyboardGeometry::windowFor`), but never while
+  the strip's own drag is running (the keys must not slide under the pointer). A press or drag
+  anywhere on the strip sets the split key (black keys win where the pointer is over their upper
+  part); Whole shows the Upper bar as "not played in Whole", Dual two stacked bars, Split two bars
+  that meet at the marker. Held keys are filled dots, sounding notes rings; with both parts on one
+  key (Dual) Lower stands left and Upper right, so a part is never a colour alone.
+- **Delay picture.** Echo n is `feedback^(n-1)` as loud as the first (the engine writes input +
+  feedback x output into the line, `Delay.h`), not `feedback^n` as the 9.4 row reads: the test
+  compares the picture with the real delay. The time axis is **logarithmic in (t + 10 ms)**, 0 to
+  6 s, the reverb picture's kind of axis (linear crowds short delays, plain logarithmic cannot show
+  0, the square root crowded a 10 ms delay into a few pixels): echoes of a 10 ms delay stay 8 px
+  apart on a 300 px axis, a 2 s delay's second echo at 4 s is inside. The handle stands on top of the
+  **second** echo: x moves the time (the pointer and the handle move together exactly; tested), y the
+  repeats (the second echo's height *is* the feedback gain; 0.95 x the lane height is the full
+  range). In ping-pong the handle moves to the right lane. The time is written above a bracket
+  from the input to the first echo.
+- **Reverb picture.** The tail starts after the pre-delay and falls 60 dB over the decay time, so
+  the RT60 point is at pre-delay + decay (the engine's `decaySeconds` counts from the tail's start).
+  The time axis is logarithmic in (t + 10 ms), 0 to 30 s. The decay handle's x is the end of the
+  tail minus the live pre-delay.
+- **Chorus picture.** Not a waveform but the delay of the two taps over four seconds (centre
+  +- depth x the block's own rounded-triangle LFO at the mode's rate): it shows what the effect
+  does and is checked against the real chorus.
+- **Power switches** are secondary bindings of the level; "Delay - OFF" in the header, the picture
+  grey and the other controls dimmed while the level is 0. The switch acts on the live level, so a
+  host write between two ticks is respected. Delay and reverb open **off** in a new program (their
+  default level is 0), which is what the page shows.
+- **Paint allocations (9.5).** Measured through a no-op graphics context (`tests/ui/NullGraphicsContext.h`,
+  reusable by other pages), so renderer allocations vanish and what is counted is our own paint code:
+  0 for every new component, in every state, stable over repeated paints. Strings, paths and fonts
+  are prepared on change (`PaintFonts` keeps the few font sizes a component draws with, because
+  `Theme::font` builds a Font, one allocation, per call). The library's Slider (2 per paint),
+  SegmentedSwitch (3) and Panel (header Path) still allocate; reported, not asserted (M7a code).
+- **Power switch** remembers the last audible level (`EditorState::fxLastLevel`) whenever the
+  mirror sees a level above 0, from any source, and when the editor opens; Off then On returns to it.
+- **Time text** (shared change, both plugins): milliseconds from 9.95 ms are whole numbers, below
+  one decimal; seconds two decimals (`juce::String (float, 0)` printed "44.7214 ms").
 
 ## M7a results: editor foundation and Sound page (2026-11-14)
 

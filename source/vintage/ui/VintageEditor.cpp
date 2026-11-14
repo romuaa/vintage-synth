@@ -1,7 +1,9 @@
 #include "vintage/ui/VintageEditor.h"
 
 #include "UiData.h"
+#include "vintage/ui/EffectsPage.h"
 #include "vintage/ui/PlaceholderPage.h"
+#include "vintage/ui/PlayPage.h"
 #include "vintage/ui/SoundPage.h"
 
 namespace vs
@@ -24,9 +26,9 @@ std::vector<EditorFrame::Page> vintagePages()
         { kVintagePageNames[0], "Sound", PageIcon::Sound, true, "Sound: the oscillators, the filter and the level of the edited part. Drag the dots on the curve." },
         { kVintagePageNames[1], "Envelopes", PageIcon::Envelopes, true, "Envelopes: how the filter, pitch and loudness move on each note (placeholder until M7b)." },
         { kVintagePageNames[2], "LFO", PageIcon::Lfo, true, "LFO: the slow wobble and what it moves (placeholder until M7b)." },
-        { kVintagePageNames[3], "Play", PageIcon::Play, false, "Play: keyboard layout, voices, glide and the mix of both parts (placeholder until M7c)." },
+        { kVintagePageNames[3], "Play", PageIcon::Play, false, "Play: how the two parts share the keyboard, and how each part is played. Drag the split marker on the keyboard." },
         { kVintagePageNames[4], "Arp + Seq", PageIcon::ArpSeq, false, "Arp + Seq: the arpeggiator and the step sequencer (placeholder until M7d)." },
-        { kVintagePageNames[5], "Effects", PageIcon::Effects, false, "Effects: chorus, delay and reverb on both parts (placeholder until M7c)." },
+        { kVintagePageNames[5], "Effects", PageIcon::Effects, false, "Effects: chorus, delay and reverb on both parts, in signal order. Drag the dots on the pictures." },
         { kVintagePageNames[6], "Browser", PageIcon::Browser, false, "Browser: programs and banks (until M7e: the preset bar at the top)." },
     };
 }
@@ -105,6 +107,8 @@ VintageEditor::~VintageEditor()
     frame.closeOutputPopover();
     for (auto& s : sound)
         s->cancelInteraction();
+    playPage->cancelInteraction();
+    effectsPage->cancelInteraction();
     for (auto& ph : placeholders)
         ph->cancelInteraction();
     frame.cancelInteraction();
@@ -145,28 +149,21 @@ void VintageEditor::buildPages()
     }
 
     // Global pages: one component each (-1).
-    std::vector<PlaceholderPage::Item> play;
-    for (const char* id : { "key.mode", "key.split_point", "mix.balance", "global.vintage" })
-        play.push_back ({ id, shortName (mirror.parameter (mirror.indexOf (id))), -1 });
-    for (int part = 0; part < 2; ++part)
-        for (auto& item : partItems (playPartSuffixes(), part))
-        {
-            item.label = (part == 0 ? "Lower " : "Upper ") + item.label;
-            play.push_back (item);
-        }
-    addPlaceholder (VintagePage::Play, -1, "Play", "Placeholder until M7c: keyboard layout, character and both parts side by side.", std::move (play));
+    registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::Play)], -1);
+    playPage = std::make_unique<PlayPage> (ctx, feed);
+    frame.addPageComponent (static_cast<int> (VintagePage::Play), -1, *playPage);
 
-    std::vector<PlaceholderPage::Item> arp, fx;
+    std::vector<PlaceholderPage::Item> arp;
     for (int i = 0; i < mirror.size(); ++i)
     {
         auto& p = mirror.parameter (i);
         if (p.paramID.startsWith ("arp.") || p.paramID.startsWith ("seq."))
             arp.push_back ({ p.paramID, shortName (p), -1 });
-        else if (p.paramID.startsWith ("fx."))
-            fx.push_back ({ p.paramID, shortName (p), -1 });
     }
     addPlaceholder (VintagePage::ArpSeq, -1, "Arp + Seq", "Placeholder until M7d: the arpeggiator, the step sequencer and its 16 steps.", std::move (arp));
-    addPlaceholder (VintagePage::Effects, -1, "Effects", "Placeholder until M7c: chorus, delay and reverb.", std::move (fx));
+    registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::Effects)], -1);
+    effectsPage = std::make_unique<EffectsPage> (ctx, editorState);
+    frame.addPageComponent (static_cast<int> (VintagePage::Effects), -1, *effectsPage);
     addPlaceholder (VintagePage::Browser, -1, "Browser",
                     "Placeholder until M7e: load, save and initialise programs with the preset bar at the top of the window.", {});
     registry.setContext ("frame", -1);

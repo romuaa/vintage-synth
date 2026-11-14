@@ -68,6 +68,9 @@ set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/Slider.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/SegmentedSwitch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/GraphView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/KeyboardStrip.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/FxViews.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/PowerSwitch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/FrameParts.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/EditorFrame.cpp)
 set(VS_VINTAGE_SOURCES
@@ -79,6 +82,8 @@ set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Part.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/VintageEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/SoundPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/PlayPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/EffectsPage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/PlaceholderPage.cpp)
 set(VS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${VS_VINTAGE_SOURCES})
 

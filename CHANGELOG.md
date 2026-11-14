@@ -66,6 +66,18 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 - Contract questions from the data (combined waveforms in the digital state, rate-counter wrap,
   divider rule, pipelines, test-bit noise fill, power-on state, board high-pass, clock-scaled
   reference filter) are in `docs/decisions.md` (review) for the owner and the S2/S3 contract.
+### M7c — Play and Effects pages (2026-11-14)
+- **Play** (global page, both parts side by side): key mode with a sentence that explains the
+  chosen mode, a keyboard strip (six octaves coloured by the part that plays each key, bars naming
+  each part's range, the split marker to drag, dots for held keys and rings for sounding notes from
+  the audio feed), balance, Vintage, and a panel per part (voices, unison, glide, bend range, mod
+  wheel, pan) with the inactive rules of 9.3.9.
+- **Effects** (global): chorus, delay and reverb in signal order, each with its picture computed
+  from the effect blocks' own constants (delay echoes, reverb tail, chorus tap delays); handles on
+  the delay and reverb pictures write time, repeats, pre-delay and decay time; delay and reverb
+  have a power switch (level 0 and back, no new parameter).
+- New: `KeyboardStrip`, `DelayView`, `ReverbView`, `ChorusView`, `PowerSwitch`, JUCE-free models
+  `KeyboardModel.h` and `FxPictureModels.h`; tests `tests/ui/PlayEffectsTests.cpp`.
 
 ### M7a — custom editor: foundation, frame, Sound page (2026-11-14)
 - The plugin opens its own editor (`source/vintage/ui/`): a 1360 × 784 canvas scaled as a whole,
