@@ -103,10 +103,20 @@ target_link_libraries(host_smoke PRIVATE
     juce::juce_recommended_warning_flags)
 add_dependencies(host_smoke VintageSynth_VST3)
 add_test(NAME host_smoke
-         COMMAND host_smoke "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+         COMMAND host_smoke --profile vintage "$<GENEX_EVAL:$<TARGET_PROPERTY:VintageSynth_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+if(VS_BUILD_BSIDE)
+    add_dependencies(host_smoke BSide_VST3)
+    add_test(NAME host_smoke_bside
+             COMMAND host_smoke --profile bside "$<GENEX_EVAL:$<TARGET_PROPERTY:BSide_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+endif()
 
 # Golden-render regression harness (ctest label "render").
 add_subdirectory(render_regression)
+
+# Exitium B-Side: its own test core and test executables (tests/bside/CMakeLists.txt).
+if(VS_BUILD_BSIDE)
+    add_subdirectory(bside)
+endif()
 
 # Steinberg VST3 validator (optional). Pass the path of a built `validator` binary, e.g. from CI:
 #   cmake ... -DVS_VST3_VALIDATOR=/path/to/validator
@@ -124,4 +134,12 @@ if(VS_VST3_VALIDATOR)
     set_tests_properties(vst3_validator PROPERTIES
         LABELS vst3
         PASS_REGULAR_EXPRESSION "Result: [1-9][0-9]* tests passed, 0 tests failed")
+    if(VS_BUILD_BSIDE)
+        add_test(NAME vst3_validator_bside
+                 COMMAND "${VS_VST3_VALIDATOR}"
+                         "$<GENEX_EVAL:$<TARGET_PROPERTY:BSide_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+        set_tests_properties(vst3_validator_bside PROPERTIES
+            LABELS vst3
+            PASS_REGULAR_EXPRESSION "Result: [1-9][0-9]* tests passed, 0 tests failed")
+    endif()
 endif()
