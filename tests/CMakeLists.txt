@@ -1,3 +1,24 @@
+# vs_juce_modules: the JUCE modules the test cores use (audio_utils, dsp and what they pull in),
+# compiled ONCE and shared by vs_test_core and bs_test_core (tests/bside). They link the modules
+# PRIVATE: JUCE's module targets carry their .cpp files as interface sources, so a PUBLIC link would
+# compile them again into every consumer (and the two copies would collide at link time). What the
+# consumers need to compile against the modules (include directories, JUCE_* definitions) they take
+# from their own plugin target, as before; the library itself is built with Vintage's. The JucePlugin_*
+# definitions differ per plugin, but no JUCE module code the cores use depends on them (the plugin
+# client module is not part of it). Nothing here touches the shipped plugin targets.
+add_library(vs_juce_modules STATIC)
+target_include_directories(vs_juce_modules PRIVATE
+    $<TARGET_PROPERTY:VintageSynth,INCLUDE_DIRECTORIES>)
+target_compile_definitions(vs_juce_modules PRIVATE
+    $<TARGET_PROPERTY:VintageSynth,COMPILE_DEFINITIONS>)
+target_link_libraries(vs_juce_modules
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+set_target_properties(vs_juce_modules PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+
 # vs_test_core: the plugin's code (our sources + JUCE modules) compiled again *without* LTO.
 # Linking tests against the LTO-built VintageSynth shared code made every test executable pay
 # a full link-time code generation (about 5 min per Windows CI job). Same sources, same
@@ -9,8 +30,7 @@ target_compile_definitions(vs_test_core PUBLIC
     $<TARGET_PROPERTY:VintageSynth,COMPILE_DEFINITIONS>)
 target_link_libraries(vs_test_core
     PRIVATE
-        juce::juce_audio_utils
-        juce::juce_dsp
+        vs_juce_modules
         VintageSynthFactoryData
     PUBLIC
         juce::juce_recommended_config_flags

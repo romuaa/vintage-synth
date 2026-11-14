@@ -55,8 +55,7 @@ if(VS_BUILD_BSIDE)
         $<TARGET_PROPERTY:BSide,COMPILE_DEFINITIONS>)
     target_link_libraries(bs_test_core
         PRIVATE
-            juce::juce_audio_utils
-            juce::juce_dsp
+            vs_juce_modules # the compiled JUCE modules, shared with vs_test_core (tests/CMakeLists.txt)
             BSideFactoryData
         PUBLIC
             juce::juce_recommended_config_flags
