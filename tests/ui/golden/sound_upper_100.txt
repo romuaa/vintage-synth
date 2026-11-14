@@ -1,0 +1,55 @@
+editor 0 0 1360 784 scale 1.0000
+Editor 0 0 1360 784
+  Pages 0 48 112 712
+    page.sound 12 12 88 82
+    page.envelopes 12 102 88 82
+    page.lfo 12 192 88 82
+    page.play 12 282 88 82
+    page.arpseq 12 372 88 82
+    page.effects 12 462 88 82
+    page.browser 12 552 88 82
+  ui.part 12 8 200 32
+  - 436 8 470 32
+    < 4 3 28 26
+    > 34 3 28 26
+    Load... 282 3 64 26
+    Save... 350 3 64 26
+    Init 418 3 48 26
+    - 68 3 69 26
+    - 137 3 36 26
+    - 173 3 103 26
+  ui.output 918 6 96 36
+  master.volume 1024 6 150 36
+  ui.limit 1184 10 70 28
+  Output settings 1258 10 26 28
+  Window size 1290 10 58 28
+  Help 0 760 1360 24
+  sound.upper 112 48 1248 712
+    Oscillator 1 12 12 470 250
+      Waveform 12 36 210 124
+      upper.vco1.range 234 36 224 46
+      upper.vco1.waveform 12 176 446 46
+    Link 494 12 76 250
+      upper.vco2.sync 8 36 60 28
+      upper.vco1.cross_mod 8 96 60 146
+    Oscillator 2 582 12 470 250
+      Waveform 12 36 210 124
+      upper.vco2.range 234 36 224 46
+      upper.vco2.mode 234 86 224 46
+      upper.vco2.fine_tune 234 134 224 36
+      upper.vco2.waveform 12 176 446 46
+    Mix 1064 12 172 250
+      upper.mixer.source_mix 12 40 148 40
+    High-pass + filter 12 274 812 426
+      upper.vcf.slope 588 2 212 24
+      Filter response 12 36 788 300
+        Filter cutoff 460 117 28 28
+        High-pass -13 87 28 28
+      upper.vcf.cutoff 12 346 185 40
+      upper.vcf.resonance 209 346 185 40
+      upper.hpf.cutoff 406 346 185 40
+      upper.vcf.key_follow 603 346 197 40
+    Amp 836 274 400 426
+      upper.vca.level 16 36 80 340
+      Signal path of this part 120 40 268 300
+        Open the Effects page 0 260 268 34

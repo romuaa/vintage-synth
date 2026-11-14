@@ -18,7 +18,7 @@
 #   scan           Trivy (vuln, secret, misconfig; HIGH/CRITICAL fail) from its pinned container image,
 #                  scanning a read-only snapshot of the tracked files (same settings as security.yml)
 #   mac            macOS universal Release build, warnings as errors, lipo check of both slices,
-#                  full ctest, pluginval strictness 10
+#                  full ctest, pluginval strictness 10 (with its editor tests)
 #   linux          scripts/linux-check.sh: GCC, Linux ARM64 container, tests under xvfb, bundle check
 #   validator      Steinberg's VST3 validator, built once from the SDK commit pinned in build.yml (cached),
 #                  run on the bundle the `mac` step built; needs "N tests passed, 0 tests failed"
@@ -206,7 +206,8 @@ step_mac() {
   if [[ -z $pv ]]; then pv=$(fetch_pluginval macos) || return 1; fi
   [[ -x $pv ]] || { echo "PLUGINVAL='$pv' is not executable"; return 1; }
   echo "pluginval: $pv"
-  "$pv" --strictness-level 10 --validate-in-process --skip-gui-tests "$bundle"
+  # With its editor tests (open, close, automation with the editor open; docs/architecture.md 9.6).
+  "$pv" --strictness-level 10 --validate-in-process "$bundle"
 }
 
 step_mac_sanitize() {
