@@ -406,6 +406,20 @@ TEST_CASE ("Step grid model: drag without press, press in the wrong lane, double
     CHECK (r.allClean());
 }
 
+TEST_CASE ("Step grid model: a contested drag shows the user's value and mouse-up writes nothing", "[ui][models][arpseq][gestures]")
+{
+    GridRig r;
+    r.grid.pressBar (StepGridModel::Lane::Pitch, r.colX (2), r.grid.pitchY (5), false);
+    CHECK (r.grid.writtenValue (StepGridModel::indexOf (2, StepGridModel::Note)) == Approx (StepGridModel::pitchNormalised (5)));
+    r.at (2, StepGridModel::Note).v = 0.9f; // the host keeps writing this parameter
+    const int valuesBefore = r.at (2, StepGridModel::Note).values;
+    CHECK (r.grid.writtenValue (StepGridModel::indexOf (2, StepGridModel::Note)) == Approx (StepGridModel::pitchNormalised (5))); // still the user's
+    r.grid.release();
+    CHECK (r.at (2, StepGridModel::Note).values == valuesBefore); // mouse-up wrote nothing
+    CHECK (r.at (2, StepGridModel::Note).v == Approx (0.9f));
+    CHECK (r.allClean());
+}
+
 TEST_CASE ("Step grid model: the length flag snaps to steps; R and T toggle between Note and Rest or Tie", "[ui][models][arpseq][gestures]")
 {
     GridRig r;
@@ -654,6 +668,14 @@ TEST_CASE ("Preview: the picture states its source and a text summary, and what 
         // A bar starts where its step is: step i at 1/16 starts at beat i/4 (the picture is linear in time).
         CHECK (roll.barBounds (i).getX() > (i > 0 ? roll.barBounds (i - 1).getX() : -1.0f));
     }
+    // The held-key marks never cover the octave labels (the "C4" label was half hidden once).
+    CHECK (roll.numKeyMarks() == 3);
+    for (int i = 0; i < roll.numKeyMarks(); ++i)
+    {
+        CHECK (roll.keyMarkBounds (i).getX() >= PianoRollView::kLabelRight);
+        CHECK (roll.getLocalBounds().toFloat().contains (roll.keyMarkBounds (i)));
+        CHECK (roll.keyMarkBounds (i).getRight() <= roll.barBounds (0).getX());
+    }
     // Both parts play (Dual): every note shows twice, Lower's half above Upper's, never on top of each other.
     hostWrite (rig.param ("key.mode"), rig.param ("key.mode").convertTo0to1 (1.0f));
     hostWrite (rig.param ("arp.target"), rig.param ("arp.target").convertTo0to1 (2.0f));
@@ -839,6 +861,184 @@ TEST_CASE ("Feed: audio output is unchanged by the feed's new writes (arp and se
         }
     }
 }
+
+TEST_CASE ("Preview: keys held on a part the arp/seq does not play through leave the example chord", "[ui][arpseq][preview]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    configure (rig, kSetups[0], 1, 1); // plays through Upper only
+    rig.set ("key.mode", 2.0f);        // Split at D4
+    rig.set ("key.split_point", 62.0f);
+    rig.tick();
+    auto& page = rig.editor->getArpSeqPage();
+    rig.play (120.0, 0.0);
+    rig.render (4800, { noteOn (0, 48, 102) }, 480); // a Lower key: not on a target part
+    rig.tick();
+    UiFeed::Order o;
+    REQUIRE (rig.proc.getUiFeed().readOrder (0, o));
+    CHECK (o[0] == 48); // the feed does carry it ...
+    CHECK_FALSE (page.previewUsesPlayerKeys()); // ... the preview does not use it
+    CHECK (page.previewSource() == "example chord C E G");
+    CHECK (page.getRoll().summary().contains ("example chord C E G"));
+    CHECK (page.previewInput().keys[1] == std::vector<int> { 64, 67 });
+    CHECK_FALSE (page.preview().notes().empty());
+
+    rig.render (4800, { noteOn (static_cast<int> (rig.now), 72, 102) }, 480); // an Upper key
+    rig.tick();
+    CHECK (page.previewUsesPlayerKeys());
+    CHECK (page.previewSource() == "your keys");
+    CHECK (page.previewInput().keys[1] == std::vector<int> { 72 });
+}
+
+TEST_CASE ("Page: a contested paint drag shows the contest and mouse-up writes nothing", "[ui][arpseq][gestures]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    rig.editor->selectPage (4, 0);
+    rig.set ("arp.mode", 2.0f);
+    rig.tick();
+    auto& grid = rig.editor->getArpSeqPage().getGrid();
+    auto& m = grid.getModel();
+    GestureCounter host (rig.proc);
+    const auto point = [&] (int col, float y) { return juce::Point<float> (m.geometry().x0 + m.geometry().colW * (static_cast<float> (col) + 0.5f), y); };
+    auto& bar = grid.pitchBar (3);
+    bar.mouseDown (gridEvent (grid, bar, point (3, m.pitchY (7))));
+    CHECK (rig.param ("seq.step04.note").getCurrentValueAsText() == "+7 st");
+    hostWrite (rig.param ("seq.step04.note"), rig.param ("seq.step04.note").convertTo0to1 (-10.0f)); // the host keeps writing (Read mode)
+    rig.tick();
+    CHECK (grid.barMarkerAlpha (3, true) > 0.0f);   // the contest is marked ...
+    CHECK (grid.drawnSemitones (3) == 7);           // ... and the bar shows the user's value
+    const int valuesBefore = host.values;
+    bar.mouseUp (gridEvent (grid, bar, point (3, m.pitchY (7))));
+    CHECK (host.values == valuesBefore); // mouse-up writes nothing
+    CHECK (rig.param ("seq.step04.note").getCurrentValueAsText() == "-10 st");
+    CHECK (host.begins == host.ends);
+    CHECK (host.openCount() == 0);
+    CHECK (host.valuesOutsideGesture == 0);
+    rig.tick();
+    CHECK (grid.drawnSemitones (3) == -10); // afterwards whatever the parameter holds
+}
+
+TEST_CASE ("Feed: seqStep is -1 while the plugin is bypassed, and stays -1 until a key is pressed again", "[ui][arpseq][feed]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    rig.set ("arp.mode", 2.0f);
+    rig.set ("arp.target", 0.0f);
+    rig.set ("arp.rate", 3.0f);
+    rig.set ("key.mode", 0.0f);
+    rig.tick();
+    auto& feed = rig.proc.getUiFeed();
+    rig.play (120.0, 0.0);
+    rig.render (6000 * 3, { noteOn (0, 60, 102) }, 480);
+    REQUIRE (feed.part[0].seqStep.load() >= 0);
+    rig.tick (10.0);
+    CHECK (rig.editor->getArpSeqPage().getGrid().playingStep() >= 0);
+
+    rig.bypass = true;
+    for (int block = 0; block < 40; ++block) // through the 5 ms fade and well beyond it
+    {
+        rig.render (480, {}, 480);
+        INFO ("bypassed block " << block);
+        CHECK (feed.part[0].seqStep.load() == -1);
+        CHECK (feed.part[1].seqStep.load() == -1);
+    }
+    rig.tick (10.0);
+    CHECK (rig.editor->getArpSeqPage().getGrid().playingStep() == -1);
+    rig.bypass = false;
+    rig.render (6000 * 2, {}, 480); // held keys are forgotten: nothing plays until a key is pressed again
+    CHECK (feed.part[0].seqStep.load() == -1);
+    rig.render (6000 * 2, { noteOn (static_cast<int> (rig.now), 60, 102) }, 480);
+    CHECK (feed.part[0].seqStep.load() >= 0);
+}
+
+TEST_CASE ("Page: the host caption and the inactive tempo need the audio to be running", "[ui][arpseq][page]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    auto& page = rig.editor->getArpSeqPage();
+    hostWrite (rig.param ("arp.mode"), rig.param ("arp.mode").convertTo0to1 (1.0f));
+    rig.play (128.0, 0.0);
+    rig.render (480, {}, 480);
+    rig.tick();
+    CHECK (page.hostCaption() == "host: 128 bpm");
+    CHECK (page.getTempoSlider().isInactive());
+    rig.tick (300.0); // no block for 300 ms: the feed is stale (the host stopped calling, or the plugin is suspended)
+    CHECK (page.hostCaption().isEmpty());
+    CHECK_FALSE (page.getTempoSlider().isInactive());
+    rig.render (480, {}, 480);
+    rig.tick (10.0);
+    CHECK (page.hostCaption() == "host: 128 bpm");
+    CHECK (page.getTempoSlider().isInactive());
+}
+
+TEST_CASE ("Step grid: a tie shows the pitch it holds; rests and ties look different from steps past the length", "[ui][arpseq][grid]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    rig.editor->selectPage (4, 0);
+    rig.set ("arp.mode", 2.0f);
+    const auto step = [&] (int n, float note, float type) {
+        const auto id = "seq.step" + juce::String (n).paddedLeft ('0', 2);
+        rig.set (id + ".note", note);
+        rig.set (id + ".type", type);
+    };
+    rig.set ("seq.length", 8.0f);
+    step (1, 3.0f, 0.0f);   // Note +3
+    step (2, 12.0f, 2.0f);  // Tie (its own stored pitch +12 never sounds)
+    step (3, 0.0f, 2.0f);   // Tie of a tie
+    step (4, 0.0f, 1.0f);   // Rest
+    step (5, 0.0f, 2.0f);   // Tie after a rest: holds nothing
+    step (6, 7.0f, 0.0f);   // Note +7
+    step (7, 0.0f, 0.0f);
+    step (8, 0.0f, 0.0f);
+    rig.tick();
+    auto& grid = rig.editor->getArpSeqPage().getGrid();
+    CHECK (grid.tiedSemitones (1) == 3);
+    CHECK (grid.tiedSemitones (2) == 3);
+    CHECK (grid.tiedSemitones (4) == StepGrid::kNoTiedNote);
+    // The sequence wraps: a tie on step 1 holds the last step before it.
+    step (1, 0.0f, 2.0f);
+    step (8, -9.0f, 0.0f);
+    rig.tick();
+    CHECK (grid.tiedSemitones (0) == -9);
+    // Beyond the length nothing wraps.
+    rig.set ("seq.length", 4.0f);
+    step (7, 0.0f, 2.0f);
+    step (6, 5.0f, 0.0f);
+    rig.tick();
+    CHECK (grid.tiedSemitones (6) == 5);
+
+    // What is drawn: the tie's bar continues the held pitch (dimmed), not its stored one.
+    rig.set ("seq.length", 8.0f);
+    step (1, 5.0f, 0.0f);
+    step (2, 12.0f, 2.0f);
+    step (3, 0.0f, 1.0f);
+    rig.tick();
+    const auto snapshot = [&] (juce::Component& c) { return c.createComponentSnapshot (c.getLocalBounds(), true, 1.0f); };
+    const auto& m = grid.getModel();
+    {
+        auto& bar = grid.pitchBar (1);
+        const auto image = snapshot (bar);
+        const int x = bar.getWidth() / 2;
+        const auto held = image.getPixelAt (x, juce::roundToInt (m.pitchY (5)) + 2 - bar.getY());
+        const auto stored = image.getPixelAt (x, juce::roundToInt (m.pitchY (12)) + 2 - bar.getY());
+        CHECK (held.getRed() > held.getBlue() + 30);                     // the dimmed bar of the held +5
+        CHECK (std::abs (stored.getRed() - stored.getBlue()) < 12);      // nothing at the stored +12
+    }
+    // A rest in the pattern keeps its frame; a step past the length is faded as a whole.
+    rig.set ("seq.length", 4.0f);
+    step (9, 0.0f, 0.0f);
+    rig.tick();
+    const auto frameBrightness = [&] (int stepIndex) {
+        auto& bar = grid.pitchBar (stepIndex);
+        const auto c = snapshot (bar).getPixelAt (0, bar.getHeight() / 2);
+        return c.getRed() + c.getGreen() + c.getBlue();
+    };
+    CHECK (frameBrightness (2) > frameBrightness (8) + 40); // rest inside the length vs a note beyond it
+    CHECK (frameBrightness (0) > frameBrightness (8) + 40);
+}
+
 
 // =================================================================================================
 // The page and its components
@@ -1039,6 +1239,15 @@ TEST_CASE ("Page: bars, toggles and the flag sit where their parameter's value p
     }
     pm.initialise();
     check ("Init");
+
+    // A session restore (any thread), as the host does it.
+    juce::MemoryBlock state;
+    pm.selectProgram (20);
+    rig.proc.getStateInformation (state);
+    pm.selectProgram (0);
+    rig.tick();
+    std::thread ([&] { rig.proc.setStateInformation (state.getData(), static_cast<int> (state.getSize())); }).join();
+    check ("session restore");
 }
 
 TEST_CASE ("Page: the view follows the mode; Off dims everything and keeps the last view; tempo is inactive while the host plays", "[ui][arpseq][page]")
@@ -1147,69 +1356,125 @@ TEST_CASE ("Layout snapshot: the Arp + Seq page in both views, 100 % and 150 %, 
 }
 
 #if VS_SEQ_COUNT_ALLOCATIONS
-TEST_CASE ("Paint: the picture, the grid and the page allocate nothing of their own; repeated paints cost the same", "[ui][arpseq][paint]")
+namespace
+{
+/** A graphics context whose every operation does nothing (not even JUCE's default path building for
+    rounded rectangles and strokes). Painting through it leaves only what our own paint code and the
+    layout of the text it draws allocate: no renderer is involved. */
+class NullContext final : public juce::LowLevelGraphicsContext
+{
+public:
+    explicit NullContext (juce::Rectangle<int> clip) : bounds (clip) {}
+    bool isVectorDevice() const override { return false; }
+    void setOrigin (juce::Point<int>) override {}
+    void addTransform (const juce::AffineTransform&) override {}
+    float getPhysicalPixelScaleFactor() const override { return 1.0f; }
+    bool clipToRectangle (const juce::Rectangle<int>&) override { return true; }
+    bool clipToRectangleList (const juce::RectangleList<int>&) override { return true; }
+    void excludeClipRectangle (const juce::Rectangle<int>&) override {}
+    void clipToPath (const juce::Path&, const juce::AffineTransform&) override {}
+    void clipToImageAlpha (const juce::Image&, const juce::AffineTransform&) override {}
+    bool clipRegionIntersects (const juce::Rectangle<int>&) override { return true; }
+    juce::Rectangle<int> getClipBounds() const override { return bounds; }
+    bool isClipEmpty() const override { return false; }
+    void saveState() override {}
+    void restoreState() override {}
+    void beginTransparencyLayer (float) override {}
+    void endTransparencyLayer() override {}
+    void setFill (const juce::FillType&) override {}
+    void setOpacity (float) override {}
+    void setImageBlendMode (juce::BlendMode) override {}
+    void setInterpolationQuality (juce::Graphics::ResamplingQuality) override {}
+    void fillRect (const juce::Rectangle<int>&, bool) override {}
+    void fillRect (const juce::Rectangle<float>&) override {}
+    void fillRectList (const juce::RectangleList<float>&) override {}
+    void fillPath (const juce::Path&, const juce::AffineTransform&) override {}
+    void drawRect (const juce::Rectangle<float>&, float) override {}
+    void strokePath (const juce::Path&, const juce::PathStrokeType&, const juce::AffineTransform&) override {}
+    void drawImage (const juce::Image&, const juce::AffineTransform&) override {}
+    void drawLine (const juce::Line<float>&) override {}
+    void drawLineWithThickness (const juce::Line<float>&, float) override {}
+    void setFont (const juce::Font& f) override { font = f; }
+    const juce::Font& getFont() override { return font; }
+    void drawGlyphs (juce::Span<const uint16_t>, juce::Span<const juce::Point<float>>, const juce::AffineTransform&) override {}
+    std::unique_ptr<juce::ImageType> getPreferredImageTypeForTemporaryImages() const override { return nullptr; }
+    void drawRoundedRectangle (const juce::Rectangle<float>&, float, float) override {}
+    void fillRoundedRectangle (const juce::Rectangle<float>&, float) override {}
+    void drawEllipse (const juce::Rectangle<float>&, float) override {}
+    void fillEllipse (const juce::Rectangle<float>&) override {}
+    uint64_t getFrameId() const override { return 0; }
+
+private:
+    juce::Rectangle<int> bounds;
+    juce::Font font { juce::FontOptions() };
+};
+
+/** Allocations of painting `c` (and its visible children) through the null context, per paint, over 4 paints. */
+std::array<int, 4> allocationsPerPaint (juce::Component& c)
+{
+    NullContext context (c.getLocalBounds());
+    juce::Graphics g (context);
+    c.paintEntireComponent (g, false); // warm-up: font and typeface caches
+    std::array<int, 4> counts {};
+    for (auto& n : counts)
+    {
+        vs::seq::test::AllocationCounter counter;
+        c.paintEntireComponent (g, false);
+        n = counter.count();
+    }
+    return counts;
+}
+} // namespace
+
+TEST_CASE ("Paint: our own paint code allocates nothing it could prepare; every repeated paint costs the same", "[ui][arpseq][paint]")
 {
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
     EditorRig rig;
     rig.editor->selectPage (4, 0);
     hostWrite (rig.param ("arp.mode"), rig.param ("arp.mode").convertTo0to1 (2.0f));
     rig.set ("seq.step03.type", 1.0f);
+    rig.set ("seq.step05.type", 2.0f);
     rig.tick();
     auto& page = rig.editor->getArpSeqPage();
-
-    // The contract's "at most 8 per component" (9.5) cannot hold with JUCE's CoreGraphics context: even
-    // a bar that draws only filled rectangles costs about 38 allocations inside the renderer (Path,
-    // clip and gradient state of fillRoundedRectangle). Our own code allocates none (strings and
-    // paths are prepared when a value changes), so what is checked is that the cost is the renderer's
-    // alone: identical for every repeated paint (no growth, no caching of ours) and within 96 per leaf component (measured 34 to 72).
-    constexpr int kPerComponent = 96;
-    const auto countPaints = [&] (juce::Component& c, int& components) {
-        juce::Image image (juce::Image::ARGB, c.getWidth(), c.getHeight(), true);
-        juce::Graphics g (image);
-        c.paintEntireComponent (g, false); // warm-up: glyph and path caches
-        std::vector<int> counts;
-        for (int i = 0; i < 4; ++i)
-        {
-            vs::seq::test::AllocationCounter counter;
-            c.paintEntireComponent (g, false);
-            counts.push_back (counter.count());
-        }
-        std::function<int (const juce::Component&)> tree = [&] (const juce::Component& x) {
-            int n = 1;
-            for (auto* ch : x.getChildren())
-                if (ch->isVisible())
-                    n += tree (*ch);
-            return n;
-        };
-        components = tree (c);
-        return counts;
-    };
     auto& grid = page.getGrid();
-    // The leaves: each costs the renderer's own allocations only, the same for every repeated paint.
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &grid.pitchBar (0), &grid.pitchBar (2), &grid.velocityBar (0), &grid.typeToggle (0),
-                                                                        &grid.typeToggle (2), &grid.lengthFlag(), &page.getRoll() })
+
+    // What is left after the null context is the layout of the text each paint draws (JUCE builds a
+    // GlyphArrangement per drawText: 5 allocations, plus 1 for the font) and nothing else. A label
+    // is therefore 6, a bar that draws no text 1, a rest or tie 11 (two texts). Any string or path
+    // our paint code builds adds to these and fails the budget.
+    struct Leaf
     {
-        int n = 0;
-        const auto counts = countPaints (*c, n);
-        INFO (c->getComponentID() << " " << c->getTitle() << ": " << n << " components, allocations per paint " << counts[0] << " " << counts[1] << " " << counts[2] << " " << counts[3]);
-        CHECK (counts[0] == counts[1]);
-        CHECK (counts[1] == counts[2]);
-        CHECK (counts[2] == counts[3]);
-        // (the picture draws a bar per note and a label per beat and octave: the bound is per drawn item)
-        CHECK (counts[0] <= (c == &page.getRoll() ? 40 * (page.getRoll().numBars() + 12) : kPerComponent * n));
+        juce::Component* c;
+        int budget;
+    };
+    const std::vector<Leaf> leaves {
+        { &grid.pitchBar (0), 6 },  // a note: its value
+        { &grid.pitchBar (2), 11 }, // a rest: value and "rest"
+        { &grid.pitchBar (4), 11 }, // a tie: value and "tie"
+        { &grid.velocityBar (0), 1 },
+        { grid.typeToggle (0).getChildComponent (0), 6 }, // "R"
+        { &grid.lengthFlag(), 6 },
+        { &page.getRoll(), 26 }, // 4 beat labels, 2 octave labels
+    };
+    for (const auto& leaf : leaves)
+    {
+        const auto n = allocationsPerPaint (*leaf.c);
+        INFO (leaf.c->getComponentID() << " " << leaf.c->getTitle() << ": " << n[0] << " " << n[1] << " " << n[2] << " " << n[3]);
+        CHECK (n[0] == n[1]);
+        CHECK (n[1] == n[2]);
+        CHECK (n[2] == n[3]);
+        CHECK (n[0] <= leaf.budget);
     }
-    // The whole page, in the sequencer view and in the arpeggiator view: repeatable, and nowhere near runaway.
-    for (int mode : { 2, 1 })
+    // The whole page, in the sequencer view and in the arpeggiator view: repeatable.
+    for (int mode : { 2, 1, 0 })
     {
         hostWrite (rig.param ("arp.mode"), rig.param ("arp.mode").convertTo0to1 (static_cast<float> (mode)));
         rig.tick();
-        int n = 0;
-        const auto counts = countPaints (page, n);
-        INFO ("page, mode " << mode << ": " << n << " components, allocations per paint " << counts[0] << " " << counts[1] << " " << counts[2] << " " << counts[3]);
-        CHECK (counts[0] == counts[1]);
-        CHECK (counts[1] == counts[2]);
-        CHECK (counts[2] == counts[3]);
-        CHECK (counts[0] <= 8000);
+        const auto n = allocationsPerPaint (page);
+        INFO ("page, mode " << mode << ": " << n[0] << " " << n[1] << " " << n[2] << " " << n[3]);
+        CHECK (n[0] == n[1]);
+        CHECK (n[1] == n[2]);
+        CHECK (n[2] == n[3]);
     }
 }
 #endif
@@ -1221,27 +1486,26 @@ TEST_CASE ("Arp + Seq page: both views to PNG for human review", "[.uishots]")
         SKIP ("VS_UISHOT_DIR not set");
     const juce::File out (dir);
     REQUIRE (out.createDirectory());
-    EditorRig rig;
-    rig.set ("arp.pattern", 2.0f);
-    rig.set ("arp.octaves", 2.0f);
-    rig.set ("arp.swing", 58.0f);
-    rig.set ("arp.gate", 60.0f);
-    rig.set ("key.mode", 1.0f);
-    rig.set ("seq.length", 12.0f);
     const int notes[] { 0, 3, 0, 12, 7, 3, 0, -5, 0, 10, 10, 12, 0, 0, 0, 0 };
-    for (int i = 0; i < 16; ++i)
-    {
-        const auto n = juce::String (i + 1).paddedLeft ('0', 2);
-        rig.set ("seq.step" + n + ".note", static_cast<float> (notes[i]));
-        rig.set ("seq.step" + n + ".velocity", 0.35f + 0.5f * static_cast<float> ((i * 7) % 5) / 4.0f);
-        rig.set ("seq.step" + n + ".type", i == 2 || i == 9 ? 1.0f : (i == 5 ? 2.0f : 0.0f));
-    }
-    for (int scale : { 100, 200 })
-    {
-        rig.editor->setSizePercent (scale);
+    for (int scale : { 75, 100, 200 })
         for (int mode : { 0, 1, 2 })
         {
+            EditorRig rig; // a fresh processor per shot: no held key leaks from one shot into the next
+            rig.set ("arp.pattern", 2.0f);
+            rig.set ("arp.octaves", 2.0f);
+            rig.set ("arp.swing", 58.0f);
+            rig.set ("arp.gate", 60.0f);
+            rig.set ("key.mode", 1.0f);
+            rig.set ("seq.length", 12.0f);
+            for (int i = 0; i < 16; ++i)
+            {
+                const auto n = juce::String (i + 1).paddedLeft ('0', 2);
+                rig.set ("seq.step" + n + ".note", static_cast<float> (notes[i]));
+                rig.set ("seq.step" + n + ".velocity", 0.35f + 0.5f * static_cast<float> ((i * 7) % 5) / 4.0f);
+                rig.set ("seq.step" + n + ".type", i == 2 || i == 9 ? 1.0f : (i == 5 || i == 6 ? 2.0f : 0.0f));
+            }
             rig.set ("arp.mode", static_cast<float> (mode));
+            rig.editor->setSizePercent (scale);
             rig.editor->selectPage (4, 0);
             if (mode == 2)
             {
@@ -1256,5 +1520,4 @@ TEST_CASE ("Arp + Seq page: both views to PNG for human review", "[.uishots]")
             REQUIRE (stream.openedOk());
             REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
         }
-    }
 }
