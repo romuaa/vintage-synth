@@ -512,7 +512,8 @@ its events unchanged. The random seed is fixed, so renders are reproducible.
    rule and survives a state round-trip; applying a program releases notes without a click and
    without audio-thread allocation; MIDI Program Change; host program list; a session saved by the
    previous milestone loads unchanged.
-2. Golden renders: one fixed phrase per factory program (`ctest -L render`).
+2. Golden renders: a fixed phrase for Init and seven designed factory programs (`ctest -L render`);
+   the load, level and release tests cover all 64 (owner decision: eight references are enough).
 3. `scripts/preflight.sh` passes; independent review; the owner's audition.
 
 ## 6c. Wave 4 — output stage: headroom and soft limiter (owner decision, 2026-11-13)
