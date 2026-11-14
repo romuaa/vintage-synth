@@ -936,9 +936,10 @@ private:
             const int numKeys = juce::jmin (keys.size(), UiFeed::kMaxOrderKeys);
             for (int i = 0; i < numKeys; ++i)
                 order[static_cast<size_t> (i)] = static_cast<std::uint8_t> (keys.ordered (i));
-            if (order != publishedOrder[p])
+            auto& published = publishedOrder[static_cast<size_t> (p)];
+            if (order != published)
             {
-                publishedOrder[p] = order;
+                published = order;
                 uiFeed.writeOrder (p, order);
             }
         }
