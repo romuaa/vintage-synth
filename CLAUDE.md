@@ -13,13 +13,7 @@ reference panel's arrangement (owner decision).
 
 ## Open decisions (do not assume — ask if work depends on them)
 
-- **B-Side (`docs/architecture.md` 8.12):** Q1 identity `Bsy1` / `com.exitium.bside`; Q2 two parts;
-  Q3 Init chip model (B proposed); Q4 reference emulator: download, licence, external adapter,
-  committing reference data; Q5 fitted, not copied, analog constants; Q6 B-Side alias budgets
-  (8.4.5); Q7 note-off at its sample; Q8 default restart policy Clean. Agents build against the
-  defaults in 8.12 until decided; nothing is downloaded before Q4 is approved.
-
-When a new one comes up, list it here; once decided, move it to "Decisions".
+None right now. When a new one comes up, list it here; once decided, move it to "Decisions".
 
 ## Decisions
 
@@ -84,6 +78,13 @@ When a new one comes up, list it here; once decided, move it to "Decisions".
   PR and weekly; HIGH/CRITICAL fixable findings fail it. The repo is private without code
   scanning, so results are in the job log and the `trivy-results` SARIF artifact. Setting the repo
   variable `CODE_SCANNING=true` turns on the SARIF upload once code scanning is available.
+- **B-Side (owner, 2026-11-14; `docs/architecture.md` 8.12):** identity `Bsy1` /
+  `com.exitium.bside`; two parts; Init uses chip Model B; mimic the original chip as closely as
+  possible (its own alias budgets, 8.4.5, approved). **Reference emulator approved as a developer
+  tool only:** built outside the repository (`~/Library/Caches/bside-oracle/`), never linked or
+  shipped, never named in the repository; only generated reference data is committed.
+- **M7 UI (owner, 2026-11-14):** the tabbed wireframes are approved as the direction, with a
+  colour tint per part, Shape split into LFO and Envelope pages, and hover help on every control.
 - **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new
   judgement call there (with the reason), and mark the ones the user should review.
 
@@ -99,8 +100,7 @@ When a new one comes up, list it here; once decided, move it to "Decisions".
   `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
   owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
-- **B-Side S1 contract is written** (architecture section 8, 2026-11-14), awaiting Q1–Q8 (open
-  decisions). **Next:** S1a, the shared processor skeleton (no agent may edit Vintage's
+- **B-Side S1 contract is written** (architecture section 8, 2026-11-14), Q1–Q8 decided. **Next:** S1a, the shared processor skeleton (no agent may edit Vintage's
   processor or editor in parallel), then S1b/S1c.
 - **M7 UI direction (owner, 2026-11-14):** a tabbed workspace, one purpose per full page (Sound,
   Shape, Play, Arp+Seq, Effects, Browser), as simple as possible, sliders instead of knobs (knobs
