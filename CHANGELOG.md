@@ -13,6 +13,11 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   error, and each step prints the tests registered per target before ctest runs.
 - `preflight.sh` refuses `VS_PREFLIGHT_PLUGINS` other than `all` for the default and `--full` runs; the summary
   names the plugins covered.
+- The JUCE modules of the test cores are compiled once (`vs_juce_modules`) and shared by `vs_test_core` and
+  `bs_test_core`: cold test build 45 s wall / 460 s CPU before, 26 s / 319 s after on this Mac; the plugin
+  targets' compile and link commands are identical, Vintage dumps byte-identical. Full gate afterwards (machine
+  load about 3 to 5): total 17m25 (mac 3m07, linux 2m46, mac-sanitize 6m15, linux-sanitize 5m14) against
+  14m05 for Vintage alone (warm).
 - `getPresets()` throws `ConfigError` like the other preset uses (tested); `TestTonePart` applies an event at or
   beyond the block's end after the last sample and ignores a non-finite pitch bend (both tested); the dev host
   has no build dependency on the Vintage bundle; the CI distribution job checks both bundles in one container;
