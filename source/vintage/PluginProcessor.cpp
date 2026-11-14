@@ -83,5 +83,5 @@ void VintageSynthProcessor::migrateState (juce::ValueTree& state)
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new vs::VintageSynthProcessor();
+    return vs::shell::createPluginProcessor<vs::VintageSynthProcessor>();
 }

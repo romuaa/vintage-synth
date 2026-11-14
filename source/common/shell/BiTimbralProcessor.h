@@ -25,6 +25,7 @@
 // Hooks are called at most once per block or chunk, never per sample.
 //
 // What Derived provides (all noexcept except prepareParts; may be private with `friend Base;`):
+//   static constexpr const char* kName;                         // the plugin's name (getName)
 //   static constexpr const char* kStateTag;  static constexpr int kStateVersion;
 //   static void migrateState (juce::ValueTree&);                // brings an older state up to date
 //   juce::AudioProcessorValueTreeState::ParameterLayout passed to the constructor
@@ -36,6 +37,10 @@
 //   double synthTailSeconds() const;                 // any thread, from parameter atomics
 //   Part& part (int p);  const Part& part (int p) const;  // 0 Lower, 1 Upper
 // and calls initPresets (...) from its constructor once the parameters are bound.
+// Contract checks (docs/architecture.md 8.2.5), the same in every build type: the hooks of the
+// per-block path must be noexcept (static_assert); a missing shared parameter throws ConfigError from
+// the constructor (BoundParam::bind); a missing initPresets call is found by verifyConstructed()
+// (the plugin entry point, createPluginProcessor) or, at the latest, by the first use of the presets.
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -63,6 +68,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -263,11 +269,11 @@ public:
     static constexpr double kBypassFadeSeconds = 0.005;
 
     // ---- Editor: the preset bar above the generic editor until the instrument has its own UI ----
-    juce::AudioProcessorEditor* createEditor() override { return createInstrumentEditor (*this, *presetManager); }
+    juce::AudioProcessorEditor* createEditor() override { return createInstrumentEditor (*this, pm()); }
     bool hasEditor() const override { return true; }
 
     // ---- Info ----
-    const juce::String getName() const override { return JucePlugin_Name; }
+    const juce::String getName() const override { return Derived::kName; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -295,23 +301,23 @@ public:
 
     // ---- Programs: the programs of the current bank (docs/architecture.md 6b.3). setCurrentProgram
     // is safe from any thread (applied on the message thread: at once if called there, else queued).
-    int getNumPrograms() override { return presetManager->bankSize(); }
-    int getCurrentProgram() override { return presetManager->currentIndex(); }
-    void setCurrentProgram (int index) override { presetManager->requestProgram (index); }
-    const juce::String getProgramName (int index) override { return presetManager->programName (index); }
-    void changeProgramName (int index, const juce::String& name) override { presetManager->renameProgram (index, name); }
+    int getNumPrograms() override { return pm().bankSize(); }
+    int getCurrentProgram() override { return pm().currentIndex(); }
+    void setCurrentProgram (int index) override { pm().requestProgram (index); }
+    const juce::String getProgramName (int index) override { return pm().programName (index); }
+    void changeProgramName (int index, const juce::String& name) override { pm().renameProgram (index, name); }
 
     /** Presets, banks and files (message thread). Owned by the processor: works without an editor. */
-    presets::PresetManager& getPresets() noexcept { return *presetManager; }
+    presets::PresetManager& getPresets() noexcept { return pm(); }
 
     // ---- State ----
     void getStateInformation (juce::MemoryBlock& destData) override
     {
         // Under the presets' writer lock: never half an apply, and the parameters match the preset info.
-        const juce::ScopedLock w (presetManager->writerLock());
+        const juce::ScopedLock w (pm().writerLock());
         auto state = apvts.copyState();
         state.setProperty (kStateVersionAttr, Derived::kStateVersion, nullptr);
-        state.appendChild (presetManager->createSessionInfo(), nullptr);
+        state.appendChild (pm().createSessionInfo(), nullptr);
 
         if (auto xml = state.createXml())
             copyXmlToBinary (*xml, destData);
@@ -339,11 +345,11 @@ public:
         // thread can come between the parameters and the preset info; the audio thread keeps its
         // parameter values until all of them have been replaced.
         {
-            const juce::ScopedLock w (presetManager->writerLock());
-            presetManager->withParametersHeld ([&] { apvts.replaceState (state); });
-            presetManager->restoreSessionInfo (info);
+            const juce::ScopedLock w (pm().writerLock());
+            pm().withParametersHeld ([&] { apvts.replaceState (state); });
+            pm().restoreSessionInfo (info);
         }
-        presetManager->sessionRestored();
+        pm().sessionRestored();
     }
 
     juce::AudioProcessorValueTreeState& getState() noexcept { return apvts; }
@@ -398,7 +404,29 @@ protected:
         limiterCeiling.bind (apvts, ParamID::masterLimiterCeiling);
         fxBinding.bind (apvts);
         arpBinding.bind (apvts);
+
+        // The per-block hooks run on the audio thread; an exception there would unwind through the host.
+        static_assert (std::is_convertible_v<decltype (Derived::kName), const char*>, "Derived::kName must be a C string");
+        static_assert (noexcept (std::declval<Derived&>().readInstrumentParams (std::declval<InstrumentParams&>())),
+                       "readInstrumentParams must be noexcept");
+        static_assert (noexcept (std::declval<Derived&>().applyInstrumentParams (std::declval<const InstrumentParams&>())),
+                       "applyInstrumentParams must be noexcept");
+        static_assert (noexcept (std::declval<const Derived&>().partPan (std::declval<const InstrumentParams&>(), 0)),
+                       "partPan must be noexcept");
+        static_assert (noexcept (std::declval<const Derived&>().synthTailSeconds()), "synthTailSeconds must be noexcept");
+        static_assert (noexcept (std::declval<Derived&>().part (0)) && noexcept (std::declval<const Derived&>().part (0)),
+                       "part (int) must be noexcept");
     }
+
+public:
+    /** Throws ConfigError unless the instrument finished its construction (it called initPresets). */
+    void verifyConstructed() const
+    {
+        if (presetManager == nullptr)
+            throw ConfigError (std::string (Derived::kName) + " did not call initPresets at the end of its constructor");
+    }
+
+protected:
 
     /** Called once by Derived's constructor, after every parameter is bound and before any is
         changed (the schema's defaults are the parameters' current values). */
@@ -414,6 +442,11 @@ protected:
     juce::AudioProcessorValueTreeState apvts;
 
 private:
+    presets::PresetManager& pm() const
+    {
+        verifyConstructed();
+        return *presetManager;
+    }
     Derived& self() noexcept { return static_cast<Derived&> (*this); }
     const Derived& self() const noexcept { return static_cast<const Derived&> (*this); }
     Part& lowerPart() noexcept { return self().part (0); }
