@@ -3,6 +3,19 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S1b: plugin shell and gates for two plugins (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A second instrument in a test build still reported the first plugin's name. | The skeleton's `getName` returned the build's `JucePlugin_Name` macro, which belongs to the plugin target the test core copies its definitions from. | Identity that differs per instrument comes from the instrument (`Derived::kName`), never from a build macro; assert both agree for the real plugin. |
+| A missing parameter or a forgotten `initPresets` call was a `jassert` (debug) and a null dereference (release). | No check in release builds. | Throw a named `ConfigError` at construction in every build type; the plugin entry point turns it into a message and an abort (an exception must not cross the plugin boundary). Test the checks with a second, deliberately broken instrument. |
+| CMake refused the second test executable's tests. | `catch_discover_tests` registers every Catch2 test case name in one ctest namespace, and a name existing in two executables is an error. | `TEST_PREFIX` per executable (`bside: `). |
+| The two test cores cannot be linked into one executable. | Each defines `createPluginFilter()` and takes its own `JucePlugin_*` definitions. | That is the guard: every test executable links exactly one core. Do not "fix" the duplicate symbol. |
+| A gate or CI step that names a build target that does not exist yet fails today. | The contract lists targets later steps add. | Name them as optional (built when `ninja -t targets all` knows them) in one list per script; a later step checks that its target shows up in the gate log. |
+| A Python edit script in a heredoc and any command mentioning git together were refused in the worktree. | The guard cannot verify such compound commands. | Write the script to a scratch file with the Write tool and run it as its own command; run git as plain, separate commands. |
+| `git status` fails in a worktree whose submodule directories are replaced by symlinks. | Git expects a gitlink directory, not a symlink. | `git status --short --ignore-submodules=all`. |
+| The gate-time baseline and the new numbers are noisy. | Other agents build on the same machine and share the Docker volume and its compiler cache. | Report the load average next to each time and compare steps, not totals. |
+
 ## B-Side S1a: shared processor skeleton (2026-11-14)
 
 | Problem | Cause | Fix / rule |
