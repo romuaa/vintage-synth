@@ -1600,9 +1600,19 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
   tables or source (Q5 stands for them).
 - **Licence consequence (accepted by the owner):** B-Side is tied to GPL-compatible licensing for
   good (the reference is GPL-2.0-or-later; this project is AGPLv3, which is compatible).
-- How the bit-exact rule (8.4.3) treats checkpoints that depend on a combined-waveform shape (in
-  the `c_*` traces: 0x1B, the noise write-back and the Model A top-bit pull-down), given our own
-  tables: exempt, compared with a tolerance, or compared exactly. **(open)**
+- **The bit-exact rule (8.4.3) with our own tables:** a field is *shape-dependent* from the cycle a
+  combined-waveform table value first reaches it until the state it reached is overwritten:
+  `rd1B` while oscillator 3 selects a combined waveform (and, on Model B, while the read latch
+  still holds a value taken from one); a voice's `noise` field from a combined-waveform write-back
+  until the test bit has refilled the register; on Model A an oscillator's `acc` and `phase`
+  fields from a sync whose source top bit came through the pull-down until that oscillator's next
+  test-bit reset. Shape-dependent fields are **exempt** from the exact comparison at those
+  checkpoints; every other field at every checkpoint stays exact. The replay marks them from the
+  trace's writes and our own chip's events, reports how many checkpoints were exempt per trace,
+  and fails a `d_*` trace with any exemption (those traces use no combined waveform). What the
+  exemption leaves unproven is covered by the shape fit itself: the combined-waveform outputs are
+  compared with the reference per waveform, model and pulse width within the fit tolerance set
+  with the tables (S2b), and by the audio comparisons of 8.9.4.
 
 ## 9. M7 — custom editor
 
