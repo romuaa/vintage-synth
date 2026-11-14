@@ -111,14 +111,15 @@ fi
 
 # 4. Source layout -----------------------------------------------------------------------------
 # source/common/ is shared by every instrument and must not depend on one: no include of
-# "vintage/..." (or any other instrument directory) from it. The directories that are JUCE-free
+# "vintage/...", "bside/..." (or any other instrument directory) from it. The pathspec covers every
+# subdirectory, the shared processor skeleton source/common/shell/ included. The directories that are JUCE-free
 # today stay so (common/engine too, except Oversampler.h, which wraps juce::dsp). No two tracked
 # files may differ only by case (macOS is case-insensitive, Linux is not).
-bad=$(git grep -n --untracked -E '#[[:space:]]*include[[:space:]]*[<"](vintage|chip)/' -- 'source/common/*' || true)
+bad=$(git grep -n --untracked -E '#[[:space:]]*include[[:space:]]*[<"](vintage|bside|chip)/' -- 'source/common/*' || true)
 if [[ -n $bad ]]; then
   fail "source/common includes an instrument directory:"; echo "$bad" >&2
 else
-  ok "source/common does not include anything from an instrument directory"
+  ok "source/common (incl. shell/) does not include anything from an instrument directory"
 fi
 bad=$(git grep -n --untracked -iE '#[[:space:]]*include[[:space:]]*[<"]juce' -- \
         'source/common/dsp/*' 'source/common/fx/*' 'source/common/seq/*' 'source/vintage/dsp/*' \
