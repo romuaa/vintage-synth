@@ -17,6 +17,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <optional>
 
 namespace vs::presets
 {
@@ -43,6 +44,13 @@ public:
     void setErrorHandler (std::function<void (const juce::String&)> handler) { onError = std::move (handler); }
     /** Shows `error` unless it is empty. */
     void report (const juce::String& error);
+
+    /** How a popup menu is shown: `done` gets the chosen id (0: dismissed). Default: showMenuAsync next to
+        `target`. Tests install a runner that keeps the menu and the callback instead of showing anything. */
+    using MenuRunner = std::function<void (juce::PopupMenu, juce::Component& target, std::function<void (int)> done)>;
+    void setMenuRunner (MenuRunner runner) { menuRunner = std::move (runner); }
+    /** Shows a menu (through the runner). The callback is dropped if this object is gone when it fires. */
+    void runMenu (juce::PopupMenu menu, juce::Component& target, std::function<void (int)> done, int minimumWidth = 0);
 
     // ---- File flows (each asks for a file, then calls the manager and reports its message) ----
     void loadProgramFile();
@@ -71,6 +79,16 @@ public:
     void handleSaveChoice (int choice);
     void handleSaveAsChoice (int choice);
 
+    /** What a menu does with its result: nothing for 0 (dismissed) or when the actions object is gone (the
+        editor closed while the menu was open). `generation`: the bank's generation when the menu opened; a
+        choice that names a slot ("store in this slot", "store in slot n") does nothing but report when the bank
+        changed meanwhile, because the slot would now be another program. */
+    static void handleLoadMenuResult (juce::WeakReference<PresetActions> actions, int choice);
+    static void handleSaveMenuResult (juce::WeakReference<PresetActions> actions, int choice, std::optional<std::uint32_t> generation = {});
+    static void handleSaveAsMenuResult (juce::WeakReference<PresetActions> actions, int choice, std::optional<std::uint32_t> generation = {});
+    /** True (and the message reported) if `generation` is set and differs from the bank's now. */
+    bool bankChangedSince (std::optional<std::uint32_t> generation, const juce::String& message);
+
 private:
     void chooseAndLoad (const juce::String& title, const juce::File& folder, const juce::String& pattern,
                         std::function<juce::String (const juce::File&)> action);
@@ -80,6 +98,7 @@ private:
 
     PresetManager& presets;
     FileSource fileSource;
+    MenuRunner menuRunner;
     std::function<void (const juce::String&)> onError;
     std::unique_ptr<juce::FileChooser> chooser;
 

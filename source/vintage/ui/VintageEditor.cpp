@@ -69,6 +69,8 @@ VintageEditor::VintageEditor (VintageSynthProcessor& p)
     frame.onPageChosen = [this] (int page) { selectPage (page, frame.getPart()); };
     frame.onPartChosen = [this] (int part) { selectPage (frame.getPage(), part); };
     frame.onSizeMenu = [this] { showSizeMenu(); };
+    bar.smartSave = true;         // Save: in place for a user bank, else Save as (9.3.7)
+    bar.setCompactLayout (true);  // the program name gets the room
     bar.onOpenBrowser = [this] { selectPage (static_cast<int> (VintagePage::Browser), frame.getPart()); };
 
     keyModeIndex = mirror.indexOf ("key.mode");

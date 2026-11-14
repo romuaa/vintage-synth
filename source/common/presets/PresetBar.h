@@ -33,12 +33,10 @@ public:
         user bank is gone "bank not found: Mine  --  Lead *". */
     juce::String describe() const;
 
-    /** What the Load / Save menus do with their result (public for tests): nothing for 0 (dismissed)
-        or when the bar no longer exists. */
-    static void handleLoadMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice);
-    static void handleSaveMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice);
+    /** The Load and Save menus' results are PresetActions::handleLoadMenuResult / handleSaveMenuResult. */
     /** The program menu's choice: a slot + 1, or kOpenBrowserChoice; nothing for 0 or when the bar is gone. */
-    static void handleProgramMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice);
+    /** `generation`: the bank's generation when the menu opened; if the bank changed since, nothing is loaded. */
+    static void handleProgramMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice, std::optional<std::uint32_t> generation = {});
     static constexpr int kOpenBrowserChoice = 10000;
 
     /** Set by the Vintage editor: adds "Open Browser" to the program menu. */
@@ -47,6 +45,16 @@ public:
     ui::model::ProgramMenu programMenuModel() const;
     void showProgramMenu();
     juce::Button& getNameButton() noexcept;
+    juce::Button& getSaveButton() noexcept { return save; }
+    juce::Button& getLoadButton() noexcept { return load; }
+    juce::Button& getInitButton() noexcept { return init; }
+    juce::Component& getBankLabel() noexcept { return bankLabel; }
+
+    /** Save stores in place (a user bank, not detached) and otherwise opens the Save as menu, instead of the
+        Save menu. Set by the Vintage editor; the second plugin's bar keeps its menu. */
+    bool smartSave = false;
+    /** The Vintage top bar's layout: the program name takes the room (no Init button, a short bank label). */
+    void setCompactLayout (bool compact);
     PresetActions& getActions() noexcept { return actions; }
 
 private:
@@ -60,6 +68,7 @@ private:
 
     PresetManager& presets;
     PresetActions actions;
+    bool compactLayout = false;
     juce::TextButton previous { "<" }, next { ">" }, load { "Load..." }, save { "Save..." }, init { "Init" };
     juce::Label bankLabel, positionLabel;
     std::unique_ptr<NameButton> nameButton;

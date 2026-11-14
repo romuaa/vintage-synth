@@ -68,7 +68,12 @@ PresetBar::PresetBar (PresetManager& manager) : presets (manager), actions (mana
     next.onClick = [this] { presets.selectNext(); };
     init.onClick = [this] { presets.initialise(); };
     load.onClick = [this] { actions.showLoadMenu (load); };
-    save.onClick = [this] { actions.showSaveMenu (save); };
+    save.onClick = [this] {
+        if (smartSave)
+            actions.save (save); // the Vintage bar: store in place, else the Save as menu (docs/architecture.md 9.3.7)
+        else
+            actions.showSaveMenu (save);
+    };
     nameButton->onClick = [this] { showProgramMenu(); };
     previous.setTooltip ("Previous program");
     next.setTooltip ("Next program");
@@ -110,7 +115,7 @@ juce::String PresetBar::describe() const
 void PresetBar::refresh()
 {
     // Label::setText only repaints when the text changed, so calling this often is cheap.
-    bankLabel.setText (bankText() + (presets.isFactoryBank() ? " (factory)" : ""), juce::dontSendNotification);
+    bankLabel.setText (bankText(), juce::dontSendNotification);
     positionLabel.setText (positionText(), juce::dontSendNotification);
     nameButton->setButtonText (presets.currentName() + (presets.isModified() ? " *" : ""));
 }
@@ -125,6 +130,13 @@ void PresetBar::paint (juce::Graphics& g)
     g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId).darker (0.3f));
 }
 
+void PresetBar::setCompactLayout (bool compact)
+{
+    compactLayout = compact;
+    init.setVisible (! compact); // Init is a button of the Browser page there
+    resized();
+}
+
 void PresetBar::resized()
 {
     auto r = getLocalBounds().reduced (4, 3);
@@ -133,6 +145,19 @@ void PresetBar::resized()
     r.removeFromLeft (2);
     next.setBounds (r.removeFromLeft (button));
     r.removeFromLeft (6);
+    if (compactLayout)
+    {
+        // The name takes all the room that is left: < > position | bank | NAME | Load Save
+        save.setBounds (r.removeFromRight (52));
+        r.removeFromRight (6);
+        load.setBounds (r.removeFromRight (52));
+        r.removeFromRight (6);
+        positionLabel.setBounds (r.removeFromLeft (28));
+        bankLabel.setBounds (r.removeFromLeft (56));
+        r.removeFromLeft (2);
+        nameButton->setBounds (r);
+        return;
+    }
     init.setBounds (r.removeFromRight (48));
     r.removeFromRight (4);
     save.setBounds (r.removeFromRight (64));
@@ -177,29 +202,19 @@ void PresetBar::showProgramMenu()
         menu.addSeparator();
         menu.addItem (kOpenBrowserChoice, "Open Browser");
     }
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (*nameButton).withMinimumWidth (nameButton->getWidth()),
-                        [safe = juce::Component::SafePointer<PresetBar> (this)] (int choice) { handleProgramMenuResult (safe, choice); });
+    // The program menu selects by slot index: if the bank changes while it is open, the choice is refused.
+    actions.runMenu (std::move (menu), *nameButton,
+                     [safe = juce::Component::SafePointer<PresetBar> (this), gen = presets.bankGeneration()] (int choice) {
+                         handleProgramMenuResult (safe, choice, gen);
+                     },
+                     nameButton->getWidth());
 }
 
-void PresetBar::handleLoadMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice)
-{
-    // JUCE calls a menu's callback with 0 when it is dismissed, also when the bar (with its
-    // editor) was deleted while the menu was open: nothing of the bar may be touched then.
-    if (choice == 0 || bar == nullptr)
-        return;
-    bar->actions.handleLoadChoice (choice);
-}
-
-void PresetBar::handleSaveMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice)
+void PresetBar::handleProgramMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice, std::optional<std::uint32_t> generation)
 {
     if (choice == 0 || bar == nullptr)
         return;
-    bar->actions.handleSaveChoice (choice);
-}
-
-void PresetBar::handleProgramMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice)
-{
-    if (choice == 0 || bar == nullptr)
+    if (choice != kOpenBrowserChoice && bar->actions.bankChangedSince (generation, "The bank changed; nothing was loaded."))
         return;
     if (choice == kOpenBrowserChoice)
     {

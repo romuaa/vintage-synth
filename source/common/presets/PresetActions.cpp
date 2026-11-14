@@ -145,11 +145,7 @@ void PresetActions::showLoadMenu (juce::Component& target)
     for (int t = 0; t < schema.numTones(); ++t)
         menu.addItem (10 + t, "Tone into " + capitalised (schema.toneKey (t)) + "...");
 
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target),
-                        [weak = juce::WeakReference<PresetActions> (this)] (int choice) {
-                            if (weak != nullptr)
-                                weak->handleLoadChoice (choice);
-                        });
+    runMenu (std::move (menu), target, [weak = juce::WeakReference<PresetActions> (this)] (int choice) { handleLoadMenuResult (weak, choice); });
 }
 
 void PresetActions::showSaveMenu (juce::Component& target)
@@ -163,11 +159,8 @@ void PresetActions::showSaveMenu (juce::Component& target)
     for (int t = 0; t < schema.numTones(); ++t)
         menu.addItem (10 + t, capitalised (schema.toneKey (t)) + " tone as...");
 
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target),
-                        [weak = juce::WeakReference<PresetActions> (this)] (int choice) {
-                            if (weak != nullptr)
-                                weak->handleSaveChoice (choice);
-                        });
+    runMenu (std::move (menu), target,
+             [weak = juce::WeakReference<PresetActions> (this), gen = presets.bankGeneration()] (int choice) { handleSaveMenuResult (weak, choice, gen); });
 }
 
 void PresetActions::showSaveAsMenu (juce::Component& target)
@@ -183,11 +176,53 @@ void PresetActions::showSaveAsMenu (juce::Component& target)
         menu.addSeparator();
         menu.addSubMenu ("Store in slot of this user bank", slots);
     }
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target),
-                        [weak = juce::WeakReference<PresetActions> (this)] (int choice) {
-                            if (weak != nullptr)
-                                weak->handleSaveAsChoice (choice);
-                        });
+    runMenu (std::move (menu), target,
+             [weak = juce::WeakReference<PresetActions> (this), gen = presets.bankGeneration()] (int choice) { handleSaveAsMenuResult (weak, choice, gen); });
+}
+
+void PresetActions::runMenu (juce::PopupMenu menu, juce::Component& target, std::function<void (int)> done, int minimumWidth)
+{
+    if (menuRunner)
+    {
+        menuRunner (std::move (menu), target, std::move (done));
+        return;
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMinimumWidth (minimumWidth), std::move (done));
+}
+
+bool PresetActions::bankChangedSince (std::optional<std::uint32_t> generation, const juce::String& message)
+{
+    if (! generation.has_value() || *generation == presets.bankGeneration())
+        return false;
+    report (message);
+    return true;
+}
+
+void PresetActions::handleLoadMenuResult (juce::WeakReference<PresetActions> actions, int choice)
+{
+    // JUCE calls a menu's callback with 0 when it is dismissed, also when the owner (with its editor) was
+    // deleted while the menu was open: nothing of it may be touched then.
+    if (choice == 0 || actions == nullptr)
+        return;
+    actions->handleLoadChoice (choice);
+}
+
+void PresetActions::handleSaveMenuResult (juce::WeakReference<PresetActions> actions, int choice, std::optional<std::uint32_t> generation)
+{
+    if (choice == 0 || actions == nullptr)
+        return;
+    if (choice == 3 && actions->bankChangedSince (generation, "The bank changed; nothing was saved."))
+        return;
+    actions->handleSaveChoice (choice);
+}
+
+void PresetActions::handleSaveAsMenuResult (juce::WeakReference<PresetActions> actions, int choice, std::optional<std::uint32_t> generation)
+{
+    if (choice == 0 || actions == nullptr)
+        return;
+    if (choice >= 100 && actions->bankChangedSince (generation, "The bank changed; nothing was saved."))
+        return;
+    actions->handleSaveAsChoice (choice);
 }
 
 void PresetActions::handleLoadChoice (int choice)
