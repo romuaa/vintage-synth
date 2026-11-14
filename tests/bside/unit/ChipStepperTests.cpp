@@ -5,6 +5,9 @@
 // advances one cycle, there are no fast paths, and nothing is shared with the implementation (only
 // the public types of ChipTypes.h and the DigitalState struct are used, to compare field by field).
 //
+// The readings below R1..R8 are the literal ones; five of them are overridden by the "reference-style"
+// readings that the committed gate uses by default (enum Reading below) because the sentences are
+// ambiguous, rows are marked "confirm", and the public documentation of the chip supports them.
 // CONTRACT READINGS (where 8.4.1-8.4.3 is silent or ambiguous; the choice is the one the text
 // supports best; each is a candidate "ambiguity" in the report):
 //  R1  Cycle order: per oscillator add F (test bit set: accumulator = 0, noise register = all ones),
@@ -16,7 +19,7 @@
 //  R2  Writes take effect immediately (no delay is given in the contract): frequency, pulse width and
 //      register values update at the write; a gate rising edge sets phase attack and a falling edge
 //      release; the test bit clears the accumulator and resets the noise register at the write.
-//  R3  Rate counter: 15 bits, +1 per cycle modulo 2^15 (0x7fff -> 0; kWrapTo selects 1 instead),
+//  R3  Rate counter: 15 bits, +1 per cycle modulo 2^15 (0x7fff -> 0; the wrap1 reading selects 1),
 //      reset to 0 on equality with the period. The period is the nibble of the current phase.
 //  R4  Envelope step on a match: attack: counter + 1 (no divider; divider counter reset), phase
 //      becomes decay when the counter reaches 0xFF (an attack that starts at 0xFF goes to decay at
@@ -54,7 +57,38 @@ namespace
 {
 using namespace vs::bside::chip;
 
-constexpr unsigned kWrapTo = 0; // R3: 15-bit counter wraps to 0 (set 1 to test the other reading)
+// The five ambiguous sentences (see "Ambiguities" in the S2a stepper report). Each bit selects the
+// reading that the implementation (and the public documentation of the chip family) uses; clear it for
+// the literal reading of the contract text that this stepper was first written with (R3, R4, R5, R1).
+//   wrap1       rate counter wraps 0x7fff -> 1 (text: -> 0, modulo 2^15)
+//   divlatch    divider period latched at the exact counter values (text: a function of the counter)
+//   sustaineq   decay stops only at counter == sustain level (text: at counter <= level)
+//   attackwrap  attack from 0xFF wraps to 0 (text: attack at 0xFF goes straight to decay)
+//   chainsuppress  a target is not reset when its source is itself being synced in the same cycle
+//               (text: every natural top-bit edge resets its target)
+// Triage: BSIDE_STEPPER_READING = comma list of the names above ("text" or empty: none; unset: all).
+enum Reading : unsigned { kWrap1 = 1, kDivLatch = 2, kSustainEq = 4, kAttackWrap = 8, kChainSuppress = 16, kAll = 31 };
+unsigned initialReadings()
+{
+    const char* e = std::getenv ("BSIDE_STEPPER_READING");
+    if (e == nullptr) return kAll;
+    const std::string s = std::string (",") + e + ",";
+    unsigned r = 0;
+    if (s.find (",wrap1,") != std::string::npos) r |= kWrap1;
+    if (s.find (",divlatch,") != std::string::npos) r |= kDivLatch;
+    if (s.find (",sustaineq,") != std::string::npos) r |= kSustainEq;
+    if (s.find (",attackwrap,") != std::string::npos) r |= kAttackWrap;
+    if (s.find (",chainsuppress,") != std::string::npos) r |= kChainSuppress;
+    return r;
+}
+unsigned gReadings = initialReadings();
+unsigned readings() { return gReadings; }
+struct ScopedReadings
+{
+    unsigned saved = gReadings;
+    explicit ScopedReadings (unsigned r) { gReadings = r; }
+    ~ScopedReadings() { gReadings = saved; }
+};
 
 struct NaiveChip
 {
@@ -97,6 +131,20 @@ struct NaiveChip
         if (c > 0x0e) return 8;
         if (c > 0x06) return 16;
         return 30;
+    }
+    static void latchDivider (E& en)
+    {
+        if (! (readings() & kDivLatch)) { en.divPeriod = dividerFor (en.counter); return; }
+        switch (en.counter)
+        {
+            case 0xff: case 0x00: en.divPeriod = 1; break;
+            case 0x5d: en.divPeriod = 2; break;
+            case 0x36: en.divPeriod = 4; break;
+            case 0x1a: en.divPeriod = 8; break;
+            case 0x0e: en.divPeriod = 16; break;
+            case 0x06: en.divPeriod = 30; break;
+            default: break;
+        }
     }
     std::uint8_t ctl (int i) const { return regs[7 * i + 4]; }
     std::uint8_t sustainLevel (int i) const { return static_cast<std::uint8_t> ((regs[7 * i + 6] >> 4) * 0x11); }
@@ -212,7 +260,8 @@ struct NaiveChip
             }
         }
         for (int i = 0; i < 3; ++i)
-            if ((ctl (i) & 2) && rise23[src (i)])
+            if ((ctl (i) & 2) && rise23[src (i)]
+                && ! ((readings() & kChainSuppress) && (ctl (src (i)) & 2) && rise23[src (src (i))]))
             {
                 o[i].phase = 0;
                 ++cov.syncResets;
@@ -222,8 +271,8 @@ struct NaiveChip
             E& en = e[i];
             refreshPeriod (i);
             en.rate = static_cast<std::uint16_t> ((en.rate + 1) & 0x7fff);
-            if (en.rate == 0 && kWrapTo == 1) en.rate = 1;
-            if (en.rate == 0 && kWrapTo == 0) ++cov.rateWraps;
+            if (en.rate == 0) ++cov.rateWraps;
+            if (en.rate == 0 && (readings() & kWrap1)) en.rate = 1;
             if (en.rate != en.period) continue;
             en.rate = 0;
             const unsigned nibIdx = en.phase == 0 ? (regs[7 * i + 5] >> 4) : en.phase == 1 ? (regs[7 * i + 5] & 15) : (regs[7 * i + 6] & 15);
@@ -231,9 +280,10 @@ struct NaiveChip
             {
                 ++cov.attackStep[nibIdx];
                 en.div = 0;
-                if (en.counter != 0xff) ++en.counter;
+                if (readings() & kAttackWrap) ++en.counter;
+                else if (en.counter != 0xff) ++en.counter;
                 if (en.counter == 0xff) { en.phase = 1; ++cov.attackDone; }
-                en.divPeriod = dividerFor (en.counter);
+                latchDivider (en);
             }
             else
             {
@@ -241,7 +291,7 @@ struct NaiveChip
                 ++en.div;
                 if (en.div != en.divPeriod) continue;
                 en.div = 0;
-                const bool floorHit = en.phase == 1 ? en.counter <= sustainLevel (i) : en.counter == 0;
+                const bool floorHit = en.phase == 1 ? ((readings() & kSustainEq) ? (en.counter == sustainLevel (i) || en.counter == 0) : en.counter <= sustainLevel (i)) : en.counter == 0;
                 if (! floorHit)
                 {
                     --en.counter;
@@ -249,7 +299,7 @@ struct NaiveChip
                 }
                 else if (en.phase == 1)
                     ++cov.sustainHold;
-                en.divPeriod = dividerFor (en.counter);
+                latchDivider (en);
                 static const std::uint8_t dv[6] = { 1, 2, 4, 8, 16, 30 };
                 for (int d = 0; d < 6; ++d)
                     if (en.divPeriod == dv[d]) ++cov.dividerSeen[static_cast<std::size_t> (d)];
@@ -312,7 +362,7 @@ std::uint8_t randomControl (Rng& r)
     if (r.chance (55)) v |= 1;   // gate
     if (r.chance (30)) v |= 2;   // sync
     if (r.chance (30)) v |= 4;   // ring
-    if (r.chance (7)) v |= 8;    // test
+    if (r.chance (12)) v |= 8;   // test
     const unsigned w = r.below (100);
     unsigned wave;
     if (w < 8) wave = 0;
@@ -641,6 +691,51 @@ void runModel (Model model, std::uint64_t cycles, std::uint64_t seed, bool dense
     std::printf ("[stepper] model %s seed %llu\n%s\n", model == Model::A ? "A" : "B", static_cast<unsigned long long> (seed), covText (r).c_str());
 }
 } // namespace
+
+namespace
+{
+using Seq = std::vector<Op>;
+/** Runs a minimal sequence under both readings; returns {referenceStyleResult, literalTextResult}. */
+std::pair<std::string, std::string> bothReadings (Model m, const Seq& s, unsigned mask)
+{
+    std::string a, b;
+    {
+        ScopedReadings g (kAll);
+        a = replay (m, s, true, ",");
+    }
+    {
+        ScopedReadings g (kAll & ~mask);
+        b = replay (m, s, true, ",");
+    }
+    return { a, b };
+}
+} // namespace
+
+TEST_CASE ("ambiguities: the implementation follows the reference-style reading; the literal text reading differs", "[bside][chip][stepper][ambiguity]")
+{
+    struct Case { const char* name; unsigned mask; Seq seq; };
+    const std::vector<Case> cases = {
+        { "wrap: rate counter after 0x7fff (8.4.3 row 11)", kWrap1,
+          { { 0, 0x06, 0x0f }, { 31000, 0x06, 0x00 }, { 1800, 0x19, 0 } } },
+        { "divider period at counter values not on a threshold (row 10)", kDivLatch,
+          { { 0, 0x04, 0x01 }, { 9, 0x19, 0 } } },
+        { "sustain raised above the counter during decay (row 10)", kSustainEq,
+          { { 0, 0x06, 0x30 }, { 0, 0x04, 0x01 }, { 3500, 0x06, 0xf0 }, { 3000, 0x19, 0 } } },
+        { "attack started at counter 0xFF (row 10)", kAttackWrap,
+          { { 0, 0x06, 0xf0 }, { 0, 0x04, 0x01 }, { 2400, 0x04, 0x00 }, { 0, 0x04, 0x01 }, { 30, 0x19, 0 } } },
+        { "sync chain: source reset in the same cycle (row 6)", kChainSuppress,
+          { { 0, 0x01, 0x80 }, { 0, 0x0f, 0x80 }, { 0, 0x07, 0x01 }, { 0, 0x0b, 0x02 }, { 0, 0x04, 0x02 }, { 300, 0x19, 0 } } },
+    };
+    for (const auto& c : cases)
+        for (Model m : { Model::A, Model::B })
+        {
+            const auto r = bothReadings (m, c.seq, c.mask);
+            INFO (c.name << "\nsequence from reset:\n" << opsToString (c.seq) << "\nreference-style reading: " << (r.first.empty() ? "equal" : r.first)
+                         << "\nliteral text reading:    " << (r.second.empty() ? "equal" : r.second));
+            CHECK (r.first.empty());
+            CHECK (! r.second.empty());
+        }
+}
 
 TEST_CASE ("chip digital core equals the naive per-cycle stepper (10^7 cycles per model)", "[bside][chip][stepper]")
 {

@@ -6,6 +6,11 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 ## [Unreleased]
 
 ### B-Side S2a — the chip's digital core (2026-11-14)
+- Digital unit gate by an independent test agent: `tests/bside/unit/ChipStepperTests.cpp`, a naive per-cycle
+  stepper written from 8.4.1-8.4.3 alone, compared field by field with `stepCycle` and `advanceCycles` after
+  every cycle/write and at random mid-gap points (10^7 cycles per model by default, `bside_unit
+  "[.stepper-long]"` 10^8). No defect found; five ambiguous contract sentences are pinned by
+  `[ambiguity]` tests with minimal sequences (both readings shown).
 - `source/bside/chip/` (JUCE-free, no allocation, noexcept, trivially copyable): register file of 8.4.1,
   three 24-bit oscillators with a 32-bit fraction for Smooth input, sync (with the chain case), ring, test
   bit, 23-bit noise registers clocked on bit-19 rises with the combined-waveform write-back, three
