@@ -75,8 +75,13 @@ void* operator new (std::size_t n, const std::nothrow_t&) noexcept { return coun
 void* operator new[] (std::size_t n, const std::nothrow_t&) noexcept { return countedAlloc (n); }
 void operator delete (void* p) noexcept { countedFree (p); }
 void operator delete[] (void* p) noexcept { countedFree (p); }
-// (The sized forms are not replaced: the default ones call these, and not every standard library
-// declares them, which -Wmissing-prototypes turns into an error.)
+// The sized forms only where the compiler has sized deallocation on: GCC then insists they are
+// replaced as well (-Wsized-deallocation), and where it is off they have no prototype
+// (-Wmissing-prototypes).
+#if defined(__cpp_sized_deallocation) && __cpp_sized_deallocation >= 201309L
+void operator delete (void* p, std::size_t) noexcept { countedFree (p); }
+void operator delete[] (void* p, std::size_t) noexcept { countedFree (p); }
+#endif
 void operator delete (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
 void operator delete[] (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
 
