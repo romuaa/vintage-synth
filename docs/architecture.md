@@ -1954,7 +1954,9 @@ M7 code starts only after **S1a has merged** (both touch the editor and the proc
   automation, size); (2) end of M7b–M7e: all pages; (3) end of M7f: visual polish and hands-on in DAWs.
   The owner's answers to 9.8 are needed before M7f, U1 and U2 ideally before M7a.
 
-### 9.8 Open questions for the owner
+### 9.8 Owner decisions (2026-11-14)
+**The owner approved the round-3 wireframes and chose the recommended option in every row below.**
+
 | Q | Question | Options | Recommendation |
 |---|---|---|---|
 | U1 | Window size and resizing | (a) fixed aspect, 75–200 % by corner and Size menu; (b) a few fixed sizes only; (c) free aspect (layout reflows) | **(a)**: one layout to test, works in every host, crisp at any size |
