@@ -125,6 +125,9 @@ add_test(NAME host_smoke
 # Golden-render regression harness (ctest label "render").
 add_subdirectory(render_regression)
 
+# B-Side JUCE-free unit tests (docs/architecture.md 8.1.2): table reader/writer, trace formats, comparer.
+add_subdirectory(bside)
+
 # Steinberg VST3 validator (optional). Pass the path of a built `validator` binary, e.g. from CI:
 #   cmake ... -DVS_VST3_VALIDATOR=/path/to/validator
 # Unset (the default): no test is added and nothing else changes.

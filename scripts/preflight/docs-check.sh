@@ -124,11 +124,18 @@ fi
 bad=$(git grep -n --untracked -iE '#[[:space:]]*include[[:space:]]*[<"]juce' -- \
         'source/common/dsp/*' 'source/common/fx/*' 'source/common/seq/*' 'source/vintage/dsp/*' \
         'source/common/engine/*' ':!source/common/engine/Oversampler.h' \
-        'source/common/ui/models/*' 'source/common/shell/EditorState.h' || true)
+        'source/common/ui/models/*' 'source/common/shell/EditorState.h' \
+        'source/bside/text/*' 'source/bside/program/*' 'source/bside/trace/*' || true)
 if [[ -n $bad ]]; then
   fail "JUCE include in a directory that is JUCE-free by design:"; echo "$bad" >&2
 else
-  ok "the JUCE-free directories (common dsp/fx/seq/engine incl. UiFeed.h, ui/models, shell/EditorState.h, vintage dsp) include no JUCE header"
+  ok "the JUCE-free directories (common dsp/fx/seq/engine incl. UiFeed.h, ui/models, shell/EditorState.h, vintage dsp, bside text/program/trace) include no JUCE header"
+fi
+bad=$(git grep -n --untracked -E '#[[:space:]]*include[[:space:]]*[<"]vintage/' -- 'source/bside/*' || true)
+if [[ -n $bad ]]; then
+  fail "source/bside includes the other instrument:"; echo "$bad" >&2
+else
+  ok "source/bside does not include source/vintage"
 fi
 dups=$(tr '\0' '\n' < "$tmp/files" | tr 'A-Z' 'a-z' | sort | uniq -d)
 if [[ -n $dups ]]; then

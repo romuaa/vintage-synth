@@ -72,7 +72,7 @@ sanitize)
     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
     -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
   step "build test binaries"
-  cmake --build "$b" --parallel "$jobs" --target VintageSynthTests render_regression -- -k 0
+  cmake --build "$b" --parallel "$jobs" --target VintageSynthTests render_regression bside_unit -- -k 0
   ccache --show-stats || true
   step "ctest (ASan + UBSan), host_smoke excluded as in CI"
   xvfb-run -a ctest --test-dir "$b" --output-on-failure -E '^host_smoke$'
