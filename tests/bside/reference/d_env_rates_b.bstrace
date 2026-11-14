@@ -3,6 +3,7 @@ bside-trace 1
 # mirrors it for the envelope read register). Per rate: gate edge, about ten steps
 # observed (probes at the edge and spread over the steps), then a return to zero.
 # The decay and release runs at rates 0 and 1 go all the way down (divider thresholds).
+# No waveform bit is set: the reference is the same for both models.
 clock 985248
 model B
 8 05 00

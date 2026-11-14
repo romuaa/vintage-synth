@@ -1,0 +1,48 @@
+bside-trace 1
+# Twin of a_modes with the voice not routed to the filter.
+# Segments: s00 low-pass; s01 band-pass; s02 high-pass; s03 notch (low + high); s04 low + band; s05 band + high; s06 all three; s07 no mode bit; s08 band-pass, resonance 12; s09 high-pass, resonance 12; s10 notch, resonance 12.
+clock 985248
+model B
+8 0e ff
+8 0f ff
+8 13 00
+8 14 80
+8 12 81
+8 15 02
+8 16 44
+8 17 00
+8 18 0f
+# low-pass
+24642 17 00
+24642 18 1f
+# band-pass
+640422 17 00
+640422 18 2f
+# high-pass
+1256202 17 00
+1256202 18 4f
+# notch (low + high)
+1871982 17 00
+1871982 18 5f
+# low + band
+2487762 17 00
+2487762 18 3f
+# band + high
+3103542 17 00
+3103542 18 6f
+# all three
+3719322 17 00
+3719322 18 7f
+# no mode bit
+4335102 17 00
+4335102 18 0f
+# band-pass, resonance 12
+4950882 17 c0
+4950882 18 2f
+# high-pass, resonance 12
+5566662 17 c0
+5566662 18 4f
+# notch, resonance 12
+6182442 17 c0
+6182442 18 5f
+end 6798212

@@ -1,7 +1,7 @@
 bside-trace 1
 # Twin of a_filter: the same writes with the voice NOT routed to the filter, so each segment has the same noise excitation (filter response = a_filter / this).
 # Segments s00..s15: resonance 0, cutoff 0, 136, 273, 409, 546, 682, 819, 955, 1092, 1228, 1365, 1501, 1638, 1774, 1911, 2047 (16 values).
-# Segments s16..s31: cutoff 1024, resonance 0..15.
+# Segments s16..s31: cutoff 1024, resonance 0..15. Segments of 16 frames.
 clock 985248
 model B
 8 0e ff
