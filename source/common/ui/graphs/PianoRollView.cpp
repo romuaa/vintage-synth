@@ -13,7 +13,8 @@ bool isBlackKey (int note)
     const int pc = note % 12;
     return pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
 }
-constexpr float kLeft = 44.0f, kTop = 18.0f, kPad = 6.0f;
+// Left strip: the octave labels (2 ... 46) and, right of them, the marks of the keys held (plot - 32 ... plot - 6).
+constexpr float kLeft = 76.0f, kTop = 18.0f, kPad = 6.0f;
 } // namespace
 
 PianoRollView::PianoRollView (const Theme& t) : theme (t)
@@ -112,7 +113,7 @@ void PianoRollView::rebuild()
         bars.push_back ({ { x, barY, std::min (w, plot.getRight() - x), barH }, n.note, n.part, n.velocity });
     }
     for (int k : keysIn)
-        keyMarks.push_back ({ plot.getX() - 36.0f, rowY (k) + 1.0f, 30.0f, std::max (2.0f, rowH - 2.0f) });
+        keyMarks.push_back ({ plot.getX() - 32.0f, rowY (k) + 1.0f, 26.0f, std::max (2.0f, rowH - 2.0f) });
     for (int n = rowLo; n <= rowHi; ++n)
         if (n % 12 == 0)
         {
@@ -162,7 +163,7 @@ void PianoRollView::paint (juce::Graphics& g)
         g.setColour (colour (Tok::BgTrack).withAlpha (0.9f));
         g.drawHorizontalLine (static_cast<int> (y + rowH * 0.5f), plot.getX(), plot.getRight());
         g.setColour (colour (Tok::TextSecondary).withAlpha (alpha));
-        drawFittedText (g, rowLabels[i], { 2.0f, y + rowH * 0.5f - 8.0f, kLeft - 4.0f, 16.0f }, juce::Justification::centredLeft);
+        drawFittedText (g, rowLabels[i], { 2.0f, y + rowH * 0.5f - 8.0f, kLabelRight - 2.0f, 16.0f }, juce::Justification::centredLeft);
     }
     // The keys the pattern is made from, at the left.
     g.setColour (accentFor (partsMask == 2 ? 1 : (partsMask == 3 ? -1 : 0)).withAlpha (alpha));

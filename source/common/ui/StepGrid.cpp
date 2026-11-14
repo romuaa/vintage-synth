@@ -92,20 +92,27 @@ public:
 
     float shownValue() const override
     {
-        return grid.getModel().isInGesture (targetIndex()) || keys.isInGesture() ? handle.value() : BoundComponent::shownValue();
+        // During a paint drag the bar shows the user's value even if the host writes the parameter
+        // meanwhile (9.1.5: the marker shows the contest; mouse-up writes nothing).
+        if (grid.getModel().isInGesture (targetIndex()))
+            return grid.getModel().writtenValue (targetIndex());
+        return keys.isInGesture() ? handle.value() : BoundComponent::shownValue();
     }
     void cancelInteraction() override { keys.cancel(); }
 
     void paint (juce::Graphics& g) override
     {
         using namespace metrics;
-        const bool dim = grid.stepIsDimmed (step);
+        // Two kinds of "weaker": a step beyond the length is faded as a whole (frame, number, bar);
+        // a rest or a tie keeps its frame and only its bar and number are softened (and say so).
+        const float outside = grid.stepIsDimmed (step) ? 0.3f : 1.0f;
+        const float alpha = outside * (grid.isOff() ? 0.5f : 1.0f);
         const int type = grid.mirroredType (step);
-        const float alpha = (dim ? 0.4f : 1.0f) * (grid.isOff() ? 0.5f : 1.0f);
+        const float soft = type == 0 ? 1.0f : 0.5f;
         auto cell = getLocalBounds().toFloat();
         if (isPitch())
         {
-            g.setColour (colour (Tok::TextSecondary).withAlpha (alpha));
+            g.setColour (colour (Tok::TextSecondary).withAlpha (alpha * soft));
             g.setFont (ctx.theme.font (kTextSmall, true));
             drawFittedText (g, pitchLabel, cell.removeFromTop (static_cast<float> (kValueRow)), juce::Justification::centred);
         }
@@ -119,19 +126,32 @@ public:
             const float mid = cell.getCentreY();
             g.setColour (colour (Tok::BgTrack).withAlpha (0.8f * alpha));
             g.drawHorizontalLine (juce::roundToInt (mid), cell.getX() + 3.0f, cell.getRight() - 3.0f);
-            if (type == 1)
+            // A rest sounds nothing: its pitch is shown softened. A tie holds the previous note: its
+            // bar continues that note's pitch (softened), not the pitch stored in the step.
+            float y = valueY() - static_cast<float> (getY());
+            bool show = true;
+            if (type == 2)
+            {
+                const int held = grid.tiedSemitones (step);
+                show = held != StepGrid::kNoTiedNote;
+                if (show)
+                    y = grid.getModel().pitchY (held) - static_cast<float> (getY());
+            }
+            if (type != 0)
             {
                 g.setColour (colour (Tok::TextSecondary).withAlpha (alpha));
                 g.setFont (ctx.theme.font (kTextSmall));
-                g.drawText (restText, cell.withSizeKeepingCentre (cell.getWidth(), 16.0f).translated (0.0f, -12.0f), juce::Justification::centred, false);
+                g.drawText (type == 1 ? restText : tieText, cell.withHeight (16.0f).translated (0.0f, 4.0f), juce::Justification::centred, false);
             }
-            const float y = valueY() - static_cast<float> (getY());
-            const float top = std::min (y, mid), bottom = std::max (y, mid);
-            auto block = juce::Rectangle<float>::leftTopRightBottom (cell.getX() + 6.0f, top, cell.getRight() - 6.0f, bottom);
-            if (block.getHeight() < 6.0f)
-                block = block.withSizeKeepingCentre (block.getWidth(), 6.0f).withCentre ({ block.getCentreX(), y });
-            g.setColour (colour (Tok::AccentLower).withAlpha (alpha * (type == 1 ? 0.3f : 1.0f)));
-            g.fillRoundedRectangle (block, 3.0f);
+            if (show)
+            {
+                const float top = std::min (y, mid), bottom = std::max (y, mid);
+                auto block = juce::Rectangle<float>::leftTopRightBottom (cell.getX() + 6.0f, top, cell.getRight() - 6.0f, bottom);
+                if (block.getHeight() < 6.0f)
+                    block = block.withSizeKeepingCentre (block.getWidth(), 6.0f).withCentre ({ block.getCentreX(), y });
+                g.setColour (colour (Tok::AccentLower).withAlpha (alpha * (type == 0 ? 1.0f : 0.35f)));
+                g.fillRoundedRectangle (block, 3.0f);
+            }
         }
         else
         {
@@ -200,10 +220,12 @@ private:
     {
         pitchLabel = drawnText().replace (" st", ""); // prepared here, paint() only draws
         repaint();
+        if (isPitch())
+            grid.repaintPitchBars(); // a tie step after this one shows this pitch
     }
 
     StepGrid& grid;
-    juce::String pitchLabel, restText { "rest" };
+    juce::String pitchLabel, restText { "rest" }, tieText { "tie" };
     int step;
     StepGridModel::Field field;
     model::SliderModel keys; // arrow keys, wheel (mouse painting is the grid model's)
@@ -225,7 +247,9 @@ public:
     int shownLength() const { return 1 + static_cast<int> (std::lround (model::clamp01 (drawnValue()) * 15.0f)); }
     float shownValue() const override
     {
-        return grid.getModel().activeLane() == StepGridModel::Lane::Flag || keys.isInGesture() ? handle.value() : BoundComponent::shownValue();
+        if (grid.getModel().activeLane() == StepGridModel::Lane::Flag)
+            return grid.getModel().writtenValue (StepGridModel::kLengthIndex);
+        return keys.isInGesture() ? handle.value() : BoundComponent::shownValue();
     }
     bool showsMirroredValue (juce::String& why) const override
     {
@@ -343,16 +367,20 @@ float StepGrid::barValueY (int step, bool pitchBarNotVelocity) const
 {
     return (pitchBarNotVelocity ? pitch : velocity)[static_cast<size_t> (step)]->valueY();
 }
+float StepGrid::barMarkerAlpha (int step, bool pitchBarNotVelocity) const
+{
+    return (pitchBarNotVelocity ? pitch : velocity)[static_cast<size_t> (step)]->getMarkerAlpha();
+}
 juce::String StepGrid::barText (int step, bool pitchBarNotVelocity) const
 {
     return (pitchBarNotVelocity ? pitch : velocity)[static_cast<size_t> (step)]->drawnText();
 }
 
-void StepGrid::TypeListener::mirrorChanged (int index, bool)
+void StepGrid::TypeListener::mirrorChanged (int, bool)
 {
-    for (size_t i = 0; i < indices.size(); ++i)
-        if (indices[i] == index && owner != nullptr && owner->pitch[i] != nullptr)
-            owner->pitch[i]->repaint(), owner->velocity[i]->repaint();
+    // A type changed: that step's bars, and any tie after it, look different.
+    if (owner != nullptr)
+        owner->repaintPitchBars();
 }
 
 std::vector<std::unique_ptr<ParamHandle>> StepGrid::makeHandles (ParamMirror& mirror)
@@ -387,6 +415,7 @@ StepGrid::StepGrid (UiContext& c) : ctx (c), handles (makeHandles (c.mirror)), m
         addAndMakeVisible (*velocity[si]);
         addAndMakeVisible (*types[si]);
         typeListener.indices[si] = c.mirror.indexOf (seqStepParamID (i + 1, SeqStepField::Type));
+        noteIndices[si] = c.mirror.indexOf (seqStepParamID (i + 1, SeqStepField::Note));
         c.mirror.subscribe (typeListener.indices[si], &typeListener);
     }
     typeListener.owner = this;
@@ -518,6 +547,39 @@ void StepGrid::rebuildOverlay()
         const float ty = bottom + 2.0f + static_cast<float> (kNumberH) + 4.0f;
         playMark.addTriangle (cx - 5.0f, ty + 8.0f, cx + 5.0f, ty + 8.0f, cx, ty);
     }
+}
+
+void StepGrid::repaintPitchBars()
+{
+    for (auto& b : pitch)
+        if (b != nullptr)
+            b->repaint();
+    for (auto& b : velocity)
+        if (b != nullptr)
+            b->repaint();
+}
+
+int StepGrid::tiedSemitones (int step) const
+{
+    // The steps before it, going back until one sounds: a Note gives its pitch, a Rest means the tie
+    // holds nothing. Inside the pattern the walk wraps from step 1 to the last step.
+    int k = step;
+    for (int n = 0; n < 16; ++n)
+    {
+        if (k == 0)
+        {
+            if (step >= length)
+                return kNoTiedNote;
+            k = length;
+        }
+        --k;
+        const int type = mirroredType (k);
+        if (type == 1)
+            return kNoTiedNote;
+        if (type == 0)
+            return StepGridModel::semitonesOfNormalised (ctx.mirror.value (noteIndices[static_cast<size_t> (k)]));
+    }
+    return kNoTiedNote;
 }
 
 void StepGrid::setOff (bool isOff)

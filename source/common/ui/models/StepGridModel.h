@@ -156,6 +156,9 @@ public:
     void cancel() { endAll(); }
     bool isInGesture() const noexcept { return begun != 0; }
     bool isInGesture (int targetIndex) const noexcept { return ((begun >> targetIndex) & 1u) != 0; }
+    /** The value this interaction wrote last to a target: what its control shows while the gesture is
+        open, even if the host writes the parameter meanwhile (a contested drag, 9.1.5). */
+    float writtenValue (int targetIndex) const noexcept { return written[static_cast<size_t> (targetIndex)]; }
     Lane activeLane() const noexcept { return active; }
 
 private:
@@ -175,7 +178,8 @@ private:
             t.beginGesture();
             begun |= bit;
         }
-        t.setValue (snap (v, t.numSteps()));
+        written[static_cast<size_t> (idx)] = snap (v, t.numSteps());
+        t.setValue (written[static_cast<size_t> (idx)]);
     }
     void endAll()
     {
@@ -190,6 +194,7 @@ private:
 
     std::array<ParamTarget*, kNumTargets> targets;
     Geometry geo;
+    std::array<float, kNumTargets> written {};
     std::uint64_t begun = 0; // bit per target whose gesture is open
     Lane active = Lane::None;
     int lastColumn = 0;

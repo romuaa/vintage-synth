@@ -159,13 +159,11 @@ void VintageEditor::buildPages()
         }
     addPlaceholder (VintagePage::Play, -1, "Play", "Placeholder until M7c: keyboard layout, character and both parts side by side.", std::move (play));
 
-    std::vector<PlaceholderPage::Item> arp, fx;
+    std::vector<PlaceholderPage::Item> fx;
     for (int i = 0; i < mirror.size(); ++i)
     {
         auto& p = mirror.parameter (i);
-        if (p.paramID.startsWith ("arp.") || p.paramID.startsWith ("seq."))
-            arp.push_back ({ p.paramID, shortName (p), -1 });
-        else if (p.paramID.startsWith ("fx."))
+        if (p.paramID.startsWith ("fx."))
             fx.push_back ({ p.paramID, shortName (p), -1 });
     }
     registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::ArpSeq)], -1);

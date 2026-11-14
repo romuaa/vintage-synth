@@ -27,6 +27,10 @@ public:
     /** Bar `i` (in the order of the notes given) in local coordinates; the note it shows. */
     juce::Rectangle<float> barBounds (int i) const noexcept { return bars[static_cast<size_t> (i)].rect; }
     int barNote (int i) const noexcept { return bars[static_cast<size_t> (i)].note; }
+    /** The octave labels fill x = 2 ... kLabelRight; the marks of the held keys sit to the right of that. */
+    static constexpr float kLabelRight = 46.0f;
+    int numKeyMarks() const noexcept { return static_cast<int> (keyMarks.size()); }
+    juce::Rectangle<float> keyMarkBounds (int i) const noexcept { return keyMarks[static_cast<size_t> (i)]; }
     int lowestRow() const noexcept { return rowLo; }
     int highestRow() const noexcept { return rowHi; }
     /** How often the picture was rebuilt (tests: only when an input changed). */

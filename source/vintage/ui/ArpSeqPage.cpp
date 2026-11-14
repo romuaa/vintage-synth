@@ -312,7 +312,8 @@ void ArpSeqPage::updateState (double nowMs)
     grid.setPlayingStep (model::playingStepOf (modeNow == 2, alive.alive(), tgt, keyMode, feed.part[0].seqStep.load (std::memory_order_relaxed),
                                                feed.part[1].seqStep.load (std::memory_order_relaxed)));
 
-    const bool playing = feed.hostPlaying.load (std::memory_order_relaxed);
+    // The host's tempo counts only while the audio runs: a stopped audio thread leaves the feed stale.
+    const bool playing = feed.hostPlaying.load (std::memory_order_relaxed) && alive.alive();
     const int bpm = static_cast<int> (std::lround (feed.hostBpm.load (std::memory_order_relaxed)));
     const bool hostChanged = playing != hostPlaying || (playing && bpm != hostBpm);
     if (hostChanged)
@@ -350,10 +351,13 @@ void ArpSeqPage::recomputePreview()
         input.keys[p].clear();
     }
 
+    // The player's keys count only if held on a part the arp/seq plays through (9.3.5); keys on
+    // another part leave the example chord.
     usingKeys = false;
-    for (const auto& m : memory)
-        for (auto k : m.current())
-            usingKeys = usingKeys || k != 0xFF;
+    for (int p = 0; p < 2; ++p)
+        if (input.partOn[p])
+            for (auto k : memory[static_cast<size_t> (p)].current())
+                usingKeys = usingKeys || k != 0xFF;
 
     if (usingKeys)
     {

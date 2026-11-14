@@ -42,6 +42,12 @@ public:
     int shownLength() const noexcept { return length; }
     /** Arp + Seq mode Off: everything dimmed (and inactive for assistive technology), still editable. */
     void setOff (bool isOff);
+    /** The semitones a Tie step holds (the pitch of the step that sounds before it), or kNoTiedNote. */
+    static constexpr int kNoTiedNote = -1000;
+    int tiedSemitones (int step) const;
+    void repaintPitchBars();
+    /** The external-change marker of a bar (tests). */
+    float barMarkerAlpha (int step, bool pitchBarNotVelocity) const;
     bool isOff() const noexcept { return off; }
 
     int columnWidth() const noexcept { return colW; }
@@ -91,6 +97,7 @@ private:
 
     UiContext& ctx;
     TypeListener typeListener;
+    std::array<int, 16> noteIndices {};
     juce::StringArray numbers, rowLabels;
     std::vector<std::unique_ptr<ParamHandle>> handles; // 49 targets, the model writes through them (shared gesture counters in the mirror)
     model::StepGridModel model;
