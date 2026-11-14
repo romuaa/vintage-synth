@@ -1379,6 +1379,17 @@ same traces are replay inputs, which proves the program engine and the chip toge
 | Q7 | Note-off handled at its sample |
 | Q8 | Default restart policy: Clean |
 
+
+### 8.13 Amendments from S1c (as built, 2026-11-14; these win over 8.6.5 and 8.9.2–8.9.4 where they differ)
+| Section | Amendment |
+|---|---|
+| 8.6.5 | A row ending in `jump` or `repeat` costs no tick (default delay 0; `ticks N` allowed). **No cycle of delay-0 rows is accepted, `repeat` edges included.** Guarantee: an accepted table, and any `Program` that `validate()` accepts, runs **at most 64 rows per tick per lane** from any start row and any repeat-counter state. A note-off on the same sample as a tick can run two such bursts back to back, so the runtime budgets 2 × 64 rows; its own cap stays as a backstop |
+| 8.6.5 | At most 512 commands per table. **The canonical text of everything accepted must itself be acceptable:** the reader rejects a row whose canonical form exceeds 200 bytes and a table whose canonical text exceeds 32 768 bytes; `validate()` enforces the same plus at most 16 jump targets and `release` per lane. Property under test: accept ⇒ write ⇒ read ⇒ identical program bytes |
+| 8.6.5 | Text rules: UTF-8 only; C0 and C1 control characters and a byte order mark are rejected with their own messages; `#` belongs to a note name only directly after `=` and a note letter, otherwise it starts a comment; leading zeros do not count toward digit limits (`ticks` keeps 1–3 digits). The compiled program stores no label names: the writer generates them, so an editor must keep the user's own text |
+| 8.9.2 | Trace limits: **at most 100 000 writes and 49 999 periodic checkpoints** (150 000 checkpoints in all), replacing "10^6 writes". 64 bytes per statement (the bytes before `#`), 256 per line including a comment. Header: `clock` 1 000–100 000 000 Hz; `model` exactly `A` or `B`; header words in any order before the first write, each at most once; `end` last. Register and value are exactly two hex digits; writable registers 0x00–0x18; cycles decimal, non-decreasing, ≤ 2^40 |
+| 8.9.3 | The reference and spec grammars are those of `source/bside/trace/ReferenceFormat.h` (20 state fields with ranges; hashes of 64 hex digits for the trace and 40 or 64 for commits; `frame` and `segment` lines; 16 MB file limit). **Every writer refuses output its reader would reject** |
+| 8.9.4 | Checkpoint order: after every write; periodic checkpoints strictly before `end`, taken before the writes of that cycle; one at `end`. "Level ±0.5 dB" is the overall level of the render. The replay driver verifies the trace's SHA-256 and the schedule. Delay estimation is a helper for the side that holds audio (the repository holds none) |
+
 ## 9. M7 — custom editor
 
 The custom editor of Exitium Vintage Synth, replacing the preset bar + generic editor. Built on a
