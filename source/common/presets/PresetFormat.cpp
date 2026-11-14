@@ -108,16 +108,26 @@ std::string formatNumber (float v)
 
 namespace
 {
-std::string quote (const juce::String& text)
+std::string quoteBytes (std::string_view text)
 {
     std::string out = "\"";
-    for (const char* p = text.toRawUTF8(); *p != 0; ++p)
+    for (const char ch : text)
     {
-        const auto c = static_cast<unsigned char> (*p);
+        const auto c = static_cast<unsigned char> (ch);
         if (c == '"')
             out += "\\\"";
         else if (c == '\\')
             out += "\\\\";
+        else if (c == '\t')
+            out += "\\t"; // the short escapes: a table may hold tabs, and "\u0009" would be three times the size
+        else if (c == '\n')
+            out += "\\n";
+        else if (c == '\r')
+            out += "\\r";
+        else if (c == '\b')
+            out += "\\b";
+        else if (c == '\f')
+            out += "\\f";
         else if (c < 0x20)
         {
             static constexpr char hex[] = "0123456789abcdef";
@@ -129,6 +139,21 @@ std::string quote (const juce::String& text)
             out += static_cast<char> (c);
     }
     return out + "\"";
+}
+
+std::string quote (const juce::String& text) { return quoteBytes (text.toRawUTF8()); }
+
+std::string pad (int level);
+
+/** "[ ... ]" with one string per line; the elements sit one level inside `level`. */
+std::string stringList (const std::vector<std::string>& lines, int level)
+{
+    if (lines.empty())
+        return "[]";
+    std::string out = "[\n";
+    for (size_t i = 0; i < lines.size(); ++i)
+        out += pad (level + 1) + quoteBytes (lines[i]) + (i + 1 < lines.size() ? ",\n" : "\n");
+    return out + pad (level) + "]";
 }
 
 std::string pad (int level) { return std::string (static_cast<size_t> (level) * 2u, ' '); }
@@ -173,6 +198,18 @@ std::vector<std::pair<std::string, std::string>> programMembers (const Schema& s
         }
         members.emplace_back (schema.toneKey (t).toStdString(), object (tone, level));
     }
+    if (schema.instrument().hasTables())
+    {
+        // One list per tone, in the schema's order; an empty list is "no table".
+        std::vector<std::pair<std::string, std::string>> tables;
+        for (int t = 0; t < schema.numTones(); ++t)
+        {
+            static const std::vector<std::string> none;
+            const auto& lines = static_cast<size_t> (t) < p.data.size() ? p.data[static_cast<size_t> (t)] : none;
+            tables.emplace_back (schema.toneKey (t).toStdString(), stringList (lines, level + 1));
+        }
+        members.emplace_back ("tables", object (tables, level));
+    }
     return members;
 }
 
@@ -202,6 +239,8 @@ std::string toJson (const Schema& schema, const Tone& tone)
         params.emplace_back (schema.toneSuffix (k).toStdString(), formatNumber (clean (schema, i, tone.values[static_cast<size_t> (k)])));
     }
     members.emplace_back ("params", object (params, 1));
+    if (schema.instrument().hasTables())
+        members.emplace_back ("table", stringList (tone.data, 1));
     return object (members, 0) + "\n";
 }
 
@@ -239,7 +278,8 @@ bool openRoot (const Schema& schema, const char* utf8, size_t n, const char* kin
         error = "The file is empty.";
         return false;
     }
-    if (n > kMaxFileBytes)
+    const auto& inst = schema.instrument();
+    if (n > inst.fileCap())
     {
         error = "The file is too large to be a preset.";
         return false;
@@ -251,8 +291,11 @@ bool openRoot (const Schema& schema, const char* utf8, size_t n, const char* kin
         n -= 3;
     }
     json::Limits limits;
-    limits.maxInputBytes = kMaxFileBytes;
+    limits.maxInputBytes = inst.fileCap();
     limits.maxDepth = kMaxJsonDepth;
+    if (inst.maxJsonValues > 0)
+        limits.maxValues = inst.maxJsonValues;
+    limits.maxElements = std::max (limits.maxElements, inst.maxTableLines);
     std::string why;
     if (! doc.parse (utf8, n, limits, why))
     {
@@ -343,6 +386,64 @@ bool readSection (const Schema& schema, const Document& doc, Index section, cons
     return true;
 }
 
+/** Reads one table: a list of strings. Missing = no table. The message names `what`. */
+bool readTableLines (const Schema& schema, const Document& doc, Index list, const juce::String& what, std::vector<std::string>& lines,
+                     juce::String& error)
+{
+    lines.clear();
+    if (list == Document::npos)
+        return true;
+    if (doc.type (list) != json::Type::Array)
+    {
+        error = what + " must be a list of text lines.";
+        return false;
+    }
+    const auto& inst = schema.instrument();
+    const size_t n = doc.size (list);
+    if (n > static_cast<size_t> (inst.maxTableLines))
+    {
+        error = what + " has more than " + juce::String (inst.maxTableLines) + " lines.";
+        return false;
+    }
+    size_t bytes = 0;
+    lines.reserve (n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const Index e = doc.element (list, i);
+        if (doc.type (e) != json::Type::String)
+        {
+            error = what + ", line " + juce::String (static_cast<int> (i) + 1) + ": a table line must be text.";
+            lines.clear();
+            return false;
+        }
+        const auto text = doc.string (e);
+        bytes += text.size() + 1u;
+        if (bytes > inst.maxTableBytes)
+        {
+            error = what + " is longer than " + juce::String (static_cast<juce::int64> (inst.maxTableBytes)) + " bytes.";
+            lines.clear();
+            return false;
+        }
+        lines.emplace_back (text);
+    }
+    if (auto e = validateTableLines (inst, lines); e.isNotEmpty())
+    {
+        error = what + ": " + e;
+        lines.clear();
+        return false;
+    }
+    return true;
+}
+
+/** "Lower table of "Name"" for messages. */
+juce::String tableName (const juce::String& part, const juce::String& programName)
+{
+    auto p = part;
+    if (p.isNotEmpty())
+        p = p.substring (0, 1).toUpperCase() + p.substring (1);
+    return p + " table" + (programName.isNotEmpty() ? " of \"" + programName + "\"" : juce::String());
+}
+
 bool readProgramObject (const Schema& schema, const Document& doc, Index obj, Program& out, juce::String& error)
 {
     if (doc.type (obj) != json::Type::Object)
@@ -366,6 +467,25 @@ bool readProgramObject (const Schema& schema, const Document& doc, Index obj, Pr
         if (! readSection (schema, doc, doc.member (obj, schema.toneKey (t).toStdString()), schema.toneKey (t), indices, toneKey, p.values,
                            error))
             return false;
+    }
+    if (schema.instrument().hasTables())
+    {
+        // "tables": { "<tone key>": [ "<line>", ... ], ... }. Missing or empty = no table; keys that
+        // are not a tone of this schema are ignored like unknown parameter IDs.
+        p.data.assign (static_cast<size_t> (schema.numTones()), {});
+        const Index tables = doc.member (obj, "tables");
+        if (tables != Document::npos)
+        {
+            if (doc.type (tables) != json::Type::Object)
+            {
+                error = "\"tables\" must be an object.";
+                return false;
+            }
+            for (int t = 0; t < schema.numTones(); ++t)
+                if (! readTableLines (schema, doc, doc.member (tables, schema.toneKey (t).toStdString()),
+                                      tableName (schema.toneKey (t), p.meta.name), p.data[static_cast<size_t> (t)], error))
+                    return false;
+        }
     }
     out = std::move (p);
     return true;
@@ -405,6 +525,10 @@ Parsed<Tone> parseTone (const Schema& schema, const char* utf8, size_t numBytes)
         return result;
     for (int i : indices)
         t.values.push_back (values[static_cast<size_t> (i)]);
+    if (schema.instrument().hasTables()
+        && ! readTableLines (schema, doc, doc.member (root, "table"), "Table of \"" + t.meta.name + "\"", t.data,
+                             result.error))
+        return result;
     result.value = std::move (t);
     result.ok = true;
     return result;

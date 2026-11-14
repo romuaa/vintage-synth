@@ -49,10 +49,15 @@ juce::String readPresetFile (const juce::File& file, size_t maxBytes, bool follo
     juce::FileInputStream in (file);
     if (! in.openedOk())
         return errorFor (file, "The file could not be read");
-    out.resize (maxBytes + 1);
+    // The buffer starts a little above the file's size and grows (at most to maxBytes + 1), so a small
+    // file costs a small buffer whatever the cap is, and a file that grows while it is read still
+    // ends at maxBytes + 1 bytes read.
+    out.resize (std::min<size_t> (maxBytes + 1, static_cast<size_t> (size) + 4096u));
     size_t total = 0;
-    while (total < out.size())
+    while (total < maxBytes + 1)
     {
+        if (total == out.size())
+            out.resize (std::min<size_t> (maxBytes + 1, out.size() * 2u));
         const auto chunk = static_cast<int> (std::min<size_t> (out.size() - total, 65536u));
         const int got = in.read (out.data() + total, chunk);
         if (got <= 0)
@@ -83,10 +88,15 @@ juce::String readPresetFile (const juce::File& file, size_t maxBytes, bool follo
     if (static_cast<unsigned long long> (st.st_size) > static_cast<unsigned long long> (maxBytes))
         return errorFor (file, "The file is too large to be a preset");
     // A regular file: reads do not block on O_NONBLOCK, and none reads more than is left of maxBytes + 1.
-    out.resize (maxBytes + 1);
+    // The buffer starts a little above the file's size and grows (at most to maxBytes + 1), so a small
+    // file costs a small buffer whatever the cap is, and a file that grows while it is read still
+    // ends at maxBytes + 1 bytes read.
+    out.resize (std::min<size_t> (maxBytes + 1, static_cast<size_t> (st.st_size) + 4096u));
     size_t total = 0;
-    while (total < out.size())
+    while (total < maxBytes + 1)
     {
+        if (total == out.size())
+            out.resize (std::min<size_t> (maxBytes + 1, out.size() * 2u));
         const auto r = ::read (fd, out.data() + total, std::min<size_t> (out.size() - total, 65536u));
         if (r < 0 && errno == EINTR)
             continue;

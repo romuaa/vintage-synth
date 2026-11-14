@@ -44,6 +44,29 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   checked states, handle values, quiet meter); discrete wheel adds up fractions; segment
   double-click selects; Delete/Backspace no longer reset; a restored session applies its window
   size; duplicate `UiState`/`Preset` children of a hostile session are all removed.
+### B-Side S1d: patch tables in presets and state (2026-11-14, `bside/s1d-preset-tables`)
+- `presets::Tone` and `Program` carry table lines; `Instrument` gets an optional table validator, canonicaliser
+  and limits (lines, bytes, file cap, JSON values). Vintage sets none: its program, tone and bank files and its
+  saved state are byte-identical to `origin/main` (hidden `[.presetdump]` test, `diff -r`).
+- Program files `"tables": {"lower": [...], "upper": [...]}`, tone files `"table": [...]`; a table the reader
+  rejects rejects the whole file, message prefixed by part and program name. Tables are stored, saved and
+  restored **verbatim** (comments, spacing, label names); the canonical form is only used to compare tables
+  (the modified marker) and, inside the reader, to compile.
+- The JSON writer writes tab, line feed, carriage return, backspace and form feed with the short escapes
+  (a tab was six bytes; a legitimate table of tab-only lines made a 26 MB bank that `loadBankFile` refused).
+  B-Side caps, from the worst case found by code (worst byte costs 2 bytes written for 1; 31-tab lines):
+  12 MiB per file and 160 000 JSON values; the constructed worst bank is 9 884 536 bytes and 136 327 values
+  (27 % headroom). Every save refuses a file larger than the instrument's own reader accepts (nothing written).
+- Session state: child `Tables` (`lower`, `upper`, the user's text); a malformed table gives that part an
+  empty table and `PresetManager::tableError(part)`; all duplicate `Tables` and `Preset` children are removed.
+- `PresetManager`: `TableSink` (owned by the manager; `prepareTable` before the hold, `publishTable` and
+  `emptyTable` inside it: the table part of the hold only swaps strings with the held ones and copies a program into a free buffer, `noexcept`; the parameter writes of an apply are as before), `setTable`, `currentTable`,
+  `tableError`; the host is told "non-parameter state changed" when a table changes. Error messages are cut
+  between UTF-8 characters.
+- B-Side: `bside/program/ProgramHandover.h` (four buffers per part, wait-free audio side, protocol for two parts
+  in one seqlock window documented and tested) behind `BSideProcessor::tableHandover(part)`. Its step hook
+  lets `HandoverModelTests` explore every interleaving (24 564 states) and catch four broken variants.
+- `readPresetFile` sizes its buffer from the file size instead of the cap.
 
 ### B-Side S1b review follow-up (2026-11-14)
 - S1c merged in (`bside_unit`, `bs_juce_free`): `tests/bside/CMakeLists.txt` holds both test structures.

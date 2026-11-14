@@ -1394,6 +1394,15 @@ same traces are replay inputs, which proves the program engine and the chip toge
 | 8.9.3 | The reference and spec grammars are those of `source/bside/trace/ReferenceFormat.h` (20 state fields with ranges; hashes of 64 hex digits for the trace and 40 or 64 for commits; `frame` and `segment` lines; 16 MB file limit). **Every writer refuses output its reader would reject** |
 | 8.9.4 | Checkpoint order: after every write; periodic checkpoints strictly before `end`, taken before the writes of that cycle; one at `end`. "Level ±0.5 dB" is the overall level of the render. The replay driver verifies the trace's SHA-256 and the schedule. Delay estimation is a helper for the side that holds audio (the repository holds none) |
 
+### 8.14 Amendments from S1d (as built, 2026-11-14; these win over 8.6.7 and 8.8 where they differ)
+| Section | Amendment |
+|---|---|
+| 8.6.7 | Per part, **four** program buffers (published, committed, candidate, one free), not three; three cannot give a wait-free reader that keeps its table after a failed read (model-checked). The audio thread claims the published buffer as a candidate inside the seqlock window, re-checks that it is still published, and commits the claim only after `endRead` succeeds; the writer reads the claim before the committed index. Unchanged table: one atomic load per block. With two parts in one window: commit both or abort both (`source/bside/program/ProgramHandover.h`). |
+| 8.8 | **Tables are stored as the user wrote them** (owner-facing decision by the orchestrator, 2026-11-14): the manager, program, tone and bank files and the session's `Tables` child keep the validated lines verbatim (comments, spacing, label names). The canonical form is used only to compare tables (the modified marker) and to compile. A text change with the same canonical form tells the host that the state changed but does not mark the program modified. |
+| 8.8 | `Instrument` also carries an optional canonicaliser and the limits `maxTableLines`, `maxTableBytes`, `maxFileBytes`, `maxJsonValues` (0 = the common default). A table line holds no LF, CR or NUL. The manager owns a table sink: `prepareTable` (before the hold; may allocate or fail, a failure is treated like an invalid table), `publishTable` and `emptyTable` (inside the hold; copy or swap only, `noexcept`). |
+| 8.8 | B-Side limits: 1024 lines and 32 768 bytes per table, file cap 12 MiB, 160 000 JSON values. The worst legitimate bank (64 programs, two maximal tables, every byte costing two written bytes) is 9.9 MB and 136 327 values. The cap is checked before parsing, and **no save function writes a file its reader would refuse**. |
+| 8.8 | Session: of several `Tables` (or `Preset`) children the first is used and all are removed. A malformed table gives that part an empty table and an error available from `PresetManager::tableError(part)` until the next apply or `setTable` for that part. `setTable` is the editor's entry point (message thread; tells the host that non-parameter state changed). |
+
 ## 9. M7 — custom editor
 
 The custom editor of Exitium Vintage Synth, replacing the preset bar + generic editor. Built on a

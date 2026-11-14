@@ -16,6 +16,14 @@
 //     from a session never depends on the bank file.
 //   - Names, the bank and the flags can be read from any thread (copies, under a small lock).
 //
+// Patch tables (an instrument whose Instrument has validateTable; docs/architecture.md 8.8): each
+// tone has an optional table, held here as validated, canonical text lines. Applying a program or
+// tone, setTable and a state restore replace tables inside the same ApplyGate hold as the
+// parameters, and hand each changed table to the TableSink the instrument supplied (which compiles
+// and publishes it for the audio thread). A table that does not validate never gets that far: a file
+// is rejected whole, a session gives that part an empty table and an error (tableError) for the
+// editor. Instruments without tables: all of this is inert (no state child, no sink call).
+//
 // User files live under <documents>/Exitium/<product>/{Programs,Tones,Banks}/. Directories are
 // created by the first save into them, never earlier, and nothing is ever written anywhere else
 // (a save writes exactly the file it is given, through a temporary file next to it). All three
@@ -33,6 +41,9 @@
 
 namespace vs::presets
 {
+/** The child of a session's state tree that holds the tables (createTablesInfo). */
+inline constexpr const char* kTablesInfoType = "Tables";
+
 struct Locations
 {
     juce::File root; // contains Programs/, Tones/, Banks/
@@ -41,6 +52,30 @@ struct Locations
     juce::File banks() const { return root.getChildFile ("Banks"); }
     /** <user documents>/Exitium/<product>: nothing is created. */
     static Locations userDefault (const juce::String& product);
+};
+
+/** A table made ready for the audio thread by TableSink::prepareTable (the sink's own type). */
+struct PreparedTable
+{
+    virtual ~PreparedTable() = default;
+};
+
+/** The instrument's side of a table change, in two steps so that nothing that can fail or allocate runs
+    inside the ApplyGate hold.
+      prepareTable   BEFORE the hold, on the message thread or a host's state thread: builds whatever the
+                     audio thread will use (B-Side: the compiled program) from validated lines (empty =
+                     no table). May allocate; may throw or return nullptr when the table cannot be used,
+                     in which case the table counts as rejected (an empty table and an error).
+      publishTable   INSIDE the hold and under writerLock(): hands the prepared table over. Must not
+                     allocate, wait, take the manager's locks or fail. The audio thread never calls either. */
+class TableSink
+{
+public:
+    virtual ~TableSink() = default;
+    virtual std::unique_ptr<PreparedTable> prepareTable (int tone, const std::vector<std::string>& lines) = 0;
+    virtual void publishTable (int tone, PreparedTable& prepared) noexcept = 0;
+    /** The prepared "no table", ready in advance (used when a table is rejected). */
+    virtual PreparedTable& emptyTable (int tone) noexcept = 0;
 };
 
 enum class BankStatus
@@ -56,7 +91,7 @@ class PresetManager final : private juce::Timer, private juce::AudioProcessorPar
 public:
     /** The bank the instrument starts with is `factoryBank`: read-only; user banks are files. */
     PresetManager (juce::AudioProcessorValueTreeState& state, Schema schema, Bank factoryBank, ApplyGate& gate,
-                   Locations locations);
+                   Locations locations, std::unique_ptr<TableSink> tableSink = nullptr);
     ~PresetManager() override;
 
     const Schema& getSchema() const noexcept { return schema; }
@@ -124,6 +159,29 @@ public:
 
     // ---- Session state (host state blob; call both under writerLock()) ----
     juce::ValueTree createSessionInfo() const;
+    /** The session's tables: a child "Tables" with one text property per tone (the tone key, e.g.
+        "lower"): the lines, verbatim, joined by LF. An invalid tree for an instrument without tables. */
+    juce::ValueTree createTablesInfo() const;
+    /** One tone's table, checked and prepared, ready to commit. */
+    struct TableUpdate
+    {
+        int tone = 0;
+        std::vector<std::string> lines;          // verbatim
+        juce::String error;
+        std::shared_ptr<PreparedTable> prepared; // from the sink; null for no table or a rejected one
+    };
+    /** The tables of a session, checked and prepared, ready to commit: one update per tone (empty for an
+        instrument without tables). */
+    struct PreparedTables
+    {
+        std::vector<TableUpdate> items;
+    };
+    /** Does the checking and preparing of a session's tables (any thread, no locks, no I/O).
+        `info` may be invalid (a session without tables: every tone gets no table). Never throws; an
+        unusable table becomes "no table" plus an error. Do this before withParametersHeld. */
+    PreparedTables prepareTablesInfo (const juce::ValueTree& info) const;
+    /** Replaces every tone's table with the prepared ones. Only inside withParametersHeld's `restore`. */
+    void restoreTables (PreparedTables&& prepared);
     /** After the parameters were restored by the caller. `info` may be invalid (state saved before
         presets existed). Any thread; does no file I/O (the bank is resolved by pollRequests()). */
     void restoreSessionInfo (const juce::ValueTree& info);
@@ -133,6 +191,19 @@ public:
     /** Runs `restore` (which replaces the parameter values) under writerLock() with the audio
         thread holding its parameter values. */
     void withParametersHeld (const std::function<void()>& restore);
+
+    // ---- Patch tables (any thread; only for an instrument with tables, else empty and inert) ----
+    bool hasTables() const noexcept { return schema.instrument().hasTables(); }
+    /** The table of tone `part`: validated lines exactly as given (empty = no table). */
+    std::vector<std::string> currentTable (int part) const;
+    /** Why the part has no table although the session saved one ("" = nothing wrong). Set by a state
+        restore, cleared by the next apply or setTable that replaces that part's table. */
+    juce::String tableError (int part) const;
+    /** Replaces tone `part`'s table (message thread; the editor's way in). Returns "" on success;
+        otherwise the message, and nothing changed. The lines are kept verbatim. A table is program
+        content: the program counts as modified unless the canonical form is unchanged. The host is told
+        that non-parameter state changed when the text changed. */
+    juce::String setTable (int part, const std::vector<std::string>& lines);
 
     // ---- Observers (message thread) ----
     juce::ChangeBroadcaster& changes() noexcept { return broadcaster; }
@@ -150,7 +221,18 @@ private:
     void parameterGestureChanged (int, bool) override {}
     void timerCallback() override { pollRequests(); }
 
-    void applyIndices (const std::vector<int>& indices, const std::vector<float>& values);
+    /** Validates `lines` and has the sink prepare them; on failure the lines are empty and `error` says why (prefixed by `context`). */
+    TableUpdate prepareTable (int tone, const std::vector<std::string>& lines, const juce::String& context) const;
+    void applyIndices (const std::vector<int>& indices, const std::vector<float>& values, std::vector<TableUpdate>* tableUpdates = nullptr);
+    /** Stores and publishes the tables, inside a gate hold and under writer. Swaps the updates' contents
+        with the held ones (the old tables are freed by whoever destroys `updates`, after the hold) and
+        calls the sink's publishTable: nothing in here allocates, copies a string or can throw. */
+    void commitTables (std::vector<TableUpdate>& updates) noexcept;
+    juce::String partLabel (int tone) const;
+    /** True if the two tables are the same (identical lines, or the same canonical form). */
+    bool sameTable (const std::vector<std::string>& a, const std::vector<std::string>& b) const;
+    /** Tells the host that state that is not a parameter changed (message thread only: a call from another thread is skipped). */
+    void notifyNonParameterState();
     void resyncLastValues();
     void notifyHost();
     void broadcastIfMessageThread();
@@ -177,7 +259,7 @@ private:
     std::atomic<bool> lastAcknowledged { true };
 
     juce::CriticalSection writer;       // serialises parameter writers (see writerLock())
-    mutable juce::CriticalSection lock; // names, bank and locations: host threads read them
+    mutable juce::CriticalSection lock; // names, bank, locations and tables: host threads read them
     Locations locations;
     Bank bank;
     BankStatus status = BankStatus::Factory;
@@ -186,6 +268,10 @@ private:
     juce::String bankDisplayName; // status Pending / Missing: the bank's name as the session had it
     std::uint32_t generation = 0; // bumped by every bank change: a stale lookup result is dropped
     Meta current;
+
+    std::unique_ptr<TableSink> sink;
+    std::vector<std::vector<std::string>> tables; // by tone (lock); empty vectors for an instrument without tables
+    std::vector<juce::String> tableErrors;        // by tone (lock)
 
     juce::ChangeBroadcaster broadcaster;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetManager)

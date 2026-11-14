@@ -13,6 +13,23 @@ void reportFatalConfigError (const char* what) noexcept
     std::abort();
 }
 
+juce::ValueTree takeChildren (juce::ValueTree& state, const char* type)
+{
+    juce::ValueTree first;
+    const juce::Identifier id (type);
+    // From the back: erasing at the end of the child array costs nothing, erasing at the front shifts everything.
+    for (int i = state.getNumChildren() - 1; i >= 0; --i)
+    {
+        auto child = state.getChild (i);
+        if (child.hasType (id))
+        {
+            first = child; // ends as the lowest index, the first one in the document
+            state.removeChild (i, nullptr);
+        }
+    }
+    return first;
+}
+
 void addMissingParameters (juce::ValueTree& state, const juce::Array<juce::AudioProcessorParameter*>& params)
 {
     static const juce::Identifier paramType ("PARAM"), idProperty ("id"); // JUCE's state format
@@ -24,19 +41,6 @@ void addMissingParameters (juce::ValueTree& state, const juce::Array<juce::Audio
                 entry.setProperty (idProperty, withId->paramID, nullptr);
                 state.appendChild (entry, nullptr);
             }
-}
-
-juce::ValueTree takeChildren (juce::ValueTree& state, const char* type)
-{
-    const juce::Identifier id (type);
-    juce::ValueTree first;
-    for (int i = state.getNumChildren(); --i >= 0;)
-        if (state.getChild (i).hasType (id))
-        {
-            first = state.getChild (i); // the loop runs backwards: the last kept is the first child
-            state.removeChild (i, nullptr);
-        }
-    return first;
 }
 
 namespace
