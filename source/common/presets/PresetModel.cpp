@@ -9,8 +9,9 @@ namespace vs::presets
 {
 bool Instrument::isValid() const noexcept
 {
+    const bool tablesOk = ! hasTables() || (maxTableLines > 0 && maxTableBytes > 0);
     return id.isNotEmpty() && groups >= 1 && groups <= 26 && slotsPerGroup >= 1 && slotsPerGroup <= 9 && programExtension.startsWithChar ('.')
-           && toneExtension.startsWithChar ('.') && bankExtension.startsWithChar ('.');
+           && toneExtension.startsWithChar ('.') && bankExtension.startsWithChar ('.') && tablesOk;
 }
 
 juce::String Instrument::positionName (int i) const
@@ -190,6 +191,101 @@ juce::String sanitiseName (const juce::String& s)
     return n.isEmpty() ? juce::String ("Untitled") : n;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------------------------
+juce::String truncateUtf8 (const juce::String& s, size_t maxBytes)
+{
+    const char* utf8 = s.toRawUTF8();
+    const size_t n = s.getNumBytesAsUTF8();
+    if (n <= maxBytes)
+        return s;
+    size_t cut = maxBytes;
+    while (cut > 0 && (static_cast<unsigned char> (utf8[cut]) & 0xC0u) == 0x80u) // utf8[cut] continues a character: back up to its start
+        --cut;
+    return juce::String::fromUTF8 (utf8, static_cast<int> (cut));
+}
+
+std::string joinTableLines (const std::vector<std::string>& lines)
+{
+    size_t n = 0;
+    for (const auto& l : lines)
+        n += l.size() + 1;
+    std::string out;
+    out.reserve (n);
+    for (const auto& l : lines)
+    {
+        out += l;
+        out += '\n';
+    }
+    return out;
+}
+
+juce::String checkTableShape (const Instrument& instrument, const std::vector<std::string>& lines)
+{
+    if (lines.size() > static_cast<size_t> (std::max (0, instrument.maxTableLines)))
+        return "The table has more than " + juce::String (instrument.maxTableLines) + " lines.";
+    size_t bytes = 0;
+    for (size_t i = 0; i < lines.size(); ++i)
+    {
+        bytes += lines[i].size() + 1u;
+        if (bytes > instrument.maxTableBytes)
+            return "The table is longer than " + juce::String (static_cast<juce::int64> (instrument.maxTableBytes)) + " bytes.";
+        if (lines[i].find_first_of (std::string ("\n\r\0", 3)) != std::string::npos)
+            return "Line " + juce::String (static_cast<int> (i) + 1) + " of the table contains a line break or a NUL character.";
+    }
+    return {};
+}
+
+juce::String validateTableLines (const Instrument& instrument, const std::vector<std::string>& lines)
+{
+    if (lines.empty())
+        return {};
+    if (! instrument.hasTables())
+        return "This instrument has no tables.";
+    if (auto e = checkTableShape (instrument, lines); e.isNotEmpty())
+        return e;
+    try
+    {
+        return truncateUtf8 (instrument.validateTable (lines), 1024); // a message is shown and stored: bounded, cut between characters
+    }
+    catch (...)
+    {
+        return "The table could not be checked.";
+    }
+}
+
+juce::String splitTableText (const Instrument& instrument, const juce::String& text, std::vector<std::string>& lines)
+{
+    lines.clear();
+    const char* utf8 = text.toRawUTF8();
+    const size_t n = text.getNumBytesAsUTF8();
+    if (n > instrument.maxTableBytes)
+        return "The table is longer than " + juce::String (static_cast<juce::int64> (instrument.maxTableBytes)) + " bytes.";
+    size_t start = 0;
+    for (size_t i = 0; i < n; ++i)
+        if (utf8[i] == '\n')
+        {
+            if (lines.size() >= static_cast<size_t> (std::max (0, instrument.maxTableLines)))
+            {
+                lines.clear();
+                return "The table has more than " + juce::String (instrument.maxTableLines) + " lines.";
+            }
+            lines.emplace_back (utf8 + start, i - start);
+            start = i + 1;
+        }
+    if (start < n)
+    {
+        if (lines.size() >= static_cast<size_t> (std::max (0, instrument.maxTableLines)))
+        {
+            lines.clear();
+            return "The table has more than " + juce::String (instrument.maxTableLines) + " lines.";
+        }
+        lines.emplace_back (utf8 + start, n - start);
+    }
+    return {};
+}
+
 Program makeInitProgram (const Schema& schema)
 {
     Program p;
@@ -210,6 +306,8 @@ Tone toneOf (const Schema& schema, const Program& program, int tone)
 {
     Tone t;
     t.meta = program.meta;
+    if (static_cast<size_t> (tone) < program.data.size())
+        t.data = program.data[static_cast<size_t> (tone)];
     t.values.reserve (static_cast<size_t> (schema.toneSize()));
     for (int k = 0; k < schema.toneSize(); ++k)
         t.values.push_back (program.values[static_cast<size_t> (schema.toneParam (tone, k))]);
@@ -218,6 +316,12 @@ Tone toneOf (const Schema& schema, const Program& program, int tone)
 
 void setTone (const Schema& schema, Program& program, int tone, const Tone& t)
 {
+    if (schema.instrument().hasTables())
+    {
+        if (program.data.size() < static_cast<size_t> (schema.numTones()))
+            program.data.resize (static_cast<size_t> (schema.numTones()));
+        program.data[static_cast<size_t> (tone)] = t.data;
+    }
     for (int k = 0; k < schema.toneSize(); ++k)
         program.values[static_cast<size_t> (schema.toneParam (tone, k))] = t.values[static_cast<size_t> (k)];
 }
