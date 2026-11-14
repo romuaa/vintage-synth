@@ -33,7 +33,17 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   filter curve vs the real filter and oscilloscope equality, registry completeness, automation
   follow for every parameter, contested drags, editor closed mid-drag, open/close and two instances,
   a text layout snapshot of the Sound page; hidden `[.uishots]` (PNGs) and `[.uibench]` (budgets).
-- The Inter font (SIL OFL 1.1) is in `resources/fonts/inter/` with its licence and source record.
+- The Inter font (SIL OFL 1.1) is in `resources/fonts/inter/` with its licence and source record;
+  the release checklist ships its licence text with every binary.
+- The local macOS gate runs pluginval with its editor tests; CI still skips pluginval's GUI tests on
+  Windows and Linux.
+- After review: the oscilloscopes run the voice's own oscillator configuration, pulse-width mapping
+  and per-sample code (`vintage/engine/OscPath.h`, shared with `Voice`; audio byte-identical); the
+  filter graph spans 5 Hz–20 kHz and states self-oscillation; the external-change marker has its own
+  colour and a dashed outline; hidden pages end their gestures; accessibility basics (focus order,
+  checked states, handle values, quiet meter); discrete wheel adds up fractions; segment
+  double-click selects; Delete/Backspace no longer reset; a restored session applies its window
+  size; duplicate `UiState`/`Preset` children of a hostile session are all removed.
 
 ### B-Side S1a — shared processor skeleton (2026-11-14)
 - Refactor, no behaviour change: everything instrument-independent in Vintage's processor moved

@@ -14,6 +14,10 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | Editor tests saw no meter update. | The constructor's first tick used the real clock; the test's own clock started far below it. | Treat a clock that goes backwards as "due now"; tests drive `tick (ms)` themselves. |
 | A prose line of `help-texts.md` parsed as an entry. | It starts with "- \`" and contains "\`: " later. | An entry's id is one token (letters, digits, `.`, `_`, `<>`). |
 | `= default` comparison of a struct with float members failed to build. | `-Wfloat-equal` (an error) applies to defaulted `operator==` too. | Compare floats bitwise with `std::bit_cast`. |
+| A test proved nothing about what the controls draw (a reviewer's mutation that stopped notifications passed). | The binding check compared a fresh read of the mirror with the mirror. | Check the **prepared drawing state** (`drawnValue`, `drawnText`, set only on notification), and compare pictures with what the engine itself read (`getBlockParams`), not with the page's own mapping. |
+| Off-screen components return no accessibility handler. | JUCE creates handlers for components with a native window only. | Tests call `createAccessibilityHandler()` directly. |
+| Counting repaints without a window. | `repaint()` goes nowhere off screen. | Install a recording `juce::CachedComponentImage` on the top component: every child's repaint arrives as `invalidate (area)`. |
+| A refactor of the voice's oscillator code needed proof beyond the existing renders (they barely use PWM). | Coverage. | A temporary probe script copied into both builds' script folders, bit-compared, then removed. |
 | The worktree guard refused shell commands whose text contained an ordinary English word that is also a git subcommand. | It scans the command text. | Put larger edits into a script file in the scratch folder and run that. |
 
 ## B-Side S1a: shared processor skeleton (2026-11-14)

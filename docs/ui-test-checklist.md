@@ -55,7 +55,7 @@ Parts, pages and help:
   text matches the control.
 - Inactive looks: unison controls outside Unison, split key outside Split, balance in Whole, ceiling
   with the limiter off, delay/reverb controls at level 0, arp controls with Arp/Seq Off.
-- Every control: drag, fine drag (Shift, Cmd/Ctrl), wheel, double-click resets, typed value (click
+- Every control: drag, fine drag (Shift, Cmd/Ctrl), wheel (a trackpad flick moves a switch by a step or two, not through all choices), double-click resets sliders and graph handles (on a switch it selects; reset is in the context menu), Delete does nothing, typed value (click
   the value, Enter), right-click shows the host's parameter menu where the host offers one.
 - Keyboard only: Tab through the page in reading order, arrows change the focused control, Esc
   closes popovers; with the screen reader on, controls read "part, name, value".
