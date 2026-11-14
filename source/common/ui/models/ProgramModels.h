@@ -70,7 +70,7 @@ inline std::string middleEllipsis (const std::string& s, size_t maxChars)
     if (maxChars <= 1)
         return ellipsis;
     const size_t keep = maxChars - 1, head = (keep + 1) / 2, tail = keep / 2;
-    const size_t tailStart = starts[starts.size() - tail];
+    const size_t tailStart = tail > 0 ? starts[starts.size() - tail] : s.size(); // no tail: nothing to index
     return s.substr (0, starts[head]) + ellipsis + (tail > 0 ? s.substr (tailStart) : std::string());
 }
 
