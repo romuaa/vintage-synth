@@ -43,6 +43,18 @@ where a row here is worded differently.
 | **Contract question, reference behaviour: board filter.** Both board filters are integer one-pole filters with rounded coefficients: high-pass 1.196 Hz at 985 248 Hz (1.243 Hz at 1 022 727 Hz; design value 1.59 Hz), low-pass 15.4 kHz (14.6 kHz). The high-pass has a dead band: after a DC step the output settles at a residual of up to -50.8 dBFS (Model A) / -46.4 dBFS (Model B) instead of 0 (`a_voice_dc_a` frames 79, 159; `a_voice_dc_b` frames 119, 239). 8.4.4 says "about 16 Hz". Per-frame comparison (architecture 8.15.7): band 0 and the frame level are ignored where both sides are below -40 dBFS (Model B's residual, -46.4 dBFS, would sit only 1.4 dB under -45); the voice-DC gate compares the first frame after each volume write only. | Quantisation artefacts of the reference, not of the chip; a 16 Hz high-pass would fail the voice-DC tolerance. |
 | **Contract question: voice DC.** Model B's voice-DC step is not "small": -25 dBFS for a volume swing 0 -> 15 (Model A: -10 dBFS) (`a_voice_dc_*`). | 8.4.4. |
 
+### Bit-exact rule with our own combined-waveform tables (orchestrator, 2026-11-14, review)
+- With "follow, own tables" the fields that a combined-waveform shape reaches (the oscillator 3
+  read register, the noise register after a write-back, on Model A an oscillator synced through a
+  pulled-down top bit) cannot equal the reference bit for bit. **Chosen: those fields are exempt
+  from the exact comparison while they depend on a shape; everything else stays exact**
+  (architecture 8.15.8). Alternatives not taken: a tolerance on digital fields (a noise register
+  that differs in one bit is simply a different sequence, so a tolerance means nothing), or exact
+  comparison (possible only with the reference's tables, which the owner decided against).
+- Consequence the owner should know: on Model A, hard sync from an oscillator that plays a
+  combined waveform may fire at different moments than in the reference, as far as our fitted
+  shape differs from it. If that turns out audible on real tunes, the remedy is "follow fully".
+
 ## M7a results: editor foundation and Sound page (2026-11-14)
 
 | Decision | Why |
