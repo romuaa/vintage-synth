@@ -24,38 +24,59 @@ void Chip::reset() noexcept
     clock.reset();
 }
 
-void Chip::updateRatePeriod (int n) noexcept
+void Chip::writeAttackDecay (int n) noexcept
 {
     Env& e = env[idx (n)];
-    switch (e.phase)
-    {
-        case EnvPhase::attack: e.ratePeriod = kRatePeriods[attackDecay (n) >> 4]; break;
-        case EnvPhase::decaySustain: e.ratePeriod = kRatePeriods[attackDecay (n) & 15u]; break;
-        case EnvPhase::release: e.ratePeriod = kRatePeriods[sustainRelease (n) & 15u]; break;
-    }
+    if (e.phase == static_cast<std::uint8_t> (EnvPhase::attack))
+        e.compare = attackMatch (n);
+    else if (e.phase == static_cast<std::uint8_t> (EnvPhase::decaySustain))
+        e.compare = decayMatch (n);
 }
 
-void Chip::applyControl (int n, std::uint8_t before) noexcept
+void Chip::writeSustainRelease (int n) noexcept
+{
+    Env& e = env[idx (n)];
+    if (e.phase == static_cast<std::uint8_t> (EnvPhase::release))
+        e.compare = releaseMatch (n);
+}
+
+void Chip::writeControl (int n, std::uint8_t before) noexcept
 {
     const std::uint8_t c = ctl (n);
     Osc& o = osc[idx (n)];
-    if ((c & ctrl::test) != 0)
+    const ModelTiming t = timingFor (cfg.model);
+    // 8.15.5: waveform bits changed to none -> the fade's hold time starts
+    if (wave::bits (before) != wave::bits (c) && wave::bits (c) == 0)
+        o.fadeTimer = t.fadeHold;
+    // 8.15.5: test bit
+    const bool testWas = (before & ctrl::test) != 0;
+    const bool testIs = (c & ctrl::test) != 0;
+    if (! testWas && testIs)
     {
         o.phase = 0;
-        o.noise = kNoiseReset;
+        o.noisePipe = 0;
+        o.latch = o.noise;
+        o.fillTimer = t.testHold;
     }
+    else if (testWas && ! testIs)
+        noiseShift (n, wave::bits (before), wave::bits (c));
+    // 8.15.4 "Writes": gate edges
     Env& e = env[idx (n)];
     const bool gateWas = (before & ctrl::gate) != 0;
     const bool gateIs = (c & ctrl::gate) != 0;
     if (! gateWas && gateIs)
     {
-        e.phase = EnvPhase::attack;
-        updateRatePeriod (n);
+        e.target = static_cast<std::uint8_t> (EnvPhase::attack);
+        e.phasePipeline = 2;
+        if (e.resetPending || e.dividerPipeline == 2)
+            e.stepPipeline = (e.dividerPeriod == 1 || e.dividerPipeline == 2) ? 2 : 4;
+        else if (e.dividerPipeline == 1)
+            e.phasePipeline = 3;
     }
     else if (gateWas && ! gateIs)
     {
-        e.phase = EnvPhase::release;
-        updateRatePeriod (n);
+        e.target = static_cast<std::uint8_t> (EnvPhase::release);
+        e.phasePipeline = e.stepPipeline > 0 ? 3 : 2;
     }
 }
 
@@ -75,17 +96,17 @@ void Chip::write (std::uint8_t address, std::uint8_t value) noexcept
     {
         case reg::freqLo:
         case reg::freqHi:
+            // The whole increment, used from the next step; the accumulator keeps its value and its fraction.
             o.inc = static_cast<std::uint64_t> (regs[base + reg::freqLo] | (regs[base + reg::freqHi] << 8)) << kFractionBits;
-            // A register write sets the whole increment; the accumulator keeps its value and its fraction.
             break;
         case reg::pwLo:
         case reg::pwHi:
             o.pw = static_cast<std::uint16_t> (regs[base + reg::pwLo] | ((regs[base + reg::pwHi] & 0x0f) << 8));
             o.pwSmooth = static_cast<float> (o.pw);
             break;
-        case reg::control: applyControl (n, before); break;
-        case reg::attackDecay:
-        case reg::sustainRelease: updateRatePeriod (n); break;
+        case reg::control: writeControl (n, before); break;
+        case reg::attackDecay: writeAttackDecay (n); break;
+        case reg::sustainRelease: writeSustainRelease (n); break;
         default: break;
     }
 }
@@ -116,18 +137,19 @@ void Chip::setOscillator (int n, const OscInput& in) noexcept
         o.inc = std::min (inc, kMaxIncrement);
         fReg = static_cast<std::uint32_t> (std::min<std::uint64_t> (o.inc >> kFractionBits, 65535));
         o.pwSmooth = std::fmin (std::fmax (pw, 0.0f), 4095.0f);
-        o.pw = static_cast<std::uint16_t> (std::floor (o.pwSmooth)); // the integer part follows the register rules (8.4.3)
+        o.pw = static_cast<std::uint16_t> (std::floor (o.pwSmooth)); // the integer part follows the register rules
     }
     regs[base + reg::freqLo] = static_cast<std::uint8_t> (fReg & 0xff);
     regs[base + reg::freqHi] = static_cast<std::uint8_t> (fReg >> 8);
     regs[base + reg::pwLo] = static_cast<std::uint8_t> (o.pw & 0xff);
     regs[base + reg::pwHi] = static_cast<std::uint8_t> (o.pw >> 8);
     regs[base + reg::attackDecay] = in.attackDecay;
+    writeAttackDecay (n);
     regs[base + reg::sustainRelease] = in.sustainRelease;
-    updateRatePeriod (n);
+    writeSustainRelease (n);
     const std::uint8_t before = regs[base + reg::control];
     regs[base + reg::control] = in.control;
-    applyControl (n, before);
+    writeControl (n, before);
 }
 
 void Chip::setFilter (const FilterInput& in) noexcept
@@ -146,8 +168,8 @@ std::uint8_t Chip::read (std::uint8_t address) const noexcept
 {
     switch (address & reg::kAddressMask)
     {
-        case reg::osc3Output: return static_cast<std::uint8_t> (output (2) >> 4);
-        case reg::env3Output: return env[2].counter;
+        case reg::osc3Output: return static_cast<std::uint8_t> (osc[2].read >> 4);
+        case reg::env3Output: return env[2].readSample;
         default: return 0;
     }
 }
@@ -163,17 +185,21 @@ DigitalState Chip::state() const noexcept
         so.acc = static_cast<std::uint32_t> (o.phase >> kFractionBits);
         so.accFraction = static_cast<std::uint32_t> (o.phase & 0xffffffffu);
         so.increment = o.inc;
-        so.noise = o.noise;
         so.pulseWidth = o.pw;
-        const Env& e = env[idx (n)];
-        auto& se = s.env[idx (n)];
-        se.counter = e.counter;
-        se.phase = static_cast<std::uint8_t> (e.phase);
-        se.rateCounter = e.rate;
-        se.ratePeriod = e.ratePeriod;
-        se.divider = e.div;
-        se.dividerPeriod = e.divPeriod;
+        so.noise = o.noise;
+        so.noiseLatch = o.latch;
+        so.noiseOutput = o.noiseOut;
+        so.noisePipeline = o.noisePipe;
+        so.firstShift = o.firstShift;
+        so.rise = o.rise;
+        so.fillTimer = o.fillTimer;
+        so.fadeTimer = o.fadeTimer;
+        so.output = o.out;
+        so.readValue = o.read;
+        so.readLatch = o.readLatch;
+        so.pulseHigh = o.pulseHigh;
     }
+    s.env = env;
     s.registers = regs;
     s.osc3Output = read (reg::osc3Output);
     s.env3Output = read (reg::env3Output);

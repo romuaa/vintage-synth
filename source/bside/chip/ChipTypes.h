@@ -61,15 +61,30 @@ constexpr std::uint8_t waveMask = 0xF0;
 
 /** Envelope rate periods in cycles, nibble 0..15 (8.4.3 row 9). */
 constexpr std::array<std::uint16_t, 16> kRatePeriods { 9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19532, 31251 };
+/** The rate counter's match positions (8.15.4): the periods minus 1. */
+constexpr std::array<std::uint16_t, 16> kRateMatch { 8, 31, 62, 94, 148, 219, 266, 312, 391, 976, 1953, 3125, 3906, 11719, 19531, 31250 };
+/** The rate counter has 32 767 positions, 0 .. 32 766 (8.15.1, 8.15.4 step 7). */
+constexpr std::uint16_t kRatePositions = 32767;
 
 /** Envelope phase, numbered as the reference format's `phase` field. */
 enum class EnvPhase : std::uint8_t { attack = 0, decaySustain = 1, release = 2 };
 
-/** 15-bit rate counter: after 0x7fff it continues at 1 (period 32 767 on a wrap; 0 only after a match). */
-constexpr std::uint16_t kRateCounterMax = 0x7fff;
-/** Value of the noise shift register at power-on and while the test bit is set (23 ones). */
-constexpr std::uint32_t kNoiseReset = 0x7fffff;
+/** Power-on values (8.15.1). */
+constexpr std::uint32_t kAccPowerOn = 0x555555;
+constexpr std::uint32_t kNoisePowerOn = 0x7ffffe;
 constexpr std::uint32_t kNoiseMask = 0x7fffff;
+constexpr std::uint16_t kReadLatchPowerOn = 0x555; // Model B triangle/saw read latch
+constexpr std::uint8_t kEnvPowerOn = 0xaa;
+
+/** The timing constants marked with a dagger in 8.15.5 (cycles), per model. */
+struct ModelTiming
+{
+    std::uint32_t testHold, fillInterval, fadeHold, fadeInterval;
+};
+constexpr ModelTiming timingFor (Model m) noexcept
+{
+    return m == Model::A ? ModelTiming { 50000, 15000, 54000, 1400 } : ModelTiming { 986000, 314300, 800000, 50000 };
+}
 
 /** Accumulator phase in fixed point: the 24-bit accumulator in bits 55..32, a 32-bit fraction below
     (always 0 with Authentic resolution and with register writes). */

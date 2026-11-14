@@ -43,7 +43,7 @@ struct RecordingSink
     {
         events.push_back ({ 0, e.target, e.cycle, e.sourcePhase, e.sourceIncrement, e.targetPhaseBefore, static_cast<std::uint32_t> (e.source), 0 });
     }
-    void noiseClock (const NoiseClockEvent& e) { events.push_back ({ 1, e.osc, e.cycle, 0, 0, 0, e.noiseRegister, e.output }); }
+    void noiseClock (const NoiseClockEvent& e) { events.push_back ({ 1, e.osc, e.cycle, e.fill ? 1u : 0u, 0, 0, e.noiseRegister, e.output }); }
     void noiseWriteBack (const NoiseWriteBackEvent& e) { events.push_back ({ 2, e.osc, e.cycle, 0, 0, 0, e.noiseRegister, e.output }); }
 };
 
@@ -59,8 +59,10 @@ void checkEventPayloads (const std::vector<Event>& events)
             REQUIRE (e.a - kPhaseMsb < e.b);                               // ... within this step
             REQUIRE (e.c <= kPhaseMask);
         }
+        else if (e.kind == 1)
+            REQUIRE (e.out == wave::noise (static_cast<std::uint32_t> (e.d))); // a shift or fill recomputes the noise output
         else
-            REQUIRE (e.out == wave::noise (static_cast<std::uint32_t> (e.d)));
+            REQUIRE ((e.out & 0xfu) == 0); // a write-back ANDs the output into the noise output (bits 3..0 stay 0)
     }
 }
 
@@ -157,15 +159,44 @@ std::uint64_t randomGap (bst::Rng& r)
 std::string describe (const DigitalState& a, const DigitalState& b)
 {
     std::string s = "cycle " + std::to_string (a.cycle) + " vs " + std::to_string (b.cycle);
+    auto f = [&s] (const char* name, std::uint64_t x, std::uint64_t y) {
+        if (x != y)
+            s += std::string (" ") + name + " " + std::to_string (x) + "/" + std::to_string (y);
+    };
     for (std::size_t n = 0; n < 3; ++n)
     {
-        s += "\n osc" + std::to_string (n + 1) + ": acc " + std::to_string (a.osc[n].acc) + "/" + std::to_string (b.osc[n].acc) + " frac "
-             + std::to_string (a.osc[n].accFraction) + "/" + std::to_string (b.osc[n].accFraction) + " noise " + std::to_string (a.osc[n].noise) + "/"
-             + std::to_string (b.osc[n].noise);
-        s += "\n env" + std::to_string (n + 1) + ": cnt " + std::to_string (a.env[n].counter) + "/" + std::to_string (b.env[n].counter) + " ph "
-             + std::to_string (a.env[n].phase) + "/" + std::to_string (b.env[n].phase) + " rate " + std::to_string (a.env[n].rateCounter) + "/"
-             + std::to_string (b.env[n].rateCounter) + " div " + std::to_string (a.env[n].divider) + "/" + std::to_string (b.env[n].divider) + " divp "
-             + std::to_string (a.env[n].dividerPeriod) + "/" + std::to_string (b.env[n].dividerPeriod);
+        s += "\n osc" + std::to_string (n + 1) + ":";
+        const auto &p = a.osc[n], &q = b.osc[n];
+        f ("acc", p.acc, q.acc);
+        f ("frac", p.accFraction, q.accFraction);
+        f ("noise", p.noise, q.noise);
+        f ("latch", p.noiseLatch, q.noiseLatch);
+        f ("nout", p.noiseOutput, q.noiseOutput);
+        f ("pipe", p.noisePipeline, q.noisePipeline);
+        f ("first", p.firstShift, q.firstShift);
+        f ("rise", p.rise, q.rise);
+        f ("fill", p.fillTimer, q.fillTimer);
+        f ("fade", p.fadeTimer, q.fadeTimer);
+        f ("out", p.output, q.output);
+        f ("read", p.readValue, q.readValue);
+        f ("latchB", p.readLatch, q.readLatch);
+        f ("pulse", p.pulseHigh, q.pulseHigh);
+        s += "\n env" + std::to_string (n + 1) + ":";
+        const auto &u = a.env[n], &v = b.env[n];
+        f ("cnt", u.counter, v.counter);
+        f ("ph", u.phase, v.phase);
+        f ("tgt", u.target, v.target);
+        f ("pp", u.phasePipeline, v.phasePipeline);
+        f ("sp", u.stepPipeline, v.stepPipeline);
+        f ("dp", u.dividerPipeline, v.dividerPipeline);
+        f ("pos", u.position, v.position);
+        f ("cmp", u.compare, v.compare);
+        f ("pend", u.resetPending, v.resetPending);
+        f ("div", u.divider, v.divider);
+        f ("divp", u.dividerPeriod, v.dividerPeriod);
+        f ("pendp", u.pendingPeriod, v.pendingPeriod);
+        f ("frz", u.frozen, v.frozen);
+        f ("rs", u.readSample, v.readSample);
     }
     return s;
 }

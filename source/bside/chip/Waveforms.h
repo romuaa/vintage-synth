@@ -1,9 +1,9 @@
 #pragma once
 
-// The digital (12-bit) waveform outputs of one oscillator (docs/architecture.md 8.4.3 rows 2-5, 8).
-// These are the values the chip's waveform logic produces before its DAC; the read register 0x1B and
-// the noise write-back use them. S2b renders the band-limited analog form of the same shapes and
-// takes the shapes from here, so both agree. JUCE-free, constexpr, no state.
+// The digital (12-bit) waveform logic of one oscillator (docs/architecture.md 8.15.2 (c), 8.15.3).
+// These are the values the chip's waveform logic produces before its DAC; the read register 0x1B, the
+// noise write-back and (Model A) the top-bit pull-down use them. S2b renders the band-limited analog form
+// of the same shapes and takes the shapes from here, so both agree. JUCE-free, constexpr, no state.
 
 #include "bside/chip/ChipTypes.h"
 
@@ -11,27 +11,37 @@
 
 namespace vs::bside::chip::wave
 {
-/** Saw = accumulator bits 23..12 (row 2). */
-constexpr std::uint16_t saw (std::uint32_t acc) noexcept { return static_cast<std::uint16_t> ((acc >> 12) & 0xfff); }
+/** The waveform bits of a control value (bits 7..4) as 0..15: 1 triangle, 2 saw, 4 pulse, 8 noise. */
+constexpr std::uint8_t bits (std::uint8_t control) noexcept { return static_cast<std::uint8_t> (control >> 4); }
+constexpr std::uint8_t kTri = 1, kSaw = 2, kPulse = 4, kNoise = 8;
 
-/** Triangle = bits 22..11 of acc XOR (fold bit ? all ones : 0). The fold bit is the own top bit, XORed with
-    the ring source's top bit when ring is on (row 3). */
-constexpr std::uint16_t triangle (std::uint32_t acc, bool ring, std::uint32_t ringSourceAcc) noexcept
+/** More than one waveform bit: the shape comes from a combined-waveform table (8.15.2 (c) step 2). */
+constexpr bool isCombined (std::uint8_t waveBits) noexcept { return (waveBits & (waveBits - 1)) != 0; }
+
+/** The waveform index: accumulator bits 23..12, with ring (ring set, saw clear) bit 11 := own bit 23 XOR
+    NOT the ring source's bit 23 (8.15.2 (c) step 1). */
+constexpr std::uint16_t index (std::uint32_t acc, std::uint8_t control, std::uint32_t ringSourceAcc) noexcept
 {
-    std::uint32_t fold = acc & 0x800000u;
-    if (ring)
-        fold ^= ringSourceAcc & 0x800000u;
-    const std::uint32_t v = fold != 0 ? ~acc : acc;
-    return static_cast<std::uint16_t> ((v >> 11) & 0xfff);
+    auto ix = static_cast<std::uint16_t> ((acc >> 12) & 0xfff);
+    if ((control & ctrl::ring) != 0 && (control & ctrl::saw) == 0)
+    {
+        const std::uint32_t b = ((acc >> 23) ^ ~(ringSourceAcc >> 23)) & 1u;
+        ix = static_cast<std::uint16_t> ((ix & 0x7ffu) | (b << 11));
+    }
+    return ix;
 }
 
-/** Pulse = 0xfff when bits 23..12 >= PW, else 0; the test bit forces it high (row 4). */
-constexpr std::uint16_t pulse (std::uint32_t acc, std::uint16_t pw, bool test) noexcept
+/** Triangle = (index < 0x800 ? index : index XOR 0xfff) << 1, 12 bits (bit 0 is always 0). */
+constexpr std::uint16_t triangle (std::uint16_t ix) noexcept
 {
-    return test || ((acc >> 12) & 0xfff) >= pw ? std::uint16_t { 0xfff } : std::uint16_t { 0 };
+    const std::uint16_t folded = (ix & 0x800u) != 0 ? static_cast<std::uint16_t> (ix ^ 0xfffu) : ix;
+    return static_cast<std::uint16_t> ((static_cast<unsigned> (folded) << 1) & 0xfffu);
 }
 
-/** Noise output: bits 11..4 = register bits 20, 18, 14, 11, 9, 5, 2, 0; bits 3..0 = 0 (row 5). */
+/** Saw = index. */
+constexpr std::uint16_t saw (std::uint16_t ix) noexcept { return ix; }
+
+/** Noise output: bits 11..4 = register bits 20, 18, 14, 11, 9, 5, 2, 0; bits 3..0 = 0 (8.15.3). */
 constexpr std::uint16_t noise (std::uint32_t reg) noexcept
 {
     return static_cast<std::uint16_t> ((((reg >> 20) & 1u) << 11) | (((reg >> 18) & 1u) << 10) | (((reg >> 14) & 1u) << 9)
@@ -39,44 +49,73 @@ constexpr std::uint16_t noise (std::uint32_t reg) noexcept
                                        | (((reg >> 2) & 1u) << 5) | ((reg & 1u) << 4));
 }
 
-/** The noise register bits that the output bits 11..4 come from, as a mask built from a 12-bit output:
-    a set output bit keeps its register bit, a clear one clears it (the write-back of row 8). */
-constexpr std::uint32_t noiseKeepMask (std::uint16_t out) noexcept
+/** The noise register's tap bits (the ones the output shows): 20, 18, 14, 11, 9, 5, 2, 0. */
+constexpr std::uint32_t kTapBits = (1u << 20) | (1u << 18) | (1u << 14) | (1u << 11) | (1u << 9) | (1u << 5) | (1u << 2) | 1u;
+
+/** Output bits 11..4 placed on the register's tap bits (the inverse of noise()). */
+constexpr std::uint32_t taps (std::uint16_t out) noexcept
 {
-    constexpr std::uint32_t outputBits = (1u << 20) | (1u << 18) | (1u << 14) | (1u << 11) | (1u << 9) | (1u << 5) | (1u << 2) | 1u;
-    const std::uint32_t keep = (((out >> 11) & 1u) << 20) | (((out >> 10) & 1u) << 18) | (((out >> 9) & 1u) << 14) | (((out >> 8) & 1u) << 11)
-                               | (((out >> 7) & 1u) << 9) | (((out >> 6) & 1u) << 5) | (((out >> 5) & 1u) << 2) | ((out >> 4) & 1u);
-    return (kNoiseMask & ~outputBits) | keep;
+    return (((out >> 11) & 1u) << 20) | (((out >> 10) & 1u) << 18) | (((out >> 9) & 1u) << 14) | (((out >> 8) & 1u) << 11)
+           | (((out >> 7) & 1u) << 9) | (((out >> 6) & 1u) << 5) | (((out >> 5) & 1u) << 2) | ((out >> 4) & 1u);
 }
 
-/** The digital output for the selected waveform bits (control bits 7..4).
-    One waveform: that waveform. None: 0. Several (row 8, "combined waveforms"): per model.
+/** The register mask of the write-back: a set output bit keeps its tap bit, a clear one clears it. */
+constexpr std::uint32_t noiseKeepMask (std::uint16_t out) noexcept { return (kNoiseMask & ~kTapBits) | taps (out); }
 
-    AS BUILT (S2a), both models: the bitwise AND of the selected outputs. This is the documented
-    first-order behaviour (a selected waveform can only pull output bits low), not the chip's measured
-    combined shapes, which 8.4.5 fits per model from reference data (Q5). This function is the one place
-    the fitted digital model replaces; the read register 0x1B and the noise write-back follow it. */
-constexpr std::uint16_t combined (Model model, std::uint8_t waveBits, std::uint16_t tri, std::uint16_t sawOut, std::uint16_t pulseOut,
-                                  std::uint16_t noiseOut) noexcept
+/** Combined-waveform shape for more than one waveform bit (8.15.2 (c) step 2; our own tables, 8.15.8).
+
+    PLACEHOLDER (S2a): for both models the bitwise AND of the selected triangle and saw shapes (0xfff when
+    neither is selected); pulse and noise enter through the masks of step 3. This is the documented
+    first-order behaviour (a selected waveform can only pull output bits low), not the fitted shapes,
+    which S2b builds per model (8.4.5, Q5). This function is the one place the fitted tables replace; the
+    read register 0x1B, the noise write-back and the Model A pull-down all follow it. Every field it
+    reaches is exempt from the exact comparison (8.15.8). */
+constexpr std::uint16_t combined (Model model, std::uint8_t waveBits, std::uint16_t ix) noexcept
 {
     (void) model;
-    if ((waveBits & ctrl::waveMask) == 0)
-        return 0;
     std::uint16_t v = 0xfff;
-    if ((waveBits & ctrl::triangle) != 0)
-        v &= tri;
-    if ((waveBits & ctrl::saw) != 0)
-        v &= sawOut;
-    if ((waveBits & ctrl::pulse) != 0)
-        v &= pulseOut;
-    if ((waveBits & ctrl::noise) != 0)
-        v &= noiseOut;
+    if ((waveBits & kTri) != 0)
+        v &= triangle (ix);
+    if ((waveBits & kSaw) != 0)
+        v &= saw (ix);
     return v;
 }
 
-/** Whether the selected waveforms write back into the noise register: noise plus at least one other. */
+/** The shape of step 2 for waveform bits 1..15: triangle, saw, 0xfff for pulse or noise alone, the
+    combined table otherwise. */
+constexpr std::uint16_t shape (Model model, std::uint8_t waveBits, std::uint16_t ix) noexcept
+{
+    switch (waveBits)
+    {
+        case kTri: return triangle (ix);
+        case kSaw: return saw (ix);
+        case kPulse:
+        case kNoise: return 0xfff;
+        default: return combined (model, waveBits, ix);
+    }
+}
+
+/** Noise together with another waveform bit: the output is written back into the noise register
+    (8.15.2 (c) step 6). */
 constexpr bool writesBack (std::uint8_t control) noexcept
 {
-    return (control & ctrl::noise) != 0 && (control & (ctrl::triangle | ctrl::saw | ctrl::pulse)) != 0 && (control & ctrl::test) == 0;
+    return (control & ctrl::noise) != 0 && (control & (ctrl::triangle | ctrl::saw | ctrl::pulse)) != 0;
+}
+
+/** Whether a noise shift with the waveform bits `oldBits` before and `newBits` after first replaces the
+    latch's tap bits by the output (8.15.3; reference behaviour, followed). */
+constexpr bool shiftWritesBack (Model model, std::uint8_t oldBits, std::uint8_t newBits) noexcept
+{
+    if (oldBits <= 8 || newBits < 8)
+        return false;
+    if (newBits == 8 && oldBits != 0xf)
+        return false;
+    if (model == Model::A)
+    {
+        const int o = oldBits & 3, n = newBits & 3;
+        if ((o == 1 && n == 2) || (o == 2 && n == 1))
+            return false;
+    }
+    return oldBits != 0xc && newBits != 0xc;
 }
 } // namespace vs::bside::chip::wave
