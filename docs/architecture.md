@@ -1356,14 +1356,14 @@ same traces are replay inputs, which proves the program engine and the chip toge
 | S5 | Shared Chip layout (one chip per part, up to three notes, one per oscillator, shared filter; an allocator voice limit ≤ 16); chord-into-one-voice (`key1`–`key3`); Look-ahead restart (latency = `gateoff` ticks, changed only at prepare); kit mode (key ranges → sub-tables); optional global tick phase |
 | S6 | Table editor UI, Hz display of the cutoff, presets and factory bank, release together with Exitium Vintage Synth's M7–M8 |
 
-### 8.12 Pending owner decisions (defaults agents build against)
-| Q | Decision | Default until decided |
-|---|---|---|
-| Q1 | Plugin identity: code `Bsy1`, bundle ID `com.exitium.bside` | as proposed |
-| Q2 | Two parts (Lower/Upper, Whole/Dual/Split) like Vintage | two parts |
-| Q3 | Default chip model for Init | Model B |
-| Q4 | Reference emulator: approval to download and build it outside the repository, its licence, the external adapter, committing generated reference data | nothing downloaded; tests needing data are skipped |
-| Q5 | Analog constants and combined waveforms fitted by our own model, never copied from the reference emulator | own model |
-| Q6 | B-Side alias budgets (8.4.5) | as in 8.4.5 |
-| Q7 | Note-off handled at its sample (not at the next tick) | at its sample |
-| Q8 | Default restart policy | Clean |
+### 8.12 Owner decisions (2026-11-14)
+| Q | Decision |
+|---|---|
+| Q1 | Plugin identity: code `Bsy1`, bundle ID `com.exitium.bside` — approved |
+| Q2 | Two parts (Lower/Upper, Whole/Dual/Split) like Vintage |
+| Q3 | Default chip model for Init: Model B |
+| Q4 | Reference emulator approved as a developer tool: downloaded and built outside the repository, never linked or shipped; the adapter lives outside the repository; generated reference data (state checkpoints and spectral features, no audio) may be committed. **Choose the one regarded as the most faithful replica of the chip.** |
+| Q5 | Analog constants and combined waveforms fitted by our own model, never copied |
+| Q6 | B-Side alias budgets of 8.4.5 approved, with the instruction to mimic the original chip as closely as possible: authenticity outranks cleanliness wherever the two conflict in Authentic settings |
+| Q7 | Note-off handled at its sample |
+| Q8 | Default restart policy: Clean |
