@@ -50,8 +50,9 @@ struct Instrument
         shape checks below, on the message thread or a host's state thread, never on the audio thread.
         Must not throw (an exception is caught and turns into an error). Setting it turns tables on. */
     std::function<juce::String (const std::vector<std::string>&)> validateTable;
-    /** Optional: the canonical lines of a table that validateTable accepted (the form saved in a
-        session). Without it the lines are kept as they are. */
+    /** Optional: the canonical lines of a table that validateTable accepted. Tables are stored and saved
+        VERBATIM (the user's comments and spacing are kept); the canonical form is used only to compare two
+        tables (the modified marker, equality). Without it only identical lines count as equal. */
     std::function<std::vector<std::string> (const std::vector<std::string>&)> canonicaliseTable;
     int maxTableLines = 0;       // lines per table, checked before validateTable (and before anything is copied)
     size_t maxTableBytes = 0;    // the lines with one line end each, summed, checked before validateTable
@@ -168,6 +169,8 @@ juce::String sanitiseText (const juce::String& s, int maxChars);
 juce::String sanitiseName (const juce::String& s);
 
 // ---- Tables (Instrument::validateTable) ----
+/** `s` cut to at most maxBytes bytes of UTF-8, at a character boundary (never inside a character). */
+juce::String truncateUtf8 (const juce::String& s, size_t maxBytes);
 /** Lines of one table, joined with one LF after each line (the text the instrument's reader gets). */
 std::string joinTableLines (const std::vector<std::string>& lines);
 /** The shape every table must have before an instrument's validator sees it: at most

@@ -118,6 +118,16 @@ std::string quoteBytes (std::string_view text)
             out += "\\\"";
         else if (c == '\\')
             out += "\\\\";
+        else if (c == '\t')
+            out += "\\t"; // the short escapes: a table may hold tabs, and "\u0009" would be three times the size
+        else if (c == '\n')
+            out += "\\n";
+        else if (c == '\r')
+            out += "\\r";
+        else if (c == '\b')
+            out += "\\b";
+        else if (c == '\f')
+            out += "\\f";
         else if (c < 0x20)
         {
             static constexpr char hex[] = "0123456789abcdef";

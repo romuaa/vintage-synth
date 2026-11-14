@@ -54,16 +54,28 @@ struct Locations
     static Locations userDefault (const juce::String& product);
 };
 
-/** Receives the table of a tone each time it changes (and for every tone at a state restore).
-    `lines` are validated and canonical; empty = no table. Called inside the ApplyGate hold and under
-    writerLock(), on the message thread or a host's state thread: it must not wait for anything the
-    audio thread does, must not take the manager's locks, and must not throw (a table the instrument
-    cannot use is published as "no table"). The audio thread never calls it. */
+/** A table made ready for the audio thread by TableSink::prepareTable (the sink's own type). */
+struct PreparedTable
+{
+    virtual ~PreparedTable() = default;
+};
+
+/** The instrument's side of a table change, in two steps so that nothing that can fail or allocate runs
+    inside the ApplyGate hold.
+      prepareTable   BEFORE the hold, on the message thread or a host's state thread: builds whatever the
+                     audio thread will use (B-Side: the compiled program) from validated lines (empty =
+                     no table). May allocate; may throw or return nullptr when the table cannot be used,
+                     in which case the table counts as rejected (an empty table and an error).
+      publishTable   INSIDE the hold and under writerLock(): hands the prepared table over. Must not
+                     allocate, wait, take the manager's locks or fail. The audio thread never calls either. */
 class TableSink
 {
 public:
     virtual ~TableSink() = default;
-    virtual void publishTable (int tone, const std::vector<std::string>& lines) noexcept = 0;
+    virtual std::unique_ptr<PreparedTable> prepareTable (int tone, const std::vector<std::string>& lines) = 0;
+    virtual void publishTable (int tone, PreparedTable& prepared) noexcept = 0;
+    /** The prepared "no table", ready in advance (used when a table is rejected). */
+    virtual PreparedTable& emptyTable (int tone) noexcept = 0;
 };
 
 enum class BankStatus
@@ -148,19 +160,20 @@ public:
     // ---- Session state (host state blob; call both under writerLock()) ----
     juce::ValueTree createSessionInfo() const;
     /** The session's tables: a child "Tables" with one text property per tone (the tone key, e.g.
-        "lower"): the canonical lines joined by LF. An invalid tree for an instrument without tables. */
+        "lower"): the lines, verbatim, joined by LF. An invalid tree for an instrument without tables. */
     juce::ValueTree createTablesInfo() const;
-    /** The tables of a session, checked and made canonical, ready to commit. Opaque. */
+    /** The tables of a session, checked and prepared, ready to commit. */
     struct PreparedTables
     {
         struct Item
         {
             std::vector<std::string> lines;
             juce::String error;
+            std::shared_ptr<PreparedTable> prepared;
         };
         std::vector<Item> items; // by tone; empty for an instrument without tables
     };
-    /** Does the checking and canonicalising of a session's tables (any thread, no locks, no I/O).
+    /** Does the checking and preparing of a session's tables (any thread, no locks, no I/O).
         `info` may be invalid (a session without tables: every tone gets no table). Never throws; an
         unusable table becomes "no table" plus an error. Do this before withParametersHeld. */
     PreparedTables prepareTablesInfo (const juce::ValueTree& info) const;
@@ -178,13 +191,15 @@ public:
 
     // ---- Patch tables (any thread; only for an instrument with tables, else empty and inert) ----
     bool hasTables() const noexcept { return schema.instrument().hasTables(); }
-    /** The table of tone `part`: validated, canonical lines (empty = no table). */
+    /** The table of tone `part`: validated lines exactly as given (empty = no table). */
     std::vector<std::string> currentTable (int part) const;
     /** Why the part has no table although the session saved one ("" = nothing wrong). Set by a state
         restore, cleared by the next apply or setTable that replaces that part's table. */
     juce::String tableError (int part) const;
     /** Replaces tone `part`'s table (message thread; the editor's way in). Returns "" on success;
-        otherwise the message, and nothing changed. A table is program content: the program counts as modified. */
+        otherwise the message, and nothing changed. The lines are kept verbatim. A table is program
+        content: the program counts as modified unless the canonical form is unchanged. The host is told
+        that non-parameter state changed when the text changed. */
     juce::String setTable (int part, const std::vector<std::string>& lines);
 
     // ---- Observers (message thread) ----
@@ -208,13 +223,18 @@ private:
         int tone = 0;
         std::vector<std::string> lines;
         juce::String error;
+        std::shared_ptr<PreparedTable> prepared; // from the sink; null for a rejected table or without a sink
     };
-    /** Validates and canonicalises `lines`; on failure the lines are empty and `error` says why (prefixed by `context`). */
+    /** Validates `lines` and has the sink prepare them; on failure the lines are empty and `error` says why (prefixed by `context`). */
     TableUpdate prepareTable (int tone, const std::vector<std::string>& lines, const juce::String& context) const;
     void applyIndices (const std::vector<int>& indices, const std::vector<float>& values, const std::vector<TableUpdate>& tableUpdates = {});
     /** Stores and publishes the tables. Inside a gate hold and under writer. */
     void commitTables (const std::vector<TableUpdate>& updates);
     juce::String partLabel (int tone) const;
+    /** True if the two tables are the same (identical lines, or the same canonical form). */
+    bool sameTable (const std::vector<std::string>& a, const std::vector<std::string>& b) const;
+    /** Tells the host that state that is not a parameter changed (message thread only: a call from another thread is skipped). */
+    void notifyNonParameterState();
     void resyncLastValues();
     void notifyHost();
     void broadcastIfMessageThread();

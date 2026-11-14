@@ -194,6 +194,18 @@ juce::String sanitiseName (const juce::String& s)
 // ---------------------------------------------------------------------------------------------
 // Tables
 // ---------------------------------------------------------------------------------------------
+juce::String truncateUtf8 (const juce::String& s, size_t maxBytes)
+{
+    const char* utf8 = s.toRawUTF8();
+    const size_t n = s.getNumBytesAsUTF8();
+    if (n <= maxBytes)
+        return s;
+    size_t cut = maxBytes;
+    while (cut > 0 && (static_cast<unsigned char> (utf8[cut]) & 0xC0u) == 0x80u) // utf8[cut] continues a character: back up to its start
+        --cut;
+    return juce::String::fromUTF8 (utf8, static_cast<int> (cut));
+}
+
 std::string joinTableLines (const std::vector<std::string>& lines)
 {
     size_t n = 0;
@@ -235,7 +247,7 @@ juce::String validateTableLines (const Instrument& instrument, const std::vector
         return e;
     try
     {
-        return instrument.validateTable (lines).substring (0, 1024); // a message is shown and stored: bounded
+        return truncateUtf8 (instrument.validateTable (lines), 1024); // a message is shown and stored: bounded, cut between characters
     }
     catch (...)
     {

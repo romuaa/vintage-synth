@@ -201,8 +201,8 @@ TEST_CASE ("B-Side tables: applying a program publishes the compiled tables of b
     pm.applyProgram (programWith (rig.schema(), kTableA, kTableB), 3, false);
     CHECK (rig.compiled (0) == compileText (kTableA));
     CHECK (rig.compiled (1) == compileText (kTableB));
-    CHECK (pm.currentTable (0) == linesOf (canonical (kTableA))); // held in canonical form, comments gone
-    CHECK (pm.captureProgram().data[1] == linesOf (canonical (kTableB)));
+    CHECK (pm.currentTable (0) == linesOf (kTableA)); // held verbatim: comments and spacing kept
+    CHECK (pm.captureProgram().data[1] == linesOf (kTableB));
     CHECK (pm.tableError (0).isEmpty());
 
     // Applying a program without tables (Init) clears both.
@@ -239,8 +239,7 @@ TEST_CASE ("B-Side tables: program, tone and bank files round trip and re-save b
     const auto text = readFileText (file);
     CHECK (text.find ("\"tables\": {") != std::string::npos);
     CHECK (text.find ("\"bside-table 1\"") != std::string::npos);
-    CHECK (text.find ("snare") == std::string::npos); // comments are not kept
-    CHECK (text.find ("# gate off") == std::string::npos);
+    CHECK (text.find ("# gate off: the release rings out") != std::string::npos); // the user's comments are kept
 
     pm.initialise();
     REQUIRE (pm.loadProgramFile (file).isEmpty());
@@ -378,65 +377,142 @@ TEST_CASE ("B-Side tables: the largest legitimate bank fits the caps", "[bside][
     Rig rig;
     const auto& schema = rig.schema();
     const auto inst = schema.instrument();
+    const auto jsonBytesOfTable = [&] (const std::vector<std::string>& lines) {
+        Tone t = toneOf (schema, makeInitProgram (schema), 0);
+        t.data = lines;
+        return toJson (schema, t).size();
+    };
 
-    // (1) The worst case of the file size: every table has the most lines (1024) and the most bytes
-    // (32 768) the reader accepts, made of comment lines of 30 quotation marks, which the file escapes.
-    std::vector<std::string> worst { "bside-table 1" };
-    while (worst.size() < 1024)
-        worst.push_back ("#" + std::string (30, '"'));
-    // 13 + 1023 x 32 = 32 749 bytes: pad the last line to exactly 32 768.
-    worst.back() += std::string (prog::kMaxTextBytes - joinTableLines (worst).size(), '"');
-    REQUIRE (joinTableLines (worst).size() == prog::kMaxTextBytes);
-    REQUIRE (worst.size() == 1024);
-    REQUIRE (bs::validateTableText (worst).isEmpty());
-
-    Bank bank = makeInitBank (schema);
-    const auto longName = juce::String::repeatedString (juce::String::fromUTF8 ("\xf0\x9f\x8e\xb9"), kMaxAuthorChars);
-    for (auto& p : bank.programs)
+    // (0) The worst byte, found by code: every byte value that the table reader accepts in a line, and
+    // every code point (a stride over the multi-byte ones), with the bytes the file writer needs for it.
+    double worstRatio = 0.0;
+    int worstByte = -1;
+    const size_t base = jsonBytesOfTable ({ "bside-table 1", "# " });
+    for (int byte = 1; byte < 256; ++byte)
     {
-        p.meta.name = longName;
-        p.meta.category = longName;
-        p.meta.author = longName;
-        p.data = { worst, worst };
-        for (int i = 0; i < schema.numParams(); ++i)
+        const std::string line = std::string ("# ") + static_cast<char> (byte);
+        if (! bs::validateTableText ({ "bside-table 1", line }).isEmpty())
+            continue;
+        const double ratio = static_cast<double> (jsonBytesOfTable ({ "bside-table 1", line }) - base);
+        if (ratio > worstRatio)
         {
-            const auto& s = schema.spec (i);
-            constexpr float tiny = 1.17549435e-38f;
-            float v = s.lo + (s.hi - s.lo) * 0.123456789f;
-            if (s.discrete)
-                v = s.hi;
-            else if (s.lo <= -tiny)
-                v = -tiny;
-            p.values[static_cast<size_t> (i)] = v;
+            worstRatio = ratio;
+            worstByte = byte;
         }
     }
-    const auto text = toJson (schema, bank);
-    std::printf ("largest legitimate bank (worst-case escapes): %zu bytes; cap %zu; json values counted below\n", text.size(), inst.fileCap());
-    CHECK (text.size() <= inst.fileCap() * 85 / 100); // at least 15 % to spare
-    CHECK (text.size() > 9'000'000);                  // and it really is the extreme: the cap is not loose by accident
+    int multiByteChecked = 0;
+    for (juce::juce_wchar cp = 0x80; cp <= 0x10FFFF; cp += (cp < 0x3000 ? 1 : 61))
+    {
+        if (cp >= 0xD800 && cp <= 0xDFFF)
+            continue;
+        const auto utf8 = juce::String::charToString (cp).toStdString();
+        if (! bs::validateTableText ({ "bside-table 1", "# " + utf8 }).isEmpty())
+            continue;
+        ++multiByteChecked;
+        const double ratio = static_cast<double> (jsonBytesOfTable ({ "bside-table 1", "# " + utf8 }) - base) / static_cast<double> (utf8.size());
+        CHECK (ratio <= 1.0); // written as they are
+    }
+    std::printf ("worst byte of a table line in a file: 0x%02x, %.0f bytes written for 1; %d multi-byte characters checked, at most 1 byte per byte\n",
+                 worstByte, worstRatio, multiByteChecked);
+    CHECK (worstRatio == Catch::Approx (2.0));
+    CHECK ((worstByte == '"' || worstByte == '\\' || worstByte == '\t'));
+    // Every byte that costs the worst ratio, by code: a tab, a quotation mark, a backslash (not a long unicode escape).
+    for (const int byte : { '\t', '"', '\\' })
+        CHECK (jsonBytesOfTable ({ "bside-table 1", std::string ("# ") + static_cast<char> (byte) }) - base == 2);
 
-    json::Limits limits;
-    limits.maxInputBytes = inst.fileCap();
-    limits.maxValues = 1 << 24;
-    limits.maxElements = 4096;
-    json::Document doc;
-    std::string why;
-    REQUIRE (doc.parse (text.data(), text.size(), limits, why));
-    std::printf ("  json values in that bank: %zu (cap %d)\n", doc.numValues(), inst.maxJsonValues);
-    CHECK (doc.numValues() <= static_cast<size_t> (inst.maxJsonValues) * 90 / 100);
+    // The bytes one line costs besides its text (indent, quotes, comma, line end), measured in a bank: write
+    // the bank with 1000 empty lines in each of its 128 tables, and with no table.
+    const auto bankWith = [&] (const std::vector<std::string>& lines) {
+        Bank bank = makeInitBank (schema);
+        for (auto& p : bank.programs)
+            p.data = { lines, lines };
+        return toJson (schema, bank).size();
+    };
+    const double lineOverhead = static_cast<double> (bankWith (std::vector<std::string> (1000, "")) - bankWith ({})) / (128.0 * 1000.0);
+    // Worst case of a table: the most lines and the most bytes the reader accepts, every byte the worst one.
+    // JSON bytes = lines x overhead + worst ratio x (bytes - lines); with 1024 lines and 32 768 bytes:
+    const double worstTable = 1024.0 * lineOverhead + worstRatio * (32768.0 - 1024.0);
 
-    Parsed<Bank> back;
-    const auto seconds = secondsOf ([&] { back = parseBank (schema, text); });
-    std::printf ("  parse + validate of 128 maximal tables: %.3f s\n", seconds);
-    REQUIRE (back.ok);
-    CHECK (back.value.programs[63].data[1] == worst);
-    CHECK (toJson (schema, back.value) == text);
-    CHECK (seconds < 5.0);
+    // Lines that are nothing but the worst byte: a table line may be white space (tabs) and its header may be
+    // followed by white space; with quotation marks the lines must be comments, which costs one byte in 31.
+    const auto makeWorstLines = [&] (char worstChar) {
+        const std::string prefix = worstChar == '\t' ? "" : "#";
+        std::vector<std::string> lines { std::string ("bside-table 1") + (worstChar == '\t' ? "" : " #") };
+        lines[0] += std::string (31 - lines[0].size(), worstChar);
+        while (lines.size() < 1024)
+            lines.push_back (prefix + std::string (31 - prefix.size(), worstChar));
+        lines.back() += std::string (prog::kMaxTextBytes - joinTableLines (lines).size(), worstChar);
+        REQUIRE (joinTableLines (lines).size() == prog::kMaxTextBytes);
+        REQUIRE (lines.size() == 1024);
+        INFO (bs::validateTableText (lines));
+        REQUIRE (bs::validateTableText (lines).isEmpty());
+        return lines;
+    };
+    // Tabs (the case in which the old escape cost 6 bytes for 1) and quotation marks.
+    const auto tabs = makeWorstLines ('\t');
+    const auto quotes = makeWorstLines ('"');
 
-    // And through the manager's file reader.
-    const auto file = rig.temp / "max.bsbank";
-    REQUIRE (file.replaceWithText (juce::String::fromUTF8 (text.c_str())));
-    CHECK (rig.presets().loadBankFile (file).isEmpty());
+    size_t worstBank = 0;
+    for (const auto& worst : { tabs, quotes })
+    {
+        Bank bank = makeInitBank (schema);
+        const auto longName = juce::String::repeatedString (juce::String::fromUTF8 ("\xf0\x9f\x8e\xb9"), kMaxAuthorChars);
+        for (auto& p : bank.programs)
+        {
+            p.meta.name = longName;
+            p.meta.category = longName;
+            p.meta.author = longName;
+            p.data = { worst, worst };
+            for (int i = 0; i < schema.numParams(); ++i)
+            {
+                const auto& s = schema.spec (i);
+                constexpr float tiny = 1.17549435e-38f;
+                float v = s.lo + (s.hi - s.lo) * 0.123456789f;
+                if (s.discrete)
+                    v = s.hi;
+                else if (s.lo <= -tiny)
+                    v = -tiny;
+                p.values[static_cast<size_t> (i)] = v;
+            }
+        }
+        const auto text = toJson (schema, bank);
+        worstBank = std::max (worstBank, text.size());
+        std::printf ("largest legitimate bank (%s lines): %zu bytes; cap %zu\n", worst == tabs ? "tab" : "quotation mark", text.size(), inst.fileCap());
+
+        json::Limits limits;
+        limits.maxInputBytes = inst.fileCap();
+        limits.maxValues = 1 << 24;
+        limits.maxElements = 4096;
+        json::Document doc;
+        std::string why;
+        REQUIRE (doc.parse (text.data(), text.size(), limits, why));
+        std::printf ("  json values in that bank: %zu (cap %d)\n", doc.numValues(), inst.maxJsonValues);
+        CHECK (doc.numValues() <= static_cast<size_t> (inst.maxJsonValues) * 90 / 100);
+
+        Parsed<Bank> back;
+        const auto seconds = secondsOf ([&] { back = parseBank (schema, text); });
+        std::printf ("  parse + validate of 128 maximal tables: %.3f s\n", seconds);
+        REQUIRE (back.ok);
+        CHECK (back.value.programs[63].data[1] == worst);
+        CHECK (toJson (schema, back.value) == text);
+        CHECK (seconds < 5.0);
+
+        // A save of it is accepted, and what was saved loads again: a writer never makes what its reader refuses.
+        const auto file = rig.temp / "max.bsbank";
+        REQUIRE (file.replaceWithData (text.data(), text.size()));
+        REQUIRE (rig.presets().loadBankFile (file).isEmpty());
+        const auto saved = rig.temp / "max2.bsbank";
+        REQUIRE (rig.presets().saveBankFile (saved).isEmpty());
+        CHECK (readFileText (saved) == text);
+        REQUIRE (rig.presets().loadBankFile (saved).isEmpty());
+    }
+    const double tableShare = 128.0 * worstTable;
+    std::printf ("worst case by formula: %.0f bytes per table x 128 = %.0f; measured worst bank %zu bytes; cap %zu (%.0f %% headroom)\n", worstTable,
+                 tableShare, worstBank, inst.fileCap(),
+                 100.0 * (static_cast<double> (inst.fileCap()) / static_cast<double> (worstBank) - 1.0));
+    CHECK (static_cast<double> (worstBank) <= tableShare + 500000.0); // the tables plus well under 0.5 MB of parameters and names
+    CHECK (static_cast<double> (worstBank) >= tableShare);            // and the constructed bank really is the extreme
+    CHECK (static_cast<double> (inst.fileCap()) >= static_cast<double>(worstBank) * 1.15); // at least 15 % to spare
 
     // (2) Large canonical tables (the table format's own bounds are tested in tests/bside/unit): 496 of the 512 commands.
     std::string t;
@@ -454,9 +530,108 @@ TEST_CASE ("B-Side tables: the largest legitimate bank fits the caps", "[bside][
     for (auto& p : canonicalBank.programs)
         p.data = { canon, canon };
     const auto canonicalText = toJson (schema, canonicalBank);
-    std::printf ("  64 programs with two maximal canonical tables (%zu bytes of text each): %zu bytes\n", joinTableLines (canon).size(), canonicalText.size());
+    std::printf ("  64 programs with two large tables (%zu bytes of text each): %zu bytes\n", joinTableLines (canon).size(), canonicalText.size());
     CHECK (canonicalText.size() < inst.fileCap() / 2);
     CHECK (parseBank (schema, canonicalText).ok);
+}
+
+TEST_CASE ("B-Side tables: the user's text is kept exactly, through apply, capture, files and the session", "[bside][tables][presets][state]")
+{
+    // Comments, odd spacing, tabs, blank lines, a trailing comment and unusual label names.
+    const std::string odd = "# my snare, take 3\n"
+                            "bside-table 1   # header with a comment\n"
+                            "\n"
+                            "[wave1]\t\t# lane\n"
+                            "start:\n"
+                            "\t\tpitch   +0,gate on     ticks   2   # tab indent\n"
+                            "     jump   start\n"
+                            "\n"
+                            "[pulse1]\n"
+                            "   set 2048#no space before the comment\n";
+    REQUIRE (prog::readTable (odd).ok);
+    Rig a, b;
+    auto& pm = a.presets();
+    pm.applyProgram (programWith (a.schema(), odd, kTableB, "Odd"), 5, false);
+    CHECK (pm.currentTable (0) == linesOf (odd));
+    CHECK (joinTableLines (pm.currentTable (0)) == odd);
+    CHECK (a.compiled (0) == compileText (odd));
+    CHECK (pm.captureProgram().data[0] == linesOf (odd));
+    CHECK (pm.captureTone (0).data == linesOf (odd));
+
+    // Files: program, tone, bank. Saved text contains the user's lines; load gives them back; re-save is byte-identical.
+    const auto file = a.temp / "odd.bsprog";
+    REQUIRE (pm.saveProgramFile (file).isEmpty());
+    const auto fileText = readFileText (file);
+    CHECK (fileText.find ("# my snare, take 3") != std::string::npos);
+    CHECK (fileText.find ("\\t\\tpitch   +0,gate on     ticks   2   # tab indent") != std::string::npos);
+    CHECK (fileText.find ("\\u0009") == std::string::npos); // tabs are written with the short escape
+    pm.initialise();
+    REQUIRE (pm.loadProgramFile (file).isEmpty());
+    CHECK (joinTableLines (pm.currentTable (0)) == odd);
+    REQUIRE (pm.saveProgramFile (a.temp / "odd2.bsprog").isEmpty());
+    CHECK (readFileText (a.temp / "odd2.bsprog") == fileText);
+    const auto toneFile = a.temp / "odd.bstone";
+    REQUIRE (pm.saveToneFile (toneFile, 0).isEmpty());
+    REQUIRE (pm.loadToneFile (toneFile, 1).isEmpty());
+    CHECK (joinTableLines (pm.currentTable (1)) == odd);
+    const auto bankFile = a.temp / "odd.bsbank";
+    REQUIRE (pm.saveBankFile (bankFile, "Odd bank").isEmpty());
+    REQUIRE (pm.storeInBank (7).isEmpty());
+    pm.initialise();
+    REQUIRE (pm.loadBankFile (bankFile).isEmpty());
+    REQUIRE (pm.selectProgram (7));
+    CHECK (joinTableLines (pm.currentTable (0)) == odd);
+
+    // Session: the text attribute is the user's text, and restoring it gives the same text back, byte for byte.
+    const auto saved = a.state();
+    const auto xml = a.stateXml();
+    CHECK (xml->getChildByName ("Tables")->getStringAttribute ("lower").toStdString() == odd);
+    b.proc.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+    CHECK (joinTableLines (b.presets().currentTable (0)) == odd);
+    CHECK (b.compiled (0) == compileText (odd));
+    const auto again = b.state();
+    CHECK (again.getSize() == saved.getSize());
+    CHECK (std::memcmp (again.getData(), saved.getData(), saved.getSize()) == 0);
+
+    // The modified marker looks at the canonical form: comments and spacing are not a change of sound.
+    pm.applyProgram (programWith (a.schema(), odd, kTableB, "Odd"), 5, false);
+    REQUIRE_FALSE (pm.isModified());
+    CHECK (pm.setTable (0, linesOf (canonical (odd))).isEmpty());
+    CHECK_FALSE (pm.isModified());
+    CHECK (pm.currentTable (0) == linesOf (canonical (odd))); // the text the user gave is the text kept
+    CHECK (pm.setTable (0, linesOf (kTableC)).isEmpty());
+    CHECK (pm.isModified());
+}
+
+TEST_CASE ("B-Side tables: error messages are valid UTF-8, cut between characters", "[bside][tables][presets]")
+{
+    // Eight errors, each quoting a long word of multi-byte characters: far over 1024 bytes in all.
+    for (const char* unit : { "\xc3\xa9", "\xe2\x82\xac", "\xf0\x9f\x8e\xb9" })
+        for (int lead = 0; lead < 4; ++lead)
+        {
+            std::vector<std::string> lines { "bside-table 1", "[wave1]" };
+            for (int i = 0; i < 12; ++i)
+            {
+                std::string word (static_cast<size_t> (lead), 'x');
+                for (int k = 0; k < 60; ++k)
+                    word += unit;
+                lines.push_back ("    " + word);
+            }
+            const auto message = bs::validateTableText (lines);
+            INFO (unit << " lead " << lead << " message of " << message.getNumBytesAsUTF8() << " bytes");
+            CHECK (message.isNotEmpty());
+            CHECK (message.getNumBytesAsUTF8() <= 1024);
+            CHECK (juce::CharPointer_UTF8::isValidString (message.toRawUTF8(), 4096));
+        }
+    // And through the common function, with a message that is exactly 1024 bytes long, and one byte more.
+    auto inst = bs::bsideInstrument();
+    for (const size_t extra : { size_t (0), size_t (1), size_t (2), size_t (3) })
+    {
+        inst.validateTable = [=] (const std::vector<std::string>&) { return juce::String (std::string (1023 - 1 + extra, 'x')) + juce::String::fromUTF8 ("\xf0\x9f\x8e\xb9"); };
+        const auto message = validateTableLines (inst, { "x" });
+        CHECK (message.getNumBytesAsUTF8() <= 1024);
+        CHECK (juce::CharPointer_UTF8::isValidString (message.toRawUTF8(), 4096));
+    }
 }
 
 TEST_CASE ("B-Side tables: files over the caps, and hostile files, are refused with bounded time and memory", "[bside][tables][presets][files][security]")
@@ -559,7 +734,7 @@ TEST_CASE ("B-Side tables: files over the caps, and hostile files, are refused w
     CHECK (rig.compiled (0) == prog::emptyProgram());
 }
 
-TEST_CASE ("B-Side tables: the session carries them in canonical form and restores them without file I/O", "[bside][tables][state]")
+TEST_CASE ("B-Side tables: the session carries them verbatim and restores them without file I/O", "[bside][tables][state]")
 {
     Rig a, b;
     a.presets().applyProgram (programWith (a.schema(), kTableA, kTableB), 2, false);
@@ -568,8 +743,8 @@ TEST_CASE ("B-Side tables: the session carries them in canonical form and restor
     REQUIRE (xml != nullptr);
     const auto* tables = xml->getChildByName ("Tables");
     REQUIRE (tables != nullptr);
-    CHECK (tables->getStringAttribute ("lower").toStdString() == canonical (kTableA));
-    CHECK (tables->getStringAttribute ("upper").toStdString() == canonical (kTableB));
+    CHECK (tables->getStringAttribute ("lower").toStdString() == kTableA);
+    CHECK (tables->getStringAttribute ("upper").toStdString() == kTableB);
     CHECK (xml->getNumChildElements() > 0);
     int tablesChildren = 0;
     for (auto* c : xml->getChildIterator())
@@ -581,7 +756,7 @@ TEST_CASE ("B-Side tables: the session carries them in canonical form and restor
     b.proc.setStateInformation (mb.getData(), static_cast<int> (mb.getSize()));
     CHECK (b.compiled (0) == compileText (kTableA));
     CHECK (b.compiled (1) == compileText (kTableB));
-    CHECK (b.presets().currentTable (0) == linesOf (canonical (kTableA)));
+    CHECK (b.presets().currentTable (0) == linesOf (kTableA));
     CHECK (b.presets().tableError (0).isEmpty());
     const auto again = b.state();
     CHECK (again.getSize() == mb.getSize());
@@ -661,17 +836,8 @@ TEST_CASE ("B-Side tables: a malformed table in a session gives that part an emp
         CHECK (b.presets().tableError (1).isNotEmpty());
         CHECK (b.compiled (0) == compileText (kTableA));
     }
-
-    // The same through a properly typed non-string property, and a Tables child of another type.
-    {
-        auto tree = juce::ValueTree::fromXml (*a.stateXml());
-        auto child = tree.getChildWithName ("Tables");
-        child.setProperty ("lower", 12345, nullptr);
-        child.setProperty ("upper", juce::var (juce::Array<juce::var> { "a", "b" }), nullptr);
-        b.restore (*tree.createXml());
-        CHECK (b.presets().currentTable (0).empty());
-        CHECK (b.presets().tableError (0).isNotEmpty());
-    }
+    // (A property that is not text cannot come through XML, which turns every attribute into text; that
+    // branch is reached through a ValueTree in tests/preset_unit/PresetTableManagerTests.cpp.)
 }
 
 TEST_CASE ("B-Side tables: duplicate Tables and Preset children of a hostile session are all removed", "[bside][tables][state][security]")
@@ -807,6 +973,84 @@ TEST_CASE ("B-Side tables: parameters and tables of an apply are one consistent 
     CHECK (used.load() > 1000);
     CHECK (changes.load() > 100);
     CHECK (gate.holdDepth() == 0);
+}
+
+TEST_CASE ("B-Side tables: two parts in one seqlock window commit both tables or neither", "[bside][tables][threads][handover]")
+{
+    // The protocol of program/ProgramHandover.h for two parts: claim both, then decide once. Each program
+    // has the same tag in the split point, the Lower table and the Upper table (the Upper one mirrored), so a
+    // block that kept one part's old table, or mixed in an old parameter, is seen.
+    Rig rig;
+    auto& pm = rig.presets();
+    auto& gate = pm.getGate();
+    auto* splitPoint = rig.proc.getState().getRawParameterValue ("key.split_point");
+    auto& lower = rig.proc.tableHandover (0);
+    auto& upper = rig.proc.tableHandover (1);
+
+    auto tableFor = [] (int tag) { return std::string ("bside-table 1\n[pulse1]\n    set ") + std::to_string (tag * 20) + "\n"; };
+    std::vector<Program> programs;
+    for (int tag = 1; tag <= 100; ++tag)
+    {
+        auto p = programWith (rig.schema(), tableFor (tag), tableFor (101 - tag), "P" + juce::String (tag));
+        p.values[static_cast<size_t> (rig.schema().indexOf ("key.split_point"))] = static_cast<float> (tag);
+        programs.push_back (std::move (p));
+    }
+
+    std::atomic<bool> stop { false };
+    std::atomic<long long> used { 0 }, aborted { 0 }, inconsistent { 0 }, bothClaimed { 0 };
+    std::thread audio ([&] {
+        while (! stop.load (std::memory_order_relaxed))
+        {
+            gate.blockStarted();
+            const auto token = gate.beginRead();
+            if ((token & 1u) != 0u)
+                continue;
+            const float split = splitPoint->load (std::memory_order_relaxed);
+            const prog::Program* l = lower.beginAcquire();
+            const prog::Program* u = upper.beginAcquire();
+            const bool ok = l != nullptr && u != nullptr && gate.endRead (token);
+            if (ok)
+            {
+                lower.commit();
+                upper.commit();
+            }
+            else
+            {
+                if (l != nullptr)
+                    lower.abort();
+                if (u != nullptr)
+                    upper.abort();
+                ++aborted;
+                continue;
+            }
+            ++used;
+            ++bothClaimed;
+            std::this_thread::yield();
+            const prog::Program& lt = lower.inUse();
+            const prog::Program& ut = upper.inUse();
+            if (lt.numCmds == 0 && ut.numCmds == 0) // before the first apply
+                continue;
+            const int tagL = static_cast<int> (lt.cmds[0].a) / 20, tagU = static_cast<int> (ut.cmds[0].a) / 20;
+            if (lt.numCmds != 1 || ut.numCmds != 1 || tagL < 1 || tagL > 100 || tagU != 101 - tagL || static_cast<int> (split + 0.5f) != tagL)
+                ++inconsistent;
+        }
+    });
+    const auto start = std::chrono::steady_clock::now();
+    int applied = 0;
+    while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds (1500))
+    {
+        pm.applyProgram (programs[static_cast<size_t> (applied % 100)], 5, false, false);
+        ++applied;
+        if ((applied & 7) == 0)
+            std::this_thread::yield();
+    }
+    stop = true;
+    audio.join();
+    INFO ("applied " << applied << ", blocks using a set " << used.load() << ", aborted " << aborted.load());
+    CHECK (inconsistent.load() == 0);
+    CHECK (applied > 500);
+    CHECK (used.load() > 1000);
+    CHECK (aborted.load() > 0); // the abort path of both parts really ran
 }
 
 TEST_CASE ("B-Side tables: applying programs and restoring states with tables while the audio thread renders", "[bside][tables][threads][realtime]")

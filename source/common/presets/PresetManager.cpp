@@ -213,33 +213,57 @@ PresetManager::TableUpdate PresetManager::prepareTable (int tone, const std::vec
 {
     TableUpdate u;
     u.tone = tone;
-    if (lines.empty())
-        return u;
     const auto& inst = schema.instrument();
     const auto fail = [&] (const juce::String& why)
     {
         u.lines.clear();
+        u.prepared.reset();
         u.error = context.isNotEmpty() ? context + ": " + why : why;
         return u;
     };
     if (auto e = validateTableLines (inst, lines); e.isNotEmpty())
         return fail (e);
-    std::vector<std::string> canonical;
+    if (sink != nullptr && ! lines.empty()) // no table: the sink's ready-made empty one is published
+    {
+        // Before any hold: this may allocate and may fail, and then the table is rejected as a whole, so the
+        // saved state and the audio side cannot disagree.
+        try
+        {
+            u.prepared = sink->prepareTable (tone, lines);
+        }
+        catch (...)
+        {
+            u.prepared.reset();
+        }
+        if (u.prepared == nullptr)
+            return fail ("The table could not be prepared for playing.");
+    }
+    u.lines = lines; // verbatim
+    return u;
+}
+
+bool PresetManager::sameTable (const std::vector<std::string>& a, const std::vector<std::string>& b) const
+{
+    if (a == b)
+        return true;
+    const auto& canonicalise = schema.instrument().canonicaliseTable;
+    if (! canonicalise || a.empty() || b.empty())
+        return false;
     try
     {
-        canonical = inst.canonicaliseTable ? inst.canonicaliseTable (lines) : lines;
+        const auto ca = canonicalise (a), cb = canonicalise (b);
+        return ! ca.empty() && ca == cb;
     }
     catch (...)
     {
-        return fail ("The table could not be normalised.");
+        return false;
     }
-    // What is kept and saved in a session must itself be accepted, or the session could not be loaded again.
-    if (canonical.empty())
-        return fail ("The table could not be normalised.");
-    if (auto e = validateTableLines (inst, canonical); e.isNotEmpty())
-        return fail ("The table's normal form is not acceptable: " + e);
-    u.lines = std::move (canonical);
-    return u;
+}
+
+void PresetManager::notifyNonParameterState()
+{
+    if (onMessageThread())
+        apvts.processor.updateHostDisplay (juce::AudioProcessor::ChangeDetails().withNonParameterStateChanged (true));
 }
 
 void PresetManager::commitTables (const std::vector<TableUpdate>& updates)
@@ -253,8 +277,8 @@ void PresetManager::commitTables (const std::vector<TableUpdate>& updates)
             tables[static_cast<size_t> (u.tone)] = u.lines;
             tableErrors[static_cast<size_t> (u.tone)] = u.error;
         }
-        if (sink != nullptr)
-            sink->publishTable (u.tone, u.lines);
+        if (sink != nullptr) // nothing in here allocates or can fail: the table was prepared before the hold
+            sink->publishTable (u.tone, u.prepared != nullptr ? *u.prepared : sink->emptyTable (u.tone));
     }
 }
 
@@ -280,15 +304,25 @@ juce::String PresetManager::setTable (int part, const std::vector<std::string>& 
     auto u = prepareTable (part, lines, partLabel (part));
     if (u.error.isNotEmpty())
         return u.error;
+    bool textChanged = false, contentChanged = false;
     {
         const juce::ScopedLock w (writer);
+        {
+            const juce::ScopedLock sl (lock);
+            const auto& old = tables[static_cast<size_t> (part)];
+            textChanged = old != u.lines;
+            contentChanged = ! sameTable (old, u.lines);
+        }
         applying.fetch_add (1, std::memory_order_acq_rel);
         gate.beginHold();
         commitTables ({ u });
         gate.endHold();
         applying.fetch_sub (1, std::memory_order_acq_rel);
-        modified.store (true, std::memory_order_relaxed);
+        if (contentChanged)
+            modified.store (true, std::memory_order_relaxed);
     }
+    if (textChanged)
+        notifyNonParameterState();
     broadcaster.sendSynchronousChangeMessage();
     return {};
 }
@@ -342,11 +376,19 @@ void PresetManager::applyTone (const Tone& tone, int part)
     std::vector<TableUpdate> tableUpdates;
     if (hasTables())
         tableUpdates.push_back (prepareTable (part, tone.data, partLabel (part) + " of \"" + tone.meta.name + "\""));
+    bool tableChanged = false;
     {
         const juce::ScopedLock w (writer);
+        if (hasTables())
+        {
+            const juce::ScopedLock sl (lock);
+            tableChanged = tables[static_cast<size_t> (part)] != tableUpdates.front().lines;
+        }
         applyIndices (indices, values, tableUpdates);
         modified.store (true, std::memory_order_relaxed); // the sound no longer is the loaded program
     }
+    if (tableChanged)
+        notifyNonParameterState(); // a parameter change tells the host itself; a table is not a parameter
     broadcaster.sendSynchronousChangeMessage();
 }
 
@@ -451,6 +493,10 @@ void PresetManager::setBank (Bank b, const juce::File& userFile)
 // ---------------------------------------------------------------------------------------------
 juce::String PresetManager::writeFile (const juce::File& file, const std::string& text) const
 {
+    // Never write what this instrument's own reader would refuse (a save that cannot be loaded again).
+    if (text.size() > schema.instrument().fileCap())
+        return errorFor (file, "Not saved: the file would be " + juce::String (static_cast<juce::int64> (text.size())) + " bytes, more than the "
+                                   + juce::String (static_cast<juce::int64> (schema.instrument().fileCap())) + " bytes this instrument reads");
     if (! file.getParentDirectory().createDirectory())
         return errorFor (file, "The folder could not be created");
     // Written to a uniquely named temporary file next to the target and moved over it, so a failed
@@ -701,6 +747,7 @@ PresetManager::PreparedTables PresetManager::prepareTablesInfo (const juce::Valu
         auto u = prepareTable (tone, lines, context);
         item.lines = std::move (u.lines);
         item.error = std::move (u.error);
+        item.prepared = std::move (u.prepared);
     }
     return out;
 }
@@ -718,6 +765,7 @@ void PresetManager::restoreTables (PreparedTables&& prepared)
         {
             u.lines = std::move (prepared.items[static_cast<size_t> (tone)].lines);
             u.error = std::move (prepared.items[static_cast<size_t> (tone)].error);
+            u.prepared = std::move (prepared.items[static_cast<size_t> (tone)].prepared);
         }
         updates.push_back (std::move (u));
     }

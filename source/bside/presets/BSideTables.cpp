@@ -12,12 +12,12 @@ constexpr size_t kMaxMessageBytes = 1024; // an error message is shown to a user
 std::string joined (const std::vector<std::string>& lines) { return vs::presets::joinTableLines (lines); }
 
 /** The largest legitimate bank file. 64 programs hold two tables each; the largest table the reader
-    accepts is 32 768 bytes and 1024 lines. In the worst case every table is made of lines of 31
-    quotation marks after a "#" (a comment: accepted), each of which the file writes with a
-    backslash before every one: 2 x (32 768 - 1024) bytes of text + 14 bytes of indent, quotes, comma
-    and line end per line = 77 824 bytes per table, 9 961 472 bytes for 128 tables; the parameters
-    and names of 64 programs add less than 0.4 MB. The cap leaves about 20 % on top. Measured by the
-    test "The largest legitimate bank fits the caps". */
+    accepts is 32 768 bytes and 1024 lines. The file writer needs at most 2 bytes for one byte of a table
+    (found by code in the test "The largest legitimate bank fits the caps": a tab, a quotation mark and a
+    backslash cost 2, every other byte 1 for 1, a tab being written as the two-byte escape), and about 12
+    bytes per line for indent, quotes, comma and line end. Worst case: every line made of 31 tabs:
+    75 782 bytes per table, 9.70 MB for 128 tables; with the parameters, names and values of 64 programs at
+    their longest the constructed worst bank is 9 884 536 bytes. The cap leaves 27 % on top. */
 constexpr size_t kMaxFileBytes = 12u * 1024u * 1024u;
 
 /** Values in the JSON tree of that bank: per table one array and up to 1024 strings, per program
@@ -30,10 +30,9 @@ juce::String validateTableText (const std::vector<std::string>& lines)
     const auto r = vs::bside::program::readTable (joined (lines));
     if (r.ok)
         return {};
-    auto message = r.message();
-    if (message.size() > kMaxMessageBytes)
-        message.resize (kMaxMessageBytes);
-    return juce::String::fromUTF8 (message.data(), static_cast<int> (message.size()));
+    const auto message = r.message();
+    // Lenient UTF-8 (the message may quote the offending text), cut between characters.
+    return vs::presets::truncateUtf8 (juce::String::fromUTF8 (message.data(), static_cast<int> (message.size())), kMaxMessageBytes);
 }
 
 std::vector<std::string> canonicalTableLines (const std::vector<std::string>& lines)
@@ -65,27 +64,28 @@ void enableTables (vs::presets::Instrument& i)
     i.canonicaliseTable = [] (const std::vector<std::string>& lines) { return canonicalTableLines (lines); };
 }
 
-void BSideTables::publishTable (int tone, const std::vector<std::string>& lines) noexcept
+std::unique_ptr<vs::presets::PreparedTable> BSideTables::prepareTable (int tone, const std::vector<std::string>& lines)
 {
     using namespace vs::bside::program;
     if (tone < 0 || tone >= kParts)
-        return;
-    try
+        return nullptr;
+    auto compiled = std::make_unique<Compiled>();
+    if (! lines.empty())
     {
-        // Compiled here, off the audio thread; the hand-over copies it into a free buffer.
-        if (! lines.empty())
-        {
-            const auto r = readTable (joined (lines));
-            if (r.ok)
-            {
-                parts[tone].publish (r.program);
-                return;
-            }
-        }
+        const auto r = readTable (joined (lines));
+        if (! r.ok)
+            return nullptr;
+        compiled->program = r.program;
     }
-    catch (...) // allocation failure: the part gets no table rather than a crash in a host callback
-    {
-    }
-    parts[tone].publish (emptyProgram());
+    return compiled;
 }
+
+void BSideTables::publishTable (int tone, vs::presets::PreparedTable& prepared) noexcept
+{
+    if (tone < 0 || tone >= kParts)
+        return;
+    parts[tone].publish (static_cast<Compiled&> (prepared).program); // prepared by prepareTable or emptyTable: always a Compiled
+}
+
+vs::presets::PreparedTable& BSideTables::emptyTable (int) noexcept { return empty; }
 } // namespace bs
