@@ -8,15 +8,14 @@ Editor 0 0 1360 784
     page.arpseq 12 372 88 82
     page.effects 12 462 88 82
     page.browser 12 552 88 82
-  - 436 8 470 32
+  - 396 8 510 32
     < 4 3 28 26
     > 34 3 28 26
-    Load... 282 3 64 26
-    Save... 350 3 64 26
-    Init 418 3 48 26
-    - 68 3 69 26
-    - 137 3 36 26
-    - 173 3 103 26
+    Load... 396 3 52 26
+    Save... 454 3 52 26
+    - 96 3 56 26
+    - 68 3 28 26
+    - 154 3 236 26
   ui.output 918 6 96 36
   master.volume 1024 6 150 36
   ui.limit 1184 10 70 28
@@ -28,7 +27,7 @@ Editor 0 0 1360 784
       Chorus picture 12 36 376 250
       fx.chorus.mode 12 304 376 46
       fx.chorus.mix 12 362 376 40
-    Delay 424 12 400 688
+    Delay - OFF 424 12 400 688
       fx.delay.level 332 4 56 20
       Delay picture 12 36 376 250
         Delay echoes 267 180 28 28
@@ -37,7 +36,7 @@ Editor 0 0 1360 784
       fx.delay.feedback 12 410 376 40
       fx.delay.damping 12 458 376 40
       fx.delay.level 12 506 376 40
-    Reverb 836 12 400 688
+    Reverb - OFF 836 12 400 688
       fx.reverb.level 332 4 56 20
       Reverb picture 12 36 376 250
         Reverb pre-delay 60 -8 28 28

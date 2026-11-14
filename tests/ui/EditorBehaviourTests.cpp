@@ -314,10 +314,9 @@ TEST_CASE ("The AUTO badge never overlaps the label or the value, on every slide
             CHECK (s->getLocalBounds().toFloat().contains (badge));
             ++checked;
         }
-    // Counted: the sliders whose AUTO badge fits (horizontal sliders wide enough), on this branch 97: Sound
-    // (both parts), the placeholder pages, the Arp + Seq page's gate, swing, tempo and length. The step bars are
-    // not sliders. A page that stops being a placeholder lowers this number; set it just under the real count.
-    CHECK (checked > 96);
+    // Counted: the horizontal sliders wide enough for the AUTO badge, on every page (55 with all seven pages built).
+    // Step bars, graph handles and switches are not sliders. Set the bound just under the real count.
+    CHECK (checked > 54);
 }
 
 TEST_CASE ("High-pass handle: moves for every value change over its whole range and stays inside the graph", "[ui][editor][graphs]")

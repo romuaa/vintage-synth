@@ -48,11 +48,23 @@ struct HandleMouse
     void doubleClick (juce::Point<float> parentPoint) { h.mouseDoubleClick (mouseEvent (h, local (parentPoint), 2)); }
 };
 
+// The parameters of the Envelopes page and of the LFO page (docs/architecture.md 9.3.2 and 9.3.3), per part.
+std::vector<juce::String> envelopeSuffixes()
+{
+    return { "env1.attack", "env1.decay", "env1.sustain", "env1.release", "env1.key_follow", "env1.polarity", "vcf.env_mod", "vcf.env_source",
+             "vcomod.env_mod", "vel.vcf", "env2.attack", "env2.decay", "env2.sustain", "env2.release", "env2.key_follow", "vel.vca" };
+}
+
+std::vector<juce::String> lfoSuffixes()
+{
+    return { "lfo.waveform", "lfo.rate", "lfo.delay", "vcomod.lfo_mod", "vcomod.target", "vcomod.pwm", "vcomod.pwm_source", "vcf.lfo_mod", "vca.lfo_mod" };
+}
+
 const std::vector<juce::String>& pageSuffixes()
 {
     static const auto all = [] {
-        auto s = ui::envelopeSuffixes();
-        for (auto& l : ui::lfoSuffixes())
+        auto s = envelopeSuffixes();
+        for (auto& l : lfoSuffixes())
             s.push_back (l);
         return s;
     }();
@@ -450,7 +462,7 @@ TEST_CASE ("Envelopes and LFO pages: one automated parameter repaints only its o
     {
         rig.editor->selectPage (which, 0);
         rig.tick();
-        for (const auto& suffix : which == 1 ? ui::envelopeSuffixes() : ui::lfoSuffixes())
+        for (const auto& suffix : which == 1 ? envelopeSuffixes() : lfoSuffixes())
         {
             auto& p = rig.param ("lower." + suffix);
             rig.tick (3000.0); // the markers of earlier changes have faded: only this change repaints

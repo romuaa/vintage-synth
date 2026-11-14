@@ -9,7 +9,7 @@ arpseq.page 112 48 1248 712
     arp.swing 324 100 284 44
     arp.tempo 12 164 284 44
     arp.hold 324 172 220 32
-  3 Preview 0 400 1248 312
+  3 Preview: what will play (example chord C E G) 0 400 1248 312
     Arpeggiator preview 12 36 1224 264
   arp.mode 12 14 780 74
   arp.target 816 30 420 44

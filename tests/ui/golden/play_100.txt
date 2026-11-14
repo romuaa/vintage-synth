@@ -8,15 +8,14 @@ Editor 0 0 1360 784
     page.arpseq 12 372 88 82
     page.effects 12 462 88 82
     page.browser 12 552 88 82
-  - 436 8 470 32
+  - 396 8 510 32
     < 4 3 28 26
     > 34 3 28 26
-    Load... 282 3 64 26
-    Save... 350 3 64 26
-    Init 418 3 48 26
-    - 68 3 69 26
-    - 137 3 36 26
-    - 173 3 103 26
+    Load... 396 3 52 26
+    Save... 454 3 52 26
+    - 96 3 56 26
+    - 68 3 28 26
+    - 154 3 236 26
   ui.output 918 6 96 36
   master.volume 1024 6 150 36
   ui.limit 1184 10 70 28
@@ -39,7 +38,7 @@ Editor 0 0 1360 784
       lower.bend.range 312 36 270 40
       lower.mod.wheel_vco 312 84 270 40
       lower.mix.pan 312 132 270 40
-    Upper part 630 418 606 282
+    Upper part (not played in Whole mode) 630 418 606 282
       upper.assign.mode 12 36 270 46
       upper.assign.unison_voices 12 90 270 46
       upper.unison.detune 12 144 270 40
