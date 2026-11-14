@@ -5,6 +5,25 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side reference data (2026-11-14)
+- The reference-emulator adapter exists (outside the repository, `docs/bside-oracle-adapter.md`) and
+  wrote the **first reference data set**: 29 synthetic traces in `tests/bside/reference/` with their
+  `.bsref` (digital state at 10 904 checkpoints: power-on, every waveform and combination, test bit
+  and noise register reset, sync and ring, every envelope rate, envelope quirks, both read registers,
+  both models, both clocks) and `.bsspec` (filter corner at 16 cutoff values, resonance 0-15,
+  Model A distortion at three drive levels, voice DC steps, noise at 8 frequencies; both models;
+  `*_bypass` twins for filter responses), and a `MANIFEST` of hashes. 2.08 MB.
+- `source/bside/trace/SpecAnalysis.*` (JUCE-free): the measurement side of the spec format (frames
+  as the render harness, 1/12-octave segment spectra, the segment plan derived from a trace's writes,
+  since the trace format has no analysis plan). The adapter compiles it, so both sides measure alike;
+  `render_regression` checks it against the harness (at most one 0.1 dB rounding step per cell).
+- `bside_trace` (ctest label `trace`): MANIFEST hashes, canonical files, reference and spec belong to
+  their trace, segment plan; the replay and analog-tolerance tests report themselves skipped until
+  the chip exists. `bside_trace` is now a required sanitizer target.
+- Contract questions from the data (combined waveforms in the digital state, rate-counter wrap,
+  divider rule, pipelines, test-bit noise fill, power-on state, board high-pass, clock-scaled
+  reference filter) are in `docs/decisions.md` (review) for the owner and the S2/S3 contract.
+
 ### B-Side S1b review follow-up (2026-11-14)
 - S1c merged in (`bside_unit`, `bs_juce_free`): `tests/bside/CMakeLists.txt` holds both test structures.
 - Sanitizer target selection fixed: `ninja -t targets \| grep -q` under `pipefail` made every target look

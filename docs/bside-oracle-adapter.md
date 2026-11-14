@@ -1,9 +1,9 @@
 # B-Side: the reference-emulator adapter interface
 
-Status: **interface only.** Nothing is downloaded, built or generated (owner decision Q4 is
-pending, `docs/architecture.md` 8.9.5). This file is the contract for the adapter that will live
+Status: **built; first reference data committed** (2026-11-14, `tests/bside/reference/`, owner
+decision Q4 in `docs/architecture.md` 8.12). This file is the contract for the adapter, which lives
 **outside** this repository, under the reference emulator's licence. The repository holds only the
-neutral formats, our replay driver, the comparer and the generated reference data.
+neutral formats, our replay driver, the comparer, the spec analysis and the generated reference data.
 
 ## What the adapter is
 
@@ -53,6 +53,20 @@ integers, one `frame` line per hop) and, for every segment the trace's analysis 
 1/12-octave averaged spectrum (120 bins from 20 Hz, 0.1 dB). The feature extraction is the same
 one the repository's render-regression harness uses, so both sides measure alike.
 
+**Output reference point.** The adapter takes the chip's output after its board filter, before the
+emulator's own playback stage (no added background noise, no soft limiter, no 16-bit rounding), as
+floats scaled so that 1.0 is that stage's 16-bit full scale. It resamples the per-cycle output to
+48 kHz itself (a linear-phase filter flat to 20 kHz, at least 120 dB down from 28 kHz, exact rate).
+Output sample i lies at chip cycle i x clock / 48000; a trace renders ceil (end x 48000 / clock)
+samples.
+
+**Analysis plan.** The trace format carries none, so the plan is derived from the trace alone
+(`source/bside/trace/SpecAnalysis.h`, `segmentPlan()`): the write cycles split the render into
+gaps; each gap that leaves at least 14 whole frames after 8 frames of settling (200 ms) is a
+segment `s00`, `s01`, ... (at most 64). A trace meant for analog measurements therefore places
+its writes at the boundaries of the segments it wants and nowhere else. `analyseRender()` builds
+the whole spec; the adapter and our own tests call the same code.
+
 The audio itself is never stored. Delay estimation (8.9.4: one constant delay within +-256
 samples, by cross-correlation) therefore happens where both signals exist: inside the adapter when
 it measures the reference, and in our own tests when they render ours; `estimateDelay()`
@@ -75,3 +89,26 @@ it measures the reference, and in our own tests when they render ours; `estimate
   `tests/bside/reference/MANIFEST` records hashes only.
 - Regenerating reference data is reviewed like a golden re-bless.
 - Our analog constants are fitted to the generated data, never copied from the emulator's source.
+
+## Regenerating the reference data
+
+Only on the development Mac, deliberately, and reviewed like a golden re-bless:
+
+1. Commit the repository change first: the adapter compiles this repository's `source/bside/`
+   (trace reader, writers, spec analysis) from the checkout and refuses uncommitted sources, so the
+   MANIFEST can name the commit (`sources-commit`).
+2. Run the adapter's one-command regeneration script (kept with the adapter, outside this
+   repository) with the checkout's path. It checks the emulator pin (commit and archive SHA-256),
+   builds the adapter, writes the traces, runs the adapter on each, replaces
+   `tests/bside/reference/` and writes its `MANIFEST`. An optional self-check proves, on every
+   trace, that the adapter's cycle loop is the emulator's own (sample for sample and state for state).
+3. Review the diff; run `bside_trace` (ctest label `trace`): it checks that every file is listed in
+   the MANIFEST with its SHA-256, that each reference and spec is canonical and belongs to its trace,
+   and that each spec follows the segment plan. Commit the data in its own commit.
+
+The traces are synthetic register scripts (no recorded music): `d_*` pin the digital state (writes
+of 00 to register 0x15, which these traces never use otherwise, are "probes" that only place a
+checkpoint), `a_*` are the analog measurements of 8.9.4 (`*_bypass` twins repeat a trace with the
+voices not routed to the filter, so a filter response is the ratio of two spectra with the same
+excitation). Each trace's comments say what it pins. Analog references exist for the 50 Hz clock
+only; the reference's filter scales with the configured clock (`docs/decisions.md`).

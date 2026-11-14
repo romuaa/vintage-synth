@@ -3,6 +3,16 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side reference data (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| `ctest -L trace` found none of the new tests. | `catch_discover_tests (... PROPERTIES LABELS "bside;trace")` passes the properties on unquoted: `trace` became a property name. | One label per discovered executable (or none); `ctest -L` is a regular expression, so a common prefix works for grouping. |
+| A noise-register test that ran combination after combination tested an empty register. | Combined waveforms lock the noise register at 0; a short test pulse leaves one bit, which takes hundreds of shifts to spread. | Refill before each case (test pulse, then about 40 000 cycles of noise at the top frequency) and check the starting value in the reference. |
+| The first spectra could not tell a filter corner within 5 %. | One 16384-point window of a noise excitation varies by several dB per bin. | Measure a filter as the ratio to a twin trace with the same writes and the filter bypassed: the excitation is deterministic, so its ripple cancels. |
+| The reference emulator's "48 kHz" output is 48 012 Hz. | Its resampler truncates cycles per sample to 1/1024. | Never take a reference's sample rate on trust: measure the output rate (count samples per second of input) before comparing spectra. |
+| Probe writes. | The reference holds the state only at checkpoints; `check N` is uniform and costly. | A write that changes nothing (00 to the unused cutoff low bits) places a checkpoint at any cycle. Digital traces only: in analog traces every write splits a spectral segment. |
+
 ## B-Side S1b: plugin shell and gates for two plugins (2026-11-14)
 
 | Problem | Cause | Fix / rule |
