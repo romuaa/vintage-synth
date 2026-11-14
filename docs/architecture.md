@@ -1428,7 +1428,9 @@ trace (both models); the `c_*` traces agree wherever no combined-waveform shape 
 - Power-on, which is also `reset()`:
   - Oscillators: accumulators 0x555555; noise register 0x7ffffe; noise latch = register;
     first-shift flag set; noise pipeline 0; rise flags clear; fill and fade timers stopped; output
-    and read value 0; pulse comparison high; Model B triangle/saw latch 0x555.
+    and read value 0; pulse comparison high; Model B triangle/saw latch 0x555. Noise output = the
+    output of the power-on register (0xfe0); unproven by data (no trace selects noise before the
+    first shift; wanted at the next regeneration).
   - Registers: F, PW and control all 0.
   - Envelopes: counter 0xaa; phase release; target phase release; all pipelines 0; position 0 with
     a reset pending; divider counter 0, period 1, no period change pending; not frozen; gate 0;
@@ -1465,14 +1467,19 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
      it comes before oscillator 3's output (and any pull-down), and for n = 2 and 3 after their
      sources' outputs.
   2. Shape: triangle = (index < 0x800 ? index : index XOR 0xfff) << 1 (12 bits); saw = index; pulse
-     or noise alone = 0xfff; combinations: the per-model combined-waveform tables (our own fits,
-     8.15.8).
+     or noise alone = 0xfff. A combined-waveform table (per model; our own fits, 8.15.8) is used
+     when at least two of triangle, saw and pulse are selected, or pulse together with noise.
+     Noise with only triangle or only saw uses no table: the shape is that of the triangle or saw
+     (the traces `c_9_*` and `c_a_*` replay exactly this way).
   3. out := shape AND (pulse selected ? the pulse comparison of the previous step, high under
      test : 0xfff) AND (noise selected ? noise output : 0xfff).
   4. Model A, saw bit set: if out bit 11 is 0, clear acc bit 23 and the rise flag.
-  5. Read value. Model A: out. Model B with a triangle or saw bit set: (latch AND the same two
-     masks, then the combined table if any); then latch := this step's shape. The latch is updated
-     only in such steps. Model B otherwise: out.
+  5. Read value. Model A: out. Model B with a triangle or saw bit set: read value := latch AND
+     this step's pulse mask AND noise mask, where the latch is the step-2 shape (after any
+     combined table) of the previous step that had a triangle or saw bit set; then latch := this
+     step's shape. The latch is updated only in such steps. Model B otherwise: out. (To confirm
+     with the fitted tables in S2b: latching the index and applying the current table instead
+     differs only when the waveform bits change.)
   6. Noise and another waveform bit together (write-back): if the noise pipeline is not 1 and the
      test bit is clear, the register's bits 20, 18, 14, 11, 9, 5, 2, 0 are ANDed with out bits
      11..4, and noise output := noise output AND out. Otherwise (in this case only), noise
@@ -1522,7 +1529,9 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
      - In the current phase (not the one it was scheduled in): attack: counter := counter + 1
        mod 256; if it becomes 0xff, target := decay/sustain and the phase pipeline := 3. This
        replaces any pending release, so a gate-off can be lost.
-     - Decay/sustain or release: counter := counter − 1; if it becomes 0, frozen.
+     - Decay/sustain or release: counter := (counter − 1) mod 256; if it becomes 0, frozen. (A
+       step at 0 is possible after an attack cleared the freeze and wraps to 0xff: `d_env_cases_b`,
+       envelope 3 at cycle 407 985.)
      - Then, if the counter is now 0xff or 0x00, 0x5d, 0x36, 0x1a, 0x0e or 0x06, a period change
        to 1, 1, 2, 4, 8, 16 or 30 is pending for the next step.
   5. Divider pipeline. Otherwise, if the divider pipeline is above 0, decrement it. If it reaches
@@ -1534,7 +1543,9 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
   7. If position ≠ the compare position: position := (position + 1) mod 32 767. Otherwise set the
      pending flag; the position stays.
 - Precedence: at most one of counter step, end of the divider pipeline, or rate reset happens per
-  cycle, in that order; a pending reset waits. Pipelines that were decremented without completing
+  cycle, in that order; a pending reset waits (informative: this cannot occur, because every
+  pipeline completes within 4 cycles of a reset or gate write, while a match needs position ≥ 8).
+  Pipelines that were decremented without completing
   do not use up the cycle.
 - Writes:
   - Gate 0→1: target := attack, phase pipeline := 2. If a reset is pending or the divider pipeline
@@ -1600,19 +1611,29 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
   tables or source (Q5 stands for them).
 - **Licence consequence (accepted by the owner):** B-Side is tied to GPL-compatible licensing for
   good (the reference is GPL-2.0-or-later; this project is AGPLv3, which is compatible).
-- **The bit-exact rule (8.4.3) with our own tables:** a field is *shape-dependent* from the cycle a
-  combined-waveform table value first reaches it until the state it reached is overwritten:
-  `rd1B` while oscillator 3 selects a combined waveform (and, on Model B, while the read latch
-  still holds a value taken from one); a voice's `noise` field from a combined-waveform write-back
-  until the test bit has refilled the register; on Model A an oscillator's `acc` and `phase`
-  fields from a sync whose source top bit came through the pull-down until that oscillator's next
-  test-bit reset. Shape-dependent fields are **exempt** from the exact comparison at those
-  checkpoints; every other field at every checkpoint stays exact. The replay marks them from the
-  trace's writes and our own chip's events, reports how many checkpoints were exempt per trace,
-  and fails a `d_*` trace with any exemption (those traces use no combined waveform). What the
-  exemption leaves unproven is covered by the shape fit itself: the combined-waveform outputs are
-  compared with the reference per waveform, model and pulse width within the fit tolerance set
-  with the tables (S2b), and by the audio comparisons of 8.9.4.
+- **The bit-exact rule (8.4.3) with our own tables (amended after the S2a review):** a field is
+  *shape-dependent* from the step in which a combined-waveform table value (8.15.2 (c) step 2)
+  first reaches it: through the output, the read value or the Model B latch; on Model A through
+  the pull-down of the oscillator's own accumulator bit 23 and rise flag; through a sync or ring
+  that reads such an accumulator; or through a noise write-back. It stays so until the reached
+  state is overwritten by a value that does not depend on it: for an accumulator a test-bit reset
+  or a sync reset from a source whose rise is not shape-dependent; for the noise register a fill
+  to all ones; for the read value the next exact output. Exempt fields are `accN`, `noiseN` and
+  `rd1B` only; envelope fields are never exempt. Shape-dependent fields are **exempt** from the
+  exact comparison at those checkpoints; every other field at every checkpoint stays exact. The
+  replay marks them from the trace's writes and the chip's events, reports per trace and field
+  how many checkpoints were exempt and how many of those differ, and fails any `d_*`, `a_*`,
+  `c_9_*` or `c_a_*` trace with an exemption (they use no table).
+- **What the exemption leaves unproven (S2a review):** within the `c_*` traces an exempt field can
+  also hide an oscillator-path error that is not a shape error (`rd1B` is the only oscillator
+  field those traces observe). Until our own tables exist, the `c_*` family proves envelopes and
+  whatever lies outside a table; the oscillator-path rules are proven by the `d_*` traces, the
+  unit tests and the independent model (`tests/bside/unit/IndependentModel.h`, written from this
+  section alone; never edited by whoever edits `source/bside/chip/`). With the tables (S2b) the
+  combined-waveform outputs are compared with the reference per waveform, model and pulse width
+  within the fit tolerance, and by the audio comparisons of 8.9.4. Wanted at the next
+  regeneration: a trace with a full noise fill after a combined waveform (an exemption that ends
+  inside a trace) and one that selects noise before the first shift.
 
 ## 9. M7 — custom editor
 
