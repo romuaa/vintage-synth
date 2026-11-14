@@ -46,9 +46,9 @@ public:
 class CheckableHandler final : public juce::AccessibilityHandler
 {
 public:
-    CheckableHandler (juce::Component& c, juce::AccessibilityRole role, juce::AccessibilityActions actions, std::function<bool()> isChecked,
-                      Interfaces interfaces = {})
-        : juce::AccessibilityHandler (c, role, std::move (actions), std::move (interfaces)), checked (std::move (isChecked))
+    CheckableHandler (juce::Component& c, juce::AccessibilityRole roleIn, juce::AccessibilityActions actionsIn, std::function<bool()> isChecked,
+                      Interfaces interfacesIn = {})
+        : juce::AccessibilityHandler (c, roleIn, std::move (actionsIn), std::move (interfacesIn)), checked (std::move (isChecked))
     {
     }
     juce::AccessibleState getCurrentState() const override
