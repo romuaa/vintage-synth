@@ -72,7 +72,7 @@ struct Sched
 
 Sched* gSched = nullptr;
 thread_local int tlRole = -1;
-long long gHist[2] = { 0, 0 };
+unsigned long long gHist[2] = { 0, 0 }; // unsigned: it wraps on purpose
 
 template <int Mutation>
 struct ModelHook
@@ -86,7 +86,7 @@ struct ModelHook
     void saw (int v) const noexcept
     {
         if (tlRole >= 0)
-            gHist[tlRole] = gHist[tlRole] * 1000003LL + v + 11;
+            gHist[tlRole] = gHist[tlRole] * 1000003ULL + static_cast<unsigned long long> (static_cast<long long> (v) + 11);
     }
 };
 
@@ -245,7 +245,7 @@ Outcome replay (const std::vector<int>& prefix, int publishes, int blocks)
                 if (sched.parked[r])
                     out.runnable |= 1 << r;
             unsigned long long k = 1469598103934665603ULL;
-            auto mix = [&] (long long v) { k = (k ^ static_cast<unsigned long long> (v + 1000)) * 1099511628211ULL; };
+            auto mix = [&] (auto v) { k = (k ^ (static_cast<unsigned long long> (v) + 1000ULL)) * 1099511628211ULL; };
             mix (sched.granted[0]);
             mix (sched.granted[1]);
             mix (gHist[0]);
