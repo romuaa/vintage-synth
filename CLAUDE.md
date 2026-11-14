@@ -13,7 +13,13 @@ reference panel's arrangement (owner decision).
 
 ## Open decisions (do not assume — ask if work depends on them)
 
-None right now. When a new one comes up, list it here; once decided, move it to "Decisions".
+- **M7 editor (`docs/architecture.md` 9.8):** U1 window size and resizing; U2 font (licence);
+  U3 dark only or also light; U4 static graphs with live markers or animated; U5 delay/reverb
+  on/off as a level-0 switch or new parameters; U6 value display 0–10 or percent; U7 help
+  bubbles. Agents build against the recommended defaults in 9.8 until decided. The round-3
+  wireframes in `docs/ui/wireframes/` still await the owner's final look.
+
+When a new one comes up, list it here; once decided, move it to "Decisions".
 
 ## Decisions
 
@@ -102,6 +108,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
 - **B-Side S1 contract is written** (architecture section 8, 2026-11-14), Q1–Q8 decided. **Next:** S1a, the shared processor skeleton (no agent may edit Vintage's
   processor or editor in parallel), then S1b/S1c.
+- **M7 editor contract is written** (architecture section 9, wireframes and help texts in
+  `docs/ui/`). M7 code starts only after S1a has merged (both touch the editor); M7a first.
 - **M7 UI direction (owner, 2026-11-14):** a tabbed workspace, one purpose per full page (Sound,
   Shape, Play, Arp+Seq, Effects, Browser), as simple as possible, sliders instead of knobs (knobs
   are hard with a mouse), graphs for visualisation. Every control and graph follows host
