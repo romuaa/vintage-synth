@@ -38,7 +38,20 @@ public:
         return t >> 32;
     }
 
-    /** The fraction of a cycle at the current sample start (0 .. 2^32 - 1). */
+    /** Sub-sample position of the instant t = eventCycle - before in the sample that starts at chip time
+        sampleStartCycle + sampleStartFraction / 2^32 and lasts increment / 2^32 cycles:
+        (t - start) x 2^32 / increment. 0 is the sample's start, 1 the next sample's start. For a step
+        ending inside the sample (before = 0) the result is in (0, 1] (Chip.h, "SAMPLES"). */
+    static double position (std::uint64_t sampleStartCycle, std::uint32_t sampleStartFraction, std::uint64_t increment, std::uint64_t eventCycle,
+                            double before = 0.0) noexcept
+    {
+        const double offsetCycles = static_cast<double> (static_cast<std::int64_t> (eventCycle - sampleStartCycle)) - before
+                                    - static_cast<double> (sampleStartFraction) / 4294967296.0;
+        return offsetCycles * 4294967296.0 / static_cast<double> (increment);
+    }
+
+    /** The fraction of a cycle at the current sample start (0 .. 2^32 - 1). Read it before
+        Chip::takeSampleCycles() to get the start of the sample being taken. */
     std::uint32_t fraction() const noexcept { return frac; }
     std::uint64_t increment() const noexcept { return inc; }
 

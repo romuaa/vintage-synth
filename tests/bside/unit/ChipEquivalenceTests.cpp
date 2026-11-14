@@ -22,22 +22,47 @@ using namespace vs::bside::chip;
 
 namespace
 {
+/** Every event in one flat record; all payload fields are compared. */
 struct Event
 {
-    int kind = 0; // 0 sync reset, 1 noise clock
-    int osc = 0;
+    int kind = 0; // 0 sync reset, 1 noise clock, 2 noise write-back
+    int osc = 0;  // target for a sync reset
     std::uint64_t cycle = 0;
-    std::uint32_t acc = 0;
+    std::uint64_t a = 0, b = 0, c = 0; // sync: source phase, source increment, target phase before (+ source in `d`)
+    std::uint32_t d = 0;               // noise: register; sync: source index
+    std::uint16_t out = 0;             // noise: 12-bit output
     bool operator== (const Event&) const = default;
 };
 
+/** Records events; it never reads the chip (the sink contract). */
 struct RecordingSink
 {
-    static constexpr bool kWantsNoiseClocks = true;
+    static constexpr bool kWantsNoiseEvents = true;
     std::vector<Event> events;
-    void syncReset (int osc, std::uint64_t cycle, std::uint32_t accBefore) { events.push_back ({ 0, osc, cycle, accBefore }); }
-    void noiseClock (int osc, std::uint64_t cycle) { events.push_back ({ 1, osc, cycle, 0 }); }
+    void syncReset (const SyncResetEvent& e)
+    {
+        events.push_back ({ 0, e.target, e.cycle, e.sourcePhase, e.sourceIncrement, e.targetPhaseBefore, static_cast<std::uint32_t> (e.source), 0 });
+    }
+    void noiseClock (const NoiseClockEvent& e) { events.push_back ({ 1, e.osc, e.cycle, 0, 0, 0, e.noiseRegister, e.output }); }
+    void noiseWriteBack (const NoiseWriteBackEvent& e) { events.push_back ({ 2, e.osc, e.cycle, 0, 0, 0, e.noiseRegister, e.output }); }
 };
+
+/** Checks the payload rules of the events against the contract, independent of the order. */
+void checkEventPayloads (const std::vector<Event>& events)
+{
+    for (const auto& e : events)
+    {
+        if (e.kind == 0)
+        {
+            REQUIRE (e.d == static_cast<std::uint32_t> ((e.osc + 2) % 3)); // source of target t is t - 1
+            REQUIRE (e.a >= kPhaseMsb);                                    // the source crossed 2^55 ...
+            REQUIRE (e.a - kPhaseMsb < e.b);                               // ... within this step
+            REQUIRE (e.c <= kPhaseMask);
+        }
+        else
+            REQUIRE (e.out == wave::noise (static_cast<std::uint32_t> (e.d)));
+    }
+}
 
 std::uint8_t randomControl (bst::Rng& r, std::uint8_t old)
 {
@@ -174,6 +199,7 @@ std::uint64_t runEquivalence (Model model, bool smooth, std::uint64_t cycles, st
                 REQUIRE (ev.cycle >= lastPerOsc[ev.osc]);
                 lastPerOsc[ev.osc] = ev.cycle;
             }
+            checkEventPayloads (refEvents.events);
             std::stable_sort (fastEvents.events.begin(), fastEvents.events.end(), [] (const Event& x, const Event& y) { return x.cycle < y.cycle; });
             if (fastEvents.events != refEvents.events)
             {
@@ -182,7 +208,7 @@ std::uint64_t runEquivalence (Model model, bool smooth, std::uint64_t cycles, st
                     ++i;
                 const auto show = [] (const std::vector<Event>& v, std::size_t k) {
                     return k < v.size() ? std::to_string (v[k].kind) + " osc " + std::to_string (v[k].osc) + " cycle " + std::to_string (v[k].cycle)
-                                              + " acc " + std::to_string (v[k].acc)
+                                              + " a " + std::to_string (v[k].a) + " d " + std::to_string (v[k].d)
                                         : std::string ("(none)");
                 };
                 INFO ("seed " << seed << ": event " << i << " of " << fastEvents.events.size() << "/" << refEvents.events.size() << ": fast "

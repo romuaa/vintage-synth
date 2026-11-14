@@ -43,19 +43,46 @@
 // A frozen envelope (counter 0, or in decay at the sustain level) is also jumped: its matches only
 // reset the rate counter and count the divider. Tests compare both for 10^7 random cycles per model.
 //
-// ---- The seam for S2b (band-limited rendering) ----
-// S2b renders per internal sample: ChipClock::nextSample() gives the whole cycles of the sample;
-// advanceCycles (n, sink) advances the digital state and reports, with their exact cycle, the events
-// a renderer cannot infer from the per-sample state: Sink::syncReset (osc, cycle, accBefore) and, when
-// Sink::kWantsNoiseClocks, Sink::noiseClock (osc, cycle) (the cycle is the one whose step caused the
-// event, i.e. cycle() right after it). Order: per oscillator in cycle order; across oscillators a
-// closed-form jump reports oscillator by oscillator (stable-sorted by cycle, the list equals what
-// stepCycle reports, which a test proves). Between events an oscillator is a straight
-// line: phase(n) + k x increment(n) (mod 2^56), from which saw wraps, top-bit flips and pulse edges
-// (bits 23..12 crossing PW) follow in closed form. pulseWidthSmooth(n) is the continuous pulse width
-// (Smooth), output(n) the 12-bit digital output (for checks and the combined shapes), envelope(n)
-// the 8-bit counter applied per internal sample (8.4.5). Writes happen between cycles; the renderer
-// splits the sample at the write's cycle (the chip has no notion of samples beyond ChipClock).
+// ---- The seam for S2b (band-limited rendering): time, samples, events ----
+// TIME. "The step ending at cycle E" is the stepCycle call that moves cycle() from E - 1 to E; the
+// state after it is the state at cycle E, and every event of that step carries E. Chip time t is
+// real-valued in cycles; the state at cycle E holds for t in [E, E + 1), so a step's changes happen at
+// the instant t = E. A write made while cycle() == C happens at t = C, after the step ending at C.
+//
+// SAMPLES. Internal sample s starts at T_s = C_s + F_s / 2^32, where C_s = cycle() and
+// F_s = sampleClock().fraction(), both read BEFORE takeSampleCycles(). takeSampleCycles() returns
+// n_s; the steps of sample s are those ending at E = C_s + 1 .. C_s + n_s (all in (T_s, T_s+1]).
+// The sub-sample position of an instant t = E - before (0 <= before < 1) in sample s is
+//     p = (E - before - T_s) x 2^32 / sampleClock().increment()        (p in (0, 1] for a step end),
+// computed by ChipClock::position (C_s, F_s, increment, E, before).
+// ENVELOPE: the envelope value that belongs to internal sample s is envelope(n) read AFTER the
+// sample's n_s cycles have been advanced (the state at C_s + n_s, the sample's end); envelope steps
+// are applied per sample and not band-limited (8.4.5).
+//
+// EVENTS. advanceCycles (n, sink) / stepCycle (sink) report what a renderer cannot infer from the
+// per-sample state. Events are self-contained: A SINK MUST NOT READ THE CHIP FROM INSIDE A CALLBACK
+// (inside a closed-form jump the oscillators are advanced one after the other, so the chip's state
+// at callback time differs from the state at the event's instant).
+//   syncReset (SyncResetEvent)    always reported. The target's accumulator becomes 0 at t = E. The
+//       source's top bit crossed 2^23 at t = E - before, before = (sourcePhase - 2^55) / sourceIncrement
+//       in [0, 1) (SyncResetEvent::crossingBefore()); targetPhaseBefore is the target's 56-bit phase
+//       (accumulator.fraction) after its own add in that step, just before the reset.
+//   noiseClock (NoiseClockEvent)  when Sink::kWantsNoiseEvents: one per shift, at t = E (bit 19 rose in
+//       that step); carries the register and its 12-bit noise output right after the shift (before
+//       any write-back of the same step).
+//   noiseWriteBack (NoiseWriteBackEvent)  when Sink::kWantsNoiseEvents: whenever the write-back of
+//       step 3 changed the register; register and 12-bit noise output after it. Write-back mode is
+//       never jumped: advanceCycles steps every cycle while any oscillator is in it, so these events
+//       come in step order.
+// ORDER. Within one step: noise clocks (oscillator 1..3), sync resets (target 1..3), write-backs
+// (oscillator 1..3). A closed-form jump contains noise clocks only and reports them OSCILLATOR BY
+// OSCILLATOR (each in time order), NOT by time across oscillators. Stable-sorted by cycle, the events
+// of advanceCycles equal those of the same cycles stepped one by one (tested).
+//
+// Between events an oscillator is a straight line: phase(n) + k x increment(n) (mod 2^56), from which
+// saw wraps, top-bit flips and pulse edges (bits 23..12 crossing PW) follow in closed form.
+// pulseWidthSmooth(n) is the continuous pulse width (Smooth), output(n) the 12-bit digital output.
+// Writes happen between cycles; the renderer splits the sample at the write's cycle.
 
 #include "bside/chip/ChipClock.h"
 #include "bside/chip/ChipTypes.h"
@@ -63,6 +90,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstdint>
 
 namespace vs::bside::chip
@@ -98,12 +126,54 @@ struct DigitalState
     bool operator== (const DigitalState&) const = default;
 };
 
-/** An event sink that ignores everything (the digital-only path). */
+/** A sync reset (see "EVENTS" above). Oscillators are 0-based. */
+struct SyncResetEvent
+{
+    int target = 0, source = 0;
+    std::uint64_t cycle = 0;             // E: the step that reset the target ends here
+    std::uint64_t sourcePhase = 0;       // source's 56-bit phase after its add in that step (>= 2^55)
+    std::uint64_t sourceIncrement = 0;   // source's increment (32.32), > 0
+    std::uint64_t targetPhaseBefore = 0; // target's 56-bit phase just before the reset
+    /** How long before E the source crossed its top bit, in cycles, in [0, 1). */
+    double crossingBefore() const noexcept
+    {
+        return static_cast<double> (sourcePhase - kPhaseMsb) / static_cast<double> (sourceIncrement);
+    }
+    bool operator== (const SyncResetEvent&) const = default;
+};
+
+/** One shift of a noise register (bit 19 rose in the step ending at `cycle`). */
+struct NoiseClockEvent
+{
+    int osc = 0;
+    std::uint64_t cycle = 0;
+    std::uint32_t noiseRegister = 0; // after the shift
+    std::uint16_t output = 0;        // wave::noise (noiseRegister)
+    bool operator== (const NoiseClockEvent&) const = default;
+};
+
+/** A change of a noise register by the combined-waveform write-back in the step ending at `cycle`. */
+struct NoiseWriteBackEvent
+{
+    int osc = 0;
+    std::uint64_t cycle = 0;
+    std::uint32_t noiseRegister = 0; // after the write-back
+    std::uint16_t output = 0;        // wave::noise (noiseRegister)
+    bool operator== (const NoiseWriteBackEvent&) const = default;
+};
+
+/** An event sink that ignores everything (the digital-only path). A sink provides
+      static constexpr bool kWantsNoiseEvents;            // noiseClock and noiseWriteBack are called only if true
+      void syncReset (const SyncResetEvent&);
+      void noiseClock (const NoiseClockEvent&);
+      void noiseWriteBack (const NoiseWriteBackEvent&);
+    and must not read the chip from inside a callback. */
 struct NullSink
 {
-    static constexpr bool kWantsNoiseClocks = false;
-    void syncReset (int, std::uint64_t, std::uint32_t) noexcept {}
-    void noiseClock (int, std::uint64_t) noexcept {}
+    static constexpr bool kWantsNoiseEvents = false;
+    void syncReset (const SyncResetEvent&) noexcept {}
+    void noiseClock (const NoiseClockEvent&) noexcept {}
+    void noiseWriteBack (const NoiseWriteBackEvent&) noexcept {}
 };
 
 namespace detail
@@ -153,7 +223,13 @@ public:
     /** Longest closed-form jump (keeps jump x increment inside 64 bits). */
     static constexpr std::uint64_t kMaxSkip = 4096;
 
-    Chip() noexcept { reset(); }
+    /** Power-on state with the default Config (clock and internal rate included, so a chip that is
+        never prepared still advances by samples). */
+    Chip() noexcept
+    {
+        clock.prepare (cfg.clockHz, cfg.internalRate);
+        reset();
+    }
 
     /** Model, clock and internal rate; resets the chip. Allocates nothing (no member owns memory). */
     void prepare (const Config& c) noexcept;
@@ -213,17 +289,19 @@ public:
     const Config& config() const noexcept { return cfg; }
     const ChipClock& sampleClock() const noexcept { return clock; }
 
-    // ---- read access for S2b and the tests (n = 0..2) ----
-    std::uint64_t phase (int n) const noexcept { return osc[idx (n)].phase; }
-    std::uint64_t increment (int n) const noexcept { return osc[idx (n)].inc; }
-    std::uint32_t accumulator (int n) const noexcept { return static_cast<std::uint32_t> (osc[idx (n)].phase >> kFractionBits); }
-    std::uint32_t noiseRegister (int n) const noexcept { return osc[idx (n)].noise; }
-    std::uint16_t pulseWidth (int n) const noexcept { return osc[idx (n)].pw; }
-    float pulseWidthSmooth (int n) const noexcept { return osc[idx (n)].pwSmooth; }
-    std::uint8_t control (int n) const noexcept { return regs[static_cast<std::size_t> (reg::oscStride * n + reg::control)]; }
-    std::uint8_t envelope (int n) const noexcept { return env[idx (n)].counter; }
-    EnvPhase envelopePhase (int n) const noexcept { return env[idx (n)].phase; }
-    /** The 12-bit digital output of oscillator n for its selected waveforms (Waveforms.h). */
+    // ---- read access for S2b and the tests ----
+    // Precondition: n is 0, 1 or 2 (asserted in debug builds). Outside that range a release build reads
+    // oscillator 1's value (never out of bounds), which is still a caller error.
+    std::uint64_t phase (int n) const noexcept { return osc[checked (n)].phase; }
+    std::uint64_t increment (int n) const noexcept { return osc[checked (n)].inc; }
+    std::uint32_t accumulator (int n) const noexcept { return static_cast<std::uint32_t> (osc[checked (n)].phase >> kFractionBits); }
+    std::uint32_t noiseRegister (int n) const noexcept { return osc[checked (n)].noise; }
+    std::uint16_t pulseWidth (int n) const noexcept { return osc[checked (n)].pw; }
+    float pulseWidthSmooth (int n) const noexcept { return osc[checked (n)].pwSmooth; }
+    std::uint8_t control (int n) const noexcept { return ctl (static_cast<int> (checked (n))); }
+    std::uint8_t envelope (int n) const noexcept { return env[checked (n)].counter; }
+    EnvPhase envelopePhase (int n) const noexcept { return env[checked (n)].phase; }
+    /** The 12-bit digital output of oscillator n (0..2) for its selected waveforms (Waveforms.h). */
     std::uint16_t output (int n) const noexcept;
     float cutoffSmooth() const noexcept { return cutoff; }
     std::uint8_t registerValue (std::uint8_t r) const noexcept { return r < reg::kWritable ? regs[r] : std::uint8_t { 0 }; }
@@ -247,7 +325,12 @@ private:
         std::uint8_t divPeriod = 1;
     };
 
-    static std::size_t idx (int n) noexcept { return static_cast<std::size_t> (n); }
+    static std::size_t idx (int n) noexcept { return static_cast<std::size_t> (n); } // internal loops: 0..2 by construction
+    static std::size_t checked (int n) noexcept
+    {
+        assert (n >= 0 && n < 3);
+        return static_cast<std::size_t> (n) < 3 ? static_cast<std::size_t> (n) : 0;
+    }
     std::uint8_t ctl (int n) const noexcept { return regs[static_cast<std::size_t> (reg::oscStride * n + reg::control)]; }
     std::uint8_t attackDecay (int n) const noexcept { return regs[static_cast<std::size_t> (reg::oscStride * n + reg::attackDecay)]; }
     std::uint8_t sustainRelease (int n) const noexcept { return regs[static_cast<std::size_t> (reg::oscStride * n + reg::sustainRelease)]; }
@@ -337,10 +420,10 @@ private:
             for (std::uint64_t k = 1; k <= rises; ++k)
             {
                 o.noise = detail::shiftNoise (o.noise);
-                if constexpr (Sink::kWantsNoiseClocks)
+                if constexpr (Sink::kWantsNoiseEvents)
                 {
                     const std::uint64_t boundary = ((first + k) << periodShift) - half;
-                    sink.noiseClock (n, cycleCount + (boundary - o.phase + o.inc - 1) / o.inc);
+                    sink.noiseClock (NoiseClockEvent { n, cycleCount + (boundary - o.phase + o.inc - 1) / o.inc, o.noise, wave::noise (o.noise) });
                 }
             }
             o.phase = end & kPhaseMask;
@@ -395,7 +478,8 @@ void Chip::stepCycle (Sink& sink) noexcept
         if ((~prev & next & kPhaseBit19) != 0)
         {
             o.noise = detail::shiftNoise (o.noise);
-            sink.noiseClock (n, now);
+            if constexpr (Sink::kWantsNoiseEvents)
+                sink.noiseClock (NoiseClockEvent { n, now, o.noise, wave::noise (o.noise) });
         }
     }
 
@@ -408,17 +492,26 @@ void Chip::stepCycle (Sink& sink) noexcept
         if (rose[s] && (ctl (t) & ctrl::sync) != 0 && (ctl (t) & ctrl::test) == 0 && ! sourceSynced)
             resetTarget[t] = true;
     }
+    const std::uint64_t phaseAfterAdd[3] = { osc[0].phase, osc[1].phase, osc[2].phase };
     for (int t = 0; t < 3; ++t)
         if (resetTarget[t])
         {
-            sink.syncReset (t, now, accumulator (t));
+            const int src = detail::syncSource (t);
+            sink.syncReset (SyncResetEvent { t, src, now, phaseAfterAdd[src], osc[idx (src)].inc, phaseAfterAdd[t] });
             osc[idx (t)].phase = 0;
         }
 
     // 3. combined-waveform write-back into the noise register
     for (int n = 0; n < 3; ++n)
         if (wave::writesBack (ctl (n)))
-            osc[idx (n)].noise &= wave::noiseKeepMask (output (n));
+        {
+            Osc& o = osc[idx (n)];
+            const std::uint32_t before = o.noise;
+            o.noise &= wave::noiseKeepMask (output (n));
+            if constexpr (Sink::kWantsNoiseEvents)
+                if (o.noise != before)
+                    sink.noiseWriteBack (NoiseWriteBackEvent { n, now, o.noise, wave::noise (o.noise) });
+        }
 
     // 4. envelopes
     for (int n = 0; n < 3; ++n)
