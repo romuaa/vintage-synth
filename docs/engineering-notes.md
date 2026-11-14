@@ -3,6 +3,14 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S2a: chip digital core (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The fast path's event list differed from the per-cycle one although every state matched. | A closed-form jump reports the noise clocks of oscillator 1, then 2, then 3; stepping reports them cycle by cycle. | State the order in the sink contract (per oscillator in cycle order) and compare the stable-sorted lists. A renderer consumes events per oscillator. |
+| Counting bit crossings in closed form overflows silently for long jumps. | `phase + jump × increment` exceeds 64 bits; the phase survives (2^64 is a multiple of the 2^56 wrap) but the crossing count does not, so a test that compares only phases misses it. Jumping frozen envelopes removed the 32 767-cycle bound that envelope events used to give. | Cap every closed-form jump (`kMaxSkip`) so the unwrapped sum fits; compare the noise registers, not only the accumulators. |
+| An equivalence test against the code's own per-cycle step cannot catch a wrong definition. | Both paths share `stepCycle`. | The fast path is proven by the equivalence test; the definition by the 8.4.3 row tests and by an independent stepper written from the contract by someone else. Check the equivalence test with mutations of the fast path (S2a: 7 mutations, 5 caught, the 2 others proven equivalent). |
+
 ## B-Side S1b: plugin shell and gates for two plugins (2026-11-14)
 
 | Problem | Cause | Fix / rule |

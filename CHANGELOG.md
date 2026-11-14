@@ -5,6 +5,23 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2a — the chip's digital core (2026-11-14)
+- `source/bside/chip/` (JUCE-free, no allocation, noexcept, trivially copyable): register file of 8.4.1,
+  three 24-bit oscillators with a 32-bit fraction for Smooth input, sync (with the chain case), ring, test
+  bit, 23-bit noise registers clocked on bit-19 rises with the combined-waveform write-back, three
+  envelope generators (15-bit rate counters, exponential divider latched at the threshold values, delay
+  quirk, freeze at 0, gate edges), the read registers 0x1B and 0x1C, `ChipClock` (32.32 cycles per
+  internal sample), and `wave::` (the 12-bit waveform outputs S2b renders from).
+- `Chip::stepCycle` is the normative per-cycle definition (header of `Chip.h`); `advanceCycles` is a
+  closed-form fast path proven equal to it (10^7 random cycles with random writes per model in ctest;
+  `bside_unit "[.chip-long]"` runs 10^8). An event sink reports sync resets and noise clocks at their
+  cycle: the seam for S2b's band-limited rendering. No waveform rendering, filter, DAC or output yet.
+- `source/bside/trace/ChipReplay.h`: the replay driver bound to the real chip (`setupChip`,
+  `snapshotChip` in the 20-field `.bsref` order, `replayChip`); the stub-based replay tests are unchanged.
+- Tests (`bside_unit`): every row of 8.4.3, the fast path against stepping (states and events), block
+  size 1/7/61/512 and internal rate independence of the digital state, replay with the real chip.
+- Judgement calls where 8.4.3 says "confirm" or is silent: `docs/decisions.md` (all review).
+
 ### B-Side S1b review follow-up (2026-11-14)
 - S1c merged in (`bside_unit`, `bs_juce_free`): `tests/bside/CMakeLists.txt` holds both test structures.
 - Sanitizer target selection fixed: `ninja -t targets \| grep -q` under `pipefail` made every target look
