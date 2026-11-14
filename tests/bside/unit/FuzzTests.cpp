@@ -75,8 +75,8 @@ void* operator new (std::size_t n, const std::nothrow_t&) noexcept { return coun
 void* operator new[] (std::size_t n, const std::nothrow_t&) noexcept { return countedAlloc (n); }
 void operator delete (void* p) noexcept { countedFree (p); }
 void operator delete[] (void* p) noexcept { countedFree (p); }
-void operator delete (void* p, std::size_t) noexcept { countedFree (p); }
-void operator delete[] (void* p, std::size_t) noexcept { countedFree (p); }
+// (The sized forms are not replaced: the default ones call these, and not every standard library
+// declares them, which -Wmissing-prototypes turns into an error.)
 void operator delete (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
 void operator delete[] (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
 
