@@ -21,7 +21,7 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 - Session state: child `Tables` (`lower`, `upper`, the user's text); a malformed table gives that part an
   empty table and `PresetManager::tableError(part)`; all duplicate `Tables` and `Preset` children are removed.
 - `PresetManager`: `TableSink` (owned by the manager; `prepareTable` before the hold, `publishTable` and
-  `emptyTable` inside it: nothing inside the hold allocates or can fail), `setTable`, `currentTable`,
+  `emptyTable` inside it: the table part of the hold only swaps strings with the held ones and copies a program into a free buffer, `noexcept`; the parameter writes of an apply are as before), `setTable`, `currentTable`,
   `tableError`; the host is told "non-parameter state changed" when a table changes. Error messages are cut
   between UTF-8 characters.
 - B-Side: `bside/program/ProgramHandover.h` (four buffers per part, wait-free audio side, protocol for two parts

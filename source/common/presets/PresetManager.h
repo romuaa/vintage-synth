@@ -162,16 +162,19 @@ public:
     /** The session's tables: a child "Tables" with one text property per tone (the tone key, e.g.
         "lower"): the lines, verbatim, joined by LF. An invalid tree for an instrument without tables. */
     juce::ValueTree createTablesInfo() const;
-    /** The tables of a session, checked and prepared, ready to commit. */
+    /** One tone's table, checked and prepared, ready to commit. */
+    struct TableUpdate
+    {
+        int tone = 0;
+        std::vector<std::string> lines;          // verbatim
+        juce::String error;
+        std::shared_ptr<PreparedTable> prepared; // from the sink; null for no table or a rejected one
+    };
+    /** The tables of a session, checked and prepared, ready to commit: one update per tone (empty for an
+        instrument without tables). */
     struct PreparedTables
     {
-        struct Item
-        {
-            std::vector<std::string> lines;
-            juce::String error;
-            std::shared_ptr<PreparedTable> prepared;
-        };
-        std::vector<Item> items; // by tone; empty for an instrument without tables
+        std::vector<TableUpdate> items;
     };
     /** Does the checking and preparing of a session's tables (any thread, no locks, no I/O).
         `info` may be invalid (a session without tables: every tone gets no table). Never throws; an
@@ -218,18 +221,13 @@ private:
     void parameterGestureChanged (int, bool) override {}
     void timerCallback() override { pollRequests(); }
 
-    struct TableUpdate
-    {
-        int tone = 0;
-        std::vector<std::string> lines;
-        juce::String error;
-        std::shared_ptr<PreparedTable> prepared; // from the sink; null for a rejected table or without a sink
-    };
     /** Validates `lines` and has the sink prepare them; on failure the lines are empty and `error` says why (prefixed by `context`). */
     TableUpdate prepareTable (int tone, const std::vector<std::string>& lines, const juce::String& context) const;
-    void applyIndices (const std::vector<int>& indices, const std::vector<float>& values, const std::vector<TableUpdate>& tableUpdates = {});
-    /** Stores and publishes the tables. Inside a gate hold and under writer. */
-    void commitTables (const std::vector<TableUpdate>& updates);
+    void applyIndices (const std::vector<int>& indices, const std::vector<float>& values, std::vector<TableUpdate>* tableUpdates = nullptr);
+    /** Stores and publishes the tables, inside a gate hold and under writer. Swaps the updates' contents
+        with the held ones (the old tables are freed by whoever destroys `updates`, after the hold) and
+        calls the sink's publishTable: nothing in here allocates, copies a string or can throw. */
+    void commitTables (std::vector<TableUpdate>& updates) noexcept;
     juce::String partLabel (int tone) const;
     /** True if the two tables are the same (identical lines, or the same canonical form). */
     bool sameTable (const std::vector<std::string>& a, const std::vector<std::string>& b) const;

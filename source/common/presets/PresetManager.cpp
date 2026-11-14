@@ -163,7 +163,7 @@ void PresetManager::parameterValueChanged (int parameterIndex, float newValue)
 }
 
 void PresetManager::applyIndices (const std::vector<int>& indices, const std::vector<float>& values,
-                                  const std::vector<TableUpdate>& tableUpdates)
+                                  std::vector<TableUpdate>* tableUpdates)
 {
     jassert (onMessageThread());
     // Under the writer lock: 1. hold the audio thread's parameter values  2. have it release every
@@ -186,7 +186,8 @@ void PresetManager::applyIndices (const std::vector<int>& indices, const std::ve
         p->setValueNotifyingHost (p->convertTo0to1 (target));
         p->endChangeGesture();
     }
-    commitTables (tableUpdates); // same hold: a block reads the parameters and the tables as one set
+    if (tableUpdates != nullptr)
+        commitTables (*tableUpdates); // same hold: a block reads the parameters and the tables as one set
     resyncLastValues();
     gate.endHold();
     applying.fetch_sub (1, std::memory_order_acq_rel);
@@ -266,18 +267,18 @@ void PresetManager::notifyNonParameterState()
         apvts.processor.updateHostDisplay (juce::AudioProcessor::ChangeDetails().withNonParameterStateChanged (true));
 }
 
-void PresetManager::commitTables (const std::vector<TableUpdate>& updates)
+void PresetManager::commitTables (std::vector<TableUpdate>& updates) noexcept
 {
-    for (const auto& u : updates)
+    for (auto& u : updates)
     {
         if (u.tone < 0 || u.tone >= static_cast<int> (tables.size()))
             continue;
         {
             const juce::ScopedLock sl (lock);
-            tables[static_cast<size_t> (u.tone)] = u.lines;
-            tableErrors[static_cast<size_t> (u.tone)] = u.error;
+            tables[static_cast<size_t> (u.tone)].swap (u.lines); // no allocation: the old text ends up in `u`
+            std::swap (tableErrors[static_cast<size_t> (u.tone)], u.error);
         }
-        if (sink != nullptr) // nothing in here allocates or can fail: the table was prepared before the hold
+        if (sink != nullptr) // the table was prepared before the hold; publishing copies into a free buffer
             sink->publishTable (u.tone, u.prepared != nullptr ? *u.prepared : sink->emptyTable (u.tone));
     }
 }
@@ -306,16 +307,19 @@ juce::String PresetManager::setTable (int part, const std::vector<std::string>& 
         return u.error;
     bool textChanged = false, contentChanged = false;
     {
-        const juce::ScopedLock w (writer);
+        const juce::ScopedLock w (writer); // writers are serialised: nobody else changes the tables while we compare
+        std::vector<std::string> old;
         {
             const juce::ScopedLock sl (lock);
-            const auto& old = tables[static_cast<size_t> (part)];
-            textChanged = old != u.lines;
-            contentChanged = ! sameTable (old, u.lines);
+            old = tables[static_cast<size_t> (part)];
         }
+        textChanged = old != u.lines;
+        contentChanged = ! sameTable (old, u.lines); // two parses, outside `lock` (host threads read names under it)
+        std::vector<TableUpdate> updates;
+        updates.push_back (std::move (u)); // allocated before the hold
         applying.fetch_add (1, std::memory_order_acq_rel);
         gate.beginHold();
-        commitTables ({ u });
+        commitTables (updates);
         gate.endHold();
         applying.fetch_sub (1, std::memory_order_acq_rel);
         if (contentChanged)
@@ -353,7 +357,7 @@ void PresetManager::applyProgram (const Program& program, int slot, bool markMod
     {
         // Parameters, tables and the program's name change together for anyone saving state meanwhile.
         const juce::ScopedLock w (writer);
-        applyIndices (indices, program.values, tableUpdates);
+        applyIndices (indices, program.values, &tableUpdates);
         setCurrent (slot, program.meta, markModified, slot < 0);
     }
     if (tellHost)
@@ -384,7 +388,7 @@ void PresetManager::applyTone (const Tone& tone, int part)
             const juce::ScopedLock sl (lock);
             tableChanged = tables[static_cast<size_t> (part)] != tableUpdates.front().lines;
         }
-        applyIndices (indices, values, tableUpdates);
+        applyIndices (indices, values, &tableUpdates);
         modified.store (true, std::memory_order_relaxed); // the sound no longer is the loaded program
     }
     if (tableChanged)
@@ -726,6 +730,7 @@ PresetManager::PreparedTables PresetManager::prepareTablesInfo (const juce::Valu
     for (int tone = 0; tone < schema.numTones(); ++tone)
     {
         auto& item = out.items[static_cast<size_t> (tone)];
+        item.tone = tone;
         if (! info.isValid() || ! info.hasType (kTablesInfoType))
             continue; // a session saved before tables existed, or without any: no table
         const juce::Identifier key (schema.toneKey (tone));
@@ -756,20 +761,9 @@ void PresetManager::restoreTables (PreparedTables&& prepared)
 {
     if (! hasTables())
         return;
-    std::vector<TableUpdate> updates;
-    for (int tone = 0; tone < schema.numTones(); ++tone)
-    {
-        TableUpdate u;
-        u.tone = tone;
-        if (static_cast<size_t> (tone) < prepared.items.size())
-        {
-            u.lines = std::move (prepared.items[static_cast<size_t> (tone)].lines);
-            u.error = std::move (prepared.items[static_cast<size_t> (tone)].error);
-            u.prepared = std::move (prepared.items[static_cast<size_t> (tone)].prepared);
-        }
-        updates.push_back (std::move (u));
-    }
-    commitTables (updates);
+    // Called inside the hold: the updates are complete (one per tone, made by prepareTablesInfo), so only swaps happen here.
+    if (prepared.items.size() == static_cast<size_t> (schema.numTones()))
+        commitTables (prepared.items);
 }
 
 void PresetManager::restoreSessionInfo (const juce::ValueTree& info)
