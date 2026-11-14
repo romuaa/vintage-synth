@@ -41,6 +41,7 @@ add_executable(bside_unit
     unit/ChipRowTests.cpp
     unit/ChipEquivalenceTests.cpp
     unit/ChipReplayTests.cpp
+    unit/IndependentModelTests.cpp
     unit/ChipStepperTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
 set_target_properties(bside_unit PROPERTIES COMPILE_WARNING_AS_ERROR ON)
