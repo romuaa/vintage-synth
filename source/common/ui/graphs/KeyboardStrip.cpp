@@ -259,7 +259,7 @@ void KeyboardStrip::paintKey (juce::Graphics& g, int note) const
     const auto r = keyBounds (note);
     const bool black = model::isBlackKey (note);
     const int owner = model::ownerMask (mode, splitNote, note);
-    const auto tint = [&] (int part) { return black ? blackTint (part) : whiteTint (part); };
+    const auto tint = [&] (int partIndex) { return black ? blackTint (partIndex) : whiteTint (partIndex); };
     if (owner == 3)
     {
         g.setColour (tint (0));
