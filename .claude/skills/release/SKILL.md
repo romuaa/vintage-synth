@@ -30,4 +30,7 @@ Publishing a release is outward-facing: **confirm with the user before tagging o
    at least one host per architecture, and reload a session saved with the previous release.
 6. **AGPLv3 compliance:** the release notes link to the exact source tag. Include `LICENSE` in
    both installers.
+   **Font licence (SIL OFL 1.1):** the editor embeds the Inter typeface; ship its licence text
+   `resources/fonts/inter/OFL.txt` with every binary (in the plugin bundle's resources and/or the
+   installer, next to `LICENSE`). The OFL requires the licence to accompany the font.
 7. **Tag and publish:** only after the user confirms.

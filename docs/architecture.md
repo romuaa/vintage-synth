@@ -748,6 +748,9 @@ includes and type names.
 8. Per chunk: parse, pedal tracking, route, arp/seq, render Lower (and Upper if active, else a
    zero-length render), mixer with latch cuts, input guard, chorus, delay, reverb, gain × trim with
    guard, limiter, clamp, copy or mono fold, guard reset, unlatch, Upper idle count.
+9. (M7a) Publish the UI feed (9.1.4): reads only, after the last chunk of `processBlock` and at
+   every exit of `processBlockBypassed` (peaks 0 there). Writes nothing the engine reads, so the
+   audio is unchanged.
 
 #### 8.2.4 Proof obligations (S1a gates)
 1. **Bit-identical audio:** the raw `[.bitdump]` output of every render-regression script and the
@@ -2079,6 +2082,16 @@ grey. Chorus needs no switch (its mode has Off).
 | Limiter Off / On | `master.limiter` | segmented, in the output popover (the LIMIT chip shows the state and opens the popover; it writes nothing) |
 | Ceiling | `master.limiter.ceiling` | slider in the output popover; inactive while the limiter is Off |
 
+- **Program menu (owner, 2026-11-14; built in M7e):** clicking the program name in the top bar
+  opens a menu of the current bank's 64 programs, grouped by `category` in order of first
+  appearance (empty → "Uncategorised"), one submenu per category when the bank has more than one
+  category, each entry "A3  Name", the current program ticked. Choosing an entry is
+  `selectProgram (slot)`, the same flow as `<` `>` and the Browser's Load. The menu is built from
+  `slotMeta` when it opens (never cached across `bankGeneration` changes); a Missing or Pending
+  bank shows one disabled entry with the bank status. Below a separator: "Open Browser" (switches
+  the page). Keyboard: Enter or Space on the focused name opens the menu. Test (9.6, M7e): the
+  menu model (groups, order, tick) is a JUCE-free function tested against the factory bank and a
+  bank with empty and duplicate categories.
 - Part pages: frame line, panel headers and accents in the edited part's tint; "Editing: LOWER" in
   18 px beside the part switch. Global pages: neutral tint, "Showing: whole instrument" and both part
   colour chips. Editing Upper while `key.mode` is Whole shows a banner "Upper is not heard in Whole

@@ -95,6 +95,17 @@ public:
     float getModWheel() const noexcept { return modWheel; }
     bool isSustainDown() const noexcept { return allocator.isPedalDown(); }
 
+    /** The notes of the sounding voices as a 128-bit mask (bit n%64 of word n/64), for the UI feed
+        (docs/architecture.md 9.1.4). Reads only; 16 checks. */
+    void soundingNotes (std::uint64_t (&mask)[2]) const noexcept
+    {
+        mask[0] = mask[1] = 0;
+        for (const auto& v : voices)
+            if (v.isActive())
+                if (const int note = v.getNote(); note >= 0 && note < 128)
+                    mask[note >> 6] |= std::uint64_t { 1 } << (note & 63);
+    }
+
     /** Read-only views for tests and diagnostics. */
     const VoiceAllocator& getAllocator() const noexcept { return allocator; }
     const Voice& getVoice (int i) const noexcept { return voices[static_cast<size_t> (i)]; }

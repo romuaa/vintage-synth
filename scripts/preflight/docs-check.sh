@@ -131,12 +131,13 @@ else
 fi
 bad=$(git grep -n --untracked -iE '#[[:space:]]*include[[:space:]]*[<"]juce' -- \
         'source/common/dsp/*' 'source/common/fx/*' 'source/common/seq/*' 'source/vintage/dsp/*' \
-        'source/bside/chip/*' 'source/bside/text/*' 'source/bside/program/*' 'source/bside/trace/*' \
-        'source/common/engine/*' ':!source/common/engine/Oversampler.h' || true)
+        'source/common/engine/*' ':!source/common/engine/Oversampler.h' \
+        'source/common/ui/models/*' 'source/common/shell/EditorState.h' \
+        'source/bside/chip/*' 'source/bside/text/*' 'source/bside/program/*' 'source/bside/trace/*' || true)
 if [[ -n $bad ]]; then
   fail "JUCE include in a directory that is JUCE-free by design:"; echo "$bad" >&2
 else
-  ok "the JUCE-free directories (common dsp/fx/seq/engine, vintage dsp, bside chip/text/program/trace) include no JUCE header"
+  ok "the JUCE-free directories (common dsp/fx/seq/engine incl. UiFeed.h, ui/models, shell/EditorState.h, vintage dsp, bside chip/text/program/trace) include no JUCE header"
 fi
 dups=$(tr '\0' '\n' < "$tmp/files" | tr 'A-Z' 'a-z' | sort | uniq -d)
 if [[ -n $dups ]]; then

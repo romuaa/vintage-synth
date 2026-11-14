@@ -43,6 +43,40 @@ where a row here is worded differently.
 | **Contract question, reference behaviour: board filter.** Both board filters are integer one-pole filters with rounded coefficients: high-pass 1.196 Hz at 985 248 Hz (1.243 Hz at 1 022 727 Hz; design value 1.59 Hz), low-pass 15.4 kHz (14.6 kHz). The high-pass has a dead band: after a DC step the output settles at a residual of up to -50.8 dBFS (Model A) / -46.4 dBFS (Model B) instead of 0 (`a_voice_dc_a` frames 79, 159; `a_voice_dc_b` frames 119, 239). 8.4.4 says "about 16 Hz". Per-frame comparison (architecture 8.15.7): band 0 and the frame level are ignored where both sides are below -40 dBFS (Model B's residual, -46.4 dBFS, would sit only 1.4 dB under -45); the voice-DC gate compares the first frame after each volume write only. | Quantisation artefacts of the reference, not of the chip; a 16 Hz high-pass would fail the voice-DC tolerance. |
 | **Contract question: voice DC.** Model B's voice-DC step is not "small": -25 dBFS for a volume swing 0 -> 15 (Model A: -10 dBFS) (`a_voice_dc_*`). | 8.4.4. |
 
+## M7a results: editor foundation and Sound page (2026-11-14)
+
+| Decision | Why |
+|---|---|
+| **The top bar's preset area is the existing preset bar** (bank, slot, name with `*`, `<` `>`, Load/Save/Init menus) until M7e builds `PresetActions` and the `<` name `>` Save design. (review) | The browser and `PresetActions` are M7e's scope; the bar keeps every file flow working now and its tests unchanged (`getBar()`). |
+| **"Upper is not heard in Whole mode" is shown at the right of the help row, not over the page.** (review) | The wireframe layout has no free row; a banner over the page covered panel headers. The help row is always visible and still shows the hovered control's help on its left. |
+| **Both parts' part pages exist at once; the edited part's is shown.** | Bindings register once at construction (9.1.5), so switching parts rebinds nothing. Costs about 40 more components. |
+| **The session saves `UiState` only for an instrument that names its pages** (`setUiPageNames`); the skeleton always removes the child before restoring parameters. | B-Side's saved state stays unchanged until it has its own editor (S6). |
+| **Sounding keys come from an optional `soundingNotes` of the part type** (checked at compile time). | B-Side's placeholder part need not implement it; its masks stay 0. |
+| **The limiter reduction published per block is the limiter's gain at the block end**, not the minimum over the block's samples. (review) | The per-sample minimum would have to be tracked inside the limiter's loop (an engine change); the popover's meter is a display. A short peak inside a long block can be under-shown. |
+| **The feed's sequencer step, step count, held-key order and live cutoff stay unpublished** (−1 / 0 / none / NaN) until M7d and M7f. | They need the `ArpSeq` accessors (M7d) and the per-voice cutoff store (U4, M7f, benchmarked). |
+| **Budget 9.5 "mirror tick ≤ 50 µs" is measured for the mirror itself (0.7 µs for all 172 changed).** The whole editor update for all 172 (every binding's text and both Sound pages' pictures) is about 126 µs, and only in a tick where they all change. (review) | The pictures are recomputed once per tick, after all notifications, and only when an input changed. |
+| **The window size is saved only when the user chooses one** (Size menu, corner, host resize), not the automatic first-open size. | Then a session opened on a smaller screen still fits it. |
+| **Typed text a parameter cannot read changes nothing:** a choice needs one of its labels, a number needs a digit (or a word the parameter itself shows, such as "Off"). | `getValueForText` returns a value for any text; the contract says unreadable text changes nothing. |
+| **Only Inter Regular and SemiBold are embedded (831 KB).** Values use Inter's default (proportional) figures: JUCE 9's font API has no OpenType feature switch for tabular figures; values are right-aligned so they do not jump much. (review, M7f) | Keeps the binary small; the contract asked for tabular figures. |
+| **The oscilloscopes show two cycles of each oscillator; with Sync, two cycles of oscillator 2 with oscillator 1 at its octave ratio** (at least four points per cycle). | Sync is about the restarts; without sync the shape is what matters. |
+| **The filter-curve test skips points predicted below −100 dB** (26 of 396). | There the float filter's own rounding dominates (engineering notes, "measure above the float floor"). |
+| **The Link panel says "off at 0" while Cross mod is 0** (9.3.9 note). | Short enough for the 76 px panel. |
+| **Placeholder pages label their sliders with the host parameter names** ("ENV-1 Attack"). | They are temporary; the real pages use the contract's labels. |
+| **After review: the oscilloscopes use the voice's own code end to end** (`vintage/engine/OscPath.h`): `oscConfigFor` (what `Voice::setBlockParams` applies), the pulse-width mapping (`pwmCoefs`, `pwmAmount`, `pulseWidth`), and `oscPairSample` (what `Voice::renderSample` runs). The picture shows the pulse width at rest: LFO at its centre, ENV-1 at 0 (inverted: full), Manual as set; cross mod is drawn too. The page converts parameters exactly as the processor's binding does (`SoundPage::mirroredParams`). | The first version drew width 0.5 for every source but Manual and ignored cross mod. Shared functions make the picture and the sound unable to drift; the engine refactor was proved byte-identical (all render scripts plus a PWM/cross-mod/sync probe). |
+| **The filter graph's frequency axis runs from 5 Hz (not 20 Hz) to 20 kHz** and the plot is inset by a handle's radius. (review) | The high-pass reaches down to 5 Hz: with a 20 Hz axis its handle sat half outside the graph and did not move between 5 and 20 Hz. |
+| **Self-oscillation:** from k ≥ 4 (resonance ≥ 0.964) the curve is clamped at the top of the axis and the graph says "Rings by itself at the cutoff (self-oscillation)". The linear-picture test covers resonance up to 0.95 (k = 3.94) at 88.2, 96 and 192 kHz. | The small-signal response has no finite peak there; the tanh in the feedback bounds the real oscillation, which a linear curve cannot show. |
+| **The external-change marker has its own token `marker` (#D59CF5, 7.1:1 on the panel) and a dashed outline;** `focus` stays the solid white ring only. | Contract 9.2.3 reserves `focus`; switches with a marker looked keyboard-focused. |
+| **Delete and Backspace no longer reset a control** (deviation from the keys row of 9.2.1). (review) | A host may forward Delete meant for a clip or region; double-click and the context menu still reset. |
+| **A double-click on a segment selects that segment;** reset is on the context menu (deviation from the double-click row of 9.2.1 for segmented switches). (review) | A fast second click on another choice must not jump back to the default. |
+| **The wheel on discrete controls adds up fractions of a notch;** reversed scrolling is honoured on every control. | A trackpad flick produced one full step per event and raced through all waveforms. |
+| **A session restored while the editor is open applies its saved window size.** | The size is part of the UI state; keeping the old size would silently disagree with the session. |
+| **A restore takes out every `UiState` and every `Preset` child** (a hostile session may hold several); the first one counts. | One-removal left duplicates in the parameter tree, and each save added another. |
+| **Unknown `UiState` attributes are dropped on the next save.** | Acceptable before v1.0 (no released sessions); from v1.0 a migration would keep what it does not understand if needed. |
+| **A page that is hidden ends its open gestures** (keyboard page switch during a drag, a session restore changing the page). | 9.1.2 rule 5; otherwise a host gesture stayed open until the next interaction. |
+| **Accessibility now:** explicit focus order (rail, top bar, page, help line, popover), a checked state on toggles and rail buttons, a value interface on graph handles (reads every parameter of the handle; typed text sets its first one), and the output meter announces at most once per second and only when its rounded value changed. **Left for M7f:** per-segment radio-button children of `SegmentedSwitch`, a screen-reader pass on macOS and Windows, the help line as a live region, focus order inside pages beyond reading position, the second (y) parameter of a graph handle through accessibility. | The basics a keyboard and screen-reader user needs first; the rest needs a real screen-reader pass. |
+| **pluginval's editor tests run in the local macOS gate only;** CI still runs pluginval with `--skip-gui-tests` on Windows and Linux (the workflow is not changed in M7a). | Local-first verification; the CI change is carried with the workflow rewrite on another branch. |
+| **The limiter reduction shown is the limiter's gain at each block's end** (see above); **the marker's dashed outline is built in `paint()` while a marker shows** (a small allocation only then). | Display only; no allocation at rest. |
+| **Files differ slightly from 9.1.1:** `frame/FrameParts.*` holds PartSwitch, PageRail, HelpLine, HelpBubble, OutputMeter; `frame/EditorFrame.*` holds the top bar and the OutputPopover; the typed-value field is part of `controls/BoundComponent`. | Fewer small files; names and responsibilities as in 9.2.2. |
 ## B-Side S1d: tables in presets and state (2026-11-14, all review)
 
 | Decision | Reason |
@@ -119,6 +153,17 @@ Contract: `docs/architecture.md` section 9. Open owner questions U1–U7 are in 
 | **The UI follows automation live.** Sliders, graphs and switches move when host automation, MIDI control or a program change alters a parameter; nothing on screen may show a stale value. | Owner's requirement: an automation track must be seamlessly visible in the synth UI. Implementation note for M7: the editor reads parameter values on a UI timer (never from the audio thread), including the graphs derived from them. |
 | **Round-2 wireframes approved as the direction (2026-11-14),** with three changes: a colour tint per part so it is obvious which part is being edited; the Shape page split into LFO and Envelope pages; hover help texts on every control. | Owner's review of the drafts. |
 | **Round-3 wireframes approved; all recommended options of the editor contract (9.8, U1–U7) chosen (owner, 2026-11-14):** fixed-aspect scaling 75–200 %, embedded Inter font (SIL OFL 1.1), dark only, static graphs with live markers, level-0 power switch for delay and reverb, 0–10 value text, help bubbles after 600 ms. | Owner: "approved, all recommended". |
+
+### After the first hands-on check of M7a (owner, 2026-11-14)
+- **The frame and the Sound page are approved.** The placeholder pages (parameters as plain
+  sliders) are "messy and hard to understand"; the owner looked at the round-3 wireframes again
+  and confirmed them, so Play, Arp + Seq and the other pages are built as drawn. Rule for every
+  page: no page may be a bare list of sliders; each has its picture and purpose-built controls.
+- **Clicking the program name opens a list of the bank's programs grouped by purpose** (owner
+  request). Contract: architecture 9.3.8. The groups are the programs' `category` values; the
+  factory bank's categories (Bass, Brass, Keys, Lead, Pad, Strings, Sound FX, ...) are kept
+  as they are. (review: the owner's examples were Horns, Keys, Leads, Noise, Radical, Strings;
+  rename factory categories only if the owner asks after seeing the menu.)
 
 ## B-Side S1 contract (2026-11-14)
 

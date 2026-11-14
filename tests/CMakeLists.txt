@@ -32,6 +32,7 @@ target_link_libraries(vs_test_core
     PRIVATE
         vs_juce_modules
         VintageSynthFactoryData
+        VintageUiData
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
@@ -96,8 +97,24 @@ target_sources(VintageSynthTests PRIVATE
     preset_unit/PresetTableManagerTests.cpp)
 target_compile_definitions(VintageSynthTests PRIVATE VS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
+# M7a custom editor (docs/architecture.md 9.6): models, help texts, UI feed, UI state, filter curve,
+# registry, automation follow, gestures, layout snapshot, open/close; hidden [.uishots] and [.uibench].
+target_sources(VintageSynthTests PRIVATE
+    ui/ModelTests.cpp
+    ui/HelpTextTests.cpp
+    ui/UiFeedTests.cpp
+    ui/UiStateTests.cpp
+    ui/PictureTests.cpp
+    ui/EditorTests.cpp
+    ui/EditorBehaviourTests.cpp
+    ui/UiShots.cpp)
+target_compile_definitions(VintageSynthTests PRIVATE
+    VS_UI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ui/golden"
+    VS_HELP_TEXTS_FILE="${PROJECT_SOURCE_DIR}/docs/ui/help-texts.md")
+
 target_link_libraries(VintageSynthTests PRIVATE
     vs_test_core
+    VintageUiData
     Catch2::Catch2WithMain)
 
 include(${PROJECT_SOURCE_DIR}/external/Catch2/extras/Catch.cmake)
