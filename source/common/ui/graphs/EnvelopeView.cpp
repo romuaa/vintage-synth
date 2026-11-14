@@ -5,12 +5,10 @@ namespace vs::ui
 namespace
 {
 constexpr float kLabelWidth = 72.0f, kLabelStrip = 18.0f;
-const juce::String& keyReleasedCaption() { static const juce::String s ("key released"); return s; }
-const juce::String& timeCaption() { static const juce::String s ("time >"); return s; }
 } // namespace
 
 EnvelopeView::EnvelopeView (UiContext& c, int part, const Ids& idList, const juce::String& name, ShapeFn shapeFunction)
-    : GraphView (c.theme), ctx (c), ids (idList), shapeFn (std::move (shapeFunction)), smallFont (c.theme.font (metrics::kTextSmall)), accentColour (accentFor (part))
+    : GraphView (c.theme), ctx (c), ids (idList), shapeFn (std::move (shapeFunction)), smallFont (c.theme.font (metrics::kTextSmall)), keyReleasedText ("key released"), timeAxisText ("time >"), accentColour (accentFor (part))
 {
     setTitle (partPrefix (part) + name + " shape");
     const juce::String* all[5] { &ids.attack, &ids.decay, &ids.sustain, &ids.release, &ids.polarity };
@@ -274,8 +272,8 @@ void EnvelopeView::paint (juce::Graphics& g)
     g.setColour (colour (Tok::TextSecondary));
     const auto plot = plotArea();
     const float releasedX = layout.points (values).plateauEndX;
-    g.drawText (keyReleasedCaption(), juce::Rectangle<float> (releasedX + 4.0f, plot.getY() - 10.0f, 80.0f, 14.0f), juce::Justification::centredLeft, false);
-    g.drawText (timeCaption(), juce::Rectangle<float> (r.getRight() - 52.0f, plot.getY() - 10.0f, 46.0f, 14.0f), juce::Justification::centredRight,
+    g.drawText (keyReleasedText, juce::Rectangle<float> (releasedX + 4.0f, plot.getY() - 10.0f, 80.0f, 14.0f), juce::Justification::centredLeft, false);
+    g.drawText (timeAxisText, juce::Rectangle<float> (r.getRight() - 52.0f, plot.getY() - 10.0f, 46.0f, 14.0f), juce::Justification::centredRight,
                 false);
     for (size_t i = 0; i < timeText.size(); ++i)
         g.drawText (timeText[i], juce::Rectangle<float> (labelX[i] - 0.5f * kLabelWidth, plot.getBottom() + 12.0f, kLabelWidth, 14.0f),

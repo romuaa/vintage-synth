@@ -617,3 +617,41 @@ TEST_CASE ("Layout snapshot: the Envelopes and LFO pages' component bounds equal
             }
 }
 
+// =================================================================================================
+// Hidden: pictures of the states the default shots do not show ($VS_UISHOT_DIR, never compared)
+// =================================================================================================
+
+TEST_CASE ("UI shots: Envelopes with an inverted Envelope 1, LFO with a delay and a sine wave, as PNG", "[.uishots]")
+{
+    const auto dir = juce::SystemStats::getEnvironmentVariable ("VS_UISHOT_DIR", {});
+    if (dir.isEmpty())
+        SKIP ("VS_UISHOT_DIR not set");
+    const juce::File out (dir);
+    REQUIRE (out.createDirectory());
+    EditorRig rig;
+    rig.set ("upper.env1.polarity", 1.0f);
+    rig.set ("upper.env1.attack", 0.3f);
+    rig.set ("upper.env1.decay", 0.5f);
+    rig.set ("upper.env1.sustain", 0.45f);
+    rig.set ("upper.env1.release", 0.6f);
+    rig.set ("upper.vcf.env_source", 1.0f);
+    rig.set ("upper.lfo.waveform", 0.0f);
+    rig.set ("upper.lfo.delay", 0.4f);
+    rig.set ("upper.lfo.rate", 0.5f);
+    rig.set ("upper.vco2.waveform", 4.0f);
+    rig.tick();
+    const auto write = [&] (int page, const char* name) {
+        rig.editor->setSizePercent (100);
+        rig.editor->selectPage (page, 1);
+        rig.tick();
+        const auto image = rig.editor->createComponentSnapshot (rig.editor->getLocalBounds(), true, 1.0f);
+        const auto file = out.getChildFile (name);
+        file.deleteFile();
+        juce::FileOutputStream stream (file);
+        REQUIRE (stream.openedOk());
+        REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+    };
+    write (1, "envelopes_upper_inverted_100.png");
+    write (2, "lfo_upper_delay_sine_100.png");
+}
+

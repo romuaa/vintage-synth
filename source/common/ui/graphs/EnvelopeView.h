@@ -72,6 +72,7 @@ private:
 
     juce::Path linePath, lineStroke, fillPath, ghostPath, ghostDashed, releaseDashed; // lineStroke: linePath stroked once, here, not in paint()
     juce::Font smallFont;
+    juce::String keyReleasedText, timeAxisText; // fixed captions, made once
     juce::Colour accentColour;
     int shapeCount = 0, pathCount = 0;
     float lastShapeInput[4] { -1.0f, -1.0f, -1.0f, -1.0f };
