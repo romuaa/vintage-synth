@@ -15,6 +15,19 @@ void addMissingParameters (juce::ValueTree& state, const juce::Array<juce::Audio
             }
 }
 
+juce::ValueTree takeChildren (juce::ValueTree& state, const char* type)
+{
+    const juce::Identifier id (type);
+    juce::ValueTree first;
+    for (int i = state.getNumChildren(); --i >= 0;)
+        if (state.getChild (i).hasType (id))
+        {
+            first = state.getChild (i); // the loop runs backwards: the last kept is the first child
+            state.removeChild (i, nullptr);
+        }
+    return first;
+}
+
 namespace
 {
 // Attribute names of the UiState child (plain strings: no static juce::Identifier objects).

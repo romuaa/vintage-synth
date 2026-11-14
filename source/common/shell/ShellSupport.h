@@ -34,6 +34,10 @@ inline constexpr const char* kPresetInfoType = "Preset"; // child of the state t
     internal. Tested in OutputStageTests, "State: a parameter missing ...".) */
 void addMissingParameters (juce::ValueTree& state, const juce::Array<juce::AudioProcessorParameter*>& params);
 
+/** Removes every child of `type` from `state` (a hostile session may hold several) and returns the
+    first one (invalid if there was none). */
+juce::ValueTree takeChildren (juce::ValueTree& state, const char* type);
+
 /** The editor's non-parameter UI state (docs/architecture.md 9.1.3), a child of the state tree:
     <UiState page="sound" part="lower" arpView="arp" size="100" delayLast="0.35" reverbLast="0.35"/>. */
 inline constexpr const char* kUiStateType = "UiState";

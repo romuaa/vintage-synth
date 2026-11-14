@@ -339,14 +339,10 @@ public:
         auto state = juce::ValueTree::fromXml (*xml);
         // The preset info (bank, program, modified flag) rides along as a child; sessions saved before
         // presets existed have none. It is taken out before the parameters are restored.
-        auto info = state.getChildWithName (kPresetInfoType);
-        if (info.isValid())
-            state.removeChild (info, nullptr);
+        const auto info = takeChildren (state, kPresetInfoType);
         // The editor's UI state (9.1.3) is not a parameter either: taken out too. A session without
         // it (saved before M7) shows the defaults.
-        auto ui = state.getChildWithName (kUiStateType);
-        if (ui.isValid())
-            state.removeChild (ui, nullptr);
+        const auto ui = takeChildren (state, kUiStateType);
         restoreUiState (editorState, ui, uiPageNames);
         Derived::migrateState (state);
         addMissingParameters (state, getParameters());

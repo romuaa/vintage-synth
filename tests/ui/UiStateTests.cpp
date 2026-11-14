@@ -189,3 +189,41 @@ TEST_CASE ("UI state text: strict parsing (JUCE-free)", "[ui][state]")
     CHECK (formatFloat (0.35f) == "0.35");
     CHECK (formatFloat (1.0f) == "1.00");
 }
+
+TEST_CASE ("A hostile session with duplicate UiState or Preset children: all are taken out, the next save has one of each", "[ui][state]")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    for (int copies : { 2, 3 })
+    {
+        INFO (copies << " copies");
+        VintageSynthProcessor a, b;
+        setState (a.getEditorState(), 3, 1, 0, 125, 0.4f, 0.4f);
+        auto tree = stateTree (a);
+        const auto ui = tree.getChildWithName ("UiState");
+        const auto preset = tree.getChildWithName ("Preset");
+        REQUIRE (ui.isValid());
+        REQUIRE (preset.isValid());
+        for (int i = 1; i < copies; ++i)
+        {
+            auto otherUi = ui.createCopy();
+            otherUi.setProperty ("page", "browser", nullptr);
+            tree.appendChild (otherUi, nullptr);
+            tree.appendChild (preset.createCopy(), nullptr);
+        }
+        restore (b, tree);
+        CHECK (b.getEditorState().page == 3); // the first one counts
+        for (const auto& c : b.getState().copyState())
+        {
+            CHECK_FALSE (c.hasType ("UiState"));
+            CHECK_FALSE (c.hasType ("Preset"));
+        }
+        int uiCount = 0, presetCount = 0;
+        for (const auto& c : stateTree (b))
+        {
+            uiCount += c.hasType ("UiState") ? 1 : 0;
+            presetCount += c.hasType ("Preset") ? 1 : 0;
+        }
+        CHECK (uiCount == 1);
+        CHECK (presetCount == 1);
+    }
+}
