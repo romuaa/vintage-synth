@@ -5,8 +5,11 @@
 #                         Only for an intended sound change; review the diff afterwards.
 option(UPDATE_GOLDENS "Rewrite render-regression references instead of comparing" OFF)
 
+# RenderHarness.cpp is instrument-independent (it renders through a processor factory);
+# VintageInstance.cpp says which instrument this executable renders by default.
 add_executable(render_regression
     RenderHarness.cpp
+    VintageInstance.cpp
     RenderRegressionTests.cpp
     BitDump.cpp)
 

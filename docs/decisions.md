@@ -25,6 +25,31 @@ the reading below. Each row is a judgement call for the owner or the reviewer to
 | **Replay is a template over the chip** (setup and snapshot callables) and the chip interface it needs is `advanceCycles`, `write`, `cycle`. | The real chip arrives in S2; the driver is proven now against a stub in the tests. |
 | **New directory `source/bside/text/`** (shared scanner of the four readers) and a target `bs_juce_free` + `bside_unit` under `tests/bside/`, defined in `tests/bside/CMakeLists.txt` so the root `CMakeLists.txt` and the Vintage build are untouched. S1b will add its own `BS_SOURCES`. | Keeps S1c independent of the processor refactor running in parallel. |
 
+## M7 editor contract (2026-11-14)
+
+Contract: `docs/architecture.md` section 9. Open owner questions U1–U7 are in 9.8.
+
+| Decision | Why |
+|---|---|
+| **The editor polls every parameter on a vblank-driven tick (≤ 66 Hz, 30 Hz timer fallback) and registers no parameter listeners.** (review) | Listener callbacks run on the thread that changed the parameter, often the audio thread; polling keeps all editor work on the message thread, coalesces bursts (a program change paints as one frame) and is testable by calling `tick()`. 172 loads per tick cost microseconds. Implements the owner's "UI reads parameter values on a UI timer". |
+| **The "automated" marker means "changed by something other than this editor in the last 1.5 s";** a tick with more than 8 changes (program load, restore) sets none. (review) | VST3 does not tell a plugin which parameters carry automation. |
+| **A drag that the host contests shows the user's value and writes nothing at mouse-up;** the next tick shows the parameter's real value. (review) | No snap-back writes that would fight the host; Touch/Latch hosts stop reading during the gesture anyway. |
+| **Non-parameter UI state (page, edited part, arp view, window size, the delay/reverb level to restore) is saved in the session as a `UiState` child of the state;** not in programs, never "modified". (review) | Generalises "Panel Mode is UI state": reopening a session shows what you left. Page names, not indices, so reordering pages never breaks a session. |
+| **Audio → editor data through one `UiFeed` of relaxed atomics (peaks with a raise/exchange protocol, key masks, step index) and one seqlock (held-key order).** (review) | Lock-free, allocation-free, about 30 atomic operations per block; nothing on the audio thread depends on whether an editor exists. |
+| **Displayed values are the parameters' own text (panel parameters show 0.0–10.0, not the wireframes' percentages).** (review, U6) | One mapping: what the editor, the host and the automation lane show must agree. |
+| **Every picture is computed by the engine's own JUCE-free code:** a new exact small-signal filter response, `Oscillator`, `Envelope`, `Lfo` and `ArpSeq` run offline on the message thread. The arpeggiator preview is tested against the processor's real output. (review) | The owner asked that the picture cannot disagree with the sound; running the same code is the only way to guarantee it. |
+| **Envelope graph x axis is the sliders' (logarithmic) scale, not seconds;** the LFO graph uses real seconds with a window chosen from fixed steps and kept during a drag. (review) | Envelope times span 1 ms–10 s: a linear axis would hide short segments. The LFO is about rhythm, where real time reads best; a fixed window keeps the handle under the mouse. |
+| **Envelope page titles are derived from `vcf.env_source`** ("Envelope 1 (filter, pitch)" or "(pitch)"); Envelope 1 polarity, missing from the wireframe, sits under Envelope 1. (review) | Checked in `Voice.cpp`: pitch modulation is always Envelope 1 (with its polarity), the filter takes ENV-1 or ENV-2, the VCA always ENV-2. The wireframe's fixed title was only true for one setting. |
+| **Delay and reverb get a header power switch that sets the level to 0 and restores the last level;** no new parameters. (review, U5) | The engine already bypasses at level 0 bit-exactly; no state, program or host-list change. |
+| **"Load tone" takes a source-part choice (Lower or Upper tone of the selected program) and two targets (→ Lower, → Upper).** (review) | Resolves the wireframe's open point: a program has two tones; Dual and Split programs need both to be reachable. |
+| **The LIMIT chip only shows and opens the output popover; the popover holds the switch and the ceiling.** | Each parameter has exactly one control (testable completeness). |
+| **Layout from a fixed grid, never from measured text; fixed aspect 75–200 %.** (review, U1) | Identical layout on every platform, so a text-free layout snapshot can be an exact cross-platform test. |
+| **No image snapshot tests as a gate;** layout snapshots and binding tests instead, plus PNG renders for human review. | Glyph rasterisation and antialiasing differ per platform and OS update: a tolerant image diff misses regressions, a strict one fails everywhere. |
+| **Control logic lives in JUCE-free model classes; components only forward events and paint.** | Interaction tests run headless on all five targets and under sanitizers without a display or mouse. |
+| **Help texts: `docs/ui/help-texts.md` is the single source, embedded and parsed by the plugin; a test fails for a parameter without exactly one text.** | Docs and plugin can never drift; wording reviews happen in one file. |
+| **Help-text corrections after checking the code:** velocity → VCF reduces the filter envelope for soft notes (not "brighter"); the mod wheel's vibrato uses the LFO; Unison is one note at a time; the split key itself plays Upper; step velocity's effect depends on the part's velocity settings; LFO delay is silent for half the time, then fades in; Low freq ignores keys, bend and glide; sync makes oscillator 2 set the pitch; PWM only changes the Pulse wave and Manual sets a fixed width. | Accuracy: the texts are the manual for most users. |
+| **M7 code starts after S1a has merged; M7a (foundation + Sound page) is serial, M7b–M7e (pages) run in parallel adding new files only.** | Both S1a and M7 touch the editor and the block algorithm; new-files-only keeps parallel agents out of each other's way. |
+
 ## M7 UI direction (owner, 2026-11-14)
 
 | Decision | Reason |
@@ -32,6 +57,9 @@ the reading below. Each row is a judgement call for the owner or the reviewer to
 | **Tabbed workspace: every purpose gets the full window** (Sound, Shape, Play, Arp+Seq, Effects, Browser), with a slim persistent frame. Chosen from three wireframe concepts; a single signal-flow page seemed to be missing features and a both-parts-at-once page was far too busy. | Better visibility and larger controls that are easier with a mouse. |
 | **Sliders, not round knobs,** for continuous controls. | Knobs are hard to use with a mouse. |
 | **As simple as possible; graphs for visualisation and intuition.** A new user must be able to see how to set up the arpeggiator without a manual. | Owner's requirement. |
+| **The UI follows automation live.** Sliders, graphs and switches move when host automation, MIDI control or a program change alters a parameter; nothing on screen may show a stale value. | Owner's requirement: an automation track must be seamlessly visible in the synth UI. Implementation note for M7: the editor reads parameter values on a UI timer (never from the audio thread), including the graphs derived from them. |
+| **Round-2 wireframes approved as the direction (2026-11-14),** with three changes: a colour tint per part so it is obvious which part is being edited; the Shape page split into LFO and Envelope pages; hover help texts on every control. | Owner's review of the drafts. |
+| **Round-3 wireframes approved; all recommended options of the editor contract (9.8, U1–U7) chosen (owner, 2026-11-14):** fixed-aspect scaling 75–200 %, embedded Inter font (SIL OFL 1.1), dark only, static graphs with live markers, level-0 power switch for delay and reverb, 0–10 value text, help bubbles after 600 ms. | Owner: "approved, all recommended". |
 
 ## B-Side S1 contract (2026-11-14)
 

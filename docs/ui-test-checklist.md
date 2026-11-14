@@ -2,7 +2,8 @@
 
 Hands-on checks in JUCE's AudioPluginHost (`scripts/dev-host.sh`, see README "Try it in a plugin
 host"), before testing in real DAWs. Until M7 the plugin shows JUCE's generic parameter editor; the
-same list applies to the custom UI later. Each line is one check with its expected result.
+general sections apply to both, "Custom editor" to the M7 editor (contract: `docs/architecture.md`
+section 9). Each line is one check with its expected result.
 
 The host has no CPU meter: use Activity Monitor, and `voice_bench` for budgeting.
 
@@ -10,6 +11,57 @@ The host has no CPU meter: use Activity Monitor, and `voice_bench` for budgeting
 - Open and close the editor 50 times quickly: no crash, no memory growth, it reopens at the same size.
 - Resize the editor (when resizable) and the host window: the layout follows, no repaint artefacts.
 - Quit the host while the editor is open: clean quit.
+
+## Custom editor (M7)
+Live automation and program changes:
+- Draw host automation for cutoff, a switch (VCF slope) and a sequencer step; play it back with the
+  editor open on that page: slider, graph handle and curve, switch and step move with the sound,
+  never a stale value; the "AUTO" marker appears while they move and fades after they stop.
+- Same with automation on a page that is not shown, then switch to it: it shows the current values at once.
+- Map a MIDI controller to cutoff in the host and turn it: the slider and filter curve follow.
+- Send MIDI Program Changes, use `<` `>` and the browser: every page shows the new program's values at
+  once, the name changes, the modified dot clears; master volume and limiter stay.
+- Record automation by dragging a slider and a filter-curve handle (cutoff and resonance together):
+  the host records one clean gesture per parameter; playing it back reproduces the move.
+- Drag a slider while the host plays automation of it in Read mode: the slider follows your hand, the
+  marker shows; after letting go it jumps to the automated value and the host's lane is unchanged.
+
+Parts, pages and help:
+- Switch Lower/Upper: the tint, "Editing: LOWER/UPPER" and every value change; Play, Arp + Seq,
+  Effects and Browser show "whole instrument". Check it in greyscale (system colour filter): the
+  edited part is still obvious from the text.
+- Edit Upper in Whole mode: the banner says Upper is not heard.
+- Hover every control on every page: a help bubble after about half a second, the help line at once,
+  text matches the control.
+- Inactive looks: unison controls outside Unison, split key outside Split, balance in Whole, ceiling
+  with the limiter off, delay/reverb controls at level 0, arp controls with Arp/Seq Off.
+- Every control: drag, fine drag (Shift, Cmd/Ctrl), wheel, double-click resets, typed value (click
+  the value, Enter), right-click shows the host's parameter menu where the host offers one.
+- Keyboard only: Tab through the page in reading order, arrows change the focused control, Esc
+  closes popovers; with the screen reader on, controls read "part, name, value".
+
+Graphs:
+- Filter: drag the cutoff/resonance handle and the high-pass handle; the sound matches the curve
+  (sweep a saw with resonance: the peak is where the curve shows it); switching the slope redraws.
+- Envelopes: drag each point; the times shown match the sliders; inverting Envelope 1 shows the mirrored ghost.
+- LFO: drag the delay and cycle handles; the vibrato you hear starts and repeats where the graph shows.
+- Arp preview: change pattern, octaves, rate, gate, swing: the preview matches what plays; hold a chord:
+  the preview switches to your keys.
+- Sequencer: draw steps by dragging across columns, set Rest/Tie, drag the length flag; with the host
+  playing the highlighted step follows the sound.
+- Effects: delay/reverb power switch turns off (level 0) and back on to the previous level.
+
+Browser and files:
+- Click, double-click, arrows + Enter in the grid; categories and search dim the rest; Load program,
+  Load tone (Lower or Upper tone of the selected program into Lower or Upper), Save into a user bank,
+  Save as, Init, Import and Export bank. Close the editor while a file dialog is open: no crash.
+
+Size, screens, performance:
+- Size menu 75–200 % and the corner resizer: layout identical in proportion, text sharp; the size
+  comes back after reopening the session. Move the window between a normal and a HiDPI monitor.
+- Two instances with open editors: independent values, meters and pages.
+- Activity Monitor: editor open and idle ≤ 0.5 % of a core; 16 automated parameters + arp + meters
+  ≤ 3 % at 100 % size.
 
 ## Parameters
 - Move every parameter while holding a note: audible change, no clicks or zipper noise.
