@@ -1,0 +1,48 @@
+editor 0 0 2040 1176 scale 1.5000
+Editor 0 0 1360 784
+  Pages 0 48 112 712
+    page.sound 12 12 88 82
+    page.envelopes 12 102 88 82
+    page.lfo 12 192 88 82
+    page.play 12 282 88 82
+    page.arpseq 12 372 88 82
+    page.effects 12 462 88 82
+    page.browser 12 552 88 82
+  - 436 8 470 32
+    < 4 3 28 26
+    > 34 3 28 26
+    Load... 282 3 64 26
+    Save... 350 3 64 26
+    Init 418 3 48 26
+    - 68 3 69 26
+    - 137 3 36 26
+    - 173 3 103 26
+  ui.output 918 6 96 36
+  master.volume 1024 6 150 36
+  ui.limit 1184 10 70 28
+  Output settings 1258 10 26 28
+  Window size 1290 10 58 28
+  Help 0 760 1360 24
+  effects 112 48 1248 712
+    Chorus 12 12 400 688
+      Chorus picture 12 36 376 250
+      fx.chorus.mode 12 304 376 46
+      fx.chorus.mix 12 362 376 40
+    Delay 424 12 400 688
+      Delay picture 12 36 376 250
+        Delay echoes 176 176 28 28
+      fx.delay.ping_pong 12 304 376 46
+      fx.delay.time 12 362 376 40
+      fx.delay.feedback 12 410 376 40
+      fx.delay.damping 12 458 376 40
+      fx.delay.level 12 506 376 40
+      fx.delay.level 332 4 56 20
+    Reverb 836 12 400 688
+      Reverb picture 12 36 376 250
+        Reverb pre-delay 60 -8 28 28
+        Reverb decay time 239 208 28 28
+      fx.reverb.predelay 12 304 376 40
+      fx.reverb.decay 12 352 376 40
+      fx.reverb.damping 12 400 376 40
+      fx.reverb.level 12 448 376 40
+      fx.reverb.level 332 4 56 20

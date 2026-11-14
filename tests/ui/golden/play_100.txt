@@ -1,0 +1,50 @@
+editor 0 0 1360 784 scale 1.0000
+Editor 0 0 1360 784
+  Pages 0 48 112 712
+    page.sound 12 12 88 82
+    page.envelopes 12 102 88 82
+    page.lfo 12 192 88 82
+    page.play 12 282 88 82
+    page.arpseq 12 372 88 82
+    page.effects 12 462 88 82
+    page.browser 12 552 88 82
+  - 436 8 470 32
+    < 4 3 28 26
+    > 34 3 28 26
+    Load... 282 3 64 26
+    Save... 350 3 64 26
+    Init 418 3 48 26
+    - 68 3 69 26
+    - 137 3 36 26
+    - 173 3 103 26
+  ui.output 918 6 96 36
+  master.volume 1024 6 150 36
+  ui.limit 1184 10 70 28
+  Output settings 1258 10 26 28
+  Window size 1290 10 58 28
+  Help 0 760 1360 24
+  play 112 48 1248 712
+    Keyboard layout 12 12 1224 306
+      key.mode 12 38 330 32
+      key.split_point 12 86 1200 186
+      mix.balance 880 34 332 40
+    Character 12 330 1224 76
+      global.vintage 12 34 760 36
+    Lower part 12 418 606 282
+      lower.assign.mode 12 36 270 46
+      lower.assign.unison_voices 12 90 270 46
+      lower.unison.detune 12 144 270 40
+      lower.porta.time 12 214 270 40
+      lower.porta.mode 312 208 270 46
+      lower.bend.range 312 36 270 40
+      lower.mod.wheel_vco 312 84 270 40
+      lower.mix.pan 312 132 270 40
+    Upper part 630 418 606 282
+      upper.assign.mode 12 36 270 46
+      upper.assign.unison_voices 12 90 270 46
+      upper.unison.detune 12 144 270 40
+      upper.porta.time 12 214 270 40
+      upper.porta.mode 312 208 270 46
+      upper.bend.range 312 36 270 40
+      upper.mod.wheel_vco 312 84 270 40
+      upper.mix.pan 312 132 270 40

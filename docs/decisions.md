@@ -3,6 +3,36 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## M7c results: Play and Effects pages (2026-11-14, all review)
+- **Keyboard strip.** Six octaves C to C (73 keys), default C1 to C7; the window shifts by whole
+  octaves so the split key keeps an octave of room (`KeyboardGeometry::windowFor`), but never while
+  the strip's own drag is running (the keys must not slide under the pointer). A press or drag
+  anywhere on the strip sets the split key (black keys win where the pointer is over their upper
+  part); Whole shows the Upper bar as "not played in Whole", Dual two stacked bars, Split two bars
+  that meet at the marker. Held keys are filled dots, sounding notes rings; with both parts on one
+  key (Dual) Lower stands left and Upper right, so a part is never a colour alone.
+- **Delay picture.** Echo n is `feedback^(n-1)` as loud as the first (the engine writes input +
+  feedback x output into the line, `Delay.h`), not `feedback^n` as the 9.4 row reads: the test
+  compares the picture with the real delay. The time axis is the **square root of time**, 0 to 6 s
+  (linear crowds short delays, logarithmic crowds long ones). The handle stands on top of the
+  **second** echo: x moves the time (a pixel shift moves every echo equally), y the repeats (the
+  second echo's height *is* the feedback gain). In ping-pong the handle moves to the right lane.
+- **Reverb picture.** The tail starts after the pre-delay and falls 60 dB over the decay time, so
+  the RT60 point is at pre-delay + decay (the engine's `decaySeconds` counts from the tail's start).
+  The time axis is logarithmic in (t + 10 ms), 0 to 30 s. The decay handle's x is the end of the
+  tail minus the live pre-delay.
+- **Chorus picture.** Not a waveform but the delay of the two taps over four seconds (centre
+  +- depth x the block's own rounded-triangle LFO at the mode's rate): it shows what the effect
+  does and is checked against the real chorus.
+- **Power switches** are secondary bindings of the level; "Delay - OFF" in the header, the picture
+  grey and the other controls dimmed while the level is 0. The switch acts on the live level, so a
+  host write between two ticks is respected. Delay and reverb open **off** in a new program (their
+  default level is 0), which is what the page shows.
+- **Paint allocations (9.5).** "At most 8 per component" cannot be measured with the software
+  renderer, which allocates inside its own drawing (the Sound page makes about 260 per component).
+  The test asserts that repeated paints allocate identically and that the new pages need no more per
+  component than 1.5 x the Sound page's; strings, paths and caches are prepared on value change.
+
 ## M7a results: editor foundation and Sound page (2026-11-14)
 
 | Decision | Why |
