@@ -4,10 +4,14 @@
 // modified marker, previous / next, Load, Save and Init menus. All logic lives in PresetManager;
 // the bar only calls it, so presets work without any editor open. File dialogs are asynchronous
 // (never modal), start in the user preset folders without creating them, and are never shown by tests.
-// Every asynchronous callback (menus, file choosers) holds a Component::SafePointer and does
+// The dialogs and menus of Load and Save are PresetActions (shared with the Vintage Browser).
+// The program name is a button: it opens the program menu (the bank's programs grouped by category,
+// docs/architecture.md 9.3.8); Enter or Space on it does the same.
+// Every asynchronous callback (menus, file choosers) holds a weak or safe pointer and does
 // nothing if the bar is gone (the editor closed while a menu or dialog was open) or if it was
 // dismissed (result 0). The bar's own timer and listener are stopped in its destructor.
 
+#include "common/presets/PresetActions.h"
 #include "common/presets/PresetManager.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -33,25 +37,32 @@ public:
         or when the bar no longer exists. */
     static void handleLoadMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice);
     static void handleSaveMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice);
+    /** The program menu's choice: a slot + 1, or kOpenBrowserChoice; nothing for 0 or when the bar is gone. */
+    static void handleProgramMenuResult (juce::Component::SafePointer<PresetBar> bar, int choice);
+    static constexpr int kOpenBrowserChoice = 10000;
+
+    /** Set by the Vintage editor: adds "Open Browser" to the program menu. */
+    std::function<void()> onOpenBrowser;
+    /** The menu the program name opens, from the manager's state now (tests). */
+    ui::model::ProgramMenu programMenuModel() const;
+    void showProgramMenu();
+    juce::Button& getNameButton() noexcept;
+    PresetActions& getActions() noexcept { return actions; }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override { refresh(); } // picks up the modified marker (set from any thread)
     void refresh();
-    void showLoadMenu();
-    void showSaveMenu();
-    void loadChosen (int choice);
-    void saveChosen (int choice);
     juce::String bankText() const;
     juce::String positionText() const;
-    void chooseAndLoad (const juce::String& title, const juce::File& folder, const juce::String& pattern, std::function<juce::String (const juce::File&)> action);
-    void chooseAndSave (const juce::String& title, const juce::File& folder, const juce::String& extension, std::function<juce::String (const juce::File&)> action);
-    void report (const juce::String& error);
+
+    class NameButton;
 
     PresetManager& presets;
+    PresetActions actions;
     juce::TextButton previous { "<" }, next { ">" }, load { "Load..." }, save { "Save..." }, init { "Init" };
-    juce::Label bankLabel, positionLabel, nameLabel;
-    std::unique_ptr<juce::FileChooser> chooser;
+    juce::Label bankLabel, positionLabel;
+    std::unique_ptr<NameButton> nameButton;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetBar)
 };
