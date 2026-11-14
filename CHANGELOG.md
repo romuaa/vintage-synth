@@ -5,6 +5,28 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S1c, JUCE-free formats (2026-11-14)
+- `source/bside/program/`: the strict reader and compiler of the patch table text format (8.6.5),
+  the compact `Program` (a fixed 5.9 KB trivially copyable struct, byte equality = program
+  equality), and the canonical writer. Every limit and error class of the contract, errors with
+  line and column, at most 8 messages. No runtime or tick engine yet.
+- `source/bside/trace/`: the `.bstrace` trace, `.bsref` reference and `.bsspec` spec readers and
+  writers (bounded, strict), SHA-256, the checkpoint schedule, the replay driver (template over the
+  chip, proven against a stub) and the comparer with the 8.9.4 tolerance table.
+- `tests/bside/`: new JUCE-free executable `bside_unit` (about 5 s to build and run), part of
+  `ctest`, the sanitizer steps of `scripts/preflight.sh` and `scripts/linux-check.sh`. Spec tests
+  for every command and error class, the four example tables, bounds tests for every limit, round
+  trips, and a deterministic fuzz test (short in the normal run; 10^6 cases hidden under
+  `[.fuzz-long]`).
+- Review follow-up: the canonical text always reads back (reader rejects rows whose canonical form is over
+  200 bytes; `validate()` checks every text limit); every cycle of rows without delay is an error and an
+  accepted table runs at most 64 rows per tick; trace limits lowered to 100 000 writes so a reference
+  file always fits its 16 MB limit and every writer refuses what its reader would; C1 controls and the
+  byte order mark are rejected with their own messages; `replay()` verifies the trace SHA-256.
+- `docs/bside-oracle-adapter.md`: the interface of the external reference-emulator adapter
+  (nothing is downloaded or generated). `docs-check` now also keeps `source/bside/{text,program,trace}`
+  JUCE-free and `source/bside` free of `vintage/` includes.
+
 ### B-Side S1a — shared processor skeleton (2026-11-14)
 - Refactor, no behaviour change: everything instrument-independent in Vintage's processor moved
   into `source/common/shell/` (`docs/architecture.md` 8.2) so the second instrument can reuse it.

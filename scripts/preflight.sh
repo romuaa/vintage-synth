@@ -220,7 +220,7 @@ step_mac_sanitize() {
     -DCMAKE_C_FLAGS="$san" -DCMAKE_CXX_FLAGS="$san" \
     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
     -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined" || return 1
-  cmake --build "$b" --target VintageSynthTests render_regression -- -k 0 || return 1
+  cmake --build "$b" --target VintageSynthTests render_regression bside_unit -- -k 0 || return 1
   # The whole unit-test binary and the render-regression binary; host_smoke needs the plugin and is not built here.
   ctest --test-dir "$b" --output-on-failure -E '^host_smoke$'
 }
