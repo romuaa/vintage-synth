@@ -654,7 +654,6 @@ TEST_CASE ("B-Side tables: a malformed table in a session gives that part an emp
         juce::ValueTree tree;
         const auto toTree = secondsOf ([&] { tree = juce::ValueTree::fromXml (*parsed); });
         (void) toTree;
-        ByteCounter counter;
         const auto seconds = secondsOf ([&] { b.proc.setStateInformation (block.getData(), static_cast<int> (block.getSize())); });
         std::printf ("  %s: XML decode %.3f s + ours %.3f s (%zu bytes of state; encode %.3f s)\n", what, decode, seconds - decode, block.getSize(), encode);
         CHECK (seconds - decode < 0.5); // our part: everything after the host's XML decoding
