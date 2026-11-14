@@ -26,6 +26,10 @@ namespace vs::shell
 inline constexpr const char* kStateVersionAttr = "stateVersion";
 inline constexpr const char* kPresetInfoType = "Preset"; // child of the state tree: the bank / program the sound came from
 
+/** Removes every child of `state` with this type and returns the first of them (an invalid tree if
+    there was none). Linear time however many there are (a hostile session may carry thousands). */
+juce::ValueTree takeChildren (juce::ValueTree& state, const char* type);
+
 /** A session saved before a parameter existed has no entry for it. The loaded sound must not
     depend on the instance's history, so every parameter of ours missing from the incoming state
     gets an entry without a value, which AudioProcessorValueTreeState restores to the parameter's

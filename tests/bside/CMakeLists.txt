@@ -30,6 +30,8 @@ add_executable(bside_unit
     unit/ReferenceFormatTests.cpp
     unit/ReplayCompareTests.cpp
     unit/FormatLimitTests.cpp
+    unit/HandoverTests.cpp
+    unit/HandoverModelTests.cpp
     unit/FuzzTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
 set_target_properties(bside_unit PROPERTIES COMPILE_WARNING_AS_ERROR ON)
@@ -68,7 +70,8 @@ if(VS_BUILD_BSIDE)
     add_executable(BSideTests
         integration/ShellContractTests.cpp
         integration/ShellTests.cpp
-        integration/TestTonePartTests.cpp)
+        integration/TestTonePartTests.cpp
+        integration/TablePresetTests.cpp)
     target_link_libraries(BSideTests PRIVATE
         bs_test_core
         Catch2::Catch2WithMain)

@@ -105,6 +105,11 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
   owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
+- **B-Side S1d (patch tables in presets and sessions) is ready on `bside/s1d-merge`, awaiting the
+  owner's merge approval:** tables in program, tone and bank files and in the session, stored as
+  the user wrote them; a wait-free hand-over of the compiled table to the audio thread
+  (`ProgramHandover.h`, exhaustively model-tested; nothing reads it until S2c). Contract as built:
+  architecture 8.14. Vintage files and states byte-identical. Reviewed twice.
 - **B-Side S1b is merged to `main`** (plugin shell): a second plugin "Exitium B-Side" (test-tone
   part, shared parameters, presets, state; no chip model yet), `VS_BUILD_BSIDE` (default ON), the
   local gate, `host_smoke`, the dev host (`scripts/dev-host.sh --plugin bside`) and the CI
@@ -150,6 +155,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   6. S1c: the B-Side table and trace readers and `bside_unit` (2026-11-14).
   7. S1b: B-Side itself, the two-plugin CMake and `build.yml` rewrite (never run), the shared
      `vs_juce_modules` library on MSVC, `scripts/sanitize-targets.sh` on a runner (2026-11-14).
+  9. S1d: patch tables in presets, `BasicProgramHandover<Hook>` (`[[no_unique_address]]` and
+     `if constexpr` on MSVC), short JSON escapes for control characters (2026-11-14).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -194,7 +201,8 @@ source/vintage/   this instrument: PluginProcessor.* (VintageSynthProcessor : sh
   params/         PartParamList.h (X-macro list of all per-part params), PartMappings.h,
                   ParameterLayout (assembles the layout), StateVersion.h
 source/bside/     Exitium B-Side (second plugin): PluginProcessor.*, engine/TestTonePart (placeholder until
-                  S2/S4), params/, presets/ (JUCE-bound); text/ program/ trace/ are JUCE-free (strict
+                  S2/S4), params/, presets/ (JUCE-bound; BSideTables = the table validator and sink);
+                  program/ProgramHandover.h (table to the audio thread); text/ program/ trace/ are JUCE-free (strict
                   readers, patch tables, trace formats); chip/ comes with S2. Vintage and B-Side never
                   include each other
 tests/bside/      bside_unit (JUCE-free, ctest label "bside") always; with VS_BUILD_BSIDE also
@@ -269,6 +277,8 @@ must build for all five targets (mac universal, win x64, win ARM64, Linux x86_64
   added to `scripts/sanitize-targets.sh`.
 - Never `grep -q` on the right side of a pipe under `pipefail` (the left side dies with SIGPIPE and
   the pipeline "fails"); capture the output first. `VS_PREFLIGHT_PLUGINS` is for `--quick`/`--only`.
+- A hand-over that publishes A and then clears B must be read B then A; change `ProgramHandover.h`
+  only together with its model test (`HandoverModelTests.cpp`).
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
 

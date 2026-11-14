@@ -90,7 +90,10 @@ target_sources(VintageSynthTests PRIVATE
     preset_unit/PresetManagerTests.cpp
     preset_unit/StrictJsonTests.cpp
     preset_unit/FactoryBankTests.cpp
-    preset_unit/FactoryRender.cpp)
+    preset_unit/FactoryRender.cpp
+    preset_unit/PresetDump.cpp
+    preset_unit/PresetTableFormatTests.cpp
+    preset_unit/PresetTableManagerTests.cpp)
 target_compile_definitions(VintageSynthTests PRIVATE VS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 target_link_libraries(VintageSynthTests PRIVATE
