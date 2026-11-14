@@ -926,7 +926,30 @@ private:
                 if (! bypassedBlock || bypassFadeLeft > 0)
                     self().part (p).soundingNotes (sounding);
             UiFeed::storeMask (uiFeed.part[p].sounding, sounding[0], sounding[1]);
+
+            // The arp/seq's playing step and the order of the keys in its pattern (the editor's
+            // preview). Reads the module's state only; the order is published when it changed.
+            const seq::ArpSeq& arp = p == 0 ? lowerArp : upperArp;
+            uiFeed.part[p].seqStep.store (bypassedBlock && bypassFadeLeft <= 0 ? -1 : arp.lastSeqStep(), std::memory_order_relaxed);
+            UiFeed::Order order = noKeysInOrder();
+            const auto& keys = arp.keys();
+            const int numKeys = juce::jmin (keys.size(), UiFeed::kMaxOrderKeys);
+            for (int i = 0; i < numKeys; ++i)
+                order[static_cast<size_t> (i)] = static_cast<std::uint8_t> (keys.ordered (i));
+            if (order != publishedOrder[p])
+            {
+                publishedOrder[p] = order;
+                uiFeed.writeOrder (p, order);
+            }
         }
+    }
+
+    static constexpr UiFeed::Order noKeysInOrder() noexcept
+    {
+        UiFeed::Order o {};
+        for (auto& b : o)
+            b = 0xFF;
+        return o;
     }
 
     presets::ApplyGate presetGate; // message thread <-> audio thread hand-over (atomics only)
@@ -988,6 +1011,7 @@ private:
     // Editor data (docs/architecture.md 9.1.3, 9.1.4). The audio thread only writes uiFeed (step 9).
     EditorState editorState;
     UiFeed uiFeed;
+    std::array<UiFeed::Order, 2> publishedOrder { noKeysInOrder(), noKeysInOrder() }; // audio thread only
     std::span<const char* const> uiPageNames; // empty: no UiState child in the session
 
     // Last member: destroyed first (it listens to the parameters). Derived's members (its parts and
