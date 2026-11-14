@@ -66,76 +66,42 @@ TEST_CASE ("A new instance is on factory program A1 (Init), unmodified, with the
     CHECK (rig.presets().positionName (63) == "H8");
 }
 
-TEST_CASE ("Factory bank: placeholders in A1-A8, Init everywhere else, nothing fails to parse", "[presets][factory]")
+TEST_CASE ("Factory bank: values from the files land in their slots", "[presets][factory]")
 {
+    // The bank as a whole (64 programs, names, categories, sound, level) is tested in
+    // FactoryBankTests.cpp; here a wrong slot or key mapping would show.
     PresetRig rig;
     juce::StringArray errors;
     const auto bank = makeVintageFactoryBank (rig.schema(), &errors);
     INFO (errors.joinIntoString ("; "));
     CHECK (errors.isEmpty());
     REQUIRE (bank.programs.size() == static_cast<size_t> (kPresetBankSize));
-    CHECK (bank.name == "Factory");
-
-    const char* names[] = { "Init", "Placeholder Pad", "Placeholder Bass", "Placeholder Lead", "Placeholder Dual Layer",
-                            "Placeholder Split", "Placeholder Arp", "Placeholder Effects" };
-    const auto init = rig.schema().defaults();
-    for (int i = 0; i < 8; ++i)
-    {
-        const auto& p = bank.programs[static_cast<size_t> (i)];
-        CHECK (p.meta.name == names[i]);
-        if (i > 0)
-        {
-            CHECK (p.meta.category == "Placeholder");
-            CHECK (p.meta.author.contains ("placeholder"));
-            // Obviously different from Init, and from each other.
-            int different = 0;
-            for (size_t k = 0; k < p.values.size(); ++k)
-                different += sameBitsF (p.values[k], init[k]) ? 0 : 1;
-            INFO (names[i]);
-            CHECK (different >= 5);
-            for (int j = 1; j < i; ++j)
-                CHECK_FALSE (sameValues (p.values, bank.programs[static_cast<size_t> (j)].values));
-        }
-    }
-    for (int i = 8; i < kPresetBankSize; ++i)
-    {
-        const auto& p = bank.programs[static_cast<size_t> (i)];
-        CHECK (p.meta.name == "Init");
-        CHECK (sameValues (p.values, init));
-    }
-    // Specific values the files carry (a wrong slot or key mapping would show here).
     const auto at = [&] (int slot, const char* id) { return bank.programs[static_cast<size_t> (slot)].values[static_cast<size_t> (rig.schema().indexOf (id))]; };
-    CHECK (feq (at (4, "key.mode"), 1.0f));
-    CHECK (feq (at (5, "key.mode"), 2.0f));
-    CHECK (feq (at (4, "upper.assign.mode"), 2.0f));
-    CHECK (feq (at (4, "lower.assign.mode"), 0.0f));
-    CHECK (feq (at (6, "arp.mode"), 1.0f));
-    CHECK (feq (at (2, "lower.assign.mode"), 2.0f));
-    CHECK (feq (at (2, "upper.assign.mode"), 0.0f));
-    CHECK (feq (at (7, "fx.reverb.level"), 0.4f));
+    CHECK (bank.programs[static_cast<size_t> (kSlotDual)].meta.name == "Twin Horizon");
+    CHECK (feq (at (kSlotDual, "key.mode"), 1.0f));
+    CHECK (feq (at (kSlotSplit, "key.mode"), 2.0f));
+    CHECK (feq (at (kSlotSplit, "key.split_point"), 55.0f));
+    CHECK (feq (at (kSlotSplit, "lower.assign.mode"), 2.0f));
+    CHECK (feq (at (kSlotSplit, "upper.assign.mode"), 0.0f));
+    CHECK (feq (at (kSlotArp, "arp.mode"), 1.0f));
+    CHECK (feq (at (kSlotArp, "arp.octaves"), 2.0f));
+    CHECK (feq (at (kSlotSeq, "arp.mode"), 2.0f));
+    CHECK (feq (at (kSlotSeq, "seq.step03.note"), 12.0f));
+    CHECK (feq (at (kSlotSoloBass, "lower.assign.mode"), 2.0f));
+    CHECK (feq (at (kSlotEffects, "fx.delay.level"), 0.45f));
+    CHECK (feq (at (kSlotEffects, "fx.chorus.mode"), 2.0f));
 }
 
-TEST_CASE ("Every placeholder program loads, sounds, is finite and survives a state round trip", "[presets][factory]")
+TEST_CASE ("Every factory program survives a state round trip", "[presets][factory]")
 {
-    for (int slot = 0; slot < 8; ++slot)
+    // Sound, finiteness, release and level of every program: FactoryBankTests.cpp.
+    for (int slot = 0; slot < kPresetBankSize; ++slot)
     {
         PresetRig rig;
         rig.prepare();
         REQUIRE (rig.presets().selectProgram (slot));
         const auto name = rig.presets().currentName();
         INFO ("program " << slot << " " << name);
-        const auto out = rig.render (rig.samples (1.6), chord (rig.samples (0.05), { 48, 55, 60, 64 }), 256);
-        double peak = 0.0;
-        bool finite = true;
-        for (size_t i = 0; i < out.l.size(); ++i)
-        {
-            finite = finite && std::isfinite (out.l[i]) && std::isfinite (out.r[i]);
-            peak = std::max ({ peak, static_cast<double> (std::abs (out.l[i])), static_cast<double> (std::abs (out.r[i])) });
-        }
-        CHECK (finite);
-        CHECK (peak > 0.01);
-        CHECK (peak < 3.9); // below the +12 dBFS safety clamp
-
         juce::MemoryBlock state;
         rig.proc.getStateInformation (state);
         PresetRig other;
@@ -158,6 +124,8 @@ TEST_CASE ("selectProgram sets every program parameter and nothing else", "[pres
     PresetRig rig;
     auto& pm = rig.presets();
     rig.set ("master.volume", -20.0f); // not part of a program
+    rig.set ("master.limiter", 0);     // nor is the limiter (Wave 4): session settings
+    rig.set ("master.limiter.ceiling", -7.5f);
     const auto program = randomProgram (rig.schema(), 11, "Mine");
     pm.setBank ([&] {
         Bank b = makeInitBank (rig.schema());
@@ -174,6 +142,8 @@ TEST_CASE ("selectProgram sets every program parameter and nothing else", "[pres
     CHECK (rig.differences (program.values).isEmpty());
     CHECK (rig.get ("master.volume") < -19.9f);
     CHECK (rig.get ("master.volume") > -20.1f);
+    CHECK (rig.get ("master.limiter") < 0.5f);
+    CHECK (std::abs (rig.get ("master.limiter.ceiling") + 7.5f) < 0.01f);
     // Nearly every program parameter is non-default in this program: they were all really set.
     int changedFromDefault = 0;
     for (int i = 0; i < rig.schema().numParams(); ++i)
@@ -197,7 +167,7 @@ TEST_CASE ("Parameters changed by hosts follow a program change (the host is not
     } counter;
     auto* cutoff = rig.proc.getState().getParameter ("lower.vcf.cutoff");
     cutoff->addListener (&counter);
-    rig.presets().selectProgram (2); // Placeholder Bass: cutoff 0.3 (default 0.6)
+    rig.presets().selectProgram (2); // A3 Low Sun Horns: cutoff 0.32 (default 0.6)
     cutoff->removeListener (&counter);
     CHECK (counter.values >= 1);
     CHECK (counter.begins == 1);
@@ -227,6 +197,12 @@ TEST_CASE ("The modified flag", "[presets][manager]")
     SECTION ("master volume is not part of a program")
     {
         rig.set ("master.volume", -30.0f);
+        CHECK_FALSE (pm.isModified());
+    }
+    SECTION ("the limiter is not part of a program")
+    {
+        rig.set ("master.limiter", 0);
+        rig.set ("master.limiter.ceiling", -6.0f);
         CHECK_FALSE (pm.isModified());
     }
     SECTION ("a change made on another thread (host automation) counts")
@@ -273,12 +249,12 @@ TEST_CASE ("Previous and next wrap around the bank", "[presets][manager]")
     auto& pm = rig.presets();
     CHECK (pm.selectPrevious());
     CHECK (pm.currentIndex() == 63);
-    CHECK (pm.currentName() == "Init");
+    CHECK (pm.currentName() == "Chorus Garden");
     CHECK (pm.selectNext());
     CHECK (pm.currentIndex() == 0);
     CHECK (pm.selectNext());
     CHECK (pm.currentIndex() == 1);
-    CHECK (pm.currentName() == "Placeholder Pad");
+    CHECK (pm.currentName() == "Copper Fanfare");
     CHECK (rig.differences (rig.schema().defaults()).size() > 5);
 }
 
@@ -466,7 +442,7 @@ TEST_CASE ("A rejected file changes nothing: parameters, name, slot, flag and ba
         CHECK (pm.loadToneFile (f, 0).isNotEmpty());
         CHECK (pm.loadBankFile (f).isNotEmpty());
         CHECK (sameValues (rig.raw(), before));
-        CHECK (pm.currentName() == "Placeholder Bass");
+        CHECK (pm.currentName() == "Low Sun Horns");
         CHECK (pm.currentIndex() == 2);
         CHECK (pm.isModified());
         CHECK (pm.isFactoryBank());
@@ -510,7 +486,7 @@ TEST_CASE ("Banks: save, load, store a program into a slot", "[presets][files]")
     CHECK_FALSE (other.presets().isFactoryBank());
     CHECK (other.presets().currentIndex() == 0); // loading a bank selects its first program
     CHECK (other.presets().programName (9) == "Stored One");
-    CHECK (other.presets().programName (1) == "Placeholder Pad"); // the rest was a copy of the factory bank
+    CHECK (other.presets().programName (1) == "Copper Fanfare"); // the rest was a copy of the factory bank
     REQUIRE (other.presets().selectProgram (9));
     CHECK (other.differences (mine.values).isEmpty());
 
@@ -577,7 +553,7 @@ TEST_CASE ("MIDI Program Change selects a program of the current bank", "[preset
     CHECK (pm.currentIndex() == 0); // only requested: the message thread applies it
     pm.pollRequests();
     CHECK (pm.currentIndex() == 3);
-    CHECK (pm.currentName() == "Placeholder Lead");
+    CHECK (pm.currentName() == "Harbour Stabs");
     CHECK (rig.differences (expected (3)).isEmpty());
     CHECK_FALSE (pm.isModified());
 
@@ -640,7 +616,7 @@ TEST_CASE ("MIDI Program Change selects a program of the current bank", "[preset
         rig.render (rig.samples (0.3), chord (static_cast<int> (rig.now), { 48, 55, 60 }), 256);
         REQUIRE (rig.proc.getLowerPart().isSounding());
         rig.render (256, { pc (0, 2) }, 256);
-        pm.pollRequests(); // Placeholder Bass
+        pm.pollRequests(); // A3 Low Sun Horns
         const auto tail = rig.render (rig.samples (3.0), {}, 256); // the held keys were released: it decays
         CHECK (peakAbs (tail.l, tail.l.size() - 4800, tail.l.size()) < 1.0e-3);
         CHECK_FALSE (rig.proc.getLowerPart().isSounding());
@@ -696,27 +672,27 @@ TEST_CASE ("Host program list: 64 programs of the current bank", "[presets][host
     CHECK (proc.getNumPrograms() == 64);
     CHECK (proc.getCurrentProgram() == 0);
     CHECK (proc.getProgramName (0) == "Init");
-    CHECK (proc.getProgramName (1) == "Placeholder Pad");
-    CHECK (proc.getProgramName (7) == "Placeholder Effects");
-    CHECK (proc.getProgramName (8) == "Init");
-    CHECK (proc.getProgramName (63) == "Init");
+    CHECK (proc.getProgramName (1) == "Copper Fanfare");
+    CHECK (proc.getProgramName (7) == "Bright Parade");
+    CHECK (proc.getProgramName (8) == "Slow Tide Strings");
+    CHECK (proc.getProgramName (63) == "Chorus Garden");
     CHECK (proc.getProgramName (64).isEmpty());
     CHECK (proc.getProgramName (-1).isEmpty());
 
-    proc.setCurrentProgram (4);
-    CHECK (proc.getCurrentProgram() == 4);
-    CHECK (rig.get ("key.mode") > 0.5f); // Placeholder Dual Layer: Dual
-    CHECK (proc.getProgramName (4) == "Placeholder Dual Layer");
+    proc.setCurrentProgram (kSlotDual);
+    CHECK (proc.getCurrentProgram() == kSlotDual);
+    CHECK (rig.get ("key.mode") > 0.5f); // G1 Twin Horizon: Dual
+    CHECK (proc.getProgramName (kSlotDual) == "Twin Horizon");
 
     proc.setCurrentProgram (64); // out of range: ignored
     proc.setCurrentProgram (-3);
-    CHECK (proc.getCurrentProgram() == 4);
+    CHECK (proc.getCurrentProgram() == kSlotDual);
 
     SECTION ("names follow the bank; the current slot shows the current program's name")
     {
         REQUIRE (rig.presets().saveBankFile (rig.temp / "b.vsbank", "B").isEmpty());
-        proc.changeProgramName (4, "Renamed");
-        CHECK (proc.getProgramName (4) == "Renamed");
+        proc.changeProgramName (kSlotDual, "Renamed");
+        CHECK (proc.getProgramName (kSlotDual) == "Renamed");
         CHECK (rig.presets().currentName() == "Renamed");
         proc.changeProgramName (5, "Other Slot"); // a user bank: any slot can be renamed
         CHECK (proc.getProgramName (5) == "Other Slot");
@@ -724,13 +700,13 @@ TEST_CASE ("Host program list: 64 programs of the current bank", "[presets][host
     }
     SECTION ("the factory bank's slot names are read-only")
     {
-        proc.changeProgramName (5, "Renamed");
-        CHECK (proc.getProgramName (5) == "Placeholder Split");
-        proc.changeProgramName (4, "Mine"); // only the current program's displayed name
-        CHECK (proc.getProgramName (4) == "Mine");
-        proc.setCurrentProgram (5);
-        proc.setCurrentProgram (4);
-        CHECK (proc.getProgramName (4) == "Placeholder Dual Layer");
+        proc.changeProgramName (kSlotSplit, "Renamed");
+        CHECK (proc.getProgramName (kSlotSplit) == "Basement Duo");
+        proc.changeProgramName (kSlotDual, "Mine"); // only the current program's displayed name
+        CHECK (proc.getProgramName (kSlotDual) == "Mine");
+        proc.setCurrentProgram (kSlotSplit);
+        proc.setCurrentProgram (kSlotDual);
+        CHECK (proc.getProgramName (kSlotDual) == "Twin Horizon");
     }
 }
 
@@ -745,7 +721,7 @@ TEST_CASE ("setCurrentProgram from another thread is queued and applied on the m
     rig.presets().pollRequests();
     CHECK (rig.proc.getCurrentProgram() == 7);
     CHECK (rig.differences (before).size() > 3);
-    CHECK (rig.presets().currentName() == "Placeholder Effects");
+    CHECK (rig.presets().currentName() == "Bright Parade");
 }
 
 TEST_CASE ("The preset bar shows bank, position, name and the modified marker", "[presets][ui]")
@@ -763,11 +739,11 @@ TEST_CASE ("The preset bar shows bank, position, name and the modified marker", 
     REQUIRE (ed != nullptr);
     CHECK (ed->getBar().describe() == "Factory  A1  Init");
     rig.presets().selectProgram (9);
-    CHECK (ed->getBar().describe() == "Factory  B2  Init");
+    CHECK (ed->getBar().describe() == "Factory  B2  Winter Ensemble");
     rig.presets().selectProgram (2);
-    CHECK (ed->getBar().describe() == "Factory  A3  Placeholder Bass");
+    CHECK (ed->getBar().describe() == "Factory  A3  Low Sun Horns");
     rig.set ("lower.vcf.resonance", 0.9f);
-    CHECK (ed->getBar().describe() == "Factory  A3  Placeholder Bass *");
+    CHECK (ed->getBar().describe() == "Factory  A3  Low Sun Horns *");
 }
 
 // =================================================================================================
@@ -777,7 +753,7 @@ TEST_CASE ("The preset bar shows bank, position, name and the modified marker", 
 TEST_CASE ("Session state carries bank, program, name and modified flag; the sound is restored exactly", "[presets][state]")
 {
     PresetRig rig;
-    rig.presets().selectProgram (5);
+    rig.presets().selectProgram (kSlotSplit);
     rig.set ("lower.vcf.resonance", 0.83f);
     rig.set ("master.volume", -9.0f);
     REQUIRE (rig.presets().isModified());
@@ -787,12 +763,12 @@ TEST_CASE ("Session state carries bank, program, name and modified flag; the sou
 
     PresetRig other;
     other.proc.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
-    CHECK (other.presets().currentIndex() == 5);
-    CHECK (other.presets().currentName() == "Placeholder Split");
+    CHECK (other.presets().currentIndex() == kSlotSplit);
+    CHECK (other.presets().currentName() == "Basement Duo");
     CHECK (other.presets().isModified());
     CHECK (other.presets().isFactoryBank());
     CHECK (sameValues (other.raw(), rig.raw()));
-    CHECK (other.proc.getCurrentProgram() == 5);
+    CHECK (other.proc.getCurrentProgram() == kSlotSplit);
 }
 
 TEST_CASE ("A session restores the sound exactly whether or not the user bank still exists", "[presets][state]")
@@ -1427,12 +1403,24 @@ TEST_CASE ("Applying a program while notes sound releases them without a click",
     PresetRig rig;
     rig.prepare();
     const int at = rig.samples (0.6);
-    for (const int program : { 2, 4, 6, 7 }) // bass, dual layer, arp, effects
+    // The switches a program changes act on the releasing voices at once: waveforms, envelope
+    // source and key follow, chorus mode, key mode, and the VCF slope, which crossfades between its
+    // taps (a slope switch stepped the output 5x the limit before, M6b). Both slope directions.
+    struct Case
     {
-        INFO ("program " << program);
+        int program;
+        int slope; // the slope of the sound that is playing (1 = -24 dB)
+    };
+    for (const auto c : { Case { kSlotSoloBass, 1 }, Case { kSlotDual, 1 }, Case { kSlotArp, 1 }, Case { 63, 1 }, // bass, dual layer, arp, effects (H8: a tail that fits the render)
+                          Case { 6, 1 }, Case { 30, 1 },                // A7 brass and D7 bass: -12 dB
+                          Case { kSlotSoloBass, 0 }, Case { 63, 0 } }) // -12 dB playing, -24 dB programs
+    {
+        const int program = c.program;
+        INFO ("program " << program << ", slope before " << c.slope);
         auto& r = rig;
         r.hostReset();
         r.presets().selectProgram (0);
+        r.set ("lower.vcf.slope", static_cast<float> (c.slope));
         r.set ("lower.vco1.waveform", 0);
         r.set ("lower.vco2.waveform", 0);
         r.set ("lower.vcf.cutoff", 0.45f);
@@ -1490,10 +1478,10 @@ TEST_CASE ("Program changes, MIDI Program Change and state restores never alloca
         gate.requestReleaseAndWait();
         CHECK (countedBlock ({}) == 0); // the release is served and acknowledged
         gate.endHold();
-        rig.presets().selectProgram (4); // message side
+        rig.presets().selectProgram (kSlotDual); // message side
         for (int i = 0; i < 4; ++i)
             CHECK (countedBlock ({}) == 0);
-        rig.presets().selectProgram (6); // arp program: arp settings change, events resync
+        rig.presets().selectProgram (kSlotArp); // arp program: arp settings change, events resync
         for (int i = 0; i < 4; ++i)
             CHECK (countedBlock (notes) == 0);
     }

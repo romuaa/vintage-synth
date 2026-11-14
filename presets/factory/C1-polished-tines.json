@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Polished Tines",
+  "category": "Keys",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.6,
+    "fx.reverb.level": 0.2
+  },
+  "lower": {
+    "vco1.waveform": 0,
+    "vco2.waveform": 1,
+    "vco2.range": 2,
+    "mixer.source_mix": 0.3,
+    "vco2.fine_tune": 0.04,
+    "vcf.cutoff": 0.55,
+    "vcf.env_mod": 0.3,
+    "vcf.env_source": 1,
+    "vel.vcf": 0.6,
+    "vel.vca": 0.7,
+    "env1.attack": 0.0,
+    "env1.decay": 0.62,
+    "env1.sustain": 0.1,
+    "env2.attack": 0.0,
+    "env2.decay": 0.78,
+    "env2.sustain": 0.25,
+    "env2.release": 0.6,
+    "env2.key_follow": 1,
+    "vca.level": 0.59
+  },
+  "upper": {}
+}

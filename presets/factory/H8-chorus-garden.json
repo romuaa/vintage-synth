@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Chorus Garden",
+  "category": "Showcase",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 2,
+    "fx.chorus.mix": 1.0,
+    "fx.reverb.level": 0.3,
+    "fx.reverb.decay": 0.5,
+    "fx.reverb.damping": 0.3
+  },
+  "lower": {
+    "vco1.waveform": 2,
+    "vco2.waveform": 4,
+    "vcomod.pwm_source": 1,
+    "vcomod.pwm": 0.3,
+    "vco2.fine_tune": 0.0,
+    "vcf.cutoff": 0.6,
+    "vcf.env_mod": 0.15,
+    "env2.attack": 0.3,
+    "env2.sustain": 0.95,
+    "env2.release": 0.6,
+    "vca.level": 0.621
+  },
+  "upper": {}
+}

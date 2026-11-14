@@ -80,18 +80,36 @@ public:
     /** One sample from precomputed coefficients (see Coefs), without the output compensation. */
     float tick (float x, float G, float c1, float c2, float c3, float c4, float k, float inv, bool slope24) noexcept
     {
+        float y2, y4;
+        cascade (x, G, c1, c2, c3, c4, k, inv, y2, y4);
+        return slope24 ? y4 : y2;
+    }
+
+    /**
+        tick() with the output between the two taps: stage 2 + (stage 4 - stage 2) * mix24. Used
+        while a slope change crossfades on a sounding voice (the taps differ in phase and level,
+        so switching between them at once steps the output).
+    */
+    float tickMix (float x, float G, float c1, float c2, float c3, float c4, float k, float inv, float mix24) noexcept
+    {
+        float y2, y4;
+        cascade (x, G, c1, c2, c3, c4, k, inv, y2, y4);
+        return y2 + (y4 - y2) * mix24;
+    }
+
+private:
+    void cascade (float x, float G, float c1, float c2, float c3, float c4, float k, float inv, float& y2, float& y4) noexcept
+    {
         // The global feedback is solved linearly, then saturated at the cascade input.
         const float sigma = c1 * s1 + c2 * s2 + c3 * s3 + c4 * s4;
         const float u = fast::tanh ((x - k * sigma) * inv);
 
         const float y1 = stage (u, s1, G);
-        const float y2 = stage (y1, s2, G);
+        y2 = stage (y1, s2, G);
         const float y3 = stage (y2, s3, G);
-        const float y4 = stage (y3, s4, G);
-        return slope24 ? y4 : y2;
+        y4 = stage (y3, s4, G);
     }
 
-private:
     static float stage (float in, float& s, float G) noexcept
     {
         const float v = (in - s) * G;

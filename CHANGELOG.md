@@ -5,6 +5,41 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### VCF slope switch without a click (2026-11-13)
+- Changing the VCF slope while notes sound (by hand, by automation, or by applying a program such as
+  the factory −12 dB programs A7 B3 B4 B7 C5 D7 F4) no longer steps the output: sounding voices
+  crossfade between the filter taps over 5 ms. Steady sound is bit-identical; CPU cost unchanged.
+- The program-apply click test covers −12 dB programs again (both directions); a new Part test flips
+  the slope on a held chord at every host rate and checks block-size independence.
+
+### M6b — the factory bank (2026-11-13)
+- 64 designed factory programs (A1–H8) replace the 8 placeholders: brass, strings and pads, keys,
+  plucks and bells, basses, leads, organ, percussion and sound effects, Dual layers and Splits,
+  arpeggiator and sequencer programs, effect showcases. Specification, level rule and feature
+  coverage: `docs/factory-sounds.md`.
+- Levels matched per group (sustained, percussive, bass): every program's standard phrase is within
+  2 dB of its group's median, and no full-velocity eight-note chord is more than 3 dB above Init's
+  or reaches 0 dBFS (measured with the output limiter off). With the limiter on at its defaults, no
+  program's standard phrase reaches its knee. Enforced by tests, together with: every program
+  sounds, stays finite and falls silent once its reported tail has passed.
+- Hidden audition render (`Render m6b_factory*`): one WAV per program, the concatenated audition
+  with an index, and a measurement table (peak, RMS, attack, release tail, spectral centroid,
+  stereo width).
+- Render-regression references for seven designed programs replace the placeholder ones.
+
+### Output stage: headroom and soft limiter (2026-11-13)
+- A fixed −6.02 dB output trim: the loudest chord (Dual, 32 voices, full velocity, dry) now peaks
+  at −2.57 dBFS at the default master volume (was +3.45 dBFS). Everything is 6 dB quieter; the
+  relative levels of programs and effects are unchanged. **Sessions saved earlier play 6.02 dB
+  quieter.** Golden renders re-blessed: the raw renders are exactly the old ones × 0.5, and 13 of
+  14 reference files shift by exactly the trim; `selftest_basic` also took the within-tolerance
+  drift it had gathered since its last bless (e3de0bd, M2b). New golden scene `limiter_drive`.
+- A soft limiter on the output, on by default: stereo-linked, no added latency, transparent below
+  its knee, never above the current (smoothed) ceiling. Two parameters, `master.limiter` and
+  `master.limiter.ceiling` (−12 … 0 dB, default −1 dB); session settings like master volume, not
+  part of programs. Switching it on or off is crossfaded over 5 ms. 172 parameters in total.
+- A session that lacks a parameter (saved by an older version) loads it at its default.
+
 ### M6a — presets and banks, infrastructure (2026-11-13)
 - Tones, programs and banks as text files; a read-only factory bank (8 placeholder programs for
   now); loading and saving from a small preset bar; MIDI Program Change; host program list;

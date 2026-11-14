@@ -1,0 +1,52 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Twin Horizon",
+  "category": "Dual",
+  "author": "Exitium",
+  "global": {
+    "key.mode": 1,
+    "mix.balance": -0.15,
+    "fx.chorus.mode": 2,
+    "fx.chorus.mix": 0.45,
+    "fx.reverb.level": 0.3
+  },
+  "lower": {
+    "vco2.fine_tune": 0.1,
+    "vcf.cutoff": 0.55,
+    "vcf.resonance": 0.05,
+    "vcf.env_mod": 0.1,
+    "hpf.cutoff": 0.2,
+    "env1.attack": 0.7,
+    "env1.decay": 0.7,
+    "env1.sustain": 0.7,
+    "env1.release": 0.75,
+    "env2.attack": 0.68,
+    "env2.decay": 0.7,
+    "env2.sustain": 0.95,
+    "env2.release": 0.75,
+    "vcomod.lfo_mod": 0.04,
+    "lfo.rate": 0.62,
+    "vel.vca": 0.3,
+    "vca.level": 0.518,
+    "mix.pan": -0.3
+  },
+  "upper": {
+    "vco2.fine_tune": 0.09,
+    "vcf.cutoff": 0.38,
+    "vcf.resonance": 0.08,
+    "vcf.env_mod": 0.5,
+    "env1.attack": 0.42,
+    "env1.decay": 0.62,
+    "env1.sustain": 0.55,
+    "env1.release": 0.55,
+    "env2.attack": 0.4,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.9,
+    "env2.release": 0.55,
+    "vel.vcf": 0.35,
+    "vca.level": 0.497,
+    "mix.pan": 0.3
+  }
+}

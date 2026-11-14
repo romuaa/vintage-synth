@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Low Sun Horns",
+  "category": "Brass",
+  "author": "Exitium",
+  "global": {
+    "fx.reverb.level": 0.25,
+    "fx.reverb.decay": 0.45,
+    "global.vintage": 0.35
+  },
+  "lower": {
+    "vco2.fine_tune": 0.12,
+    "vcf.cutoff": 0.32,
+    "vcf.resonance": 0.08,
+    "vcf.env_mod": 0.45,
+    "env1.attack": 0.5,
+    "env1.decay": 0.62,
+    "env1.sustain": 0.55,
+    "env1.release": 0.55,
+    "env2.attack": 0.42,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.9,
+    "env2.release": 0.62,
+    "vel.vcf": 0.35,
+    "vco1.range": 1,
+    "vca.level": 0.638
+  },
+  "upper": {}
+}

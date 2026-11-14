@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Summit Horn",
+  "category": "Brass",
+  "author": "Exitium",
+  "global": {
+    "fx.reverb.level": 0.2,
+    "fx.delay.level": 0.15,
+    "fx.delay.time": 0.8
+  },
+  "lower": {
+    "vco2.fine_tune": 0.09,
+    "vcf.cutoff": 0.38,
+    "vcf.resonance": 0.08,
+    "vcf.env_mod": 0.5,
+    "env1.attack": 0.42,
+    "env1.decay": 0.62,
+    "env1.sustain": 0.55,
+    "env1.release": 0.55,
+    "env2.attack": 0.3,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.9,
+    "env2.release": 0.55,
+    "vel.vcf": 0.35,
+    "assign.mode": 1,
+    "assign.unison_voices": 1,
+    "unison.detune": 0.25,
+    "porta.time": 0.18,
+    "porta.mode": 1,
+    "lfo.delay": 0.5,
+    "lfo.rate": 0.66,
+    "vcomod.lfo_mod": 0.07,
+    "vca.level": 0.887
+  },
+  "upper": {}
+}

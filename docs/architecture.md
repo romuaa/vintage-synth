@@ -13,8 +13,8 @@ host MIDI ─► EventParser ─► KeyRouter ─► [Arp/Seq] ─► Part "lowe
  (raw bytes)  (NoteEvent)   (M3: whole/   (M4, per     Part "upper" ─┤ mono
                              dual/split)   part)                     ▼
                                                     PartMixer (level, balance, pan) ─► stereo bus
-                                                    ─► Chorus ─► Delay ─► Reverb ─► master gain
-                                                    ─► NaN guard + clamp ─► host
+                                                    ─► Chorus ─► Delay ─► Reverb ─► master gain × trim
+                                                    ─► NaN guard ─► soft limiter ─► clamp ─► host
 ```
 
 - A **Part** is mono from its voices through its decimator (one decimator per part). Stereo starts at
@@ -380,6 +380,7 @@ with a test).
 host MIDI → EventParser → KeyRouter → ArpSeq (one per part) → Part lower / Part upper
           → PartMixer → Chorus → Delay → Reverb → master gain → non-finite guard + clamp → host
 ```
+(Since Wave 4 the output stage is master gain × trim → non-finite guard → soft limiter → clamp; see 6c.)
 - The effects run on the stereo bus at the host rate, add no latency, and are skipped bit-exactly
   when off (chorus mode Off, delay and reverb level 0).
 - `getTailLengthSeconds()` is the largest of the effects' static `tailSeconds (params)` (each
@@ -443,7 +444,7 @@ its events unchanged. The random seed is fixed, so renders are reproducible.
    Off ↔ on with held keys; `arp.target` routing in Whole, Dual and Split; host transport
    (start, stop, loop, tempo change, missing play head) through the processor; chunked rendering
    keeps step timing; random streams never hang a note; block-size independence with arp and
-   effects on; state round-trip of all 170 parameters; no allocation in `processBlock`.
+   effects on; state round-trip of all 170 parameters (172 since Wave 4, section 6c); no allocation in `processBlock`.
 3. `voice_bench`/`fx_bench`: Dual with 32 voices, arp on and all three effects on, inside 15 % of a
    core at 48 kHz, and reported at 192 kHz.
 4. Golden scripts with effects and with the arpeggiator (host-synced).
@@ -457,8 +458,8 @@ its events unchanged. The random seed is fixed, so renders are reproducible.
 ### 6b.1 Terms
 - **Tone:** the sound of one part: all of that part's parameters (the `lower.*` or `upper.*` set).
 - **Program:** the whole instrument: Lower tone, Upper tone and the global parameters (key mode,
-  split point, balance, arp/seq incl. the 16 steps, effects, Vintage). Master volume is not part of
-  a program. A program has a name, a category and an author.
+  split point, balance, arp/seq incl. the 16 steps, effects, Vintage). Master volume and the output
+  limiter (section 6c) are not part of a program. A program has a name, a category and an author.
 - **Bank:** 64 programs in 8 groups of 8 (A1 … H8). One **factory bank** is compiled into the
   plugin and is read-only; **user banks** are files.
 
@@ -494,9 +495,12 @@ its events unchanged. The random seed is fixed, so renders are reproducible.
   leads (incl. sync and unison leads), bells and plucks (cross-mod), organ and keys, effects and
   noises, arpeggiated and sequenced programs, Dual layers and Splits. Own names; no third-party
   names of any kind (the hygiene check covers `presets/`).
-- **Level:** every program is trimmed so that a full-velocity eight-note chord stays below 0 dBFS
-  at the default master volume, and single notes sit at a comparable loudness across programs
-  (measured, tolerance stated). This is tested for every program.
+- **Level:** every program is trimmed (part VCA levels only) so that, measured with the output
+  limiter off at the default master volume: a full-velocity eight-note chord stays below 0 dBFS and
+  at most 3 dB above Init's (RMS and peak); and the category's standard phrase at velocity 100 is
+  within ±2 dB (unweighted RMS) of the median of its level group (sustained, percussive, bass).
+  With the limiter on at its defaults, no standard phrase reaches the limiter's knee. Phrases,
+  groups and measurements: `docs/factory-sounds.md`. This is tested for every program.
 - Programs are drafted by an agent from a written sound specification and **auditioned by the
   owner** (the M6 audition gate): one short rendered phrase per program, with a contact sheet
   (name, category, what to listen for).
@@ -508,8 +512,72 @@ its events unchanged. The random seed is fixed, so renders are reproducible.
    rule and survives a state round-trip; applying a program releases notes without a click and
    without audio-thread allocation; MIDI Program Change; host program list; a session saved by the
    previous milestone loads unchanged.
-2. Golden renders: one fixed phrase per factory program (`ctest -L render`).
+2. Golden renders: a fixed phrase for Init and seven designed factory programs (`ctest -L render`);
+   the load, level and release tests cover all 64 (owner decision: eight references are enough).
 3. `scripts/preflight.sh` passes; independent review; the owner's audition.
+
+## 6c. Wave 4 — output stage: headroom and soft limiter (owner decision, 2026-11-13)
+
+### 6c.1 Signal path
+```
+… → Reverb → × master gain × kOutputTrim → non-finite guard → SoftLimiter (if on) → ±4.0 clamp → host
+```
+- **Trim:** `VintageSynthProcessor::kOutputTrim` = 0.5 (−6.02 dB), fixed, multiplied into the
+  master gain. Per-voice, per-part and effect gains are unchanged, so relative program levels and
+  the effect send balance stay as they were. A power of two: a render differs from the untrimmed
+  one by exactly that factor (except values that become subnormal and are flushed to zero).
+- **Limiter** (`common/fx/SoftLimiter.h`): stereo-linked, zero latency (the reported latency does
+  not change), soft knee 3 dB below the ceiling, gain exactly 1 below the knee (samples untouched,
+  bit-identical to limiter off), output never above the current (smoothed) ceiling (float
+  rounding aside; the ceiling ramps over 20 ms), program-dependent release. Block-size
+  independent, deterministic, allocation-free, denormal-safe.
+- **Switch:** crossfaded over 5 ms (applied gain g^m, m ramping 0 ↔ 1, linear in dB), a deliberate
+  exception to "never smooth switches" (docs/decisions.md). The detectors keep running during a
+  fade-out; fully off, the limiter does nothing and costs nothing (bit-identical to the path ×
+  trim); switched on from fully off it starts clean (detectors cleared). Below the knee the
+  samples stay untouched, also during a fade. Reset with everything else (`reset()`, the
+  non-finite guard, the end of a host bypass), at the current parameter values without a ramp.
+- The clamp at ±4.0 (+12 dBFS) stays as a safety net behind the limiter.
+- The limiter adds no tail: the reported tail length is unchanged.
+
+### 6c.2 New host parameters (global; appended after `seq.step16.velocity`, in this order)
+
+| ID | Name | Range (default) |
+|---|---|---|
+| `master.limiter` | Limiter | Off, On (On) |
+| `master.limiter.ceiling` | Limiter Ceiling | −12 … 0 dB, continuous (−1 dB) |
+
+Host parameter count 170 → **172**. Like `master.volume`, both are **session settings**: saved in
+the host session, not part of a program, tone or bank; loading or initialising a program does not
+change them and changing them does not mark the program modified. Non-finite host values become
+the default (sanitised binding). The ceiling is smoothed (20 ms linear ramp in dB); the switch is
+crossfaded (5 ms). The ceiling is shown in 0.1 dB steps ("0.0", never "-0.0").
+
+**Sessions saved before a parameter existed:** every parameter missing from a loaded state is set
+to its default (the processor adds an empty entry for it before the state is applied; JUCE 9.0.5
+also does this by itself, the processor makes it explicit). A session saved before Wave 4 so loads
+with the limiter on at −1 dB, and plays 6.02 dB quieter than before (the trim).
+
+### 6c.3 Gates
+1. Headroom: the 32-voice full-velocity Dual chord, dry, default master, limiter off, peaks at or
+   below −1 dBFS.
+2. Limiter block: below the knee bit-identical; the gain returns to exactly 1 after a burst; no
+   sample above the ceiling on sustained material (+6/+12/+24 dB over) or a hard transient, at
+   44.1/48/192 kHz; **bit-identical** for block sizes 1, 7, 61, 512 and 4096 with a moving (and
+   NaN) ceiling; switching below the knee leaves the samples untouched; fully off does nothing.
+3. Through the processor: ceiling held for the loudest chord dry and with extreme effects; limiter
+   off = the plain path plus trim (bit-identical to the M3 reference at a level far above the
+   ceiling); distortion of a chord 6 dB over the ceiling below −38 dB (20 ms fits); block-size
+   independent with ceiling automation and switch changes (whole processor, blocks 512 / 61 / 7:
+   difference **below −120 dB**, not bit-identical, as for the rest of the engine); a ceiling
+   sweep in 0.5 dB steps changes the gain by less than 0.01 dB per sample (measured against the
+   unswept render, so the detectors' own moves cancel); switching off or on while reducing the
+   gain changes it by less than 0.1 dB per sample during the fade; non-finite values are safe;
+   program loads leave both parameters alone; a session without the limiter entries loads them
+   at their defaults.
+4. Golden renders re-blessed only after showing old × 0.5 = new for every sample of the raw
+   renders. Golden scene `limiter_drive` drives the limiter (master +6 dB, ceiling moves, switch
+   off and on), so limiter changes show up in render regression.
 
 ## 7. Test and validation infrastructure (parallel track in Wave 1)
 

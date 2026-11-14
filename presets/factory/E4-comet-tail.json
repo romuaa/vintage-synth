@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Comet Tail",
+  "category": "Lead",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.3,
+    "fx.delay.level": 0.2
+  },
+  "lower": {
+    "assign.mode": 1,
+    "vcf.cutoff": 0.6,
+    "vcf.resonance": 0.2,
+    "vcf.env_mod": 0.25,
+    "env2.attack": 0.12,
+    "env2.sustain": 0.9,
+    "env2.release": 0.42,
+    "lfo.delay": 0.45,
+    "vcomod.lfo_mod": 0.06,
+    "lfo.rate": 0.67,
+    "mod.wheel_vco": 0.4,
+    "assign.unison_voices": 2,
+    "unison.detune": 0.35,
+    "porta.time": 0.12,
+    "vca.level": 0.833
+  },
+  "upper": {}
+}

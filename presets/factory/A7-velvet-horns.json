@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Velvet Horns",
+  "category": "Brass",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 2,
+    "fx.chorus.mix": 0.45,
+    "fx.reverb.level": 0.22
+  },
+  "lower": {
+    "vco2.fine_tune": 0.09,
+    "vcf.cutoff": 0.33,
+    "vcf.resonance": 0.08,
+    "vcf.env_mod": 0.38,
+    "env1.attack": 0.6,
+    "env1.decay": 0.62,
+    "env1.sustain": 0.55,
+    "env1.release": 0.55,
+    "env2.attack": 0.47,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.9,
+    "env2.release": 0.65,
+    "vel.vcf": 0.5,
+    "vcf.slope": 0,
+    "env1.key_follow": 1,
+    "vcf.env_source": 1,
+    "vca.level": 0.572
+  },
+  "upper": {}
+}

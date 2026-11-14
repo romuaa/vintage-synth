@@ -123,7 +123,7 @@ TEST_CASE ("Render regression: every script matches its golden reference", "[ren
 TEST_CASE ("Render regression: the program command loads a factory program by slot or by name", "[render]")
 {
     const auto bySlot = renderScript (parseScript ("length 1.5\n0 program A3\n0.1 on 36 100\n"), kGoldenBlock);
-    const auto byName = renderScript (parseScript ("length 1.5\n0 program Placeholder Bass\n0.1 on 36 100\n"), kGoldenBlock);
+    const auto byName = renderScript (parseScript ("length 1.5\n0 program Low Sun Horns\n0.1 on 36 100\n"), kGoldenBlock);
     const auto other = renderScript (parseScript ("length 1.5\n0 program A4\n0.1 on 36 100\n"), kGoldenBlock);
     const auto none = renderScript (parseScript ("length 1.5\n0.1 on 36 100\n"), kGoldenBlock);
     CHECK (bySlot == byName); // bit-identical: same program

@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Glass Hall",
+  "category": "Pad",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 2,
+    "fx.chorus.mix": 0.5,
+    "fx.reverb.level": 0.35,
+    "fx.reverb.decay": 0.6
+  },
+  "lower": {
+    "vco1.waveform": 3,
+    "vco2.waveform": 3,
+    "vco2.range": 2,
+    "vco2.fine_tune": 0.05,
+    "mixer.source_mix": 0.4,
+    "vcf.slope": 0,
+    "vcf.cutoff": 0.5,
+    "vcf.resonance": 0.3,
+    "vcf.env_mod": 0.0,
+    "vcf.lfo_mod": 0.12,
+    "lfo.rate": 0.35,
+    "env2.attack": 0.62,
+    "env2.sustain": 1.0,
+    "env2.release": 0.78,
+    "vca.level": 0.372
+  },
+  "upper": {}
+}

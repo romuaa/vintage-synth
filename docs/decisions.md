@@ -3,6 +3,29 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Wave 4: output stage, headroom and soft limiter (2026-11-13)
+
+Owner decision "more headroom and an adjustable soft limiter"; the numbers below are judgement
+calls. All (review) unless marked; the owner should confirm the trim and the limiter by ear.
+
+**Owner, 2026-11-14:** the default level after the trim is good ("User can boost them if wanted");
+Wave 4a approved for merge. Eight golden references for the factory bank are enough (not one per
+program): the load, level and release tests cover all 64.
+
+| Decision | Why |
+|---|---|
+| **Fixed output trim −6.02 dB (× 0.5), multiplied into the master gain.** The loudest chord (Dual, 32 voices, velocity 127, dry, default master −6 dB) now peaks at **−2.57 dBFS** (was +3.45); moderate effects −0.45 dBFS (was +5.57); extreme effects still reach the clamp without the limiter (+12.04 dBFS, was the same). Single notes and programs are 6 dB quieter. | The brief asked for ≤ about −1 dBFS: at least −4.45 dB was needed. −6.02 dB is the smallest power-of-two gain that meets it, leaves 1.5 dB of margin for presets louder than the test chord, and is exact in floating point: a render differs from the old one by exactly 0.5 per sample, which made the golden re-bless provable. Per-voice, per-part and effect gains are untouched, so relative program levels and the effect send balance stay. |
+| Master volume range (−60 … +6 dB) and default (−6 dB) unchanged. | No strong reason to change them; the trim alone gives the headroom, and existing sessions keep their master setting. |
+| **Soft limiter after master gain and trim, before the +12 dBFS clamp: stereo-linked, zero latency, no look-ahead.** Instant attack with a 20 ms hold and a 150 ms release (fast detector); a slow detector (20 ms attack, 1 s release) fed from the fast one; the envelope is the larger of the two (program-dependent release). Soft knee 3 dB wide below the ceiling: `out = C − 3·exp(−(L − (C − 3))/3)` dB, which never reaches the ceiling. | The owner preferred no look-ahead. Because the envelope is never below the current sample and the curve stays below the ceiling, no sample exceeds the ceiling even on a hard transient (measured: 0 dB overshoot; the clamp is never reached). The slow detector keeps the gain steady on sustained loud material (distortion −41 dB) while a short peak releases fast. |
+| Measured: the loudest chord driven 6 dB over a −1 dBFS ceiling: **distortion −41.4 dB** (residual after a least-squares gain fit per 20 ms window), −27.4 dB if slow level changes over 2 s are counted too; level down 5.2 dB; output peak −1.15 dBFS. With only the fast detector (150 ms release) the distortion was −28 dB; with a 1.5 s single release −36 dB but slow recovery after every transient. | Basis for the release choice. |
+| Gain exactly 1 below the knee start (ceiling − 3 dB): the samples are not touched, so quiet material is bit-identical with the limiter on or off. At the defaults (ceiling −1 dB) the knee starts at −4 dBFS; no golden scene reaches it (the loudest, `poly_chord_steal`, peaks at −4.28 dBFS). | Transparent where it is not needed; provable by test. |
+| **Two parameters, appended: `master.limiter` (Off/On, default On) and `master.limiter.ceiling` (−12 … 0 dB, continuous, default −1 dB).** A golden scene (`limiter_drive`) drives the limiter. No release, knee or look-ahead controls. | Small surface; −1 dB leaves room for inter-sample peaks after conversion. Release is program-dependent, so a control adds little. |
+| **Both are session settings like master volume:** saved with the host session, not stored in programs, tones or banks; loading or initialising a program leaves them alone and changing them does not mark the program modified. | Least surprising: an output-stage setting the player chose for the session should not change when browsing sounds. Consistent with master volume (section 6b.1). |
+| The ceiling is smoothed (20 ms linear in dB). **The limiter switch is crossfaded over 5 ms — a deliberate exception to "never smooth switches".** The applied gain is g^m with m ramping 0 ↔ 1 (linear in dB). Fully off, the limiter does nothing (bit-identical to the path × trim, no cost); switched on from fully off it starts clean; below the knee the samples stay untouched during a fade. Measured: switching while reducing 8.4 dB changes the gain by at most 0.035 dB per sample. | Review: an unfaded switch stepped the level by the whole gain reduction (+6 to +24 dB) — a click on a host-automatable parameter. The "never smooth switches" rule exists for switches that change the sound's structure; this one only scales the level, so a fade is safe and keeps block-size independence (per-sample ramp). |
+| A session missing a parameter loads it at its default (the processor adds an empty entry before applying the state). | A pre-Wave-4 session must not keep whatever limiter setting the instance happened to have. JUCE 9.0.5 already does this through an internal callback; the explicit step does not depend on that. |
+| The ceiling is continuous and shown in 0.1 dB ("0.0", never "−0.0"). | A 0.1 dB interval snapped stored values, so a session did not restore the exact normalised value. |
+| The limiter adds no latency and no tail; reported latency and tail length are unchanged. | Zero look-ahead; its gain is ≤ 1 and has no memory of the signal itself. |
+
 ## Wave 3 integration contract (2026-11-12)
 
 All (review).
@@ -12,6 +35,29 @@ All (review).
 | Effects stay global and in series (chorus → delay → reverb) on the stereo bus; 11 parameters. Delay time is free (1 ms–2 s, default 700 ms, ping-pong on by default as in the approved demo); tempo-synced delay can be appended later. | Matches what the owner approved by ear; per-part sends and delay sync are additive later. |
 | One arpeggiator/sequencer settings set with a part selector (Lower, Upper, Both); the sequencer's 16 steps are host parameters (48 of them). | One set is easy to understand and automate; step parameters make the sequencer usable and testable before the custom UI exists and are saved with the state. Parameter count becomes 170. |
 | With no usable host transport the arp/seq runs on its internal tempo parameter. | Works in simple hosts and when just playing. |
+
+## VCF slope switch on sounding voices (2026-11-13)
+
+(review)
+
+| Decision | Why |
+|---|---|
+| **A VCF slope change crossfades the output between the stage-2 and stage-4 taps over 5 ms on every voice that is sounding** (held or releasing); idle voices and notes starting from idle take the slope at once. Outside the 5 ms the plain tap is used, so the steady sound is bit-identical (all render-regression scripts compared bit for bit). This applies to a hand flip of the switch as well as to a program change. | The two taps differ in phase and level, so switching between them stepped the output (0.18–0.33 on a held sine chord against its own 0.018). 5 ms is the parameter-smoothing time used elsewhere; the crossfade is a gain ramp between two correlated signals, so it has no step of its own. This does not smooth the switch value itself (the "never smooth switches" rule): the filter is in one mode or the other, only the output moves between them. |
+| **Other switches are left as they are.** Measured on a held chord and in a program apply, waveform, range, sync, VCO-2 mode, ENV-1 polarity, VCF envelope source, ENV-1 key follow and chorus mode cause no step larger than the sound's own. | A waveform switch jumps the oscillator to the new shape at its current phase; the jump is no larger than the new waveform's own edges and is low-passed by the VCF, so it is not heard as a click. Not band-limited, so it can alias once; left as is unless the owner hears it. |
+
+## M6b: the factory bank (2026-11-13)
+
+All (review): drafted by an agent that cannot hear; the owner's audition decides.
+
+| Decision | Why |
+|---|---|
+| **Bank layout by theme:** A Init + brass, B strings/pads, C keys/plucks/bells, D basses, E leads, F organ/percussion/effects, G Dual (G1–G4) and Split (G5–G8), H arpeggiator, sequencer and effect showcases. Spec: `docs/factory-sounds.md`. | Browsable by sound type; brass first because it is the genre's signature. |
+| **The level rule is relative, in three groups** (sustained, percussive, bass): the standard phrase at velocity 100 within ±2 dB (unweighted RMS, note-on to last note-off) of the group median; plus a headroom check: a full-velocity eight-note chord at most 3 dB above Init's (RMS and peak) and below 0 dBFS. **Measured with the output limiter off;** with it on at its defaults no standard phrase may reach the knee (−4 dBFS). Delivered within ±0.6 dB; after the −6.02 dB output trim the medians are sustained −27.3, percussive −31.5, bass −32.8 dB, Init's chord is −20.5 dB RMS / −7.0 dBFS peak, the loudest phrase peaks at −8.3 dBFS (F5) and the loudest chord at −4.5 dBFS (C2): nothing touches the limiter. The contract's "chord below 0 dBFS" (`docs/architecture.md` 6b.4) is kept and the relative rule is added there. | Owner brief for M6b: the output stage keeps relative levels, so programs mainly need to match each other; measuring without the limiter keeps it from hiding a hot program. Unweighted RMS keeps the measure simple; bass has its own group because it carries more energy per perceived loudness. |
+| **Levels are set with each part's VCA level only**; master volume is not stored in programs and was not touched. | The contract excludes master volume from programs; one control per part keeps trims easy to read. |
+| **Split programs split at G3 (MIDI 55)** with the bass part in Lower. | Leaves a usable two-octave bass range and middle C and up for the other part. |
+| **Arp Hold is off in every program;** Arp pattern Down and 16 unison voices are not used. | A held pattern never stops, so it fails "silent after the tail" and surprises when browsing. The unused options are shown by their neighbours. |
+| **Programs with the −12 dB VCF slope (A7 B3 B4 B7 C5 D7 F4) step audibly when applied over sounding notes** (see the engine finding in the M6b report): kept, because the slope is a feature the bank must show. | The fix belongs in the engine, not in the presets. **Fixed** (2026-11-13): the slope now crossfades on sounding voices (see "VCF slope switch on sounding voices"). |
+| **Render-regression references cover seven designed programs, loaded by name, not all 64** (`docs/architecture.md` 6b.5 asks for one per program). | Each reference is about 40 KB; 64 would add about 2.5 MB of features to the repository. The factory tests already check every program's sound, finiteness, release and level. Owner decision whether all 64 are wanted. |
 
 ## M6a results: preset and bank infrastructure (2026-11-13)
 

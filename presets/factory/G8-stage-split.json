@@ -1,0 +1,50 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Stage Split",
+  "category": "Split",
+  "author": "Exitium",
+  "global": {
+    "key.mode": 2,
+    "key.split_point": 55,
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.3,
+    "fx.reverb.level": 0.2
+  },
+  "lower": {
+    "vco1.range": 1,
+    "vco2.range": 0,
+    "vco2.fine_tune": 0.04,
+    "vcf.cutoff": 0.28,
+    "vcf.resonance": 0.3,
+    "vcf.env_mod": 0.5,
+    "vcf.key_follow": 0.6,
+    "env1.attack": 0.0,
+    "env1.decay": 0.5,
+    "env1.sustain": 0.15,
+    "env1.release": 0.3,
+    "env2.attack": 0.0,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.85,
+    "env2.release": 0.25,
+    "vco2.waveform": 2,
+    "vca.level": 0.638
+  },
+  "upper": {
+    "vco2.fine_tune": 0.09,
+    "vcf.cutoff": 0.38,
+    "vcf.resonance": 0.08,
+    "vcf.env_mod": 0.5,
+    "env1.attack": 0.42,
+    "env1.decay": 0.62,
+    "env1.sustain": 0.55,
+    "env1.release": 0.55,
+    "env2.attack": 0.3,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.9,
+    "env2.release": 0.55,
+    "vel.vcf": 0.35,
+    "vca.level": 0.566
+  }
+}

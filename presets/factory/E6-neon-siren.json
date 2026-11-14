@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Neon Siren",
+  "category": "Lead",
+  "author": "Exitium",
+  "global": {
+    "fx.delay.level": 0.2,
+    "fx.delay.time": 0.7
+  },
+  "lower": {
+    "assign.mode": 2,
+    "vcf.cutoff": 0.48,
+    "vcf.resonance": 0.55,
+    "vcf.env_mod": 0.25,
+    "env2.attack": 0.12,
+    "env2.sustain": 0.9,
+    "env2.release": 0.42,
+    "lfo.delay": 0.0,
+    "vcomod.lfo_mod": 0.0,
+    "lfo.rate": 0.5,
+    "mod.wheel_vco": 0.4,
+    "vco1.waveform": 4,
+    "vco2.waveform": 2,
+    "vcomod.pwm": 0.5,
+    "vcomod.pwm_source": 1,
+    "vcf.lfo_mod": 0.2,
+    "lfo.waveform": 2,
+    "vca.level": 0.72
+  },
+  "upper": {}
+}

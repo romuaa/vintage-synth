@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Dust Hats",
+  "category": "Percussion",
+  "author": "Exitium",
+  "global": {
+    "fx.delay.level": 0.15,
+    "fx.delay.time": 0.62
+  },
+  "lower": {
+    "vco1.waveform": 5,
+    "vco2.waveform": 5,
+    "hpf.cutoff": 0.75,
+    "vcf.cutoff": 1.0,
+    "vcf.env_mod": 0.0,
+    "vcf.slope": 0,
+    "env2.attack": 0.0,
+    "env2.decay": 0.64,
+    "env2.sustain": 0.12,
+    "env2.release": 0.6,
+    "vel.vca": 0.4,
+    "vca.level": 1.0
+  },
+  "upper": {}
+}

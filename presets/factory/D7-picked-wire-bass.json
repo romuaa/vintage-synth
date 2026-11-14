@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Picked Wire Bass",
+  "category": "Bass",
+  "author": "Exitium",
+  "global": {
+    "fx.reverb.level": 0.1
+  },
+  "lower": {
+    "vco1.range": 1,
+    "vco2.range": 0,
+    "vco2.fine_tune": 0.04,
+    "vcf.cutoff": 0.3,
+    "vcf.resonance": 0.2,
+    "vcf.env_mod": 0.55,
+    "vcf.key_follow": 0.6,
+    "env1.attack": 0.0,
+    "env1.decay": 0.45,
+    "env1.sustain": 0.0,
+    "env1.release": 0.3,
+    "env2.attack": 0.0,
+    "env2.decay": 0.68,
+    "env2.sustain": 0.0,
+    "env2.release": 0.35,
+    "vcf.slope": 0,
+    "vel.vcf": 0.6,
+    "vco1.waveform": 4,
+    "vcomod.pwm_source": 2,
+    "vcomod.pwm": 0.6,
+    "vca.level": 0.876
+  },
+  "upper": {}
+}

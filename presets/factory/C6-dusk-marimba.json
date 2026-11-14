@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Dusk Marimba",
+  "category": "Pluck",
+  "author": "Exitium",
+  "global": {
+    "fx.reverb.level": 0.25
+  },
+  "lower": {
+    "vco1.waveform": 0,
+    "vco2.waveform": 1,
+    "vco2.range": 2,
+    "mixer.source_mix": 0.25,
+    "vcomod.env_mod": 0.1,
+    "vcomod.target": 1,
+    "vcf.cutoff": 0.6,
+    "vcf.env_mod": 0.2,
+    "env1.attack": 0.0,
+    "env1.decay": 0.3,
+    "env1.sustain": 0.0,
+    "env1.release": 0.3,
+    "env2.attack": 0.0,
+    "env2.decay": 0.66,
+    "env2.sustain": 0.0,
+    "env2.release": 0.6,
+    "env2.key_follow": 1,
+    "vel.vca": 0.6,
+    "vca.level": 0.831
+  },
+  "upper": {}
+}

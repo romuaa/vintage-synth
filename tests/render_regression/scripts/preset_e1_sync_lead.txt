@@ -1,0 +1,14 @@
+# Factory program "Solar Sync" (M6b), loaded by name like a preset change: synced Solo lead, ENV-1 sweep on VCO-1, delayed vibrato and delay; a legato phrase.
+# Regenerate this reference only when the program is changed on purpose.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program Solar Sync
+
+0.10 on 64 100
+0.70 on 67 100
+0.80 off 64
+1.30 on 72 100
+1.40 off 67
+2.00 off 72

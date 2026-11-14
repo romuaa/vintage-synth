@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Random Rain",
+  "category": "Arpeggio",
+  "author": "Exitium",
+  "global": {
+    "arp.mode": 1,
+    "arp.rate": 2,
+    "arp.pattern": 3,
+    "arp.octaves": 2,
+    "arp.gate": 70,
+    "arp.tempo": 100,
+    "fx.reverb.level": 0.4,
+    "fx.reverb.decay": 0.6
+  },
+  "lower": {
+    "vco1.waveform": 0,
+    "vco1.range": 3,
+    "vco2.waveform": 0,
+    "vco2.fine_tune": 0.3,
+    "vco1.cross_mod": 0.25,
+    "mixer.source_mix": 0.15,
+    "vcf.cutoff": 0.85,
+    "vcf.env_mod": 0.0,
+    "env2.attack": 0.0,
+    "env2.decay": 0.75,
+    "env2.sustain": 0.0,
+    "env2.release": 0.7,
+    "vca.level": 0.553
+  },
+  "upper": {}
+}

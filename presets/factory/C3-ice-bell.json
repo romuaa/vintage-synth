@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Ice Bell",
+  "category": "Bell",
+  "author": "Exitium",
+  "global": {
+    "fx.reverb.level": 0.35,
+    "fx.reverb.decay": 0.6
+  },
+  "lower": {
+    "vco1.waveform": 0,
+    "vco1.range": 4,
+    "vco2.waveform": 0,
+    "vco2.fine_tune": 0.3,
+    "vco1.cross_mod": 0.32,
+    "mixer.source_mix": 0.15,
+    "vcf.cutoff": 0.85,
+    "vcf.env_mod": 0.0,
+    "vcf.resonance": 0.0,
+    "env2.attack": 0.0,
+    "env2.decay": 0.85,
+    "env2.sustain": 0.0,
+    "env2.release": 0.8,
+    "env2.key_follow": 1,
+    "vca.level": 0.507
+  },
+  "upper": {}
+}

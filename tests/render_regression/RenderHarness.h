@@ -16,7 +16,7 @@
 //                                     most sliders, the choice index for choice params)
 //   [t] program <slot|name>          load a program of the factory bank, like a preset change at that
 //                                    moment: by position ("A2" ... "H8") or by exact name
-//                                    ("Placeholder Pad"). Applied before the block that starts at t, so
+//                                    ("Glass Hall"). Applied before the block that starts at t, so
 //                                    the sounding notes are released and the parameters replaced
 //                                    exactly as the plugin does it (parameters set before it stay
 //                                    unless the program overwrites them; master volume is not part of one)

@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Solar Sync",
+  "category": "Lead",
+  "author": "Exitium",
+  "global": {
+    "fx.delay.level": 0.22,
+    "fx.delay.time": 0.8,
+    "fx.reverb.level": 0.15
+  },
+  "lower": {
+    "assign.mode": 2,
+    "vcf.cutoff": 0.7,
+    "vcf.resonance": 0.2,
+    "vcf.env_mod": 0.25,
+    "env2.attack": 0.12,
+    "env2.sustain": 0.9,
+    "env2.release": 0.42,
+    "lfo.delay": 0.45,
+    "vcomod.lfo_mod": 0.06,
+    "lfo.rate": 0.67,
+    "mod.wheel_vco": 0.4,
+    "vco2.sync": 1,
+    "vco1.range": 3,
+    "vco2.range": 1,
+    "mixer.source_mix": 0.2,
+    "vcomod.env_mod": 0.5,
+    "vcomod.target": 0,
+    "env1.attack": 0.0,
+    "env1.decay": 0.68,
+    "env1.sustain": 0.25,
+    "vca.level": 0.776
+  },
+  "upper": {}
+}

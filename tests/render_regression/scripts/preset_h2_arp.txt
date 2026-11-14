@@ -1,0 +1,14 @@
+# Factory program "Racing Lights" (M6b), loaded by name like a preset change: arpeggiator (up and down, 3 octaves, 1/16, internal tempo 132) on held keys.
+# Regenerate this reference only when the program is changed on purpose.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program Racing Lights
+
+0.10 on 48 100
+0.10 on 55 100
+0.10 on 60 100
+2.40 off 48
+2.40 off 55
+2.40 off 60

@@ -115,6 +115,14 @@ inline std::string readText (const juce::File& f)
     return std::string (static_cast<const char*> (mb.getData()), mb.getSize());
 }
 
+// Factory slots the tests use for a role (docs/factory-sounds.md).
+inline constexpr int kSlotSoloBass = 25; // D2 Rubber Floor: Solo bass
+inline constexpr int kSlotDual = 48;     // G1 Twin Horizon: Dual
+inline constexpr int kSlotSplit = 52;    // G5 Basement Duo: Split at G3 (55), Solo bass below
+inline constexpr int kSlotArp = 56;      // H1 Glass Steps: arpeggiator
+inline constexpr int kSlotSeq = 60;      // H5 Motor Line: step sequencer
+inline constexpr int kSlotEffects = 62;  // H7 Deep Space Echo: chorus, delay and reverb
+
 inline constexpr int kTestBankSize = 64;
 inline constexpr const char* kTestInstrumentId = "test-synth";
 

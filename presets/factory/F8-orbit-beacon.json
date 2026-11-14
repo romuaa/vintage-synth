@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Orbit Beacon",
+  "category": "Sound FX",
+  "author": "Exitium",
+  "global": {
+    "fx.delay.level": 0.3,
+    "fx.reverb.level": 0.3
+  },
+  "lower": {
+    "vco2.mode": 1,
+    "vco2.range": 2,
+    "vco2.waveform": 3,
+    "vco1.cross_mod": 0.3,
+    "vco1.waveform": 1,
+    "mixer.source_mix": 0.0,
+    "vcf.cutoff": 0.5,
+    "vcf.resonance": 0.55,
+    "vcf.env_mod": 0.0,
+    "vcf.lfo_mod": 0.3,
+    "lfo.waveform": 4,
+    "lfo.rate": 0.62,
+    "env2.attack": 0.2,
+    "env2.sustain": 1.0,
+    "env2.release": 0.6,
+    "vca.level": 0.415
+  },
+  "upper": {}
+}

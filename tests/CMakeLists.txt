@@ -61,13 +61,16 @@ target_sources(VintageSynthTests PRIVATE
     integration/FxIntegrationTests.cpp
     integration/ArpIntegrationTests.cpp
     integration/RobustnessTests.cpp
+    integration/OutputStageTests.cpp
     integration/RenderDemoM5.cpp)
 
 # M6a presets and banks (docs/architecture.md 6b): files, manager, factory bank, state, MIDI, host list.
 target_sources(VintageSynthTests PRIVATE
     preset_unit/PresetFormatTests.cpp
     preset_unit/PresetManagerTests.cpp
-    preset_unit/StrictJsonTests.cpp)
+    preset_unit/StrictJsonTests.cpp
+    preset_unit/FactoryBankTests.cpp
+    preset_unit/FactoryRender.cpp)
 target_compile_definitions(VintageSynthTests PRIVATE VS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 target_link_libraries(VintageSynthTests PRIVATE

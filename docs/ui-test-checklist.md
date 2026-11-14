@@ -17,6 +17,17 @@ The host has no CPU meter: use Activity Monitor, and `voice_bench` for budgeting
 - Displayed values use the documented units (Hz, ms, cents, panel 0–10).
 - Reset to default (double-click, or the host's reset): returns to the default value.
 
+## Output level and limiter
+- Hold a full-velocity chord in Dual with 16 notes per part: no harsh clipping at the default
+  master volume, limiter on or off.
+- Limiter on, ceiling −1 dB, master +6 dB, extreme effects (chorus II, delay and reverb at full
+  level): loud but clean, no crackle; the host's output meter never passes the ceiling.
+- Sweep the limiter ceiling from 0 to −12 dB and back while a loud chord sounds: the level follows
+  smoothly, no clicks or zipper noise.
+- Toggle the limiter while quiet material plays (below the ceiling minus 3 dB): no audible change.
+- Toggle the limiter while a loud chord is being limited: the level changes smoothly (5 ms fade), no click.
+- Load another program and initialise: the limiter switch and ceiling stay as set.
+
 ## State
 - Set an unusual patch, File > Save, quit, relaunch, File > Open: identical sound and values.
 - Two instances (duplicate the node): independent parameters, both sound, no cross-talk.

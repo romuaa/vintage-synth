@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Reed Whistle",
+  "category": "Lead",
+  "author": "Exitium",
+  "global": {
+    "fx.reverb.level": 0.25
+  },
+  "lower": {
+    "assign.mode": 2,
+    "vcf.cutoff": 0.55,
+    "vcf.resonance": 0.0,
+    "vcf.env_mod": 0.25,
+    "env2.attack": 0.3,
+    "env2.sustain": 0.9,
+    "env2.release": 0.42,
+    "lfo.delay": 0.55,
+    "vcomod.lfo_mod": 0.08,
+    "lfo.rate": 0.69,
+    "mod.wheel_vco": 0.4,
+    "vco1.waveform": 1,
+    "vco2.waveform": 0,
+    "vco2.range": 2,
+    "mixer.source_mix": 0.3,
+    "lfo.waveform": 0,
+    "vca.level": 0.807
+  },
+  "upper": {}
+}

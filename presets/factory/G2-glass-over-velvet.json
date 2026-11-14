@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Glass Over Velvet",
+  "category": "Dual",
+  "author": "Exitium",
+  "global": {
+    "key.mode": 1,
+    "fx.chorus.mode": 1,
+    "fx.chorus.mix": 0.4,
+    "fx.reverb.level": 0.35
+  },
+  "lower": {
+    "vcf.cutoff": 0.5,
+    "vcf.env_mod": 0.25,
+    "env1.polarity": 1,
+    "env1.attack": 0.72,
+    "env1.sustain": 0.5,
+    "vco2.fine_tune": 0.12,
+    "env2.attack": 0.62,
+    "env2.sustain": 1.0,
+    "env2.release": 0.72,
+    "vca.level": 0.622
+  },
+  "upper": {
+    "vco1.waveform": 0,
+    "vco1.range": 4,
+    "vco2.waveform": 0,
+    "vco2.fine_tune": 0.3,
+    "vco1.cross_mod": 0.28,
+    "mixer.source_mix": 0.15,
+    "vcf.cutoff": 0.85,
+    "vcf.env_mod": 0.0,
+    "env2.attack": 0.0,
+    "env2.decay": 0.82,
+    "env2.sustain": 0.0,
+    "env2.release": 0.75,
+    "vca.level": 0.747
+  }
+}

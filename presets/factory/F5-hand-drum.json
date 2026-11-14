@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Hand Drum",
+  "category": "Percussion",
+  "author": "Exitium",
+  "global": {
+    "fx.reverb.level": 0.15
+  },
+  "lower": {
+    "vco1.waveform": 1,
+    "vco2.waveform": 5,
+    "mixer.source_mix": 0.3,
+    "vcomod.env_mod": 0.18,
+    "vcomod.target": 0,
+    "vcf.cutoff": 0.45,
+    "vcf.resonance": 0.3,
+    "vcf.env_mod": 0.35,
+    "env1.attack": 0.0,
+    "env1.decay": 0.32,
+    "env1.sustain": 0.0,
+    "env2.attack": 0.0,
+    "env2.decay": 0.6,
+    "env2.sustain": 0.0,
+    "env2.release": 0.5,
+    "vca.level": 1.0
+  },
+  "upper": {}
+}

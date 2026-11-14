@@ -1077,6 +1077,54 @@ TEST_CASE ("Changing the assign mode or unison count releases the voices without
     SECTION ("Solo -> Unison") { run (2, 1, 1, 1, { 36 }); }
 }
 
+TEST_CASE ("Flipping the VCF slope on sounding voices crossfades the filter taps: no step, independent of block size", "[part][slope]")
+{
+    VS_EVERY_RATE;
+    // Stage 2 and stage 4 of the ladder differ in phase and level: switching the output tap at
+    // once stepped a held sine chord by 4-7x its own largest step (M6b). A smooth chord below the
+    // cutoff, so a step is the largest event in the signal by far.
+    static constexpr int changeAt = 100 * kBlock; // 25600 samples
+    static constexpr int length = changeAt + 9600;
+    const int scale = static_cast<int> (std::lround (gRate.fs / kFs));
+    auto run = [scale] (int fromSlope, int blockSize, Rig* keep = nullptr) {
+        Rig local;
+        Rig& rig = keep != nullptr ? *keep : local;
+        sinePatch (rig.params);
+        rig.params.sourceMix = 0.5f;
+        rig.params.vco2Wave = 0;
+        rig.params.vcfCutoff = 0.45f;
+        rig.params.vcfResonance = 0.3f;
+        rig.params.vcfSlope = fromSlope;
+        rig.apply();
+        std::vector<vs::NoteEvent> events;
+        for (const int n : { 48, 55, 64 })
+            events.push_back (on (0, n));
+        const int changeHost = changeAt * scale;
+        return rig.render (length, events, blockSize, [=] (int b, vs::PartParams& p) {
+            if (b * blockSize >= changeHost) // host blocks divide changeAt: the change is at changeAt
+                p.vcfSlope = 1 - fromSlope;
+        });
+    };
+    for (const int fromSlope : { 1, 0 })
+    {
+        INFO ("from slope " << fromSlope);
+        Rig rig;
+        const auto out = run (fromSlope, kBlock, &rig);
+        const double steadyBefore = maxStep (out, 12000, changeAt);
+        const double steadyAfter = maxStep (out, changeAt + 2400, length);
+        const double around = maxStep (out, changeAt, changeAt + 2400);
+        INFO ("steady max step " << steadyBefore << " / " << steadyAfter << ", around the change " << around);
+        CHECK (around <= 1.1 * std::max (steadyBefore, steadyAfter));
+        for (int v = 0; v < vs::kMaxVoices; ++v)
+            CHECK_FALSE (rig.part.getVoice (v).isSlopeFading()); // the fade ended (5 ms)
+
+        // The crossfade advances per sample: the same change in other host blocks sounds the same.
+        const double ratioDb = differenceDb (out, run (fromSlope, 64));
+        INFO ("block size 256 vs 64: " << ratioDb << " dB");
+        CHECK (ratioDb < -100.0);
+    }
+}
+
 TEST_CASE ("Render does not depend on the host block size with 16 voices, steals, glide and pedal (Vintage 1)", "[part][control][poly]")
 {
     VS_EVERY_RATE;

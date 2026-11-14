@@ -1,0 +1,14 @@
+# Factory program "Twin Horizon" (M6b), loaded by name like a preset change: Dual: strings (Lower, left) and brass (Upper, right); every note plays both.
+# Regenerate this reference only when the program is changed on purpose.
+rate 48000
+channels 2
+length 3.2
+
+0.00 program Twin Horizon
+
+0.10 on 48 90
+0.10 on 55 85
+0.80 on 64 100
+1.60 off 64
+1.60 off 48
+1.60 off 55

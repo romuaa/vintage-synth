@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Sub Cellar",
+  "category": "Bass",
+  "author": "Exitium",
+  "global": {},
+  "lower": {
+    "vco1.range": 1,
+    "vco2.range": 0,
+    "vco2.fine_tune": 0.04,
+    "vcf.cutoff": 0.38,
+    "vcf.resonance": 0.0,
+    "vcf.env_mod": 0.2,
+    "vcf.key_follow": 0.6,
+    "env1.attack": 0.0,
+    "env1.decay": 0.5,
+    "env1.sustain": 0.15,
+    "env1.release": 0.3,
+    "env2.attack": 0.0,
+    "env2.decay": 0.7,
+    "env2.sustain": 1.0,
+    "env2.release": 0.3,
+    "vco1.waveform": 1,
+    "vco2.waveform": 0,
+    "mixer.source_mix": 0.55,
+    "assign.mode": 2,
+    "vca.level": 0.609
+  },
+  "upper": {}
+}

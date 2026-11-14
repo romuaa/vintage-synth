@@ -65,6 +65,7 @@ void Voice::reset() noexcept
     env2.reset();
     hpf.reset();
     vcf.reset();
+    snapSlope();
     glideDev = 0.0f;
     glideCur = 0.0;
     glideAnchored = false;
@@ -86,7 +87,20 @@ void Voice::setBlockParams (const PartParams& p, float vintage) noexcept
     vco2RangeOct = p.vco2Range - kVco2RangeIndexOf8ft;
     vco2LoFreq = p.vco2Mode == 1;
     sync = p.vcoSync == 1;
-    slope24 = p.vcfSlope == 1;
+    const bool newSlope24 = p.vcfSlope == 1;
+    if (newSlope24 != slope24)
+    {
+        slope24 = newSlope24;
+        if (env2.isActive())
+        {
+            // Sounding: crossfade to the new tap (from wherever a running fade is). The VCF ticks
+            // at half this rate on the real-time-rate path.
+            slopeFading = true;
+            slopeFadeStep = 1.0f / (kSlopeFadeSeconds * (rtPair ? 0.5f * fs : fs));
+        }
+        else
+            snapSlope();
+    }
     vcfEnvSource = p.vcfEnvSource;
     env1Inverted = p.env1Polarity == 1;
     env1KeyFollow = p.env1KeyFollow == 1;
@@ -139,6 +153,7 @@ void Voice::restartFromIdle() noexcept
     env1.reset();
     hpf.reset();
     vcf.reset();
+    snapSlope(); // a slope crossfade of the previous note ends with it
 
     // Offline: a note that starts while Cross Mod is up renders at the real-time rate.
     rtPair = rtPairRatio == 2 && crossModWanted;
@@ -416,6 +431,7 @@ void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m,
         Voice* active[kVoiceGroup];
         Voice* rtPairs[kVoiceGroup]; // offline Cross Mod notes rendered at the real-time rate
         int numActive = 0, numRtPairs = 0;
+        bool anyFading = false;
         const int last = std::min (numVoices, first + kVoiceGroup);
         for (int v = first; v < last; ++v)
             if (voices[v]->beginBlock (m))
@@ -423,16 +439,30 @@ void Voice::renderBlock (Voice* const* voices, int numVoices, const ModBlock& m,
                 if (voices[v]->rtPair)
                     rtPairs[numRtPairs++] = voices[v];
                 else
+                {
+                    anyFading = anyFading || voices[v]->slopeFading;
                     active[numActive++] = voices[v];
+                }
             }
 
-        for (int i = 0; i < n; ++i)
-        {
-            float sum = 0.0f;
-            for (int a = 0; a < numActive; ++a)
-                sum += active[a]->renderSample (i, hpfG[i], crossOct[i], mix[i]);
-            out[i] += sum;
-        }
+        // A VCF slope crossfade is rare (5 ms after a slope change): only then does the loop pay
+        // for the per-sample check (a branch in this loop costs about a quarter of the voice time).
+        if (anyFading)
+            for (int i = 0; i < n; ++i)
+            {
+                float sum = 0.0f;
+                for (int a = 0; a < numActive; ++a)
+                    sum += active[a]->renderSample<true> (i, hpfG[i], crossOct[i], mix[i]);
+                out[i] += sum;
+            }
+        else
+            for (int i = 0; i < n; ++i)
+            {
+                float sum = 0.0f;
+                for (int a = 0; a < numActive; ++a)
+                    sum += active[a]->renderSample<false> (i, hpfG[i], crossOct[i], mix[i]);
+                out[i] += sum;
+            }
         if (numRtPairs > 0) // offline only
             for (int i = 0; i < n; ++i)
             {

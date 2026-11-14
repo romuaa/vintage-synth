@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Drift Ice",
+  "category": "Pad",
+  "author": "Exitium",
+  "global": {
+    "fx.chorus.mode": 2,
+    "fx.chorus.mix": 0.4,
+    "fx.reverb.level": 0.4,
+    "fx.reverb.decay": 0.65
+  },
+  "lower": {
+    "vco2.fine_tune": 0.14,
+    "vcf.cutoff": 0.3,
+    "vcf.resonance": 0.35,
+    "vcf.env_mod": 0.5,
+    "env1.attack": 0.85,
+    "env1.decay": 0.85,
+    "env1.sustain": 0.4,
+    "env1.release": 0.8,
+    "env2.attack": 0.6,
+    "env2.sustain": 1.0,
+    "env2.release": 0.8,
+    "vca.level": 0.54
+  },
+  "upper": {}
+}

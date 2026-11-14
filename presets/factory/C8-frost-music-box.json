@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "instrument": "vintage-synth",
+  "kind": "program",
+  "name": "Frost Music Box",
+  "category": "Bell",
+  "author": "Exitium",
+  "global": {
+    "fx.delay.level": 0.3,
+    "fx.delay.time": 0.8,
+    "fx.delay.feedback": 0.4,
+    "fx.reverb.level": 0.3
+  },
+  "lower": {
+    "vco1.waveform": 0,
+    "vco1.range": 4,
+    "vco2.waveform": 1,
+    "vco2.range": 3,
+    "vco2.fine_tune": 0.02,
+    "mixer.source_mix": 0.3,
+    "vcf.cutoff": 0.85,
+    "vcf.env_mod": 0.0,
+    "env2.attack": 0.0,
+    "env2.decay": 0.75,
+    "env2.sustain": 0.0,
+    "env2.release": 0.7,
+    "vca.level": 0.641
+  },
+  "upper": {}
+}
