@@ -8,6 +8,10 @@ Anything marked **(review)** is a judgement call that the product owner may want
 Owner decision "more headroom and an adjustable soft limiter"; the numbers below are judgement
 calls. All (review) unless marked; the owner should confirm the trim and the limiter by ear.
 
+**Owner, 2026-11-14:** the default level after the trim is good ("User can boost them if wanted");
+Wave 4a approved for merge. Eight golden references for the factory bank are enough (not one per
+program): the load, level and release tests cover all 64.
+
 | Decision | Why |
 |---|---|
 | **Fixed output trim −6.02 dB (× 0.5), multiplied into the master gain.** The loudest chord (Dual, 32 voices, velocity 127, dry, default master −6 dB) now peaks at **−2.57 dBFS** (was +3.45); moderate effects −0.45 dBFS (was +5.57); extreme effects still reach the clamp without the limiter (+12.04 dBFS, was the same). Single notes and programs are 6 dB quieter. | The brief asked for ≤ about −1 dBFS: at least −4.45 dB was needed. −6.02 dB is the smallest power-of-two gain that meets it, leaves 1.5 dB of margin for presets louder than the test chord, and is exact in floating point: a render differs from the old one by exactly 0.5 per sample, which made the golden re-bless provable. Per-voice, per-part and effect gains are untouched, so relative program levels and the effect send balance stay. |

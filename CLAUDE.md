@@ -87,17 +87,13 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   in the plugin, 170 parameters, host bypass, sine-sync alias fix, offline = real time for Cross
   Mod), S0 (common library `source/common/`) and M6a (presets and banks, preset bar, 8 placeholder
   programs). Verified by the local gate only.
-- **In progress (Wave 4a):** the output stage (more default headroom as a global trim, adjustable
-  soft limiter; owner decision) on `wave4/output-stage`, and M6b, the 64 factory programs, on
-  `wave4/factory-sounds` (owner auditions before merge). B-Side S1 can start in parallel.
-  `wave4/slope-click` (stacked on `wave4/factory-sounds`): the VCF slope crossfades on sounding
-  voices, so the −12 dB factory programs no longer click when applied over notes.
+- **Wave 4a is merged to `main`** (owner approved 2026-11-14): M6b, the 64 factory programs
+  (`docs/factory-sounds.md`, level rule enforced by tests, eight golden references by owner
+  decision); the output stage (fixed −6.02 dB trim, soft limiter `master.limiter` /
+  `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
+  owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
+  **Next:** B-Side S1; the owner's by-ear notes on single factory programs; M7 UI direction.
 - MIDI Program Change timing: accepted as is for now (owner will test later).
-- **Wave 4 output stage is done on branch `wave4/output-stage`** (from `main`): fixed −6.02 dB
-  output trim, soft limiter (`master.limiter`, `master.limiter.ceiling`; session settings), 172
-  parameters, goldens re-blessed (raw renders old × 0.5 exactly; `selftest_basic` also took old
-  drift), golden scene `limiter_drive`. Verified by the local gate only. Open for the
-  owner: confirm trim and limiter by ear (decisions, Wave 4).
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
   in `source/common/seq/`, not wired in. Audition approved by the owner.
@@ -111,6 +107,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
      never run on GitHub: its first dispatch is also its first test) (2026-11-12).
   3. Wave 3 (PR #9): effects and arp/sequencer integration, the common-library split, presets and
      banks incl. the strict JSON reader and file dialogs (2026-11-13).
+  4. Wave 4a: factory bank and its tests, output trim and soft limiter, VCF slope crossfade,
+     the rule that parameters missing from a session load at their defaults (2026-11-14).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
