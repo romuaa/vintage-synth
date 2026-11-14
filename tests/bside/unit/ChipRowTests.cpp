@@ -108,6 +108,7 @@ TEST_CASE ("chip 8.15.1: power-on state (also reset())", "[bside][chip]")
                 CHECK (o.accFraction == 0);
                 CHECK (o.noise == 0x7ffffe);
                 CHECK (o.noiseLatch == 0x7ffffe);
+                CHECK (o.noiseOutput == 0xfe0); // the output of the power-on register (8.15.1 is silent; docs/decisions.md)
                 CHECK (o.firstShift);
                 CHECK (o.noisePipeline == 0);
                 CHECK_FALSE (o.rise);
@@ -143,6 +144,18 @@ TEST_CASE ("chip 8.15.1: power-on state (also reset())", "[bside][chip]")
             c.advanceCycles (123457);
             c.reset();
         }
+    }
+}
+
+TEST_CASE ("chip 8.15.1: noise selected before any shift shows the power-on register's output", "[bside][chip]")
+{
+    for (auto m : { Model::A, Model::B })
+    {
+        auto c = makeChip (m);
+        wr (c, 2, reg::control, ctrl::noise); // F = 0: no shift, no fill, no write-back
+        c.advanceCycles (3);
+        CHECK (c.output (2) == 0xfe0);
+        CHECK (c.read (0x1b) == 0xfe);
     }
 }
 
@@ -289,6 +302,18 @@ TEST_CASE ("chip 8.15.2 (a)/8.15.5: the test bit holds the accumulator and fills
         const auto t = timingFor (m);
         CHECK (t.testHold == (m == Model::A ? 50000u : 986000u));
         CHECK (t.fillInterval == (m == Model::A ? 15000u : 314300u));
+        // Set while the noise pipeline runs: it stops (no latch, no shift).
+        auto p = makeChip (m);
+        setFreq (p, 0, 0x8000);
+        zeroAcc (p, 0);
+        p.advanceCycles (16); // bit 19 rose in step 16
+        REQUIRE (oscOf (p, 0).noisePipeline == 2);
+        const auto rp = p.noiseRegister (0);
+        wr (p, 0, reg::control, ctrl::test);
+        CHECK (oscOf (p, 0).noisePipeline == 0);
+        p.advanceCycles (10);
+        CHECK (p.noiseRegister (0) == rp);
+
         auto c = makeChip (m);
         setFreq (c, 0, 0x4321);
         wr (c, 0, reg::control, ctrl::noise);
@@ -329,7 +354,8 @@ TEST_CASE ("chip 8.15.2 (a)/8.15.5: the test bit holds the accumulator and fills
         // Pulse reads high under the test bit.
         wr (c, 0, reg::control, ctrl::pulse | ctrl::test);
         setPw (c, 0, 0xfff);
-        c.stepCycle();
+        c.advanceCycles (2); // the comparison of acc 0 with 0xfff is low; under the test bit the pulse reads high
+        CHECK_FALSE (oscOf (c, 0).pulseHigh);
         CHECK (c.output (0) == 0xfff);
         // Released: the accumulator runs from 0.
         wr (c, 0, reg::control, ctrl::noise);
@@ -653,6 +679,15 @@ TEST_CASE ("chip 8.15.2 (c) step 6: noise with another waveform writes the outpu
         wr (c, 0, reg::control, ctrl::noise);
         c.advanceCycles (100000);
         CHECK (c.noiseRegister (0) == 0); // an all-zero register stays zero: silent
+        {
+            // A short test pulse (shorter than the hold time): the shift at its end feeds the first-shift
+            // flag in, (0 OR 1) XOR 0 = 1.
+            Chip k = c;
+            wr (k, 0, reg::control, ctrl::noise | ctrl::test);
+            k.advanceCycles (10);
+            wr (k, 0, reg::control, ctrl::noise);
+            CHECK (k.noiseRegister (0) == 1);
+        }
         // The test bit refills it (from 0: 23 fill steps), then noise runs again.
         const auto t = timingFor (model);
         wr (c, 0, reg::control, ctrl::noise | ctrl::test);
@@ -678,6 +713,36 @@ TEST_CASE ("chip 8.15.2 (c) step 6: noise with another waveform writes the outpu
     const auto before = e.noiseRegister (2);
     e.advanceCycles (200); // bit 19 rises once (step 129), the shift follows in step 131
     CHECK (e.noiseRegister (2) == lfsr (before));
+}
+
+TEST_CASE ("chip 8.15.2 (c) step 6: no write-back into the register in the noise pipeline's latch step", "[bside][chip]")
+{
+    // Noise alone, F = 0x8000 from 0: bit 19 rises in step 16. Switched to noise + saw right after it, the
+    // next step is the pipeline's latch step: the noise output takes the output, the register is kept.
+    // One step later (pipeline 0, a shift) the write-back ANDs the register.
+    for (auto m : { Model::A, Model::B })
+    {
+        auto c = makeChip (m);
+        setFreq (c, 0, 0x8000);
+        zeroAcc (c, 0, ctrl::noise);
+        c.advanceCycles (16);
+        REQUIRE (oscOf (c, 0).noisePipeline == 2);
+        const auto reg0 = c.noiseRegister (0);
+        wr (c, 0, reg::control, ctrl::noise | ctrl::saw);
+        c.stepCycle();
+        auto o = oscOf (c, 0);
+        REQUIRE (o.noisePipeline == 1);
+        CHECK (o.noise == reg0);
+        CHECK (o.noiseOutput == o.output);
+        REQUIRE ((wave::noise (reg0) & ~o.output & 0xff0) != 0); // an AND would have changed the register
+        const auto latchOut = o.output;
+        c.stepCycle();
+        o = oscOf (c, 0);
+        // The shift first writes the previous output into the latch's tap bits (8.15.3, noise + saw), then
+        // (c) step 6 ANDs this step's output into the register.
+        const std::uint32_t latch = (reg0 & ~wave::kTapBits) | wave::taps (latchOut);
+        CHECK (o.noise == (lfsr (latch) & wave::noiseKeepMask (o.output)));
+    }
 }
 
 TEST_CASE ("chip 8.15.2 (d): sync resets the target in the step of the source's top-bit rise", "[bside][chip]")
@@ -925,6 +990,12 @@ TEST_CASE ("chip 8.15.4: the divider period is a state, set when the counter tak
     c.advanceCycles (300000);
     REQUIRE (c.envelope (0) == 0);
     wr (c, 0, reg::control, ctrl::gate);
+    REQUIRE (stepsUntil (c, [] (const Chip& x) { return x.envelope (0) == 0x5d; }, 2000) <= 2000);
+    CHECK (envOf (c, 0).dividerPeriod == 4); // 0x36 set 4; 0x5d taken in this step: the change is pending for the next one
+    CHECK (envOf (c, 0).pendingPeriod == 2);
+    c.stepCycle();
+    CHECK (envOf (c, 0).dividerPeriod == 2);
+    CHECK (envOf (c, 0).pendingPeriod == 0);
     REQUIRE (stepsUntil (c, [] (const Chip& x) { return x.envelope (0) == 0x60; }, 2000) <= 2000);
     CHECK (envOf (c, 0).dividerPeriod == 2);
     wr (c, 0, reg::control, 0);
