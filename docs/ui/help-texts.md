@@ -104,7 +104,7 @@ Format (one entry per line, nothing else on the line):
 ## Arpeggiator and step sequencer
 
 - `arp.mode`: Off, Arpeggiator (plays the keys you hold one at a time) or Sequencer (plays your step pattern).
-- `arp.target`: Which part the arpeggiator or sequencer plays: Lower, Upper or both. Another part plays your keys normally.
+- `arp.target`: Which part the arpeggiator or sequencer plays: Lower, Upper or both. A part it does not play gets your keys as usual.
 - `arp.pattern`: The order the held notes play in. Up & Down does not repeat the top and bottom notes.
 - `arp.octaves`: How many octaves the pattern climbs through before it starts again.
 - `arp.rate`: How long each step is, as a note length at the song tempo. A triplet (T) fits three steps into the time of two.
