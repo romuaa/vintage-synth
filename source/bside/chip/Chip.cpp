@@ -101,10 +101,12 @@ void Chip::setOscillator (int n, const OscInput& in) noexcept
     std::uint32_t fReg = 0;
     if (cfg.authentic)
     {
-        const double fr = std::fmin (std::fmax (std::nearbyint (f), 0.0), 65535.0);
+        // round() = half away from zero, as 8.4.6 says "round". The chip accepts 0 (a register write may be
+        // 0); the 1..65535 clamp of 8.4.6 belongs to the pitch-to-register mapping of the program engine.
+        const double fr = std::fmin (std::fmax (std::round (f), 0.0), 65535.0);
         fReg = static_cast<std::uint32_t> (fr);
         o.inc = static_cast<std::uint64_t> (fReg) << kFractionBits;
-        o.pw = static_cast<std::uint16_t> (std::fmin (std::fmax (std::nearbyint (pw), 0.0f), 4095.0f));
+        o.pw = static_cast<std::uint16_t> (std::fmin (std::fmax (std::round (pw), 0.0f), 4095.0f));
         o.pwSmooth = static_cast<float> (o.pw);
     }
     else
@@ -131,11 +133,12 @@ void Chip::setOscillator (int n, const OscInput& in) noexcept
 void Chip::setFilter (const FilterInput& in) noexcept
 {
     const float fc = std::isfinite (in.cutoff) ? std::fmin (std::fmax (in.cutoff, 0.0f), 2047.0f) : 0.0f;
-    cutoff = cfg.authentic ? std::nearbyint (fc) : fc;
+    cutoff = cfg.authentic ? std::round (fc) : fc;
     const auto fcReg = static_cast<std::uint32_t> (cfg.authentic ? cutoff : std::floor (fc));
     regs[reg::cutoffLo] = static_cast<std::uint8_t> (fcReg & 7u);
     regs[reg::cutoffHi] = static_cast<std::uint8_t> (fcReg >> 3);
-    regs[reg::resonanceRouting] = static_cast<std::uint8_t> ((in.resonance << 4) | (in.routing & 0x0f));
+    // Bit 3 (external input) is not modelled and always 0 (8.4.1); a trace's write() stores what it wrote.
+    regs[reg::resonanceRouting] = static_cast<std::uint8_t> (((in.resonance & 0x0f) << 4) | (in.routing & 0x07));
     regs[reg::modeVolume] = in.modeVolume;
 }
 

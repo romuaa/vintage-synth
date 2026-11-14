@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <type_traits>
@@ -658,4 +659,182 @@ TEST_CASE ("chip 8.4.6: Authentic setOscillator equals the register writes; Smoo
     CHECK (smooth.increment (1) == 0);
     smooth.setOscillator (2, { 1.0e12, 0.0f, 0, 0, 0 });
     CHECK (smooth.increment (2) == kMaxIncrement);
+}
+
+TEST_CASE ("chip 8.4.3 row 6 (confirm): the chain case in all three rotations", "[bside][chip]")
+{
+    // Rotation a -> b -> c: a and b rise in the same cycle (2048), b and c have their sync bits.
+    // b is synced by a; c is NOT synced, because its source b was synced in that cycle.
+    for (int a = 0; a < 3; ++a)
+    {
+        const int b = (a + 1) % 3, c = (a + 2) % 3;
+        auto chip = makeChip();
+        setFreq (chip, a, 0x1000);
+        setFreq (chip, b, 0x1000);
+        setFreq (chip, c, 0x0100);
+        wr (chip, b, reg::control, ctrl::sync);
+        wr (chip, c, reg::control, ctrl::sync);
+        chip.advanceCycles (2048);
+        INFO ("rotation starting at oscillator " << (a + 1));
+        CHECK (chip.accumulator (a) == 0x800000);
+        CHECK (chip.accumulator (b) == 0);
+        CHECK (chip.accumulator (c) == 2048u * 0x100u);
+        // One cycle later nothing else happened.
+        chip.stepCycle();
+        CHECK (chip.accumulator (b) == 0x1000);
+        CHECK (chip.accumulator (c) == 2049u * 0x100u);
+    }
+}
+
+TEST_CASE ("chip 8.4.3 row 6 (confirm): all three rise together with every sync bit set: nobody is reset", "[bside][chip]")
+{
+    // Each source is synced in that cycle by its own source, so no target is reset. A loop that
+    // applied resets one by one ("was my source reset already?") would reset some of them.
+    for (int round = 0; round < 2; ++round)
+    {
+        auto chip = makeChip();
+        for (int n = 0; n < 3; ++n)
+        {
+            setFreq (chip, n, 0x1000);
+            wr (chip, n, reg::control, ctrl::sync | ctrl::saw);
+        }
+        if (round == 0)
+            chip.advanceCycles (2048);
+        else
+            for (int i = 0; i < 2048; ++i)
+                chip.stepCycle();
+        for (int n = 0; n < 3; ++n)
+            CHECK (chip.accumulator (n) == 0x800000);
+    }
+    // Two of three rising together, all sync bits set: only the target of the unsynced riser resets.
+    auto chip = makeChip();
+    setFreq (chip, 0, 0x1000);
+    setFreq (chip, 1, 0x1000);
+    setFreq (chip, 2, 0x0300);
+    for (int n = 0; n < 3; ++n)
+        wr (chip, n, reg::control, ctrl::sync);
+    chip.advanceCycles (2048);
+    // Oscillator 3 did not rise (2048 x 0x300 = 0x180000), so 1 is not synced; 1 rose and syncs 2;
+    // 2 rose but was synced by 1 in that cycle, so 3 keeps running.
+    CHECK (chip.accumulator (0) == 0x800000);
+    CHECK (chip.accumulator (1) == 0);
+    CHECK (chip.accumulator (2) == 2048u * 0x300u);
+}
+
+TEST_CASE ("chip 8.4.3 rows 7/8: no write-back while the test bit is held", "[bside][chip]")
+{
+    // Noise + saw with the test bit: the accumulator is held at 0, so saw is 0 and an AND write-back
+    // would clear the register. While the test bit is set the register stays all ones.
+    for (auto model : { Model::A, Model::B })
+    {
+        auto c = makeChip (model);
+        setFreq (c, 1, 0x2345);
+        wr (c, 1, reg::control, ctrl::noise | ctrl::saw | ctrl::test);
+        for (int i = 0; i < 100; ++i)
+        {
+            c.stepCycle();
+            REQUIRE (c.noiseRegister (1) == 0x7fffff);
+        }
+        c.advanceCycles (1000000);
+        CHECK (c.noiseRegister (1) == 0x7fffff);
+        // Released: the first cycle's saw is 0x002 (0x2345 >> 12) and the write-back starts at once.
+        wr (c, 1, reg::control, ctrl::noise | ctrl::saw);
+        c.stepCycle();
+        CHECK (c.noiseRegister (1) != 0x7fffff);
+    }
+}
+
+namespace
+{
+struct SyncOnlySink
+{
+    static constexpr bool kWantsNoiseEvents = false;
+    int calls = 0, noiseCalls = 0;
+    SyncResetEvent last;
+    void syncReset (const SyncResetEvent& e) noexcept
+    {
+        ++calls;
+        last = e;
+    }
+    void noiseClock (const NoiseClockEvent&) noexcept { ++noiseCalls; }
+    void noiseWriteBack (const NoiseWriteBackEvent&) noexcept { ++noiseCalls; }
+};
+} // namespace
+
+TEST_CASE ("chip: the sync event carries the sub-cycle crossing and the target's phase", "[bside][chip]")
+{
+    using Sink = SyncOnlySink;
+    auto c = makeChip();
+    setFreq (c, 0, 0x1001); // top bit: 2048 x 0x1001 = 0x800800 is the first value >= 0x800000
+    setFreq (c, 1, 0x0100);
+    wr (c, 1, reg::control, ctrl::sync);
+    Sink sink;
+    c.advanceCycles (5000, sink); // also many noise clocks: none may reach the sink
+    REQUIRE (sink.calls >= 1);
+    CHECK (sink.noiseCalls == 0); // kWantsNoiseEvents = false: neither path calls them
+    for (int i = 0; i < 5000; ++i)
+        c.stepCycle (sink);
+    CHECK (sink.noiseCalls == 0);
+    // The first reset: re-run to it.
+    auto d = makeChip();
+    setFreq (d, 0, 0x1001);
+    setFreq (d, 1, 0x0100);
+    wr (d, 1, reg::control, ctrl::sync);
+    Sink first;
+    d.advanceCycles (2048, first);
+    REQUIRE (first.calls == 1);
+    CHECK (first.last.cycle == 2048);
+    CHECK (first.last.target == 1);
+    CHECK (first.last.source == 0);
+    CHECK (first.last.sourcePhase == (std::uint64_t { 0x800800 } << 32));
+    CHECK (first.last.sourceIncrement == (std::uint64_t { 0x1001 } << 32));
+    CHECK (first.last.targetPhaseBefore == (std::uint64_t { 2048 * 0x100 } << 32));
+    CHECK (std::abs (first.last.crossingBefore() - 2048.0 / 4097.0) < 1e-15);
+    // Sub-sample position: a sample starting at cycle 2040.5 lasting 10.5 cycles.
+    const auto inc = static_cast<std::uint64_t> (10.5 * 4294967296.0);
+    const double p = ChipClock::position (2040, 1u << 31, inc, first.last.cycle, first.last.crossingBefore());
+    CHECK (std::abs (p - (2048.0 - 2048.0 / 4097.0 - 2040.5) / 10.5) < 1e-12);
+    CHECK (std::abs (ChipClock::position (100, 0, inc, 100)) < 1e-15);
+    CHECK (std::abs (ChipClock::position (100, 0, inc, 110, -0.5) - 1.0) < 1e-12);
+}
+
+TEST_CASE ("chip: a default-constructed chip advances by samples at the default clock and rate", "[bside][chip]")
+{
+    Chip c;
+    CHECK (c.sampleClock().increment() == ChipClock::incrementFor (Config {}.clockHz, Config {}.internalRate));
+    const auto cycles = c.advanceSamples (96000);
+    // One second at 96 kHz internal is one second of chip clock (to the rounding of the increment).
+    CHECK (cycles == (96000ull * c.sampleClock().increment()) >> 32);
+    CHECK (cycles >= 985247);
+    CHECK (cycles <= 985248);
+    CHECK (c.cycle() == cycles);
+}
+
+TEST_CASE ("chip 8.4.6: Authentic rounds half away from zero; the chip accepts F = 0", "[bside][chip]")
+{
+    auto c = makeChip();
+    c.setOscillator (0, { 1234.5, 2048.5f, 0, 0, 0 });
+    CHECK (c.increment (0) == (std::uint64_t { 1235 } << 32));
+    CHECK (c.pulseWidth (0) == 2049);
+    c.setOscillator (0, { 0.5, 0.5f, 0, 0, 0 });
+    CHECK (c.increment (0) == (std::uint64_t { 1 } << 32));
+    CHECK (c.pulseWidth (0) == 1);
+    c.setOscillator (0, { 0.49, -3.0f, 0, 0, 0 });
+    CHECK (c.increment (0) == 0); // the 1..65535 clamp is the pitch mapping's (program engine), not the chip's
+    CHECK (c.pulseWidth (0) == 0);
+    FilterInput f;
+    f.cutoff = 1000.5f;
+    c.setFilter (f);
+    CHECK (c.registerValue (0x15) == (1001 & 7));
+    CHECK (c.registerValue (0x16) == (1001 >> 3));
+}
+
+TEST_CASE ("chip 8.4.1: setFilter keeps the external-input bit of 0x17 at 0", "[bside][chip]")
+{
+    auto c = makeChip();
+    c.setFilter ({ 0.0f, 0x0f, 0x0f, 0x7f });
+    CHECK (c.registerValue (0x17) == 0xf7);
+    CHECK (c.registerValue (0x18) == 0x7f);
+    c.setFilter ({ 0.0f, 0x03, 0x08, 0x00 });
+    CHECK (c.registerValue (0x17) == 0x30);
 }
