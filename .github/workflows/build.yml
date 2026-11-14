@@ -43,7 +43,10 @@ env:
   PLUGINVAL_SHA256_MACOS: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
   PLUGINVAL_SHA256_WINDOWS: c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab
   PLUGINVAL_SHA256_LINUX: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
-  BUNDLE: Exitium Vintage Synth.vst3
+  # The two plugins of this repository (docs/architecture.md 8.1): every row builds both; pluginval,
+  # the VST3 validator, the architecture and dependency checks, the artifact and the bundle merge run per plugin.
+  BUNDLE_VINTAGE: Exitium Vintage Synth.vst3
+  BUNDLE_BSIDE: Exitium B-Side.vst3
   # Steinberg VST3 SDK, built only for its `validator` tool (MIT; not linked into the plugin).
   # Pinned by commit SHA; the tag is for humans. Bump both together, deliberately.
   VST3_SDK_TAG: v3.8.1_build_84
@@ -241,13 +244,17 @@ jobs:
             ctest --test-dir build --output-on-failure
           fi
 
+      # Per plugin: "<CMake target>|<product name>" (bundle: build/<target>_artefacts/Release/VST3/<product>.vst3).
       - name: Check architectures (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          archs=$(lipo -archs "build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/MacOS/Exitium Vintage Synth")
-          echo "$archs"
-          [[ "$archs" == *x86_64* && "$archs" == *arm64* ]]
+          for pair in "VintageSynth|Exitium Vintage Synth" "BSide|Exitium B-Side"; do
+            target=${pair%%|*}; name=${pair#*|}
+            archs=$(lipo -archs "build/${target}_artefacts/Release/VST3/$name.vst3/Contents/MacOS/$name")
+            echo "$name: $archs"
+            [[ "$archs" == *x86_64* && "$archs" == *arm64* ]]
+          done
 
       - name: pluginval (macOS)
         if: matrix.pluginval && runner.os == 'macOS'
@@ -256,8 +263,10 @@ jobs:
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
           echo "$PLUGINVAL_SHA256_MACOS  pv.zip" | shasum -a 256 -c -
           unzip -q pv.zip
-          pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
-            --skip-gui-tests "build/VintageSynth_artefacts/Release/VST3/$BUNDLE"
+          for pair in "VintageSynth|$BUNDLE_VINTAGE" "BSide|$BUNDLE_BSIDE"; do
+            pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
+              --skip-gui-tests "build/${pair%%|*}_artefacts/Release/VST3/${pair#*|}"
+          done
 
       - name: pluginval (Windows)
         if: matrix.pluginval && runner.os == 'Windows'
@@ -266,8 +275,10 @@ jobs:
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
           echo "$PLUGINVAL_SHA256_WINDOWS  pv.zip" | sha256sum -c -
           unzip -q pv.zip
-          ./pluginval.exe --strictness-level 10 --validate-in-process \
-            --skip-gui-tests "build/VintageSynth_artefacts/Release/VST3/$BUNDLE"
+          for pair in "VintageSynth|$BUNDLE_VINTAGE" "BSide|$BUNDLE_BSIDE"; do
+            ./pluginval.exe --strictness-level 10 --validate-in-process \
+              --skip-gui-tests "build/${pair%%|*}_artefacts/Release/VST3/${pair#*|}"
+          done
 
       # The binary must depend only on glibc and the usual system libraries (the C++ runtime is
       # linked statically); report the oldest glibc it can run on.
@@ -276,18 +287,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dir="build/VintageSynth_artefacts/Release/VST3/$BUNDLE/Contents/${{ matrix.arch_dir }}"
-          so=$(ls "$dir"/*.so | head -n 1)
-          test -f "$so"
-          file "$so"
-          ldd "$so"
-          objdump -p "$so" | grep -E "NEEDED|SONAME"
-          ! ldd "$so" | grep -q "not found"
-          ! ldd "$so" | grep -q "libstdc++"
-          echo "Highest required glibc symbol version:"
-          objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1
-          echo "Highest required GLIBCXX symbol version (should be none, runtime is static):"
-          objdump -T "$so" | grep -o 'GLIBCXX_[0-9.]*' | sort -uV | tail -n 1 || true
+          for pair in "VintageSynth|$BUNDLE_VINTAGE" "BSide|$BUNDLE_BSIDE"; do
+            dir="build/${pair%%|*}_artefacts/Release/VST3/${pair#*|}/Contents/${{ matrix.arch_dir }}"
+            echo "=== ${pair#*|}"
+            so=$(ls "$dir"/*.so | head -n 1)
+            test -f "$so"
+            file "$so"
+            ldd "$so"
+            objdump -p "$so" | grep -E "NEEDED|SONAME"
+            ! ldd "$so" | grep -q "not found"
+            ! ldd "$so" | grep -q "libstdc++"
+            echo "Highest required glibc symbol version:"
+            objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1
+            echo "Highest required GLIBCXX symbol version (should be none, runtime is static):"
+            objdump -T "$so" | grep -o 'GLIBCXX_[0-9.]*' | sort -uV | tail -n 1 || true
+          done
 
       - name: pluginval (Linux)
         if: matrix.pluginval && runner.os == 'Linux'
@@ -297,17 +311,25 @@ jobs:
           echo "$PLUGINVAL_SHA256_LINUX  pv.zip" | sha256sum -c -
           unzip -q pv.zip
           chmod +x pluginval
-          xvfb-run -a ./pluginval --strictness-level 10 --validate-in-process \
-            --skip-gui-tests "build/VintageSynth_artefacts/Release/VST3/$BUNDLE"
+          for pair in "VintageSynth|$BUNDLE_VINTAGE" "BSide|$BUNDLE_BSIDE"; do
+            xvfb-run -a ./pluginval --strictness-level 10 --validate-in-process \
+              --skip-gui-tests "build/${pair%%|*}_artefacts/Release/VST3/${pair#*|}"
+          done
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vst3-${{ matrix.name }}
+          name: vst3-vintage-${{ matrix.name }}
           retention-days: 7
-          path: build/VintageSynth_artefacts/Release/VST3/${{ env.BUNDLE }}
+          path: build/VintageSynth_artefacts/Release/VST3/${{ env.BUNDLE_VINTAGE }}
 
-  # The ONE bundle built by the linux-x64 row must load on other distributions than the image it
-  # was built on. Each entry runs pluginval (strictness 10) inside a container of that
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vst3-bside-${{ matrix.name }}
+          retention-days: 7
+          path: build/BSide_artefacts/Release/VST3/${{ env.BUNDLE_BSIDE }}
+
+  # The bundles built by the linux-x64 row (one per plugin) must load on other distributions than the image
+  # they were built on. Each entry runs pluginval (strictness 10) inside a container of that
   # distribution; the entry marked NEGATIVE is older than the glibc floor (2.35, the build image)
   # and asserts that the plugin is refused with "GLIBC_x.y not found", so the documented floor is
   # tested, not assumed. Tags are pinned by hand (Dependabot doesn't bump them): check Docker Hub
@@ -368,8 +390,13 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: vst3-linux-x64
-          path: ${{ env.BUNDLE }}
+          name: vst3-vintage-linux-x64
+          path: ${{ env.BUNDLE_VINTAGE }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vst3-bside-linux-x64
+          path: ${{ env.BUNDLE_BSIDE }}
 
       - name: pluginval (download, checksum)
         run: |
@@ -383,12 +410,14 @@ jobs:
           start=$(date +%s)
           docker pull -q "${{ matrix.image }}" >/dev/null
           rc=0
-          docker run --rm -v "$PWD":/w -w /w "${{ matrix.image }}" \
-            sh /w/scripts/linux-check/distro-check.sh "${{ matrix.pm }}" "${{ matrix.expect }}" "/w/$BUNDLE" "${{ matrix.pkgs }}" || rc=$?
+          for bundle in "$BUNDLE_VINTAGE" "$BUNDLE_BSIDE"; do
+            docker run --rm -v "$PWD":/w -w /w "${{ matrix.image }}" \
+              sh /w/scripts/linux-check/distro-check.sh "${{ matrix.pm }}" "${{ matrix.expect }}" "/w/$bundle" "${{ matrix.pkgs }}" || rc=$?
+          done
           echo "distribution ${{ matrix.name }}: exit $rc after $(( $(date +%s) - start ))s"
           exit $rc
 
-  # Merge Windows x64 + ARM64 into one .vst3 bundle (Contents/x86_64-win + Contents/arm64-win).
+  # Merge Windows x64 + ARM64 into one .vst3 bundle per plugin (Contents/x86_64-win + Contents/arm64-win).
   windows-bundle:
     needs: [plan, build]
     # Needs both Windows builds (and, implicitly, every selected build to have succeeded).
@@ -397,23 +426,35 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: { name: vst3-windows-x64, path: x64 }
+        with: { name: vst3-vintage-windows-x64, path: vintage-x64 }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: { name: vst3-windows-arm64, path: arm64 }
+        with: { name: vst3-vintage-windows-arm64, path: vintage-arm64 }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: vst3-bside-windows-x64, path: bside-x64 }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: vst3-bside-windows-arm64, path: bside-arm64 }
       - name: Merge
         run: |
-          mkdir -p "merged/$BUNDLE"
-          cp -R x64/. "merged/$BUNDLE/"
-          cp -R arm64/Contents/arm64-win "merged/$BUNDLE/Contents/"
-          ls -R "merged/$BUNDLE/Contents" | head -40
-          test -d "merged/$BUNDLE/Contents/x86_64-win" && test -d "merged/$BUNDLE/Contents/arm64-win"
+          for pair in "vintage|$BUNDLE_VINTAGE" "bside|$BUNDLE_BSIDE"; do
+            plugin=${pair%%|*}; bundle=${pair#*|}
+            mkdir -p "merged-$plugin/$bundle"
+            cp -R "$plugin-x64/." "merged-$plugin/$bundle/"
+            cp -R "$plugin-arm64/Contents/arm64-win" "merged-$plugin/$bundle/Contents/"
+            ls -R "merged-$plugin/$bundle/Contents" | head -40
+            test -d "merged-$plugin/$bundle/Contents/x86_64-win" && test -d "merged-$plugin/$bundle/Contents/arm64-win"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vst3-windows-universal
+          name: vst3-vintage-windows-universal
           retention-days: 7
-          path: merged
+          path: merged-vintage
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vst3-bside-windows-universal
+          retention-days: 7
+          path: merged-bside
 
-  # Merge Linux x86_64 + ARM64 into one .vst3 bundle (Contents/x86_64-linux + Contents/aarch64-linux).
+  # Merge Linux x86_64 + ARM64 into one .vst3 bundle per plugin (Contents/x86_64-linux + Contents/aarch64-linux).
   linux-bundle:
     needs: [plan, build]
     # Needs both Linux builds (and, implicitly, every selected build to have succeeded).
@@ -422,21 +463,33 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: { name: vst3-linux-x64, path: x64 }
+        with: { name: vst3-vintage-linux-x64, path: vintage-x64 }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: { name: vst3-linux-arm64, path: arm64 }
+        with: { name: vst3-vintage-linux-arm64, path: vintage-arm64 }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: vst3-bside-linux-x64, path: bside-x64 }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: vst3-bside-linux-arm64, path: bside-arm64 }
       - name: Merge
         run: |
-          mkdir -p "merged/$BUNDLE"
-          cp -R x64/. "merged/$BUNDLE/"
-          cp -R arm64/Contents/aarch64-linux "merged/$BUNDLE/Contents/"
-          ls -R "merged/$BUNDLE/Contents" | head -40
-          test -n "$(ls "merged/$BUNDLE"/Contents/x86_64-linux/*.so)" && test -n "$(ls "merged/$BUNDLE"/Contents/aarch64-linux/*.so)"
+          for pair in "vintage|$BUNDLE_VINTAGE" "bside|$BUNDLE_BSIDE"; do
+            plugin=${pair%%|*}; bundle=${pair#*|}
+            mkdir -p "merged-$plugin/$bundle"
+            cp -R "$plugin-x64/." "merged-$plugin/$bundle/"
+            cp -R "$plugin-arm64/Contents/aarch64-linux" "merged-$plugin/$bundle/Contents/"
+            ls -R "merged-$plugin/$bundle/Contents" | head -40
+            test -n "$(ls "merged-$plugin/$bundle"/Contents/x86_64-linux/*.so)" && test -n "$(ls "merged-$plugin/$bundle"/Contents/aarch64-linux/*.so)"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vst3-linux-universal
+          name: vst3-vintage-linux-universal
           retention-days: 7
-          path: merged
+          path: merged-vintage
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vst3-bside-linux-universal
+          retention-days: 7
+          path: merged-bside
 
   # AddressSanitizer + UndefinedBehaviorSanitizer on the unit and render-regression tests.
   # Clang on the newest-but-one LTS image: best diagnostics. Runs for linux, no-macos and all.
@@ -479,13 +532,19 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
 
-      # Only the test binaries: the plugin bundle and host_smoke are covered by the linux-x64 row.
+      # Only the test binaries: the plugin bundles and host_smoke are covered by the linux-x64 row. The
+      # JUCE-free B-Side executables and regressions (S1c, S2, S4) join when the build system has them.
       - name: Build
-        run: cmake --build build --parallel --target VintageSynthTests render_regression
+        run: |
+          targets="VintageSynthTests render_regression BSideTests"
+          for t in bside_unit bside_render bside_trace; do
+            ninja -C build -t targets all | grep -q "^$t:" && targets="$targets $t"
+          done
+          cmake --build build --parallel --target $targets
 
       - name: Compiler cache statistics
         if: always()
         run: ccache --show-stats || true
 
       - name: Tests (ASan + UBSan)
-        run: xvfb-run -a ctest --test-dir build --output-on-failure -E '^host_smoke$'
+        run: xvfb-run -a ctest --test-dir build --output-on-failure -E '^(host_smoke|host_smoke_bside)$'

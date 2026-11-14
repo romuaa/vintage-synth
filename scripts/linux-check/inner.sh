@@ -44,17 +44,19 @@ gcc)
   step "build everything, all errors shown (-k 0)"
   cmake --build "$b" --parallel "$jobs" -- -k 0
   ccache --show-stats || true
-  step "bundle and dependency check (as in CI)"
-  bundle=$(find "$b" -type d -name '*.vst3' | head -n 1)
-  [ -n "$bundle" ] || { echo "no .vst3 bundle found"; exit 1; }
-  echo "bundle: $bundle"; ls "$bundle/Contents"
-  so=$(ls "$bundle"/Contents/*-linux/*.so | head -n 1)
-  echo "architecture folder: $(basename "$(dirname "$so")")"
-  ldd "$so"
-  ! ldd "$so" | grep -q "not found"
-  ! ldd "$so" | grep -q "libstdc++"
-  echo "Highest glibc symbol version: $(objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
-  step "ctest under xvfb (includes host_smoke)"
+  step "bundle and dependency check of both plugins (as in CI)"
+  for name in "Exitium Vintage Synth.vst3" "Exitium B-Side.vst3"; do
+    bundle=$(find "$b" -type d -name "$name" | head -n 1)
+    [ -n "$bundle" ] || { echo "no $name bundle found"; exit 1; }
+    echo "bundle: $bundle"; ls "$bundle/Contents"
+    so=$(ls "$bundle"/Contents/*-linux/*.so | head -n 1)
+    echo "architecture folder: $(basename "$(dirname "$so")")"
+    ldd "$so"
+    ! ldd "$so" | grep -q "not found"
+    ! ldd "$so" | grep -q "libstdc++"
+    echo "Highest glibc symbol version: $(objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
+  done
+  step "ctest under xvfb (includes host_smoke and host_smoke_bside)"
   xvfb-run -a ctest --test-dir "$b" --output-on-failure
   ;;
 sanitize)
@@ -72,10 +74,18 @@ sanitize)
     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
     -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
   step "build test binaries"
-  cmake --build "$b" --parallel "$jobs" --target VintageSynthTests render_regression -- -k 0
+  # Every test executable: the two instruments' unit and integration tests and the render regression,
+  # plus the JUCE-free B-Side executables and regressions once they exist (S1c, S2, S4; same list as
+  # OPTIONAL_SANITIZER_TARGETS in scripts/preflight.sh, built when the generated build system has them).
+  targets="VintageSynthTests render_regression BSideTests"
+  for t in bside_unit bside_render bside_trace; do
+    ninja -C "$b" -t targets all | grep -q "^$t:" && targets="$targets $t"
+  done
+  # shellcheck disable=SC2086
+  cmake --build "$b" --parallel "$jobs" --target $targets -- -k 0
   ccache --show-stats || true
-  step "ctest (ASan + UBSan), host_smoke excluded as in CI"
-  xvfb-run -a ctest --test-dir "$b" --output-on-failure -E '^host_smoke$'
+  step "ctest (ASan + UBSan), host_smoke and host_smoke_bside excluded as in CI"
+  xvfb-run -a ctest --test-dir "$b" --output-on-failure -E '^(host_smoke|host_smoke_bside)$'
   ;;
 shell)
   cd "$src"

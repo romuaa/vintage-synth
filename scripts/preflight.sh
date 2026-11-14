@@ -17,13 +17,18 @@
 #                  shell syntax                                       (scripts/preflight/docs-check.sh)
 #   scan           Trivy (vuln, secret, misconfig; HIGH/CRITICAL fail) from its pinned container image,
 #                  scanning a read-only snapshot of the tracked files (same settings as security.yml)
-#   mac            macOS universal Release build, warnings as errors, lipo check of both slices,
-#                  full ctest, pluginval strictness 10
+#   mac            macOS universal Release build of both plugins, warnings as errors, lipo check of
+#                  both slices of each, full ctest, pluginval strictness 10 on each bundle
 #   linux          scripts/linux-check.sh: GCC, Linux ARM64 container, tests under xvfb, bundle check
 #   validator      Steinberg's VST3 validator, built once from the SDK commit pinned in build.yml (cached),
-#                  run on the bundle the `mac` step built; needs "N tests passed, 0 tests failed"
+#                  run on each bundle the `mac` step built; needs "N tests passed, 0 tests failed"
 #   mac-sanitize   arm64 RelWithDebInfo ASan+UBSan: unit tests and render regression
 #   linux-sanitize scripts/linux-check.sh --sanitize (clang ASan+UBSan, Ubuntu 24.04, ARM64)
+#
+# Two plugins (Exitium Vintage Synth, Exitium B-Side): every step covers both. While iterating,
+#   VS_PREFLIGHT_PLUGINS=vintage|bside|all   (default all) limits the pluginval and validator runs of
+# the `mac` and `validator` steps to one bundle (the build, ctest and the other steps always cover both).
+# The hand-over gate always runs `all`.
 #
 # Steps run one after another, not concurrently: the macOS builds and the Docker VM already use all
 # cores, and concurrent runs would only make timings and memory-pressure failures (the container's
@@ -56,6 +61,8 @@ TRIVY_IMAGE_VERSION=v0.76.2
 TRIVY_CACHE_VOLUME=vs-preflight-trivy-cache
 
 ALL_STEPS=(docs scan mac validator linux mac-sanitize linux-sanitize)
+PLUGINS=${VS_PREFLIGHT_PLUGINS:-all}
+case $PLUGINS in vintage|bside|all) ;; *) echo "preflight: VS_PREFLIGHT_PLUGINS must be vintage, bside or all (got '$PLUGINS')" >&2; exit 2 ;; esac
 DEFAULT_STEPS=("${ALL_STEPS[@]}")
 QUICK_STEPS=(docs mac linux)
 
@@ -160,6 +167,26 @@ ensure_out_ignored() {
 
 jobs_flag=() # ninja decides the parallelism (all cores).
 
+# The bundles this run checks, "Name.vst3" in build-tree order: one per plugin selected by
+# VS_PREFLIGHT_PLUGINS. bundle_path <build tree> <Name.vst3> prints the built bundle or nothing.
+selected_bundles() {
+  case $PLUGINS in
+    vintage) echo "Exitium Vintage Synth.vst3" ;;
+    bside) echo "Exitium B-Side.vst3" ;;
+    *) echo "Exitium Vintage Synth.vst3"; echo "Exitium B-Side.vst3" ;;
+  esac
+}
+bundle_path() { find "$1" -type d -name "$2" -path '*/Release/VST3/*' 2>/dev/null | head -n 1; }
+
+# Extra sanitizer targets that exist only once a later step has landed (the JUCE-free B-Side test
+# executables and the render and trace regressions of S1c, S2 and S4): built when the generated
+# build system knows them, so adding one to the build needs no edit here.
+OPTIONAL_SANITIZER_TARGETS="bside_unit bside_render bside_trace"
+existing_targets() { # existing_targets <build tree> <names...>: those that are targets of that tree
+  local b=$1 t; shift
+  for t in "$@"; do ninja -C "$b" -t targets all 2>/dev/null | grep -q "^$t:" && printf '%s\n' "$t"; done
+}
+
 # ---- steps ------------------------------------------------------------------------------------
 step_docs() { "$here/preflight/docs-check.sh"; }
 
@@ -194,19 +221,27 @@ step_mac() {
     -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
     -DCMAKE_COMPILE_WARNING_AS_ERROR=ON || return 1
   cmake --build "$b" -- -k 0 || return 1
-  local bundle bin archs
-  bundle=$(find "$b" -type d -name '*.vst3' -path '*/Release/VST3/*' | head -n 1)
-  [[ -n $bundle ]] || { echo "no .vst3 bundle found under $b"; return 1; }
-  bin=$(find "$bundle/Contents/MacOS" -type f | head -n 1)
-  archs=$(lipo -archs "$bin")
-  echo "bundle: $bundle"; echo "lipo: $archs"
-  [[ $archs == *arm64* && $archs == *x86_64* ]] || { echo "the plugin binary is not universal"; return 1; }
+  # Both plugins are always built and lipo-checked, whatever VS_PREFLIGHT_PLUGINS selects.
+  local name bundle bin archs
+  for name in "Exitium Vintage Synth.vst3" "Exitium B-Side.vst3"; do
+    bundle=$(bundle_path "$b" "$name")
+    [[ -n $bundle ]] || { echo "no $name bundle found under $b"; return 1; }
+    bin=$(find "$bundle/Contents/MacOS" -type f | head -n 1)
+    archs=$(lipo -archs "$bin")
+    echo "bundle: $bundle"; echo "lipo: $archs"
+    [[ $archs == *arm64* && $archs == *x86_64* ]] || { echo "the plugin binary $bin is not universal"; return 1; }
+  done
   ctest --test-dir "$b" --output-on-failure || return 1
   local pv=${PLUGINVAL:-}
   if [[ -z $pv ]]; then pv=$(fetch_pluginval macos) || return 1; fi
   [[ -x $pv ]] || { echo "PLUGINVAL='$pv' is not executable"; return 1; }
   echo "pluginval: $pv"
-  "$pv" --strictness-level 10 --validate-in-process --skip-gui-tests "$bundle"
+  # One bundle after the other (strictness 10, in process, no GUI tests).
+  while IFS= read -r name; do
+    bundle=$(bundle_path "$b" "$name")
+    echo "pluginval on: $bundle"
+    "$pv" --strictness-level 10 --validate-in-process --skip-gui-tests "$bundle" || return 1
+  done < <(selected_bundles)
 }
 
 step_mac_sanitize() {
@@ -220,9 +255,11 @@ step_mac_sanitize() {
     -DCMAKE_C_FLAGS="$san" -DCMAKE_CXX_FLAGS="$san" \
     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
     -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined" || return 1
-  cmake --build "$b" --target VintageSynthTests render_regression -- -k 0 || return 1
-  # The whole unit-test binary and the render-regression binary; host_smoke needs the plugin and is not built here.
-  ctest --test-dir "$b" --output-on-failure -E '^host_smoke$'
+  local targets=(VintageSynthTests render_regression BSideTests) extra
+  while IFS= read -r extra; do [[ -n $extra ]] && targets+=("$extra"); done < <(existing_targets "$b" $OPTIONAL_SANITIZER_TARGETS)
+  cmake --build "$b" --target "${targets[@]}" -- -k 0 || return 1
+  # Every test executable (not the plugins): host_smoke needs the bundles and is not built here.
+  ctest --test-dir "$b" --output-on-failure -E '^(host_smoke|host_smoke_bside)$'
 }
 
 step_linux() { need_docker; "$here/linux-check.sh"; }
@@ -231,8 +268,9 @@ step_linux_sanitize() { need_docker; "$here/linux-check.sh" --sanitize; }
 # VST3 validator. Built once from the SDK commit pinned in build.yml (same steps and options as the CI
 # job), cached by SHA outside the repository. It is run directly against the bundle the `mac` step
 # built (rather than via -DVS_VST3_VALIDATOR in the mac configure) so that step's build tree stays
-# the plain, CI-identical configuration; the pass criterion is the same as the ctest test
-# `vst3_validator`: exit 0 and "Result: N tests passed, 0 tests failed" with N >= 1.
+# the plain, CI-identical configuration; the pass criterion is the same as the ctest tests
+# `vst3_validator` and `vst3_validator_bside`: exit 0 and "Result: N tests passed, 0 tests failed"
+# with N >= 1, on every selected bundle.
 step_validator() {
   need git "needed to fetch the VST3 SDK"; need cmake "brew install cmake ninja"; need ninja "brew install cmake ninja"
   local sha tag exe=${VST3_VALIDATOR:-}
@@ -262,14 +300,17 @@ step_validator() {
     fi
   fi
   [[ -x $exe ]] || { echo "validator '$exe' is not executable"; return 1; }
-  local bundle; bundle=$(find "$OUT/mac" -type d -name '*.vst3' -path '*/Release/VST3/*' 2>/dev/null | head -n 1)
-  [[ -n $bundle ]] || { echo "no bundle from the mac step under $OUT/mac: run '--only mac' first (or '--only mac,validator')"; return 1; }
-  echo "validator: $exe"; echo "bundle:    $bundle"
-  local log; log=$(mktemp "${TMPDIR:-/tmp}/vs-validator.XXXXXX")
-  "$exe" "$bundle" 2>&1 | tee "$log"; local rc=${PIPESTATUS[0]}
-  local line; line=$(grep -E '^Result: [1-9][0-9]* tests passed, 0 tests failed' "$log" | head -n 1); rm -f "$log"
-  [[ $rc -eq 0 && -n $line ]] || { echo "validator failed (exit $rc, no passing summary line)"; return 1; }
-  echo "validator summary: $line"
+  local name bundle log rc line
+  while IFS= read -r name; do
+    bundle=$(bundle_path "$OUT/mac" "$name")
+    [[ -n $bundle ]] || { echo "no $name bundle from the mac step under $OUT/mac: run '--only mac' first (or '--only mac,validator')"; return 1; }
+    echo "validator: $exe"; echo "bundle:    $bundle"
+    log=$(mktemp "${TMPDIR:-/tmp}/vs-validator.XXXXXX")
+    "$exe" "$bundle" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
+    line=$(grep -E '^Result: [1-9][0-9]* tests passed, 0 tests failed' "$log" | head -n 1); rm -f "$log"
+    [[ $rc -eq 0 && -n $line ]] || { echo "validator failed on $name (exit $rc, no passing summary line)"; return 1; }
+    echo "validator summary ($name): $line"
+  done < <(selected_bundles)
 }
 
 # ---- run --------------------------------------------------------------------------------------
