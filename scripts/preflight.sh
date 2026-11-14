@@ -94,6 +94,12 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# The hand-over gate covers both plugins. A narrower VS_PREFLIGHT_PLUGINS (it may be left exported in a
+# shell) is only accepted for an iteration run (--quick or --only), never for the default or --full run.
+if [[ $PLUGINS != all && $mode_set != quick && ${#only[@]} -eq 0 ]]; then
+  die "VS_PREFLIGHT_PLUGINS=$PLUGINS limits the gate to one plugin: allowed only with --quick or --only (the default and --full runs always cover both); unset it"
+fi
+
 valid_step() { local s; for s in "${ALL_STEPS[@]}"; do [[ $s == "$1" ]] && return 0; done; return 1; }
 for s in "${only[@]+"${only[@]}"}" "${skip[@]+"${skip[@]}"}"; do
   valid_step "$s" || die "unknown step '$s' (steps: ${ALL_STEPS[*]})"
@@ -178,15 +184,6 @@ selected_bundles() {
 }
 bundle_path() { find "$1" -type d -name "$2" -path '*/Release/VST3/*' 2>/dev/null | head -n 1; }
 
-# Extra sanitizer targets that exist only once a later step has landed (the JUCE-free B-Side test
-# executables and the render and trace regressions of S1c, S2 and S4): built when the generated
-# build system knows them, so adding one to the build needs no edit here.
-OPTIONAL_SANITIZER_TARGETS="bside_unit bside_render bside_trace"
-existing_targets() { # existing_targets <build tree> <names...>: those that are targets of that tree
-  local b=$1 t; shift
-  for t in "$@"; do ninja -C "$b" -t targets all 2>/dev/null | grep -q "^$t:" && printf '%s\n' "$t"; done
-}
-
 # ---- steps ------------------------------------------------------------------------------------
 step_docs() { "$here/preflight/docs-check.sh"; }
 
@@ -255,10 +252,12 @@ step_mac_sanitize() {
     -DCMAKE_C_FLAGS="$san" -DCMAKE_CXX_FLAGS="$san" \
     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
     -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined" || return 1
-  local targets=(VintageSynthTests render_regression BSideTests) extra
-  while IFS= read -r extra; do [[ -n $extra ]] && targets+=("$extra"); done < <(existing_targets "$b" $OPTIONAL_SANITIZER_TARGETS)
-  cmake --build "$b" --target "${targets[@]}" -- -k 0 || return 1
-  # Every test executable (not the plugins): host_smoke needs the bundles and is not built here.
+  # shellcheck source=sanitize-targets.sh
+  . "$here/sanitize-targets.sh"
+  san_select "$b" || return 1
+  cmake --build "$b" --target "${SAN_TARGETS[@]}" -- -k 0 || return 1
+  san_report "$b" || return 1
+  # Every test executable (not the plugins): host_smoke and host_smoke_bside need the bundles and are not built here.
   ctest --test-dir "$b" --output-on-failure -E '^(host_smoke|host_smoke_bside)$'
 }
 
@@ -356,6 +355,10 @@ printf '%-16s %-10s %s\n' STEP RESULT DURATION
 for i in "${!names[@]}"; do printf '%-16s %-10s %s\n' "${names[$i]}" "${results[$i]}" "$(fmt_dur "${durs[$i]}")"; done
 printf '%-16s %-10s %s\n' TOTAL "$([[ $overall -eq 0 ]] && echo PASS || echo FAIL)" "$(fmt_dur $(( SECONDS - t_all )))"
 echo "machine load at end: $(uptime | sed 's/.*load averages*: //')"
+case $PLUGINS in
+  all) echo "plugins covered by pluginval and the validator: both (Exitium Vintage Synth, Exitium B-Side)" ;;
+  *) echo "plugins covered by pluginval and the validator: ONLY $PLUGINS (VS_PREFLIGHT_PLUGINS): this is not the hand-over gate" ;;
+esac
 echo
 echo "Confirmed by CI only (when CI is available): Windows x64/ARM64 (MSVC) and Linux x86_64."
 echo "Confirm those with one CI dispatch: gh workflow run build.yml --ref <branch> -f targets=no-macos"

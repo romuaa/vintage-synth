@@ -113,10 +113,9 @@ endif()
 # Golden-render regression harness (ctest label "render").
 add_subdirectory(render_regression)
 
-# Exitium B-Side: its own test core and test executables (tests/bside/CMakeLists.txt).
-if(VS_BUILD_BSIDE)
-    add_subdirectory(bside)
-endif()
+# Exitium B-Side (tests/bside/CMakeLists.txt): the JUCE-free unit tests (bside_unit: table reader/writer,
+# trace formats, comparer; always built) and, with VS_BUILD_BSIDE, the plugin shell's test core and BSideTests.
+add_subdirectory(bside)
 
 # Steinberg VST3 validator (optional). Pass the path of a built `validator` binary, e.g. from CI:
 #   cmake ... -DVS_VST3_VALIDATOR=/path/to/validator

@@ -105,6 +105,12 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
   owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
+- **B-Side S1c (JUCE-free part) is merged to `main`** (owner approved 2026-11-14): patch table
+  reader, writer and compiler (`source/bside/program/`), trace, reference and spec formats with
+  replay driver and comparer (`source/bside/trace/`), shared scanner (`source/bside/text/`), test
+  target `bside_unit`, adapter interface `docs/bside-oracle-adapter.md`. Reviewed twice with
+  independent fuzzing; guarantees in architecture 8.13. Not done: the preset-model extension (8.8)
+  and any reference data.
 - **B-Side S1a is merged to `main`** (owner approved 2026-11-14): the shared processor skeleton
   `source/common/shell/` (pure refactor; raw renders, parameter list, states and preset files
   byte-identical, shown by the author and again by an independent reviewer). Contract as built:
@@ -135,6 +141,7 @@ None right now. When a new one comes up, list it here; once decided, move it to 
      the rule that parameters missing from a session load at their defaults (2026-11-14).
   5. S1a: the shared processor skeleton, a header-only CRTP template that MSVC has never
      compiled (highest portability risk on this list) (2026-11-14).
+  6. S1c: the B-Side table and trace readers and `bside_unit` (2026-11-14).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -178,6 +185,11 @@ source/vintage/   this instrument: PluginProcessor.* (VintageSynthProcessor : sh
   engine/         Voice, Part, Modulation (shared per-part modulation)
   params/         PartParamList.h (X-macro list of all per-part params), PartMappings.h,
                   ParameterLayout (assembles the layout), StateVersion.h
+source/bside/     second instrument (JUCE-free parts so far): text/ (strict-reader plumbing), program/
+                  (patch table reader, writer, compiled Program), trace/ (trace, reference and spec
+                  formats, replay driver, comparer); must not include anything from source/vintage/
+tests/bside/      bside_unit (Catch2, no JUCE; ctest label "bside"); `bside_unit "[.fuzz-long]"` is
+                  the hidden 10^6-case fuzz run (allocation bounds measured only without ASan)
 tests/dsp_unit/  Catch2 tests; RenderDemo.cpp is a hidden "[.render]" audition render
 tests/benchmarks/ voice_bench (CPU cost per voice)
 tests/host_smoke/ loads the built .vst3 through JUCE's VST3 host (ctest "host_smoke"; runs on every CI target)

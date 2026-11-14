@@ -16,6 +16,25 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | `git status` fails in a worktree whose submodule directories are replaced by symlinks. | Git expects a gitlink directory, not a symlink. | `git status --short --ignore-submodules=all`. |
 | The gate-time baseline and the new numbers are noisy. | Other agents build on the same machine and share the Docker volume and its compiler cache. | Report the load average next to each time and compare steps, not totals. |
 
+## B-Side S1c: text readers and their tests (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Error columns pointed at the wrong place in some messages. | `errors.add (line, c.column(), ..., tokenOrChar (c))`: the order in which function arguments are evaluated is unspecified, so the cursor had already moved when `c.column()` ran. | Read the column into a local before anything that advances the cursor. Never call a consuming function twice in one expression either (`c.token().empty() ? x : c.token()` consumed the token and returned an empty second one). |
+| The note name `=C#6` was cut at the `#` (a comment). | The grammar allows a comment right after any token. | In a pitch token that starts with `=`, a `#` in the second character belongs to the note name; everywhere else `#` ends the token. |
+| A test macro with a parameter called `what` broke `e.what`. | The preprocessor replaced the member name. | Give macro parameters names no member shares (`phrase`). |
+| Cross-correlation "found" a delay of -9 for identical 10-sample signals and -256 for silence. | The overlap of one sample correlates perfectly by chance; and silence ties at every lag. | Ignore lags whose overlap is under half of the signal; on a tie take the smallest lag. |
+| The note name `=a3#` must not pull a later `#` into the token. | The first rule kept a `#` in the second character of any `=` token. | A `#` belongs to a note only directly after the note letter. |
+| The contract's own example trace is rejected by a plain 64-byte line limit. | Its comment lines are 85–105 bytes. | The limit applies to the statement (before `#`); the whole line may be 256 bytes. When a contract example and a contract limit disagree, make the example a test. |
+| A hand-counted column in a test is wrong half the time. | Counting characters in a string literal by eye. | Write the test with the intended message first, run it, and check each reported position against the text before accepting it; do not "fix" the reader to match a miscounted test. |
+| A fuzz test that only checks "no crash" misses leaks of work, not memory. | A hang or quadratic parser passes it. | Cap the wall time per input and count the bytes allocated per call with a replaced global `operator new` in the test executable (works under ASan); assert both. |
+| The writer produced text the reader rejected (a compact 197-byte row became 233 bytes). | The canonical form is longer than input (indent, `, `, `set 25%` -> `set 1024`) while the reader bounds the line, so "reader output is writable" and "writer output is readable" are separate properties. | State the round-trip property for **both** sides, put every limit of the text format into `validate()`, and fuzz it on hostile `Program` bytes as well as on text. |
+| A "finite" `repeat` loop of rows without delay was accepted and could run more than 10^9 rows in one tick. | The loop check ignored the repeat's jump edge. | A bound you rely on (rows per tick) needs a proof and a model test, not a runtime cap as the only guard: the check is now acyclicity of the delay-0 graph, and the model runs every start row with random counters. |
+| A valid trace had a reference file the reader refused. | The trace's write limit (10^6) and the reference's file limit (16 MB) were chosen separately. | Derive file limits from count limits with a `static_assert` of the longest line, and make every writer refuse what its reader would. |
+| Replacing the global `operator new` in a test hides small under-runs from AddressSanitizer. | The replacement allocates with a header, so ASan sees valid memory. | Measure allocation bounds only in builds without ASan; leave `operator new` alone under it. |
+| `snprintf("%.1f")` in a report depends on the C locale. | Decimal comma. | Format numbers yourself (integer arithmetic) when the text is compared or parsed; `std::to_chars` for doubles is not available at the macOS 11 deployment target. |
+| `git status` in a worktree with symlinked submodules shows an error about `external/Catch2`. | Git expects a submodule directory, not a symlink. | Harmless; commit explicit paths only and never `git add -A`. |
+
 ## B-Side S1a: shared processor skeleton (2026-11-14)
 
 | Problem | Cause | Fix / rule |

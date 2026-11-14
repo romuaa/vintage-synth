@@ -74,15 +74,12 @@ sanitize)
     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
     -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
   step "build test binaries"
-  # Every test executable: the two instruments' unit and integration tests and the render regression,
-  # plus the JUCE-free B-Side executables and regressions once they exist (S1c, S2, S4; same list as
-  # OPTIONAL_SANITIZER_TARGETS in scripts/preflight.sh, built when the generated build system has them).
-  targets="VintageSynthTests render_regression BSideTests"
-  for t in bside_unit bside_render bside_trace; do
-    ninja -C "$b" -t targets all | grep -q "^$t:" && targets="$targets $t"
-  done
-  # shellcheck disable=SC2086
-  cmake --build "$b" --parallel "$jobs" --target $targets -- -k 0
+  # The test targets and the report of what runs come from the one list shared with preflight.sh
+  # (mac-sanitize) and the CI job: every required target must exist, every built one must have tests.
+  . /repo/scripts/sanitize-targets.sh
+  san_select "$b"
+  cmake --build "$b" --parallel "$jobs" --target "${SAN_TARGETS[@]}" -- -k 0
+  san_report "$b"
   ccache --show-stats || true
   step "ctest (ASan + UBSan), host_smoke and host_smoke_bside excluded as in CI"
   xvfb-run -a ctest --test-dir "$b" --output-on-failure -E '^(host_smoke|host_smoke_bside)$'
