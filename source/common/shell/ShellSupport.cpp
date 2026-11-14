@@ -1,7 +1,18 @@
 #include "common/shell/ShellSupport.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 namespace vs::shell
 {
+void reportFatalConfigError (const char* what) noexcept
+{
+    std::fprintf (stderr, "Exitium plugin: setup error, the plugin cannot start: %s\n", what);
+    std::fflush (stderr);
+    juce::Logger::writeToLog (juce::String ("Exitium plugin: setup error, the plugin cannot start: ") + what);
+    std::abort();
+}
+
 void addMissingParameters (juce::ValueTree& state, const juce::Array<juce::AudioProcessorParameter*>& params)
 {
     static const juce::Identifier paramType ("PARAM"), idProperty ("id"); // JUCE's state format

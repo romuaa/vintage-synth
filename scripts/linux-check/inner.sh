@@ -44,17 +44,19 @@ gcc)
   step "build everything, all errors shown (-k 0)"
   cmake --build "$b" --parallel "$jobs" -- -k 0
   ccache --show-stats || true
-  step "bundle and dependency check (as in CI)"
-  bundle=$(find "$b" -type d -name '*.vst3' | head -n 1)
-  [ -n "$bundle" ] || { echo "no .vst3 bundle found"; exit 1; }
-  echo "bundle: $bundle"; ls "$bundle/Contents"
-  so=$(ls "$bundle"/Contents/*-linux/*.so | head -n 1)
-  echo "architecture folder: $(basename "$(dirname "$so")")"
-  ldd "$so"
-  ! ldd "$so" | grep -q "not found"
-  ! ldd "$so" | grep -q "libstdc++"
-  echo "Highest glibc symbol version: $(objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
-  step "ctest under xvfb (includes host_smoke)"
+  step "bundle and dependency check of both plugins (as in CI)"
+  for name in "Exitium Vintage Synth.vst3" "Exitium B-Side.vst3"; do
+    bundle=$(find "$b" -type d -name "$name" | head -n 1)
+    [ -n "$bundle" ] || { echo "no $name bundle found"; exit 1; }
+    echo "bundle: $bundle"; ls "$bundle/Contents"
+    so=$(ls "$bundle"/Contents/*-linux/*.so | head -n 1)
+    echo "architecture folder: $(basename "$(dirname "$so")")"
+    ldd "$so"
+    ! ldd "$so" | grep -q "not found"
+    ! ldd "$so" | grep -q "libstdc++"
+    echo "Highest glibc symbol version: $(objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
+  done
+  step "ctest under xvfb (includes host_smoke and host_smoke_bside)"
   xvfb-run -a ctest --test-dir "$b" --output-on-failure
   ;;
 sanitize)
@@ -72,10 +74,15 @@ sanitize)
     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
     -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
   step "build test binaries"
-  cmake --build "$b" --parallel "$jobs" --target VintageSynthTests render_regression bside_unit -- -k 0
+  # The test targets and the report of what runs come from the one list shared with preflight.sh
+  # (mac-sanitize) and the CI job: every required target must exist, every built one must have tests.
+  . /repo/scripts/sanitize-targets.sh
+  san_select "$b"
+  cmake --build "$b" --parallel "$jobs" --target "${SAN_TARGETS[@]}" -- -k 0
+  san_report "$b"
   ccache --show-stats || true
-  step "ctest (ASan + UBSan), host_smoke excluded as in CI"
-  xvfb-run -a ctest --test-dir "$b" --output-on-failure -E '^host_smoke$'
+  step "ctest (ASan + UBSan), host_smoke and host_smoke_bside excluded as in CI"
+  xvfb-run -a ctest --test-dir "$b" --output-on-failure -E '^(host_smoke|host_smoke_bside)$'
   ;;
 shell)
   cd "$src"

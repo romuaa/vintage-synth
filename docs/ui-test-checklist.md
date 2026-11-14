@@ -7,6 +7,19 @@ section 9). Each line is one check with its expected result.
 
 The host has no CPU meter: use Activity Monitor, and `voice_bench` for budgeting.
 
+## B-Side shell (until its chip sound exists)
+Open it with `scripts/dev-host.sh --plugin bside` (the "Exitium B-Side" node). Its sound is a sine per
+key (a placeholder), so these checks are about the plugin around it; the general sections below apply too.
+- Play keys: a sine per note, up to 16 at once, soft 5 ms start and stop, no clicks. Pitch bend moves it ±2 semitones.
+- The editor shows the preset bar above 75 generic parameters (master volume, key mode, split point,
+  balance, effects, arpeggiator/sequencer, limiter). The program menu lists 64 programs, all "Init".
+- Set Key Mode to Split or Dual: both parts sound (identically); the split point and balance act.
+- Switch the arpeggiator on and hold a chord: it arpeggiates the sine; reverb, delay and chorus act.
+- Save a program and a bank from the preset bar: files end in `.bsprog` and `.bsbank`, in `Documents/Exitium/B-Side/`.
+  A Vintage Synth program file refuses to load into it, and the other way round.
+- Bypass the plugin while holding a chord: it fades out and stays silent; un-bypass: nothing hangs.
+- Save the session, reload it: all values come back. Both plugins in one project: independent.
+
 ## Editor window
 - Open and close the editor 50 times quickly: no crash, no memory growth, it reopens at the same size.
 - Resize the editor (when resizable) and the host window: the layout follows, no repaint artefacts.

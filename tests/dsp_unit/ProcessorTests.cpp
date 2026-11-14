@@ -185,3 +185,12 @@ TEST_CASE ("VST3 parameter IDs: hashes of the string IDs, all distinct (order-in
     }
     CHECK (ids.size() == static_cast<size_t> (proc.getParameters().size()));
 }
+
+TEST_CASE ("Processor: the name comes from the instrument and equals the plugin's name", "[processor][identity]")
+{
+    JuceEnv env;
+    vs::VintageSynthProcessor proc;
+    CHECK (proc.getName() == "Exitium Vintage Synth");
+    CHECK (proc.getName() == JucePlugin_Name);
+    CHECK (juce::String (vs::VintageSynthProcessor::kName) == JucePlugin_Name);
+}

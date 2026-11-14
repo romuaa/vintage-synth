@@ -132,13 +132,12 @@ void BoundParam::bind (juce::AudioProcessorValueTreeState& state, const juce::St
 {
     auto* p = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter (id));
     value = state.getRawParameterValue (id);
-    jassert (p != nullptr && value != nullptr);
-    if (p != nullptr)
-    {
-        lo = p->getNormalisableRange().start;
-        hi = p->getNormalisableRange().end;
-        def = p->convertFrom0to1 (p->getDefaultValue());
-    }
+    // Every build type, not only debug: a missing parameter would otherwise be a null read much later.
+    if (p == nullptr || value == nullptr)
+        throw ConfigError ("the parameter layout has no parameter '" + id.toStdString() + "'");
+    lo = p->getNormalisableRange().start;
+    hi = p->getNormalisableRange().end;
+    def = p->convertFrom0to1 (p->getDefaultValue());
 }
 
 juce::String noteName (int note)

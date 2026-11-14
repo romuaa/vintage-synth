@@ -1,6 +1,8 @@
 // Loads the built .vst3 through JUCE's VST3 host, like a DAW would, and checks the basics:
 // identity, parameter count, rendering at several rates/block sizes, silence after release,
-// and state round-trip between two instances. Usage: host_smoke "<path>/Exitium Vintage Synth.vst3"
+// and state round-trip between two instances.
+//   host_smoke [--profile vintage|bside] "<path>/<plugin>.vst3"
+// The profile (default: vintage) says which plugin is expected: its name, parameter count and programs.
 #include <juce_audio_processors_headless/juce_audio_processors_headless.h>
 #include <juce_events/juce_events.h>
 
@@ -38,6 +40,25 @@ juce::Array<juce::AudioProcessorParameter*> ownParameters (juce::AudioPluginInst
     return result;
 }
 
+/** What a plugin of this repository must look like through a host. */
+struct Profile
+{
+    const char* name;           // the plugin's name in the bundle
+    int parameters;             // host-visible parameters of our own (no wrapper parameters)
+    int programs;               // the factory bank
+    const char* program0;       // names of programs 0, 1, 63 and 2 (the program set in the test)
+    const char* program1;
+    const char* program63;
+    const char* program2;
+    // Vintage only: a parameter that program 2 (A3) moves, to prove that a program's values are applied.
+    const char* cutoffParameter;
+};
+
+// 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3 + 2 = 172 (docs/architecture.md 6c.2); B-Side's shell: 75 (8.3).
+constexpr Profile kVintage { "Exitium Vintage Synth", 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3 + 2, 64, "Init", "Copper Fanfare", "Chorus Garden",
+                             "Low Sun Horns", "Lower VCF Cutoff" };
+constexpr Profile kBSide { "Exitium B-Side", 75, 64, "Init", "Init", "Init", "Init", nullptr };
+
 RenderStats render (juce::AudioPluginInstance& p, int numSamples, int blockSize, juce::MidiBuffer firstBlockMidi)
 {
     RenderStats st;
@@ -63,9 +84,22 @@ RenderStats render (juce::AudioPluginInstance& p, int numSamples, int blockSize,
 
 int main (int argc, char** argv)
 {
-    if (argc < 2)
+    const Profile* profile = &kVintage;
+    const char* bundle = nullptr;
+    for (int i = 1; i < argc; ++i)
     {
-        std::printf ("usage: host_smoke <plugin.vst3>\n");
+        const juce::String arg (argv[i]);
+        if (arg == "--profile" && i + 1 < argc)
+        {
+            const juce::String name (argv[++i]);
+            profile = name == "vintage" ? &kVintage : name == "bside" ? &kBSide : nullptr;
+        }
+        else
+            bundle = argv[i];
+    }
+    if (bundle == nullptr || profile == nullptr)
+    {
+        std::printf ("usage: host_smoke [--profile vintage|bside] <plugin.vst3>\n");
         return 2;
     }
 
@@ -82,13 +116,13 @@ int main (int argc, char** argv)
         return 1;
 
     juce::OwnedArray<juce::PluginDescription> types;
-    vst3->findAllTypesForFile (types, juce::String::fromUTF8 (argv[1]));
+    vst3->findAllTypesForFile (types, juce::String::fromUTF8 (bundle));
     check (types.size() == 1, "exactly one plugin in bundle (" + juce::String (types.size()) + ")");
     if (types.isEmpty())
         return 1;
 
     const auto& desc = *types[0];
-    check (desc.name == "Exitium Vintage Synth", "name: " + desc.name);
+    check (desc.name == profile->name, "name: " + desc.name);
     check (desc.manufacturerName == "Exitium", "vendor: " + desc.manufacturerName);
     check (desc.isInstrument, "is instrument");
 
@@ -99,7 +133,7 @@ int main (int argc, char** argv)
         return 1;
 
     const int numParams = ownParameters (*plugin).size();
-    check (numParams == 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3 + 2, "own parameter count " + juce::String (numParams)
+    check (numParams == profile->parameters, "own parameter count " + juce::String (numParams)
                                         + " (total incl. wrapper params " + juce::String (plugin->getParameters().size()) + ")");
 
     // Host program list: the 64 programs of the factory bank, through the VST3 wrapper's program list.
@@ -109,24 +143,27 @@ int main (int argc, char** argv)
         for (auto* param : plugin->getParameters())
             hasProgramParam = hasProgramParam || param->getName (100) == "Program";
         check (hasProgramParam, "the wrapper's Program parameter exists (host program list)");
-        check (plugin->getNumPrograms() == 64, "64 programs: " + juce::String (plugin->getNumPrograms()));
+        check (plugin->getNumPrograms() == profile->programs, juce::String (profile->programs) + " programs: " + juce::String (plugin->getNumPrograms()));
         check (plugin->getCurrentProgram() == 0, "current program 0");
-        check (plugin->getProgramName (0) == "Init", "program 0 is Init: " + plugin->getProgramName (0));
-        check (plugin->getProgramName (1) == "Copper Fanfare", "program 1 name: " + plugin->getProgramName (1));
-        check (plugin->getProgramName (63) == "Chorus Garden", "program 63 name: " + plugin->getProgramName (63));
+        check (plugin->getProgramName (0) == profile->program0, "program 0 is Init: " + plugin->getProgramName (0));
+        check (plugin->getProgramName (1) == profile->program1, "program 1 name: " + plugin->getProgramName (1));
+        check (plugin->getProgramName (63) == profile->program63, "program 63 name: " + plugin->getProgramName (63));
 
         const auto cutoffOf = [&] {
             for (auto* param : ownParameters (*plugin))
-                if (param->getName (100) == "Lower VCF Cutoff")
+                if (param->getName (100) == profile->cutoffParameter)
                     return param->getValue();
             return -1.0f;
         };
-        const float before = cutoffOf();
-        plugin->setCurrentProgram (2); // A3 Low Sun Horns: a darker filter than the default
+        const float before = profile->cutoffParameter != nullptr ? cutoffOf() : 0.0f;
+        plugin->setCurrentProgram (2); // Vintage A3 Low Sun Horns: a darker filter than the default
         check (plugin->getCurrentProgram() == 2, "setCurrentProgram(2) sticks: " + juce::String (plugin->getCurrentProgram()));
-        const float after = cutoffOf();
-        check (before > 0.55f && after < 0.35f, "the program's parameters were applied: cutoff " + juce::String (before) + " -> " + juce::String (after));
-        check (plugin->getProgramName (2) == "Low Sun Horns", "program 2 name: " + plugin->getProgramName (2));
+        if (profile->cutoffParameter != nullptr)
+        {
+            const float after = cutoffOf();
+            check (before > 0.55f && after < 0.35f, "the program's parameters were applied: cutoff " + juce::String (before) + " -> " + juce::String (after));
+        }
+        check (plugin->getProgramName (2) == profile->program2, "program 2 name: " + plugin->getProgramName (2));
     }
 
     for (const double sr : { 44100.0, 48000.0, 96000.0 })

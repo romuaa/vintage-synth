@@ -12,6 +12,7 @@
 #include "common/params/ParamFactory.h"
 
 #include <cstring>
+#include <memory>
 #include <span>
 
 namespace vs::presets
@@ -32,6 +33,30 @@ inline constexpr const char* kPresetInfoType = "Preset"; // child of the state t
     while reconnecting its parameters; this makes the rule explicit and independent of that
     internal. Tested in OutputStageTests, "State: a parameter missing ...".) */
 void addMissingParameters (juce::ValueTree& state, const juce::Array<juce::AudioProcessorParameter*>& params);
+
+/** Reports a setup mistake (ConfigError, ParamFactory.h) and aborts the process. Used by the plugin
+    entry point only: an exception cannot be allowed to cross the plugin's C boundary into a host
+    (the host would terminate with no explanation at all, or worse, unwind through its own frames),
+    so the entry point says what is wrong, in the log and on stderr, and stops. [[noreturn]]. */
+[[noreturn]] void reportFatalConfigError (const char* what) noexcept;
+
+/** The body of every instrument's createPluginFilter(): constructs the processor, checks that its
+    construction is complete (every shared parameter bound, initPresets called) and turns a setup
+    mistake into reportFatalConfigError. Any other exception propagates as before. */
+template <class Processor>
+juce::AudioProcessor* createPluginProcessor()
+{
+    try
+    {
+        auto processor = std::make_unique<Processor>();
+        processor->verifyConstructed();
+        return processor.release();
+    }
+    catch (const ConfigError& e)
+    {
+        reportFatalConfigError (e.what());
+    }
+}
 
 /** The shared placeholder editor (InstrumentEditor.h; declared here to keep the GUI headers out of
     the processor's header). Message thread. */

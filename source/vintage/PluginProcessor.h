@@ -38,6 +38,9 @@ public:
 
     static constexpr std::uint32_t kLowerSeed = 0x1001u, kUpperSeed = 0x2001u;
 
+    /** The plugin's name as hosts list it (the skeleton's getName); equals the build's JucePlugin_Name (tested). */
+    static constexpr const char* kName = "Exitium Vintage Synth";
+
     // State identity (used by the skeleton's get/setStateInformation).
     static constexpr const char* kStateTag = "VintageSynthState";
     static constexpr int kStateVersion = vs::kStateVersion;

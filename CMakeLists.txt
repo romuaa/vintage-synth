@@ -14,6 +14,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 option(VS_BUILD_TESTS "Build unit tests" ON)
+# The second plugin, Exitium B-Side (docs/architecture.md section 8). OFF builds exactly what the
+# repository built before it existed: Exitium Vintage Synth and its tests.
+option(VS_BUILD_BSIDE "Also build the second plugin, Exitium B-Side" ON)
 
 add_subdirectory(external/JUCE)
 
@@ -42,9 +45,9 @@ juce_add_plugin(VintageSynth
 # Our sources. Also compiled (without LTO) into vs_test_core for the tests; see tests/CMakeLists.txt.
 #   VS_COMMON_SOURCES   shared by every instrument in this repository (source/common/)
 #   VS_VINTAGE_SOURCES  this instrument only (source/vintage/)
-# A second instrument adds its own juce_add_plugin target and its own VS_<NAME>_SOURCES list and
-# links VS_COMMON_SOURCES the same way as below. Everything is included as "common/..." or
-# "vintage/..." with source/ as the include root.
+# The second instrument (B-Side, below) has its own juce_add_plugin target and its own source list
+# (BS_SOURCES) and compiles VS_COMMON_SOURCES the same way. Everything is included as "common/...",
+# "vintage/..." or "bside/..." with source/ as the include root.
 set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/params/ParamFactory.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/params/FxArpParams.cpp
@@ -80,39 +83,87 @@ juce_add_binary_data(VintageSynthFactoryData
     HEADER_NAME FactoryData.h
     NAMESPACE   vs_factory
     SOURCES     ${VS_FACTORY_PRESETS})
-set_target_properties(VintageSynthFactoryData PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(VintageSynth PRIVATE VintageSynthFactoryData)
+# What every plugin target of this repository shares (one call per plugin): its factory data, the
+# include root, compile definitions, link libraries, plugin-only link-time optimisation, warnings as
+# errors, and the Linux static C++ runtime. JUCE modules are compiled into each plugin target and the
+# JucePlugin_* definitions differ per plugin, so there is deliberately no static library of our code
+# shared between the plugins.
+function(vs_configure_plugin target factory_data)
+    set_target_properties(${factory_data} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(${target} PRIVATE ${factory_data})
 
-target_include_directories(VintageSynth PRIVATE source)
+    target_include_directories(${target} PRIVATE source)
 
-target_compile_definitions(VintageSynth PUBLIC
-    JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0
-    JUCE_VST3_CAN_REPLACE_VST2=0)
+    target_compile_definitions(${target} PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0)
 
-target_link_libraries(VintageSynth
-    PRIVATE
-        juce::juce_audio_utils
-        juce::juce_dsp
-    PUBLIC
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_warning_flags)
+    target_link_libraries(${target}
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_dsp
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
 
-# Link-time optimisation for the shipped plugin only. PRIVATE, so it doesn't leak into anything
-# that links VintageSynth; tests use vs_test_core instead and skip the slow LTCG/LTO link.
-target_link_libraries(VintageSynth PRIVATE juce::juce_recommended_lto_flags)
-if(TARGET VintageSynth_VST3)
-    target_link_libraries(VintageSynth_VST3 PRIVATE juce::juce_recommended_lto_flags)
-endif()
+    # Link-time optimisation for the shipped plugin only. PRIVATE, so it doesn't leak into anything
+    # that links the plugin; tests use a *_test_core library instead and skip the slow LTCG/LTO link.
+    target_link_libraries(${target} PRIVATE juce::juce_recommended_lto_flags)
+    if(TARGET ${target}_VST3)
+        target_link_libraries(${target}_VST3 PRIVATE juce::juce_recommended_lto_flags)
+    endif()
 
-set_target_properties(VintageSynth PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+    set_target_properties(${target} PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
-# Linux: link the C++ runtime statically into the shipped plugin, so it depends only on glibc and
-# the usual system libraries (a host may load a different libstdc++ than the one we built with).
-# --exclude-libs keeps the statically linked runtime's symbols out of the plugin's exports.
-if(UNIX AND NOT APPLE AND TARGET VintageSynth_VST3)
-    target_link_options(VintageSynth_VST3 PRIVATE
-        -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL)
+    # Linux: link the C++ runtime statically into the shipped plugin, so it depends only on glibc and
+    # the usual system libraries (a host may load a different libstdc++ than the one we built with).
+    # --exclude-libs keeps the statically linked runtime's symbols out of the plugin's exports.
+    if(UNIX AND NOT APPLE AND TARGET ${target}_VST3)
+        target_link_options(${target}_VST3 PRIVATE
+            -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL)
+    endif()
+endfunction()
+
+vs_configure_plugin(VintageSynth VintageSynthFactoryData)
+
+# ---- Exitium B-Side (docs/architecture.md 8.1) ----
+# BS_SOURCES: the .cpp files of source/bside/. S1c adds source/bside/program/ and source/bside/trace/
+# (JUCE-free), S2 adds source/bside/chip/; they join this list. BS_PLUGIN_SOURCES is what the plugin and
+# bs_test_core (tests/bside) compile; the plugin target never sees a Vintage source and vice versa.
+if(VS_BUILD_BSIDE)
+    juce_add_plugin(BSide
+        PRODUCT_NAME                "Exitium B-Side"
+        COMPANY_NAME                "Exitium"
+        BUNDLE_ID                   "com.exitium.bside"
+        PLUGIN_MANUFACTURER_CODE    Exit
+        PLUGIN_CODE                 Bsy1
+        FORMATS                     VST3
+        IS_SYNTH                    TRUE
+        NEEDS_MIDI_INPUT            TRUE
+        NEEDS_MIDI_OUTPUT           FALSE
+        IS_MIDI_EFFECT              FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+        VST3_CATEGORIES             Instrument Synth
+        HARDENED_RUNTIME_ENABLED    TRUE
+        COPY_PLUGIN_AFTER_BUILD     FALSE)
+
+    set(BS_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/PluginProcessor.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/presets/BSidePresets.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/params/ParameterLayout.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/TestTonePart.cpp)
+    set(BS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${BS_SOURCES})
+    target_sources(BSide PRIVATE ${BS_PLUGIN_SOURCES})
+
+    # Factory programs: presets/bside/factory/*.json, embedded like Vintage's (see above).
+    file(GLOB BS_FACTORY_PRESETS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/presets/bside/factory/*.json)
+    juce_add_binary_data(BSideFactoryData
+        HEADER_NAME BSideFactoryData.h
+        NAMESPACE   bs_factory
+        SOURCES     ${BS_FACTORY_PRESETS})
+
+    vs_configure_plugin(BSide BSideFactoryData)
 endif()
 
 if(VS_BUILD_TESTS)
@@ -134,6 +185,6 @@ if(VS_BUILD_DEV_HOST)
     if(TARGET AudioPluginHostData)
         set_target_properties(AudioPluginHostData PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
     endif()
-    # Make sure the plugin bundle is built whenever the host is.
-    add_dependencies(AudioPluginHost VintageSynth_VST3)
+    # No dependency on a plugin bundle: scripts/dev-host.sh builds the plugin it opens
+    # (--plugin vintage|bside), so opening one plugin never needs the other built.
 endif()
