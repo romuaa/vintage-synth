@@ -55,6 +55,25 @@ inline std::string lowered (const std::string& s)
 }
 } // namespace detail
 
+/** `s` cut to at most maxChars characters (code points) by taking characters out of the middle and putting
+    an ellipsis (U+2026) there; the start keeps one more than the end when the count is odd. "Category Number 12"
+    cut to 10 characters is "Categ" + ellipsis + "r 12". Shorter text is returned as is. */
+inline std::string middleEllipsis (const std::string& s, size_t maxChars)
+{
+    std::vector<size_t> starts; // byte offset of each code point
+    for (size_t i = 0; i < s.size(); ++i)
+        if ((static_cast<unsigned char> (s[i]) & 0xC0) != 0x80)
+            starts.push_back (i);
+    if (starts.size() <= maxChars)
+        return s;
+    const std::string ellipsis = "\xE2\x80\xA6";
+    if (maxChars <= 1)
+        return ellipsis;
+    const size_t keep = maxChars - 1, head = (keep + 1) / 2, tail = keep / 2;
+    const size_t tailStart = starts[starts.size() - tail];
+    return s.substr (0, starts[head]) + ellipsis + (tail > 0 ? s.substr (tailStart) : std::string());
+}
+
 /** The label a category is shown under: surrounding blanks removed, empty -> "Uncategorised". */
 inline std::string categoryLabel (const std::string& category)
 {

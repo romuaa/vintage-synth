@@ -12,6 +12,8 @@
 #include "vintage/presets/VintagePresets.h"
 #include "vintage/ui/BrowserPage.h"
 
+#include <thread>
+
 using namespace vs;
 using namespace vs::itest;
 using namespace vs::ptest;
@@ -630,41 +632,541 @@ TEST_CASE ("Layout snapshot: the Browser page's component bounds equal the golde
     }
 }
 
-#if VS_SEQ_COUNT_ALLOCATIONS
-TEST_CASE ("Browser: repainting the grid and the chips with unchanged values allocates the same small number of times (cached image)", "[ui][browser][paint]")
-{
-    BrowserRig rig;
-    auto& grid = rig.page().getGrid();
-    auto& chips = rig.page().getChips();
-    // What a repaint with nothing changed does: the component's cached image is drawn (it is
-    // re-rendered only after repaint() invalidated it, i.e. when the bank or the state changed).
-    const auto paintCount = [] (juce::Component& c) {
-        auto* cache = c.getCachedComponentImage();
-        REQUIRE (cache != nullptr);
-        juce::Image image (juce::Image::ARGB, c.getWidth(), c.getHeight(), true);
-        juce::Graphics g (image);
-        cache->paint (g); // renders the cache
-        cache->paint (g);
-        vs::seq::test::AllocationCounter counter;
-        cache->paint (g);
-        const int first = counter.count();
-        vs::seq::test::AllocationCounter counter2;
-        cache->paint (g);
-        return std::pair<int, int> { first, counter2.count() };
-    };
-    const auto g = paintCount (grid);
-    CHECK (g.first == g.second);
-    CHECK (g.first <= 8);
-    const auto ch = paintCount (chips);
-    CHECK (ch.first == ch.second);
-    CHECK (ch.first <= 8);
 
-    // The uncached drawing of 64 cells is what the cache avoids: it allocates in the renderer, far more.
-    juce::Image image (juce::Image::ARGB, grid.getWidth(), grid.getHeight(), true);
-    juce::Graphics g2 (image);
-    grid.paintEntireComponent (g2, false);
-    vs::seq::test::AllocationCounter counter;
-    grid.paintEntireComponent (g2, false);
-    CHECK (counter.count() > 8);
+// =================================================================================================
+// Review round 1
+// =================================================================================================
+
+namespace
+{
+/** A menu captured instead of shown: what it held and the callback JUCE would call with the choice. */
+struct MenuCapture
+{
+    std::vector<juce::PopupMenu> menus;
+    std::vector<std::function<void (int)>> callbacks;
+    void install (presets::PresetActions& a)
+    {
+        a.setMenuRunner ([this] (juce::PopupMenu m, juce::Component&, std::function<void (int)> done) {
+            menus.push_back (std::move (m));
+            callbacks.push_back (std::move (done));
+        });
+    }
+    void choose (int choice) { callbacks.back() (choice); }
+};
+
+/** A bank of 64 programs with 40-character names and 30 categories (some empty). */
+presets::Bank stressBank (const presets::Schema& schema)
+{
+    auto bank = presets::makeInitBank (schema);
+    bank.name = "Stress Bank With A Long Name Indeed";
+    for (int i = 0; i < 64; ++i)
+    {
+        auto& m = bank.programs[static_cast<size_t> (i)].meta;
+        m.name = (juce::String ("Program number ") + juce::String (i).paddedLeft ('0', 2) + " with a very long name x").substring (0, 40);
+        m.category = i % 9 == 0 ? juce::String() : (i % 30 == 5 ? juce::String ("Category Number Twelve Hundred ") + juce::String (i) : "Category " + juce::String (i % 30 + 1));
+        m.author = "Somebody With A Long Name";
+    }
+    return bank;
 }
+
+/** Records every area the editor is asked to repaint (installed as its cached image). */
+struct RepaintRecorder final : juce::CachedComponentImage
+{
+    void paint (juce::Graphics&) override {}
+    bool invalidateAll() override
+    {
+        ++all;
+        return false;
+    }
+    bool invalidate (const juce::Rectangle<int>& area) override
+    {
+        areas.push_back (area);
+        return false;
+    }
+    void releaseResources() override {}
+    std::vector<juce::Rectangle<int>> areas;
+    int all = 0;
+};
+
+#if VS_SEQ_COUNT_ALLOCATIONS
+/** A graphics context that draws nothing and allocates nothing itself: what remains in an allocation count
+    is what our own paint code allocates (strings, paths, glyph arrays, ...). */
+class NullContext final : public juce::LowLevelGraphicsContext
+{
+public:
+    bool isVectorDevice() const override { return false; }
+    void setOrigin (juce::Point<int>) override {}
+    void addTransform (const juce::AffineTransform&) override {}
+    float getPhysicalPixelScaleFactor() const override { return 1.0f; }
+    bool clipToRectangle (const juce::Rectangle<int>&) override { return true; }
+    bool clipToRectangleList (const juce::RectangleList<int>&) override { return true; }
+    void excludeClipRectangle (const juce::Rectangle<int>&) override {}
+    void clipToPath (const juce::Path&, const juce::AffineTransform&) override {}
+    void clipToImageAlpha (const juce::Image&, const juce::AffineTransform&) override {}
+    bool clipRegionIntersects (const juce::Rectangle<int>&) override { return true; }
+    juce::Rectangle<int> getClipBounds() const override { return bounds; }
+    bool isClipEmpty() const override { return false; }
+    void saveState() override {}
+    void restoreState() override {}
+    void beginTransparencyLayer (float) override {}
+    void endTransparencyLayer() override {}
+    void setFill (const juce::FillType&) override {}
+    void setOpacity (float) override {}
+    void setImageBlendMode (juce::BlendMode) override {}
+    void setInterpolationQuality (juce::Graphics::ResamplingQuality) override {}
+    void fillRect (const juce::Rectangle<int>&, bool) override {}
+    void fillRect (const juce::Rectangle<float>&) override {}
+    void fillRectList (const juce::RectangleList<float>&) override {}
+    void fillPath (const juce::Path&, const juce::AffineTransform&) override {}
+    void strokePath (const juce::Path&, const juce::PathStrokeType&, const juce::AffineTransform&) override {}
+    void drawImage (const juce::Image&, const juce::AffineTransform&) override {}
+    void drawLine (const juce::Line<float>&) override {}
+    void setFont (const juce::Font&) override {}
+    const juce::Font& getFont() override { return font; }
+    void drawGlyphs (juce::Span<const std::uint16_t>, juce::Span<const juce::Point<float>>, const juce::AffineTransform&) override { ++glyphRuns; }
+    std::unique_ptr<juce::ImageType> getPreferredImageTypeForTemporaryImages() const override { return {}; }
+    void drawRoundedRectangle (const juce::Rectangle<float>&, float, float) override {}
+    void fillRoundedRectangle (const juce::Rectangle<float>&, float) override {}
+    void drawEllipse (const juce::Rectangle<float>&, float) override {}
+    void fillEllipse (const juce::Rectangle<float>&) override {}
+    std::uint64_t getFrameId() const override { return 0; }
+
+    juce::Rectangle<int> bounds { 0, 0, 2000, 1000 };
+    juce::Font font { juce::FontOptions {} };
+    int glyphRuns = 0;
+};
 #endif
+
+juce::Rectangle<int> inEditor (BrowserRig& rig, juce::Component& c, juce::Rectangle<int> r) { return rig.editor->getLocalArea (&c, r); }
+} // namespace
+
+TEST_CASE ("Top bar: Save is the contract's Save in the Vintage bar (in place in a user bank, else Save as) and the menu in the second plugin's bar", "[ui][browser][bar]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    BrowserRig rig;
+    auto& bar = rig.editor->getBar();
+    auto& pm = rig.pm();
+    REQUIRE (bar.smartSave);
+    MenuCapture menus;
+    menus.install (bar.getActions());
+    Dialogs dialogs;
+    dialogs.install (bar.getActions());
+
+    // Factory bank: nothing to store into; the "Save as" menu opens (program file, bank copy; no slot list).
+    rig.set ("lower.vcf.cutoff", 0.3f);
+    bar.getSaveButton().onClick();
+    REQUIRE (menus.menus.size() == 1);
+    CHECK (dialogs.errors.isEmpty());
+    CHECK_FALSE ((rig.temp / "Banks").exists());
+    {
+        juce::PopupMenu::MenuItemIterator it (menus.menus.back());
+        int items = 0;
+        while (it.next())
+            if (it.getItem().itemID != 0 || it.getItem().subMenu != nullptr)
+                ++items;
+        CHECK (items == 2);
+    }
+
+    // A user bank and a slot: Save writes the bank file at once and opens no menu.
+    const auto file = rig.makeUserBank (rig.temp.dir);
+    rig.set ("lower.vcf.cutoff", 0.77f);
+    REQUIRE (pm.renameProgram (0, "Saved From Bar").isEmpty());
+    bar.getSaveButton().onClick();
+    CHECK (menus.menus.size() == 1);
+    CHECK_FALSE (pm.isModified());
+    PresetRig other;
+    REQUIRE (other.presets().loadBankFile (file).isEmpty());
+    CHECK (other.presets().programName (0) == "Saved From Bar");
+
+    // The second plugin's bar does not set the flag: Save opens its menu, whatever the bank.
+    presets::PresetBar plain (pm);
+    CHECK_FALSE (plain.smartSave);
+    MenuCapture plainMenus;
+    plainMenus.install (plain.getActions());
+    rig.set ("lower.vcf.cutoff", 0.2f);
+    plain.getSaveButton().onClick();
+    CHECK (plainMenus.menus.size() == 1);
+    CHECK (pm.isModified());
+}
+
+TEST_CASE ("Menus: a choice that names a slot is refused when the bank changed while the menu was open", "[ui][browser][menu]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    BrowserRig rig;
+    auto& pm = rig.pm();
+    auto& bar = rig.editor->getBar();
+    const auto file = rig.makeUserBank (rig.temp.dir);
+    MenuCapture menus;
+    menus.install (bar.getActions());
+    Dialogs dialogs;
+    dialogs.install (bar.getActions());
+    juce::Component anchor;
+
+    SECTION ("Save as > Store in slot")
+    {
+        const auto before = readText (file);
+        rig.set ("lower.vcf.cutoff", 0.9f);
+        bar.getActions().showSaveAsMenu (anchor);
+        REQUIRE (menus.callbacks.size() == 1);
+        pm.setBank ({}, juce::File()); // the bank changes while the menu is open
+        menus.choose (100 + 5);
+        CHECK (dialogs.errors.size() == 1);
+        CHECK (dialogs.errors[0].contains ("bank changed"));
+        CHECK (readText (file) == before);
+
+        // Without a change the same choice stores.
+        REQUIRE (pm.loadBankFile (file).isEmpty());
+        dialogs.errors.clear();
+        rig.set ("lower.vcf.cutoff", 0.9f);
+        bar.getActions().showSaveAsMenu (anchor);
+        menus.choose (100 + 5);
+        CHECK (dialogs.errors.isEmpty());
+        CHECK (readText (file) != before);
+    }
+    SECTION ("Save menu > Store in this slot")
+    {
+        REQUIRE (pm.loadBankFile (file).isEmpty());
+        const auto before = readText (file);
+        rig.set ("lower.vcf.cutoff", 0.9f);
+        bar.getActions().showSaveMenu (anchor);
+        pm.setBank ({}, juce::File());
+        menus.choose (3);
+        CHECK (dialogs.errors.size() == 1);
+        CHECK (readText (file) == before);
+        // The other items of that menu do not depend on the slot: "Program as..." still opens its dialog.
+        menus.choose (1);
+        CHECK (dialogs.requests.size() == 1);
+    }
+    SECTION ("the program menu")
+    {
+        pm.selectProgram (3);
+        bar.showProgramMenu();
+        REQUIRE (menus.callbacks.size() == 1);
+        pm.setBank ({}, juce::File());
+        pm.selectProgram (10);
+        menus.choose (20 + 1);
+        CHECK (pm.currentIndex() == 10); // not loaded: it would have been another program
+        CHECK (dialogs.errors.size() == 1);
+        CHECK (dialogs.errors[0].contains ("nothing was loaded"));
+        // Open Browser is not about a slot: it works whatever changed.
+        rig.editor->selectPage (0, 0);
+        menus.choose (presets::PresetBar::kOpenBrowserChoice);
+        CHECK (rig.editor->getFrame().getPage() == kBrowserPage);
+        // The same menu opened again and not disturbed selects.
+        bar.showProgramMenu();
+        menus.choose (20 + 1);
+        CHECK (pm.currentIndex() == 20);
+    }
+}
+
+TEST_CASE ("Grid paint allocates nothing; nothing repaints at rest; a selection or program change repaints only the cells involved", "[ui][browser][paint]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    BrowserRig rig;
+    rig.editor->setSizePercent (100);
+    rig.editor->setVisible (true);
+    auto& page = rig.page();
+    auto& grid = page.getGrid();
+    rig.tick();
+
+#if VS_SEQ_COUNT_ALLOCATIONS
+    {
+        // The harness sees an allocation (so a zero below means something).
+        vs::seq::test::AllocationCounter probe;
+        juce::String s ("an allocation the counter must see");
+        s += juce::String (probe.count());
+        CHECK (probe.count() > 0);
+    }
+    const auto allocations = [] (juce::Component& c, bool focused) {
+        (void) focused;
+        NullContext context;
+        juce::Graphics g (context);
+        c.paint (g); // warm
+        vs::seq::test::AllocationCounter counter;
+        c.paint (g);
+        c.paint (g);
+        CHECK (context.glyphRuns > 0);
+        return counter.count();
+    };
+    CHECK (allocations (grid, false) == 0);
+    CHECK (allocations (page.getChips(), false) == 0);
+    grid.grabKeyboardFocus(); // the focus ring too
+    CHECK (allocations (grid, true) == 0);
+#endif
+
+    auto* recorder = new RepaintRecorder();
+    rig.editor->setCachedComponentImage (recorder);
+    const auto gridArea = inEditor (rig, grid, grid.getLocalBounds());
+    const auto inGrid = [&] {
+        std::vector<juce::Rectangle<int>> v;
+        for (const auto& a : recorder->areas)
+            if (a.intersects (gridArea))
+                v.push_back (a);
+        return v;
+    };
+    const auto cellArea = [&] (int slot) { return inEditor (rig, grid, grid.cellRepaintArea (slot)); };
+    const auto expectOnly = [&] (std::initializer_list<int> slots) {
+        const auto areas = inGrid();
+        CHECK_FALSE (areas.empty()); // the recorder does see repaints of a visible editor
+        for (const auto& a : areas)
+        {
+            bool inside = false;
+            for (int s : slots)
+                inside |= cellArea (s).contains (a);
+            INFO ("area " << a.toString());
+            CHECK (inside);
+        }
+        for (int s : slots)
+        {
+            bool covered = false;
+            for (const auto& a : areas)
+                covered |= a.intersects (cellArea (s));
+            CHECK (covered);
+        }
+    };
+
+    // At rest nothing is repainted.
+    recorder->areas.clear();
+    for (int i = 0; i < 5; ++i)
+        rig.tick();
+    CHECK (inGrid().empty());
+
+    page.selectSlot (12); // selected 5 -> 12: two cells
+    CHECK (rig.pm().currentIndex() == 0);
+    const int from = grid.selected() == 12 ? 0 : -1; // (selection started at the current program, slot 0)
+    (void) from;
+    expectOnly ({ 0, 12 });
+    CHECK (inGrid().size() == 2);
+
+    recorder->areas.clear();
+    grid.onLoad (20); // double-click on 20: selected 12 -> 20, current 0 -> 20 (after the next tick)
+    rig.tick();
+    expectOnly ({ 0, 12, 20 });
+
+    recorder->areas.clear();
+    rig.set ("lower.vcf.cutoff", 0.33f); // the program becomes modified: the dot on the current cell only
+    rig.tick();
+    expectOnly ({ 20 });
+
+    recorder->areas.clear();
+    page.setSearch ("zzzz"); // everything but nothing-matching dims: only the cells that were lit change, no whole-grid repaint
+    for (const auto& a : inGrid())
+        CHECK (a.getWidth() * a.getHeight() < gridArea.getWidth() * gridArea.getHeight() / 8);
+    rig.editor->setCachedComponentImage (nullptr);
+}
+
+TEST_CASE ("Grid cache memory: the prepared text of a bank with 40-character names stays under 1 MB; there is no image", "[ui][browser][paint]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    BrowserRig rig;
+    rig.pm().setBank (stressBank (rig.schema()), rig.temp.dir.getChildFile ("Banks").getChildFile ("stress.vsbank"));
+    rig.pm().selectProgram (3);
+    rig.tick();
+    auto& grid = rig.page().getGrid();
+    CHECK (grid.getCachedComponentImage() == nullptr);
+    const auto bytes = grid.cacheBytes();
+    WARN ("worst-case prepared text of the grid: " << bytes << " bytes");
+    CHECK (bytes > 0);
+    CHECK (bytes < 1024u * 1024u);
+}
+
+TEST_CASE ("Chips are as wide as their text; long names are cut in the middle; the overflow is in More; hover names the full category", "[ui][browser][chips]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    BrowserRig rig;
+    rig.pm().setBank (stressBank (rig.schema()), rig.temp.dir.getChildFile ("Banks").getChildFile ("stress.vsbank"));
+    rig.pm().selectProgram (3);
+    rig.tick();
+    auto& page = rig.page();
+    auto& chips = page.getChips();
+    const auto& groups = page.categoryGroupsShown();
+    REQUIRE (groups.size() > 20);
+
+    int widest = 0, narrowest = 1000, cut = 0, visible = 0;
+    for (int i = 1; i <= chips.numChips(); ++i)
+    {
+        const auto r = chips.chipBounds (i);
+        if (r.isEmpty())
+            continue;
+        ++visible;
+        widest = std::max (widest, r.getWidth());
+        narrowest = std::min (narrowest, r.getWidth());
+        CHECK (r.getWidth() >= ui::ChipStrip::kMinW);
+        CHECK (r.getWidth() <= ui::ChipStrip::kMaxW);
+        const auto shown = chips.shownLabel (i);
+        const auto full = juce::String::fromUTF8 (groups[static_cast<size_t> (i - 1)].label.c_str());
+        if (shown != full)
+        {
+            ++cut;
+            CHECK (shown.contains (juce::String::fromUTF8 ("\xE2\x80\xA6")));
+            CHECK (shown.startsWith (full.substring (0, 4)));
+            CHECK (shown.endsWith (full.getLastCharacters (2)));
+            CHECK (shown.length() < full.length());
+        }
+    }
+    CHECK (narrowest < widest); // not all alike
+    CHECK (cut >= 1);
+    CHECK_FALSE (chips.moreBounds().isEmpty());
+    CHECK (visible < chips.numChips());
+    // No two chips overlap, all lie inside the strip.
+    std::vector<juce::Rectangle<int>> rects;
+    for (int i = -1; i <= chips.numChips(); ++i)
+    {
+        const auto r = i < 0 ? chips.moreBounds() : chips.chipBounds (i);
+        if (r.isEmpty())
+            continue;
+        CHECK (chips.getLocalBounds().contains (r));
+        for (const auto& o : rects)
+            CHECK_FALSE (r.intersects (o));
+        rects.push_back (r);
+    }
+
+    // Hover: the help line names the full category, also when the same strip stays hovered across chips.
+    auto& frame = rig.editor->getFrame();
+    int first = 0, second = 0;
+    for (int i = 1; i <= chips.numChips() && second == 0; ++i)
+        if (! chips.chipBounds (i).isEmpty())
+            (first == 0 ? first : second) = i;
+    for (int idx : { first, second })
+    {
+        chips.mouseMove (mouseEvent (chips, chips.chipBounds (idx).getCentre(), 0));
+        frame.hoverHelp (&chips);
+        const auto full = juce::String::fromUTF8 (groups[static_cast<size_t> (idx - 1)].label.c_str());
+        INFO (full);
+        CHECK (frame.getHelpLine().getText().startsWith ("Category " + full + ": "));
+    }
+    chips.mouseExit (mouseEvent (chips, { 0, 0 }, 0));
+    frame.hoverHelp (&chips);
+    CHECK (frame.getHelpLine().getText().startsWith ("Category: "));
+}
+
+TEST_CASE ("Top bar: a 20-character program name fits at 100 %; the bank label is short; Init moved to the Browser", "[ui][browser][bar]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    BrowserRig rig;
+    rig.editor->setSizePercent (100);
+    auto& bar = rig.editor->getBar();
+    const juce::String name ("Twin Horizon Lead XL"); // 20 characters
+    REQUIRE (name.length() == 20);
+    REQUIRE (rig.pm().renameProgram (rig.pm().currentIndex(), name).isEmpty());
+    rig.tick();
+    bar.setSize (bar.getWidth(), bar.getHeight());
+    auto& button = bar.getNameButton();
+    CHECK (button.getButtonText() == name);
+    // The button paints its text between 8 px of padding and the 16 px of its chevron.
+    const float room = static_cast<float> (button.getWidth() - 2 * 8 - 16);
+    CHECK (ui::PreparedText::widthOf (name, rig.editor->getTheme().font (16.0f, true)) < room);
+    CHECK (bar.describe().contains ("Factory  A1  " + name));
+    CHECK (static_cast<juce::Label&> (bar.getBankLabel()).getText() == "Factory");
+    CHECK_FALSE (bar.getInitButton().isVisible());
+    // The second plugin's bar keeps its Init button.
+    presets::PresetBar plain (rig.pm());
+    CHECK (plain.getInitButton().isVisible());
+}
+
+TEST_CASE ("Bank chooser: Factory shows the bank without loading anything while the sound is modified", "[ui][browser][files]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    BrowserRig rig;
+    auto& page = rig.page();
+    auto& pm = rig.pm();
+    rig.makeUserBank (rig.temp.dir);
+    pm.selectProgram (6);
+    rig.set ("lower.vcf.cutoff", 0.123f); // an edit not saved
+    REQUIRE (pm.isModified());
+    const auto before = rig.raw();
+    page.chooseBank (1);
+    CHECK (pm.isFactoryBank());
+    CHECK (rig.raw() == before);        // the sound is kept
+    CHECK (pm.isModified());
+    CHECK (pm.currentIndex() == 6);
+
+    // Nothing modified: the first program of the bank is loaded, as Load bank file does.
+    rig.makeUserBank (rig.temp.dir);
+    pm.selectProgram (6);
+    REQUIRE_FALSE (pm.isModified());
+    page.chooseBank (1);
+    CHECK (pm.isFactoryBank());
+    CHECK (pm.currentIndex() == 0);
+}
+
+TEST_CASE ("Browser keyboard order is the reading order; the search box reacts to typing, not to a poll", "[ui][browser][page]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    BrowserRig rig;
+    auto& page = rig.page();
+    juce::KeyboardFocusTraverser traverser;
+    CHECK (traverser.getNextComponent (&page.getBankButton()) == &page.getSearchBox());
+    CHECK (traverser.getNextComponent (&page.getSearchBox()) == &page.getChips());
+    CHECK (traverser.getNextComponent (&page.getChips()) == &page.getGrid());
+    auto* afterGrid = traverser.getNextComponent (&page.getGrid());
+    REQUIRE (afterGrid != nullptr);
+    CHECK (page.isParentOf (afterGrid));
+    CHECK_FALSE (page.getGrid().isParentOf (afterGrid));
+    CHECK (afterGrid != &page.getSearchBox());
+    CHECK (traverser.getPreviousComponent (&page.getBankButton()) != &page.getChips()); // not the old y-order
+
+    // Typing: the editor's change message calls onTextChange; a tick does not look at the text.
+    page.getSearchBox().setText ("twin", false);
+    page.getSearchBox().onTextChange(); // what the editor's (asynchronous) text-change message calls
+    CHECK_FALSE (page.getGrid().isLit (0));
+    CHECK_FALSE (page.getGrid().isLit (0));
+    CHECK (page.getGrid().isLit (kSlotDual));
+    page.getSearchBox().setText ("", false); // no notification: nothing polls the text
+    rig.tick();
+    rig.tick();
+    CHECK_FALSE (page.getGrid().isLit (0));
+}
+
+TEST_CASE ("Chip middle ellipsis keeps the start and the end of a name", "[ui][browser][model]")
+{
+    using ui::model::middleEllipsis;
+    const std::string e = "\xE2\x80\xA6";
+    CHECK (middleEllipsis ("short", 10) == "short");
+    CHECK (middleEllipsis ("exactlyten", 10) == "exactlyten");
+    CHECK (middleEllipsis ("Category Number 12", 10) == "Categ" + e + "r 12");
+    CHECK (middleEllipsis ("Category Number 12", 9) == "Cate" + e + "r 12");
+    CHECK (middleEllipsis ("abcdefghij", 2) == "a" + e);
+    CHECK (middleEllipsis ("abcdefghij", 1) == e);
+    CHECK (middleEllipsis ("abcdefghij", 0) == e);
+    CHECK (middleEllipsis ("", 3).empty());
+    // Characters are code points: a multi-byte letter is never split.
+    const std::string accents = "\xC3\xA4\xC3\xB6\xC3\xBC\xC3\xA4\xC3\xB6\xC3\xBC\xC3\xA4\xC3\xB6"; // 8 letters
+    const auto cut = middleEllipsis (accents, 5);
+    CHECK (juce::String::fromUTF8 (cut.c_str()).length() == 5);
+    CHECK (juce::CharPointer_UTF8::isValidString (cut.c_str(), static_cast<int> (cut.size())));
+}
+
+TEST_CASE ("UI shots (hidden): the Browser with the factory bank and a stress bank at 75, 100 and 200 %", "[.uishots]")
+{
+    const auto dir = juce::SystemStats::getEnvironmentVariable ("VS_UISHOT_DIR", {});
+    if (dir.isEmpty())
+        SKIP ("VS_UISHOT_DIR not set");
+    const juce::File out (dir);
+    REQUIRE (out.createDirectory());
+    BrowserRig rig;
+    const auto shoot = [&] (const juce::String& prefix) {
+        for (int scale : { 75, 100, 200 })
+        {
+            rig.editor->setSizePercent (scale);
+            rig.tick();
+            const auto image = rig.editor->createComponentSnapshot (rig.editor->getLocalBounds(), true, 1.0f);
+            const auto file = out.getChildFile (prefix + "_" + juce::String (scale) + ".png");
+            file.deleteFile();
+            juce::FileOutputStream stream (file);
+            REQUIRE (stream.openedOk());
+            REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+        }
+    };
+    rig.pm().selectProgram (kSlotDual);
+    rig.editor->getBrowserPage().selectSlot (kSlotDual);
+    rig.tick();
+    shoot ("browser_factory");
+    rig.pm().setBank (stressBank (rig.schema()), rig.temp.dir.getChildFile ("Banks").getChildFile ("stress.vsbank"));
+    rig.pm().selectProgram (5);
+    rig.tick();
+    rig.editor->getBrowserPage().selectSlot (17);
+    rig.editor->getBrowserPage().getChips().choose (2);
+    rig.tick();
+    shoot ("browser_stress");
+}

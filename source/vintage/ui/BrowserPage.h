@@ -12,6 +12,7 @@
 
 #include "common/presets/PresetActions.h"
 #include "common/ui/ParamMirror.h"
+#include "common/ui/PreparedText.h"
 #include "common/ui/controls/BoundComponent.h"
 #include "common/ui/controls/Panel.h"
 #include "common/ui/models/ProgramModels.h"
@@ -24,7 +25,8 @@
 
 namespace vs::ui
 {
-/** The grid of programs: one component, 64 cells prepared when the bank changes. */
+/** The grid of programs: one component, 64 cells laid out when the bank changes. paint() allocates nothing
+    (prepared glyph runs), and a state change repaints only the cells involved. */
 class ProgramGrid final : public juce::Component
 {
 public:
@@ -35,8 +37,9 @@ public:
 
     /** Rebuilds the cells (names, positions, stripes). Not a per-frame call: only when the bank changed. */
     void setSlots (const std::vector<model::SlotInfo>& infos, const std::vector<std::string>& positions, const std::vector<juce::Colour>& stripes);
-    /** `lit[i]` false: the cell is dimmed to 30 %. */
+    /** `lit[i]` false: the cell is dimmed to 30 %. Repaints the cells whose state changed. */
     void setLit (const std::vector<bool>& lit);
+    /** Repaints the cells that stop or start being selected / current, and the current one when the dot changes. */
     void setState (int selectedSlot, int currentSlot, bool modified);
 
     int numSlots() const noexcept { return static_cast<int> (cells.size()); }
@@ -44,9 +47,13 @@ public:
     int current() const noexcept { return currentSlot; }
     bool isLit (int slot) const { return slot >= 0 && slot < numSlots() && cells[static_cast<size_t> (slot)].lit; }
     juce::Rectangle<int> cellBounds (int slot) const;
+    /** The area repainted for a cell: the cell and its outline (inside the gap to the next one). */
+    juce::Rectangle<int> cellRepaintArea (int slot) const { return cellBounds (slot).expanded (3); }
     int slotAt (juce::Point<int> p) const;
     /** How often the cells were rebuilt (tests: only when the bank changed). */
     int rebuilds() const noexcept { return rebuildCount; }
+    /** Heap bytes of the prepared text (the grid's whole cache; there is no image). */
+    size_t cacheBytes() const noexcept;
 
     std::function<void (int)> onSelect, onLoad;
 
@@ -54,33 +61,37 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
-    void focusGained (FocusChangeType) override { repaint(); }
-    void focusLost (FocusChangeType) override { repaint(); }
+    void focusGained (FocusChangeType) override { repaintSelected(); }
+    void focusLost (FocusChangeType) override { repaintSelected(); }
 
 private:
     struct Cell
     {
-        juce::GlyphArrangement name, position;
+        PreparedText name, position;
         juce::Colour stripe;
         bool lit = true;
     };
     void select (int slot);
+    void repaintCell (int slot);
+    void repaintSelected() { repaintCell (selectedSlot); }
 
     const Theme& theme;
     std::vector<Cell> cells;
-    std::vector<juce::GlyphArrangement> columnLabels, rowLabels;
+    std::vector<PreparedText> columnLabels, rowLabels;
     int selectedSlot = 0, currentSlot = 0, rebuildCount = 0;
     bool modifiedDot = false;
 };
 
-/** "All" plus one chip per category; fixed-size chips on two rows, "More" for the rest. */
+/** "All" plus one chip per category. Chips are as wide as their text (minimum and maximum, long names cut
+    in the middle), on two rows; categories that do not fit go to a "More..." menu. Hovering a chip names
+    its full category in the help line. */
 class ChipStrip final : public juce::Component
 {
 public:
     explicit ChipStrip (const Theme& theme);
     struct Chip
     {
-        juce::String label;
+        juce::String label; // the full category name
         juce::Colour colour;
     };
     /** `chips`: the categories (without "All"); `active`: 0 = All, i = chips[i - 1]. */
@@ -91,26 +102,34 @@ public:
     /** Bounds of the chip `index` (0 = All, i = chips[i-1]) or an empty rectangle if it is in "More". */
     juce::Rectangle<int> chipBounds (int index) const;
     juce::Rectangle<int> moreBounds() const;
+    /** The text drawn on chip `index` (cut in the middle when long). */
+    juce::String shownLabel (int index) const;
+    /** The chip under a point: 0 = All, i = a category, -1 = "More...", -2 = none. */
+    int chipAt (juce::Point<int> p) const;
     std::function<void (int)> onChoose;
 
     void paint (juce::Graphics&) override;
     void resized() override { rebuildLayout(); }
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
     void focusGained (FocusChangeType) override { repaint(); }
     void focusLost (FocusChangeType) override { repaint(); }
 
-    static constexpr int kChipH = 26, kChipW = 100, kAllW = 56, kGap = 4;
+    static constexpr int kChipH = 26, kMinW = 64, kMaxW = 150, kAllW = 56, kMoreW = 80, kGap = 4, kDot = 14, kPad = 10;
 
 private:
     struct Slot
     {
         juce::Rectangle<int> bounds;
         int chip; // 0 = All, i = a category, -1 = "More"
+        PreparedText text;
+        juce::String shown;
     };
     void rebuildLayout();
     void showMore();
-    int hit (juce::Point<int> p) const;
+    void setHoverLabel (const juce::String& label);
 
     const Theme& theme;
     std::vector<Chip> chips;
@@ -210,7 +229,6 @@ private:
             return current == o.current && status == o.status && modified == o.modified && detached == o.detached;
         }
     } seenState;
-    juce::String seenSearch;
     std::atomic<bool> dirty { true };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BrowserPage)

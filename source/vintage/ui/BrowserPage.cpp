@@ -27,7 +27,6 @@ ProgramGrid::ProgramGrid (const Theme& t) : theme (t)
     setWantsKeyboardFocus (true);
     setTitle ("Programs");
     setComponentID ("browser.grid");
-    setBufferedToImage (true); // 64 cells drawn once per change, not per repaint (9.5: grid caches)
 }
 
 juce::Rectangle<int> ProgramGrid::cellBounds (int slot) const
@@ -44,6 +43,24 @@ int ProgramGrid::slotAt (juce::Point<int> p) const
     return -1;
 }
 
+size_t ProgramGrid::cacheBytes() const noexcept
+{
+    size_t n = 0;
+    for (const auto& c : cells)
+        n += c.name.memoryBytes() + c.position.memoryBytes();
+    for (const auto& l : columnLabels)
+        n += l.memoryBytes();
+    for (const auto& l : rowLabels)
+        n += l.memoryBytes();
+    return n;
+}
+
+void ProgramGrid::repaintCell (int slot)
+{
+    if (slot >= 0 && slot < numSlots())
+        repaint (cellRepaintArea (slot));
+}
+
 void ProgramGrid::setSlots (const std::vector<model::SlotInfo>& infos, const std::vector<std::string>& positions,
                             const std::vector<juce::Colour>& stripes)
 {
@@ -58,12 +75,9 @@ void ProgramGrid::setSlots (const std::vector<model::SlotInfo>& infos, const std
         if (! same)
             c.lit = true;
         const auto r = cellBounds (static_cast<int> (i)).toFloat();
-        c.name.clear();
-        c.name.addFittedText (nameFont, utf8 (infos[i].name), r.getX() + 10.0f, r.getY() + 7.0f, r.getWidth() - 16.0f, 36.0f,
-                              juce::Justification::topLeft, 2, 1.0f);
-        c.position.clear();
-        c.position.addFittedText (posFont, i < positions.size() ? utf8 (positions[i]) : juce::String(), r.getX() + 10.0f, r.getBottom() - 20.0f,
-                                  r.getWidth() - 16.0f, 14.0f, juce::Justification::centredRight, 1, 1.0f);
+        c.name.set (utf8 (infos[i].name), nameFont, { r.getX() + 10.0f, r.getY() + 7.0f, r.getWidth() - 16.0f, 36.0f }, juce::Justification::topLeft, 2);
+        c.position.set (i < positions.size() ? utf8 (positions[i]) : juce::String(), posFont,
+                        { r.getX() + 10.0f, r.getBottom() - 20.0f, r.getWidth() - 16.0f, 14.0f }, juce::Justification::centredRight, 1);
         c.stripe = i < stripes.size() ? stripes[i] : colour (Tok::TextSecondary);
     }
     // Row letters and column numbers come from the position names ("A3": letter, then number).
@@ -77,36 +91,47 @@ void ProgramGrid::setSlots (const std::vector<model::SlotInfo>& infos, const std
         const juce::String colName = col < positions.size() ? utf8 (positions[col]).substring (1) : juce::String (k + 1);
         const juce::String rowName = row < positions.size() ? utf8 (positions[row]).substring (0, 1) : juce::String();
         const auto cb = cellBounds (k);
-        columnLabels[col].addFittedText (labelFont, colName, static_cast<float> (cb.getX()), 0.0f, static_cast<float> (kCellW),
-                                         static_cast<float> (kHeaderH), juce::Justification::centred, 1, 1.0f);
+        columnLabels[col].set (colName, labelFont, { static_cast<float> (cb.getX()), 0.0f, static_cast<float> (kCellW), static_cast<float> (kHeaderH) },
+                               juce::Justification::centred);
         const auto rb = cellBounds (k * 8);
-        rowLabels[col].addFittedText (labelFont, rowName, 0.0f, static_cast<float> (rb.getY()), static_cast<float> (kLabelW),
-                                      static_cast<float> (kCellH), juce::Justification::centred, 1, 1.0f);
+        rowLabels[col].set (rowName, labelFont, { 0.0f, static_cast<float> (rb.getY()), static_cast<float> (kLabelW), static_cast<float> (kCellH) },
+                            juce::Justification::centred);
     }
-    repaint();
+    repaint(); // the whole bank changed
 }
 
 void ProgramGrid::setLit (const std::vector<bool>& lit)
 {
-    bool changed = false;
     for (size_t i = 0; i < cells.size(); ++i)
     {
         const bool l = i < lit.size() ? lit[i] : true;
-        changed |= cells[i].lit != l;
-        cells[i].lit = l;
+        if (cells[i].lit != l)
+        {
+            cells[i].lit = l;
+            repaintCell (static_cast<int> (i));
+        }
     }
-    if (changed)
-        repaint();
 }
 
 void ProgramGrid::setState (int selectedSlot_, int currentSlot_, bool modified)
 {
-    if (selectedSlot_ == selectedSlot && currentSlot_ == currentSlot && modified == modifiedDot)
-        return;
+    const int oldSelected = selectedSlot, oldCurrent = currentSlot;
+    const bool oldModified = modifiedDot;
     selectedSlot = selectedSlot_;
     currentSlot = currentSlot_;
     modifiedDot = modified;
-    repaint();
+    if (oldSelected != selectedSlot)
+    {
+        repaintCell (oldSelected);
+        repaintCell (selectedSlot);
+    }
+    if (oldCurrent != currentSlot)
+    {
+        repaintCell (oldCurrent);
+        repaintCell (currentSlot);
+    }
+    else if (oldModified != modified)
+        repaintCell (currentSlot);
 }
 
 void ProgramGrid::select (int slot)
@@ -161,15 +186,19 @@ bool ProgramGrid::keyPressed (const juce::KeyPress& k)
 
 void ProgramGrid::paint (juce::Graphics& g)
 {
+    // Nothing is allocated here: the text is prepared, the shapes are drawn by the context.
+    const auto clip = g.getClipBounds();
     g.setColour (colour (Tok::TextSecondary));
-    for (auto& a : columnLabels)
+    for (const auto& a : columnLabels)
         a.draw (g);
-    for (auto& a : rowLabels)
+    for (const auto& a : rowLabels)
         a.draw (g);
     for (size_t i = 0; i < cells.size(); ++i)
     {
-        const auto& c = cells[i];
         const int slot = static_cast<int> (i);
+        if (! cellRepaintArea (slot).intersects (clip))
+            continue;
+        const auto& c = cells[i];
         const auto r = cellBounds (slot).toFloat();
         const float alpha = c.lit ? 1.0f : 0.3f;
         const bool isSelected = slot == selectedSlot, isCurrent = slot == currentSlot;
@@ -205,7 +234,6 @@ ChipStrip::ChipStrip (const Theme& t) : theme (t)
     setWantsKeyboardFocus (true);
     setTitle ("Categories");
     setComponentID ("browser.chips");
-    setBufferedToImage (true);
     setSize (766, 2 * kChipH + kGap);
 }
 
@@ -222,13 +250,44 @@ void ChipStrip::rebuildLayout()
 {
     layout.clear();
     const int width = getWidth();
+    const auto font = theme.font (kText, false);
     const int total = 1 + numChips();
+
+    // Width of each chip: its text between a minimum and a maximum; text above the maximum is cut in the middle.
+    struct Measured
+    {
+        int w;
+        juce::String shown;
+    };
+    std::vector<Measured> measured;
+    for (int i = 0; i < total; ++i)
+    {
+        if (i == 0)
+        {
+            measured.push_back ({ kAllW, "All" });
+            continue;
+        }
+        const auto full = chips[static_cast<size_t> (i - 1)].label;
+        const float room = static_cast<float> (kMaxW - kDot - 2 * kPad);
+        juce::String shown = full;
+        if (PreparedText::widthOf (full, font) > room)
+        {
+            const auto utf = full.toStdString();
+            for (size_t n = static_cast<size_t> (full.length()); n > 1; --n)
+            {
+                shown = utf8 (model::middleEllipsis (utf, n));
+                if (PreparedText::widthOf (shown, font) <= room)
+                    break;
+            }
+        }
+        const int w = juce::jlimit (kMinW, kMaxW, static_cast<int> (std::ceil (PreparedText::widthOf (shown, font))) + kDot + 2 * kPad);
+        measured.push_back ({ w, shown });
+    }
+
     struct Cursor
     {
         int x = 0, row = 0;
     };
-    const auto widthOf = [] (int i) { return i == 0 ? kAllW : kChipW; };
-    // Places a chip of width w at the cursor (wrapping once to the second row); false if it does not fit.
     const auto tryPlace = [width] (Cursor& cur, int w, juce::Rectangle<int>& out) {
         if (cur.x + w > width)
         {
@@ -246,27 +305,34 @@ void ChipStrip::rebuildLayout()
     juce::Rectangle<int> r;
     bool everythingFits = true;
     for (int i = 0; i < total && everythingFits; ++i)
-        everythingFits = tryPlace (all, widthOf (i), r);
+        everythingFits = tryPlace (all, measured[static_cast<size_t> (i)].w, r);
 
     Cursor cur;
     for (int i = 0; i < total; ++i)
     {
         Cursor probe = cur;
-        if (! tryPlace (probe, widthOf (i), r))
+        if (! tryPlace (probe, measured[static_cast<size_t> (i)].w, r))
             break;
         if (! everythingFits)
         {
-            // Keep room for the "More" chip after this one.
             Cursor after = probe;
             juce::Rectangle<int> more;
-            if (! tryPlace (after, kChipW, more))
+            if (! tryPlace (after, kMoreW, more)) // keep room for "More..." after this chip
                 break;
         }
         cur = probe;
-        layout.push_back ({ r, i });
+        layout.push_back ({ r, i, {}, measured[static_cast<size_t> (i)].shown });
     }
-    if (! everythingFits && tryPlace (cur, kChipW, r))
-        layout.push_back ({ r, -1 });
+    if (! everythingFits && tryPlace (cur, kMoreW, r))
+        layout.push_back ({ r, -1, {}, "More..." });
+
+    for (auto& s : layout)
+    {
+        auto text = s.bounds.toFloat().reduced (static_cast<float> (kPad), 0.0f);
+        if (s.chip > 0)
+            text.removeFromLeft (static_cast<float> (kDot));
+        s.text.set (s.shown, font, text, s.chip == 0 ? juce::Justification::centred : juce::Justification::centredLeft, 1);
+    }
 }
 
 juce::Rectangle<int> ChipStrip::chipBounds (int index) const
@@ -282,12 +348,20 @@ juce::Rectangle<int> ChipStrip::moreBounds() const
     return chipBounds (-1);
 }
 
-int ChipStrip::hit (juce::Point<int> p) const
+juce::String ChipStrip::shownLabel (int index) const
 {
-    for (size_t i = 0; i < layout.size(); ++i)
-        if (layout[i].bounds.contains (p))
-            return static_cast<int> (i);
-    return -1;
+    for (const auto& s : layout)
+        if (s.chip == index)
+            return s.shown;
+    return {};
+}
+
+int ChipStrip::chipAt (juce::Point<int> p) const
+{
+    for (const auto& s : layout)
+        if (s.bounds.contains (p))
+            return s.chip;
+    return -2;
 }
 
 void ChipStrip::choose (int index)
@@ -316,14 +390,36 @@ void ChipStrip::showMore()
                         });
 }
 
+void ChipStrip::setHoverLabel (const juce::String& label)
+{
+    getProperties().set (helpLabelProperty(), label);
+}
+
+void ChipStrip::mouseMove (const juce::MouseEvent& e)
+{
+    const int chip = chipAt (e.getPosition());
+    if (chip > 0)
+        setHoverLabel ("Category " + chips[static_cast<size_t> (chip - 1)].label); // the full name, also when the chip shows a cut one
+    else if (chip == -1)
+        setHoverLabel ("More categories");
+    else
+        setHoverLabel ("Category");
+}
+
+void ChipStrip::mouseExit (const juce::MouseEvent&)
+{
+    setHoverLabel ("Category");
+}
+
 void ChipStrip::mouseDown (const juce::MouseEvent& e)
 {
-    const int i = hit (e.getPosition());
-    if (i < 0)
+    const int chip = chipAt (e.getPosition());
+    if (chip == -2)
         return;
-    focusSlot = i;
+    for (size_t i = 0; i < layout.size(); ++i)
+        if (layout[i].chip == chip)
+            focusSlot = static_cast<int> (i);
     grabKeyboardFocus();
-    const int chip = layout[static_cast<size_t> (i)].chip;
     if (chip < 0)
         showMore();
     else
@@ -355,7 +451,7 @@ bool ChipStrip::keyPressed (const juce::KeyPress& k)
 
 void ChipStrip::paint (juce::Graphics& g)
 {
-    // The active chip may be one of those in "More".
+    // Nothing is allocated here. The active chip may be one of those in "More": then "More..." is lit.
     bool activeVisible = false;
     for (const auto& s : layout)
         activeVisible |= s.chip == activeChip;
@@ -365,25 +461,17 @@ void ChipStrip::paint (juce::Graphics& g)
         const auto r = s.bounds.toFloat();
         const bool more = s.chip < 0;
         const bool active = s.chip == activeChip || (more && ! activeVisible);
-        const juce::Colour c = s.chip > 0 ? chips[static_cast<size_t> (s.chip - 1)].colour
-                               : (more && ! activeVisible && activeChip > 0 ? chips[static_cast<size_t> (activeChip - 1)].colour : colour (Tok::TextSecondary));
         g.setColour (active ? colour (Tok::BgTrack) : colour (Tok::BgWindow));
         g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
         g.setColour (active ? colour (Tok::TextPrimary) : colour (Tok::BgTrack));
         g.drawRoundedRectangle (r.reduced (0.5f), r.getHeight() * 0.5f, 1.0f);
-        auto text = r.reduced (10.0f, 0.0f);
-        if (s.chip != 0)
+        if (s.chip > 0)
         {
-            g.setColour (c);
-            g.fillEllipse (text.getX(), r.getCentreY() - 4.0f, 8.0f, 8.0f);
-            text.removeFromLeft (14.0f);
+            g.setColour (chips[static_cast<size_t> (s.chip - 1)].colour);
+            g.fillEllipse (r.getX() + static_cast<float> (kPad), r.getCentreY() - 4.0f, 8.0f, 8.0f);
         }
         g.setColour (colour (Tok::TextPrimary));
-        g.setFont (theme.font (kText, active));
-        const juce::String label = s.chip == 0 ? juce::String ("All")
-                                   : s.chip > 0 ? chips[static_cast<size_t> (s.chip - 1)].label
-                                   : (activeVisible || activeChip == 0 ? juce::String ("More...") : chips[static_cast<size_t> (activeChip - 1)].label);
-        drawFittedText (g, label, text, s.chip == 0 ? juce::Justification::centred : juce::Justification::centredLeft);
+        s.text.draw (g);
         if (hasKeyboardFocus (false) && static_cast<int> (i) == focusSlot)
             drawFocusRing (g, r, r.getHeight() * 0.5f);
     }
@@ -586,6 +674,14 @@ BrowserPage::BrowserPage (UiContext& c, presets::PresetManager& manager, std::fu
     setHelp (loadToneFile, "ui.load_tone_file", "Load tone file", c.help);
     bank.setTitle ("Bank");
 
+    // Keyboard order is the reading order: bank, search, chips, grid, the panel on the right (its own
+    // children follow by position). The page itself sits at the frame's page order.
+    bank.setExplicitFocusOrder (1);
+    search.setExplicitFocusOrder (2);
+    chips.setExplicitFocusOrder (3);
+    grid.setExplicitFocusOrder (4);
+    panel.setExplicitFocusOrder (5);
+
     selected = presets.isDetached() ? 0 : presets.currentIndex();
     presets.changes().addChangeListener (this);
     ctx.mirror.addIdleClient (this);
@@ -652,7 +748,6 @@ void BrowserPage::refreshBank()
 
 void BrowserPage::refreshLit()
 {
-    seenSearch = search.getText();
     std::vector<bool> lit (infos.size(), true);
     const int a = chips.active();
     const auto q = search.getText().toStdString();
@@ -711,8 +806,6 @@ void BrowserPage::mirrorIdle (double)
     // The cells are rebuilt only when the bank shown changed (its generation) or a slot's name or
     // category did (a rename of the current program does not change the generation).
     const bool changed = dirty.exchange (false, std::memory_order_relaxed);
-    if (search.getText() != seenSearch)
-        refreshLit(); // typing: the editor's own change message is asynchronous
     if (presets.bankGeneration() != seenGeneration || infos.empty() || (changed && infosStale()))
         refreshBank();
     const bool detached = presets.isDetached();
@@ -783,8 +876,11 @@ void BrowserPage::chooseBank (int choice)
 {
     if (choice == 1 && presets.bankStatus() != presets::BankStatus::Factory)
     {
+        // Show the factory bank; load its first program only when nothing would be lost (a modified sound is kept).
+        const bool keepSound = presets.isModified();
         presets.setBank ({}, juce::File());
-        presets.selectProgram (0);
+        if (! keepSound)
+            presets.selectProgram (0);
     }
     else if (choice == 3)
         actions.loadBankFile();
