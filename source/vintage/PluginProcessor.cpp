@@ -682,7 +682,7 @@ void VintageSynthProcessor::renderChunk (float* const* out, int numChannels, int
 juce::AudioProcessorEditor* VintageSynthProcessor::createEditor()
 {
     // Placeholder until the custom panel UI (M7): the preset bar above the generic parameter editor.
-    return new VintageSynthEditor (*this);
+    return shell::createInstrumentEditor (*this, getPresets());
 }
 
 void VintageSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
