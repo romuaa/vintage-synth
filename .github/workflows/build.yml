@@ -260,6 +260,7 @@ jobs:
         if: matrix.pluginval && runner.os == 'macOS'
         shell: bash
         run: |
+          # TODO: enable editor tests when the custom editor (M7) is merged and a display is available on the runner.
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
           echo "$PLUGINVAL_SHA256_MACOS  pv.zip" | shasum -a 256 -c -
           unzip -q pv.zip
@@ -272,6 +273,7 @@ jobs:
         if: matrix.pluginval && runner.os == 'Windows'
         shell: bash
         run: |
+          # TODO: enable editor tests when the custom editor (M7) is merged and a display is available on the runner.
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
           echo "$PLUGINVAL_SHA256_WINDOWS  pv.zip" | sha256sum -c -
           unzip -q pv.zip
@@ -307,6 +309,7 @@ jobs:
         if: matrix.pluginval && runner.os == 'Linux'
         shell: bash
         run: |
+          # TODO: enable editor tests when the custom editor (M7) is merged and a display is available on the runner.
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Linux.zip"
           echo "$PLUGINVAL_SHA256_LINUX  pv.zip" | sha256sum -c -
           unzip -q pv.zip
@@ -410,10 +413,9 @@ jobs:
           start=$(date +%s)
           docker pull -q "${{ matrix.image }}" >/dev/null
           rc=0
-          for bundle in "$BUNDLE_VINTAGE" "$BUNDLE_BSIDE"; do
-            docker run --rm -v "$PWD":/w -w /w "${{ matrix.image }}" \
-              sh /w/scripts/linux-check/distro-check.sh "${{ matrix.pm }}" "${{ matrix.expect }}" "/w/$bundle" "${{ matrix.pkgs }}" || rc=$?
-          done
+          docker run --rm -v "$PWD":/w -w /w "${{ matrix.image }}" \
+            sh /w/scripts/linux-check/distro-check.sh "${{ matrix.pm }}" "${{ matrix.expect }}" "${{ matrix.pkgs }}" \
+            "/w/$BUNDLE_VINTAGE" "/w/$BUNDLE_BSIDE" || rc=$?
           echo "distribution ${{ matrix.name }}: exit $rc after $(( $(date +%s) - start ))s"
           exit $rc
 
@@ -532,15 +534,16 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
 
-      # Only the test binaries: the plugin bundles and host_smoke are covered by the linux-x64 row. The
-      # JUCE-free B-Side executables and regressions (S1c, S2, S4) join when the build system has them.
+      # Only the test binaries: the plugin bundles and host_smoke are covered by the linux-x64 row. The list
+      # of test targets, the check that every required one exists and the per-target test count printed
+      # before ctest are scripts/sanitize-targets.sh, the same file scripts/preflight.sh and the Linux
+      # container check use.
       - name: Build
         run: |
-          targets="VintageSynthTests render_regression BSideTests"
-          for t in bside_unit bside_render bside_trace; do
-            ninja -C build -t targets all | grep -q "^$t:" && targets="$targets $t"
-          done
-          cmake --build build --parallel --target $targets
+          . scripts/sanitize-targets.sh
+          san_select build
+          cmake --build build --parallel --target "${SAN_TARGETS[@]}"
+          san_report build
 
       - name: Compiler cache statistics
         if: always()

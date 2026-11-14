@@ -86,7 +86,8 @@ void TestTonePart::apply (const vs::NoteEvent& e) noexcept
             allocator.noteOff (e.note, sink);
             break;
         case vs::EventType::PitchBend:
-            bend = static_cast<double> (std::clamp (e.value, -1.0f, 1.0f));
+            // A non-finite value (a host or a parser slip) is no bend; anything else is clamped.
+            bend = std::isfinite (e.value) ? static_cast<double> (std::clamp (e.value, -1.0f, 1.0f)) : 0.0;
             updateIncrements();
             break;
         case vs::EventType::ModWheel:
@@ -143,25 +144,19 @@ void TestTonePart::renderSegment (float* out, int len) noexcept
 
 void TestTonePart::render (float* out, int n, std::span<const vs::NoteEvent> events) noexcept
 {
+    // Each event is applied at its offset, moved into [0, n] (and never before the previous event, so
+    // the order is kept); an offset of n or more is applied after the last sample.
     int pos = 0;
-    size_t next = 0;
-    while (next < events.size() && events[next].offset <= n)
+    for (const auto& e : events)
     {
-        const int at = std::clamp (events[next].offset, pos, n);
+        const int at = std::clamp (e.offset, pos, n);
         if (at > pos)
         {
             renderSegment (out + pos, at - pos);
             pos = at;
         }
-        // Every event at this position (the skeleton hands them over in ascending order).
-        while (next < events.size() && std::clamp (events[next].offset, pos, n) == pos)
-            apply (events[next++]);
-        if (pos >= n)
-            break;
+        apply (e);
     }
-    // Events after the end (should not happen: offsets are clamped to n) are applied after the last sample.
-    while (next < events.size())
-        apply (events[next++]);
     if (pos < n)
         renderSegment (out + pos, n - pos);
 }

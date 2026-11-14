@@ -185,6 +185,6 @@ if(VS_BUILD_DEV_HOST)
     if(TARGET AudioPluginHostData)
         set_target_properties(AudioPluginHostData PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
     endif()
-    # Make sure the plugin bundle is built whenever the host is.
-    add_dependencies(AudioPluginHost VintageSynth_VST3)
+    # No dependency on a plugin bundle: scripts/dev-host.sh builds the plugin it opens
+    # (--plugin vintage|bside), so opening one plugin never needs the other built.
 endif()

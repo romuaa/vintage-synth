@@ -142,6 +142,7 @@ TEST_CASE ("Skeleton: a forgotten initPresets call is reported by name at the fi
     // Every use of the presets reports the same mistake instead of dereferencing a null pointer.
     CHECK_THROWS_AS (mini.getNumPrograms(), vs::ConfigError);
     CHECK_THROWS_AS (mini.getProgramName (0), vs::ConfigError);
+    CHECK_THROWS_AS (mini.getPresets(), vs::ConfigError);
     juce::MemoryBlock state;
     CHECK_THROWS_AS (mini.getStateInformation (state), vs::ConfigError);
 }

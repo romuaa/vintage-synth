@@ -308,7 +308,7 @@ public:
     void changeProgramName (int index, const juce::String& name) override { pm().renameProgram (index, name); }
 
     /** Presets, banks and files (message thread). Owned by the processor: works without an editor. */
-    presets::PresetManager& getPresets() noexcept { return pm(); }
+    presets::PresetManager& getPresets() { return pm(); } // throws ConfigError if the instrument forgot initPresets
 
     // ---- State ----
     void getStateInformation (juce::MemoryBlock& destData) override

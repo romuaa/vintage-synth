@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace
@@ -150,4 +151,27 @@ TEST_CASE ("TestTonePart: a zero-length render only applies the events", "[bside
     const NoteEvent on = noteOn (0, 60);
     part.render (nullptr, 0, { &on, 1 });
     CHECK (part.isSounding());
+}
+
+TEST_CASE ("TestTonePart: an offset at or beyond the block applies after its last sample", "[bside][part]")
+{
+    bs::TestTonePart part;
+    part.prepare (kRate);
+    std::vector<float> out (100, 1.0f);
+    const NoteEvent late[] { noteOn (100, 60), noteOn (5000, 64) }; // n == 100: at the end; and far beyond
+    part.render (out.data(), 100, late);
+    CHECK (peakOf (out, 0, out.size()) < 1.0e-9f); // both notes start after the block's last sample
+    CHECK (part.isSounding());
+    part.render (out.data(), 100, {});
+    CHECK (peakOf (out, 0, out.size()) > 0.0f);
+}
+
+TEST_CASE ("TestTonePart: a non-finite pitch bend is no bend", "[bside][part]")
+{
+    bs::TestTonePart part;
+    part.prepare (kRate);
+    const auto out = renderAll (part, 4800, 480, { noteOn (0, 69), control (100, EventType::PitchBend, std::numeric_limits<float>::quiet_NaN()) });
+    for (const float v : out)
+        REQUIRE (std::isfinite (v));
+    CHECK (peakOf (out, 1000, 4800) > 0.2f);
 }
