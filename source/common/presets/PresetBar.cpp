@@ -40,12 +40,12 @@ public:
             g.setColour (juce::Colours::white);
             g.drawRoundedRectangle (r.reduced (1.0f), 4.0f, 2.0f);
         }
-        auto text = r.reduced (8.0f, 0.0f);
+        auto textArea = r.reduced (8.0f, 0.0f);
         g.setColour (getLookAndFeel().findColour (juce::Label::textColourId));
         g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-        g.drawText (getButtonText(), text.withTrimmedRight (16.0f), juce::Justification::centredLeft, true);
+        g.drawText (getButtonText(), textArea.withTrimmedRight (16.0f), juce::Justification::centredLeft, true);
         g.setFont (juce::FontOptions (12.0f));
-        g.drawText ("v", text.removeFromRight (14.0f), juce::Justification::centred, false);
+        g.drawText ("v", textArea.removeFromRight (14.0f), juce::Justification::centred, false);
     }
 };
 
