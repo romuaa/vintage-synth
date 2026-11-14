@@ -26,6 +26,7 @@
 namespace vs::ui
 {
 class SoundPage;
+class BrowserPage;
 class PlaceholderPage;
 
 /** The embedded Inter faces (resources/fonts/inter, SIL OFL 1.1). */
@@ -46,6 +47,8 @@ public:
 
     // ---- Introspection for tests ----
     const presets::PresetBar& getBar() const noexcept { return bar; }
+    presets::PresetBar& getBar() noexcept { return bar; }
+    BrowserPage& getBrowserPage() noexcept { return *browser; }
     const ControlRegistry& getRegistry() const noexcept { return registry; }
     ParamMirror& getMirror() noexcept { return mirror; }
     EditorFrame& getFrame() noexcept { return frame; }
@@ -87,6 +90,7 @@ private:
     presets::PresetBar bar;
     EditorFrame frame;
     std::unique_ptr<SoundPage> sound[2];
+    std::unique_ptr<BrowserPage> browser;
     std::vector<std::unique_ptr<PlaceholderPage>> placeholders;
     struct PlaceholderRef
     {

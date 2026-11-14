@@ -3,6 +3,22 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## M7e results: Browser, `PresetActions`, program menu (2026-11-14)
+
+| Decision | Why |
+|---|---|
+| **A fourth read accessor, `PresetManager::slotValue (slot, paramIndex)`,** returns the stored plain value of one parameter in a slot of the bank shown (NaN out of range). (review: contract 9.3.7 names three) | The contract asks the Browser to mark the Upper tone "(not heard in this program)" for a program in Whole mode, but `slotMeta` carries no sound data. A copy of one float under the existing lock is the smallest door. |
+| **The "(not heard)" mark is a note line under the tone-source switch** ("Upper tone: not heard in this program (Whole mode)"), shown while the selected program's `key.mode` is Whole, not text inside the segment. (review) | Segments have a fixed width (layout never depends on text metrics, 9.2.4); the caption would not fit. |
+| **`bankGeneration` also changes when a program is stored into or renamed in a user bank and when a session's bank is resolved**, not only when another bank is set. A rename or store of the current slot's name without a new generation is caught by comparing the 64 names when the manager broadcasts a change. | The grid must show what the bank holds; the generation was already the "stale lookup" guard, so storing and renaming now also invalidate an in-flight write of the same bank (the later write reports "The bank changed while it was being written"). |
+| **Selecting a bank in the bank chooser loads its first program** (the same as Load bank file). The factory entry returns to the factory bank and loads A1. (review) | `setBank` alone would leave a sound that belongs to no slot of the bank shown. Other user banks are reached with "Load bank file...". |
+| **Save (Browser) = store in the current slot when a user bank is shown and the sound is not detached; otherwise a "Save as" menu** (program file, a copy of the bank as a new user bank, and "Store in slot of this user bank" with the 64 slots and their names). The top bar keeps its Load and Save menus (now `PresetActions`) with the "Store in this slot" item, so B-Side's bar is unchanged. (review) | Contract 9.3.7. A copy of the factory bank is the way to get a user bank in which to store. Overwriting another slot shows that slot's name in the menu. |
+| **The program name in the shared preset bar is a button** (click, Enter or Space opens the program menu); the same bar is B-Side's, so B-Side gets the menu too, without "Open Browser". | One bar, no fork; the bar is the top bar's preset area until the custom top bar redesign (M7f). |
+| **The category chips are 100 px wide on two rows; when the bank has more categories than fit, the last place is "More..." with a menu of the rest.** (review) | A bank may have up to 64 distinct categories; chip width is fixed (no text metrics). The factory bank has 17. |
+| **Chip and stripe colours are `categoryColour (index mod 12)`, placeholder hues (HSV, S 0.55, V 0.85).** (review, M7f) | Final `cat.*` colours come with M7f. |
+| **Search and a category apply together (a cell must match both); search is case-insensitive for ASCII only.** | Simple, predictable; the contract's search row names substring match only. |
+| **The grid and the chips are buffered to an image** (JUCE `setBufferedToImage`): a repaint with nothing changed draws the image (no allocation from our code); the 64 cells are drawn again only after `repaint()`. | Budget 9.5: uncached, the 64 cells cost about 3,000 allocations per paint inside the software renderer. |
+| **Selection follows the current program (a host program change, `<`, `>`, the menu); clicking only selects.** | The grid then always shows where the sound came from; loading is explicit (double-click, Enter, Load program). |
+
 ## M7a results: editor foundation and Sound page (2026-11-14)
 
 | Decision | Why |

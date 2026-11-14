@@ -1,0 +1,52 @@
+editor 0 0 2040 1176 scale 1.5000
+Editor 0 0 1360 784
+  Pages 0 48 112 712
+    page.sound 12 12 88 82
+    page.envelopes 12 102 88 82
+    page.lfo 12 192 88 82
+    page.play 12 282 88 82
+    page.arpseq 12 372 88 82
+    page.effects 12 462 88 82
+    page.browser 12 552 88 82
+  - 436 8 470 32
+    < 4 3 28 26
+    > 34 3 28 26
+    Load... 282 3 64 26
+    Save... 350 3 64 26
+    Init 418 3 48 26
+    - 68 3 69 26
+    - 137 3 36 26
+    - 173 3 103 26
+  ui.output 918 6 96 36
+  master.volume 1024 6 150 36
+  ui.limit 1184 10 70 28
+  Output settings 1258 10 26 28
+  Window size 1290 10 58 28
+  Help 0 760 1360 24
+  browser 112 48 1248 712
+    browser.grid 12 88 856 578
+    browser.chips 458 14 766 56
+    Bank 24 26 190 32
+    Search programs 226 26 220 32
+      - 1 1 216 30
+        - 0 0 216 30
+          - 0 0 216 30
+    Selected program 888 88 348 578
+      - 12 36 324 74
+      Take its tone 12 190 324 30
+      - 12 170 324 18
+      - 12 290 324 18
+      - 12 398 324 18
+      - 12 466 324 18
+      - 12 222 324 16
+      - 12 530 324 32
+      Load program 12 118 324 40
+      Load tone > Lower 12 242 156 32
+      Load tone > Upper 180 242 156 32
+      Save 12 310 156 32
+      Save as... 180 310 156 32
+      Init (blank) 12 350 156 32
+      Save tone... 12 418 156 32
+      Load tone file... 180 418 156 32
+      Import... 12 486 156 32
+      Export bank... 180 486 156 32

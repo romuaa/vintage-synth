@@ -80,6 +80,7 @@ set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Part.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/VintageEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/SoundPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/BrowserPage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/PlaceholderPage.cpp)
 set(VS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${VS_VINTAGE_SOURCES})
 

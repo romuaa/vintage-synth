@@ -1,6 +1,7 @@
 #include "vintage/ui/VintageEditor.h"
 
 #include "UiData.h"
+#include "vintage/ui/BrowserPage.h"
 #include "vintage/ui/PlaceholderPage.h"
 #include "vintage/ui/SoundPage.h"
 
@@ -27,7 +28,7 @@ std::vector<EditorFrame::Page> vintagePages()
         { kVintagePageNames[3], "Play", PageIcon::Play, false, "Play: keyboard layout, voices, glide and the mix of both parts (placeholder until M7c)." },
         { kVintagePageNames[4], "Arp + Seq", PageIcon::ArpSeq, false, "Arp + Seq: the arpeggiator and the step sequencer (placeholder until M7d)." },
         { kVintagePageNames[5], "Effects", PageIcon::Effects, false, "Effects: chorus, delay and reverb on both parts (placeholder until M7c)." },
-        { kVintagePageNames[6], "Browser", PageIcon::Browser, false, "Browser: programs and banks (until M7e: the preset bar at the top)." },
+        { kVintagePageNames[6], "Browser", PageIcon::Browser, false, "Browser: pick a program from the grid, load it or just one of its sounds, and save your own." },
     };
 }
 
@@ -68,6 +69,7 @@ VintageEditor::VintageEditor (VintageSynthProcessor& p)
     frame.onPageChosen = [this] (int page) { selectPage (page, frame.getPart()); };
     frame.onPartChosen = [this] (int part) { selectPage (frame.getPage(), part); };
     frame.onSizeMenu = [this] { showSizeMenu(); };
+    bar.onOpenBrowser = [this] { selectPage (static_cast<int> (VintagePage::Browser), frame.getPart()); };
 
     keyModeIndex = mirror.indexOf ("key.mode");
     if (keyModeIndex >= 0)
@@ -167,8 +169,9 @@ void VintageEditor::buildPages()
     }
     addPlaceholder (VintagePage::ArpSeq, -1, "Arp + Seq", "Placeholder until M7d: the arpeggiator, the step sequencer and its 16 steps.", std::move (arp));
     addPlaceholder (VintagePage::Effects, -1, "Effects", "Placeholder until M7c: chorus, delay and reverb.", std::move (fx));
-    addPlaceholder (VintagePage::Browser, -1, "Browser",
-                    "Placeholder until M7e: load, save and initialise programs with the preset bar at the top of the window.", {});
+    registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::Browser)], -1);
+    browser = std::make_unique<BrowserPage> (ctx, static_cast<VintageSynthProcessor&> (processor).getPresets(), [this] { return frame.getPart(); });
+    frame.addPageComponent (static_cast<int> (VintagePage::Browser), -1, *browser);
     registry.setContext ("frame", -1);
 }
 

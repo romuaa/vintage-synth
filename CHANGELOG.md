@@ -5,6 +5,21 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M7e — Browser page, `PresetActions`, program menu (2026-11-14)
+- **Browser page:** bank chooser, search, category chips (colour per category, "More..." when many),
+  an 8 × 8 grid of the bank's programs (name, slot, category stripe; the current program outlined with a
+  dot when changed; click selects, double-click or Enter loads, arrow keys move), and the selected
+  program's panel: Load program, **Load tone** (take its Lower or Upper tone into Lower or Upper only),
+  Save, Save as, Init, tone files for the edited part, Import and Export of banks. Follows program
+  changes and bank changes live.
+- **Program menu:** clicking the program name in the top bar (or Enter/Space on it) lists the bank's
+  programs grouped by category, current one ticked, with "Open Browser" below.
+- **`PresetActions`** (`source/common/presets/`): the file dialogs, menus and save/load flows moved out of
+  `PresetBar`, shared by the bar and the Browser (a test dialog replaces the real one in tests).
+- **`PresetManager`:** `slotMeta`, `bankGeneration`, `applyToneFromSlot` (and `slotValue`, see
+  `docs/decisions.md`); no change to how programs reach the audio thread.
+- JUCE-free logic in `common/ui/models/ProgramModels.h` (category groups, menu model, search, grid movement).
+
 ### M7a — custom editor: foundation, frame, Sound page (2026-11-14)
 - The plugin opens its own editor (`source/vintage/ui/`): a 1360 × 784 canvas scaled as a whole,
   75–200 % at a fixed aspect (corner resizer and a Size menu), page rail, top bar (part switch with
