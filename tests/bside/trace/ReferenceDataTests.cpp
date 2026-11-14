@@ -2,9 +2,13 @@
 // structure only, no chip needed. Every trace reads; its .bsref and .bsspec read, are canonical (the
 // writer reproduces them byte for byte), belong to the trace (SHA-256 and checkpoint schedule), and the
 // spec has the frame count and segment plan of SpecAnalysis.h; the MANIFEST lists every file with its
-// SHA-256 and names the generator commits the files carry. The replay against our chip and the analog
-// tolerances need the chip (S2/S3): those tests report themselves skipped until it exists.
+// SHA-256 and names the generator commits the files carry. The digital replay runs every trace through
+// our chip (docs/architecture.md 8.9.4, 8.15, ChipReplay.h): exact at every checkpoint, with the
+// shape exemption of 8.15.8 counted and reported per trace (`[replay]` lines on stdout); a `d_*` trace
+// may have no exemption. The analog tolerances need the chip's output path (S2b/S3) and report
+// themselves skipped until it exists.
 
+#include "bside/trace/ChipReplay.h"
 #include "bside/trace/ReferenceFormat.h"
 #include "bside/trace/Sha256.h"
 #include "bside/trace/SpecAnalysis.h"
@@ -13,6 +17,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -173,14 +178,107 @@ TEST_CASE ("reference data: every trace has a canonical reference and spec that 
     }
 }
 
-TEST_CASE ("reference data: digital replay against our chip", "[trace][reference][chip]")
+namespace
 {
-    // Replay.h, against vs::bside::chip::Chip once S2 builds it: every checkpoint exact.
-    SKIP ("needs the chip (S2): no chip implementation exists yet");
+struct FamilyTotals
+{
+    std::size_t traces = 0, replays = 0, checkpoints = 0, exact = 0, exempt = 0, mismatched = 0;
+};
+
+std::string familyOf (const std::string& name)
+{
+    if (name.rfind ("d_", 0) == 0)
+        return "d";
+    if (name.rfind ("c_", 0) == 0)
+        return "c";
+    if (name.rfind ("a_", 0) == 0)
+        return "a";
+    return "other";
+}
+} // namespace
+
+TEST_CASE ("reference data: digital replay against our chip, exact at every checkpoint (8.15.8 exemption)", "[trace][reference][chip]")
+{
+    const auto all = traces();
+    if (all.empty())
+        SKIP ("no reference data committed");
+    std::map<std::string, FamilyTotals> families;
+    for (const auto& path : all)
+    {
+        const auto name = path.stem().string();
+        const auto family = familyOf (name);
+        const auto bytes = slurp (path);
+        const auto tr = readTrace (bytes);
+        REQUIRE (tr.ok);
+        const auto rr = readReference (slurp (kDir / (name + ".bsref")));
+        REQUIRE (rr.ok);
+        // The envelope traces set no waveform bit and hold for both models (docs/bside-oracle-adapter.md):
+        // they are replayed as committed and once more with the chip configured as the other model.
+        std::vector<vs::bside::chip::Model> models { chipModel (tr.trace.model) };
+        if (name.rfind ("d_env_", 0) == 0)
+            models.push_back (tr.trace.model == Model::A ? vs::bside::chip::Model::B : vs::bside::chip::Model::A);
+        auto& f = families[family];
+        ++f.traces;
+        for (const auto m : models)
+        {
+            const auto r = replayChipExact (tr.trace, bytes, rr.reference, m);
+            const char* modelName = m == vs::bside::chip::Model::A ? "A" : "B";
+            std::printf ("[replay] %-24s model %s: %6zu checkpoints, %6zu exact, %6zu exempt (%zu of them equal anyway), %zu mismatched\n",
+                         name.c_str(), modelName, r.checkpoints, r.exact, r.exempt, r.exemptButEqual, r.mismatched);
+            INFO (name << " as model " << modelName);
+            REQUIRE (r.error.empty());
+            std::string first;
+            for (const auto& mm : r.first)
+                first += "\n  checkpoint " + std::to_string (mm.checkpoint) + " (cycle " + std::to_string (mm.cycle) + "): " + kStateFieldNames[mm.field]
+                         + " ours " + hexText (mm.ours) + ", reference " + hexText (mm.expected);
+            for (const auto& w : r.writesBefore)
+                first += "\n  write before: " + std::to_string (w.cycle) + " " + hexText (w.reg) + " " + hexText (w.value);
+            INFO ("first differences:" << first);
+            CHECK (r.checkpoints == rr.reference.points.size());
+            CHECK (r.mismatched == 0);
+            CHECK (r.fastPathDiffs == 0); // advanceCycles equals stepCycle in the full state at every checkpoint
+            if (family == "d")
+                CHECK (r.exempt == 0); // the digital traces use no combined waveform: nothing may be exempt
+            ++f.replays;
+            f.checkpoints += r.checkpoints;
+            f.exact += r.exact;
+            f.exempt += r.exempt;
+            f.mismatched += r.mismatched;
+        }
+    }
+    for (const auto& [family, f] : families)
+        std::printf ("[replay] family %-5s %3zu traces, %3zu replays: %7zu checkpoints, %7zu exact, %6zu exempt, %zu mismatched\n", family.c_str(),
+                     f.traces, f.replays, f.checkpoints, f.exact, f.exempt, f.mismatched);
+    CHECK (families["d"].traces > 0);
+    CHECK (families["c"].traces > 0);
+}
+
+TEST_CASE ("reference data: the exemption covers real differences in the combined-waveform traces", "[trace][reference][chip]")
+{
+    // Our combined-waveform tables are placeholders (8.15.8), so some exempt checkpoints must actually
+    // differ from the reference; otherwise the exemption would be untested.
+    const auto all = traces();
+    if (all.empty())
+        SKIP ("no reference data committed");
+    std::size_t exemptAndDifferent = 0;
+    for (const auto& path : all)
+    {
+        const auto name = path.stem().string();
+        if (familyOf (name) != "c")
+            continue;
+        const auto bytes = slurp (path);
+        const auto tr = readTrace (bytes);
+        const auto rr = readReference (slurp (kDir / (name + ".bsref")));
+        REQUIRE (tr.ok);
+        REQUIRE (rr.ok);
+        const auto r = replayChipExact (tr.trace, bytes, rr.reference);
+        exemptAndDifferent += r.exempt - r.exemptButEqual;
+    }
+    CHECK (exemptAndDifferent > 0);
 }
 
 TEST_CASE ("reference data: analog tolerances against our chip", "[trace][reference][chip]")
 {
     // Compare.h: filter corners, resonance peaks, distortion, voice DC steps, noise spectra (8.9.4).
-    SKIP ("needs the chip's output path (S3): no chip implementation exists yet");
+    SKIP ("needs the chip's output path (S2b/S3): the digital core exists and is replayed above, but there is no audio path yet");
 }
