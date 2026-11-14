@@ -22,6 +22,7 @@
 //   8. Per chunk: parse, pedal tracking, route, arp/seq, render Lower (and Upper if active, else a
 //      zero-length render), mixer with latch cuts, input guard, chorus, delay, reverb, gain x trim
 //      with guard, limiter, clamp, copy or mono fold, guard reset, unlatch, Upper idle count.
+//   9. Publish the UI feed (reads only; also at every exit of processBlockBypassed).
 // Hooks are called at most once per block or chunk, never per sample.
 //
 // What Derived provides (all noexcept except prepareParts; may be private with `friend Base;`):
@@ -44,6 +45,7 @@
 #include "common/engine/NoteEvent.h"
 #include "common/engine/Oversampler.h"
 #include "common/engine/PartMixer.h"
+#include "common/engine/UiFeed.h"
 #include "common/fx/Chorus.h"
 #include "common/fx/Delay.h"
 #include "common/fx/Reverb.h"
@@ -54,6 +56,7 @@
 #include "common/presets/ApplyGate.h"
 #include "common/presets/PresetManager.h"
 #include "common/seq/ArpSeq.h"
+#include "common/shell/EditorState.h"
 #include "common/shell/ShellSupport.h"
 
 #include <algorithm>
@@ -172,6 +175,8 @@ public:
         // Both parts share the factor, so they have the same latency.
         jassert (lowerPart().getLatencySamples() == upperPart().getLatencySamples());
         setLatencySamples (lowerPart().getLatencySamples());
+
+        uiFeed.internalRate.store (static_cast<float> (sampleRate * voiceOversamplingFactor (sampleRate, false)), std::memory_order_relaxed);
     }
 
     void releaseResources() override {}
@@ -201,6 +206,7 @@ public:
                 resetEngine();
         }
         processInternal (buffer, midi);
+        publishUiFeed (buffer, false); // step 9
     }
     using juce::AudioProcessor::processBlock;
 
@@ -218,6 +224,7 @@ public:
         if (preparedBlockSize == 0)
         {
             buffer.clear();
+            publishUiFeed (buffer, true); // step 9
             return;
         }
         if (! bypassed)
@@ -241,6 +248,7 @@ public:
             if (presetGate.takeReleaseRequest())
                 presetGate.acknowledgeRelease();
             buffer.clear();
+            publishUiFeed (buffer, true); // step 9
             return;
         }
         // Fading out: render on without the host's MIDI, ramp the output to 0 over the fade (per
@@ -258,6 +266,7 @@ public:
         bypassFadeLeft -= fadeSamples;
         if (bypassFadeLeft <= 0)
             resetEngine();
+        publishUiFeed (buffer, true); // step 9
     }
     using juce::AudioProcessor::processBlockBypassed;
     static constexpr double kBypassFadeSeconds = 0.005;
@@ -312,6 +321,8 @@ public:
         auto state = apvts.copyState();
         state.setProperty (kStateVersionAttr, Derived::kStateVersion, nullptr);
         state.appendChild (presetManager->createSessionInfo(), nullptr);
+        if (! uiPageNames.empty()) // an instrument with its own editor (docs/architecture.md 9.1.3)
+            state.appendChild (createUiState (editorState, uiPageNames), nullptr);
 
         if (auto xml = state.createXml())
             copyXmlToBinary (*xml, destData);
@@ -331,6 +342,12 @@ public:
         auto info = state.getChildWithName (kPresetInfoType);
         if (info.isValid())
             state.removeChild (info, nullptr);
+        // The editor's UI state (9.1.3) is not a parameter either: taken out too. A session without
+        // it (saved before M7) shows the defaults.
+        auto ui = state.getChildWithName (kUiStateType);
+        if (ui.isValid())
+            state.removeChild (ui, nullptr);
+        restoreUiState (editorState, ui, uiPageNames);
         Derived::migrateState (state);
         addMissingParameters (state, getParameters());
 
@@ -347,6 +364,12 @@ public:
     }
 
     juce::AudioProcessorValueTreeState& getState() noexcept { return apvts; }
+
+    // ---- Editor data (docs/architecture.md 9.1.2): both live as long as the processor ----
+    /** Non-parameter UI state, saved with the session (any thread; atomics). */
+    EditorState& getEditorState() noexcept { return editorState; }
+    /** Audio -> editor feed, written once per block (step 9); the editor only reads it. */
+    UiFeed& getUiFeed() noexcept { return uiFeed; }
 
     // ---- Read-only views for tests and diagnostics (not thread-safe: read between blocks) ----
     const Part& getLowerPart() const noexcept { return self().part (0); }
@@ -407,6 +430,10 @@ protected:
         presetManager = std::make_unique<presets::PresetManager> (apvts, std::move (schema), std::move (factoryBank), presetGate,
                                                                   presets::Locations::userDefault (productFolder));
     }
+
+    /** An instrument with its own editor names its pages (index -> name; a static array): the
+        session then saves the editor's UI state (docs/architecture.md 9.1.3). Constructor only. */
+    void setUiPageNames (std::span<const char* const> names) noexcept { uiPageNames = names; }
 
     /** The key mode from the parameter atomics (any thread; NaN-safe). */
     KeyMode currentKeyMode() const noexcept { return detail::keyModeOf (keyMode); }
@@ -825,6 +852,42 @@ private:
         }
     }
 
+    /** Step 9 (docs/architecture.md 9.1.4): publishes the UI feed. Reads engine state only, writes
+        only the feed's atomics: no allocation, no lock, no system call. A part type may offer
+        `soundingNotes (std::uint64_t (&)[2])`; without it the sounding masks stay 0. */
+    void publishUiFeed (const juce::AudioBuffer<float>& buffer, bool bypassedBlock) noexcept
+    {
+        const int n = buffer.getNumSamples(), channels = buffer.getNumChannels();
+        if (! bypassedBlock && n > 0 && channels > 0)
+            for (int c = 0; c < 2; ++c)
+                uiFeed.raisePeak (c, buffer.getMagnitude (juce::jmin (c, channels - 1), 0, n));
+        if (! bypassedBlock && ! limiter.isOff())
+            uiFeed.lowerLimiterGain (1.0f - limiter.currentMix() * (1.0f - limiter.currentGain()));
+        uiFeed.blockCount.store (uiFeed.blockCount.load (std::memory_order_relaxed) + 1u, std::memory_order_relaxed);
+        uiFeed.hostPlaying.store (hostPlaying, std::memory_order_relaxed);
+        uiFeed.hostBpm.store (static_cast<float> (hostPlaying ? hostBpm : arpSettings.settings.internalBpm), std::memory_order_relaxed);
+
+        std::uint64_t held[2][2] {};
+        for (int note = 0; note < 128; ++note)
+        {
+            const auto owner = router.ownerOf (note);
+            const auto bit = std::uint64_t { 1 } << (note & 63);
+            if ((owner & KeyRouter::kLower) != 0)
+                held[0][note >> 6] |= bit;
+            if ((owner & KeyRouter::kUpper) != 0)
+                held[1][note >> 6] |= bit;
+        }
+        for (int p = 0; p < 2; ++p)
+        {
+            UiFeed::storeMask (uiFeed.part[p].held, held[p][0], held[p][1]);
+            std::uint64_t sounding[2] {};
+            if constexpr (requires (const Part& c, std::uint64_t (&m)[2]) { c.soundingNotes (m); })
+                if (! bypassedBlock || bypassFadeLeft > 0)
+                    self().part (p).soundingNotes (sounding);
+            UiFeed::storeMask (uiFeed.part[p].sounding, sounding[0], sounding[1]);
+        }
+    }
+
     presets::ApplyGate presetGate; // message thread <-> audio thread hand-over (atomics only)
 
     BoundParam masterVolume, keyMode, splitPoint, balance; // sanitised reads (ParamFactory.h)
@@ -880,6 +943,11 @@ private:
     static constexpr int kUpperIdleSamples = 256;
     bool upperActive = false;
     int upperQuietSamples = 0;
+
+    // Editor data (docs/architecture.md 9.1.3, 9.1.4). The audio thread only writes uiFeed (step 9).
+    EditorState editorState;
+    UiFeed uiFeed;
+    std::span<const char* const> uiPageNames; // empty: no UiState child in the session
 
     // Last member: destroyed first (it listens to the parameters). Derived's members (its parts and
     // bindings) are destroyed before it; it uses neither.
