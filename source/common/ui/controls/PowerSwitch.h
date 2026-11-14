@@ -5,6 +5,7 @@
 // switching off remembers the level (EditorState::fxLastLevel) and sets 0, switching on brings the
 // remembered level back (0.35 if none). No parameter of its own.
 
+#include "common/ui/PaintFonts.h"
 #include "common/ui/controls/BoundComponent.h"
 #include "common/ui/models/FxPictureModels.h"
 
@@ -34,6 +35,7 @@ public:
 
 private:
     std::atomic<float>& last;
-    juce::String effect;
+    juce::String effect, onText { "ON" }, offText { "OFF" };
+    PaintFonts fonts;
 };
 } // namespace vs::ui

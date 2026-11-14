@@ -29,15 +29,16 @@ Editor 0 0 1360 784
       fx.chorus.mode 12 304 376 46
       fx.chorus.mix 12 362 376 40
     Delay 424 12 400 688
+      fx.delay.level 332 4 56 20
       Delay picture 12 36 376 250
-        Delay echoes 176 176 28 28
+        Delay echoes 267 180 28 28
       fx.delay.ping_pong 12 304 376 46
       fx.delay.time 12 362 376 40
       fx.delay.feedback 12 410 376 40
       fx.delay.damping 12 458 376 40
       fx.delay.level 12 506 376 40
-      fx.delay.level 332 4 56 20
     Reverb 836 12 400 688
+      fx.reverb.level 332 4 56 20
       Reverb picture 12 36 376 250
         Reverb pre-delay 60 -8 28 28
         Reverb decay time 239 208 28 28
@@ -45,4 +46,3 @@ Editor 0 0 1360 784
       fx.reverb.decay 12 352 376 40
       fx.reverb.damping 12 400 376 40
       fx.reverb.level 12 448 376 40
-      fx.reverb.level 332 4 56 20

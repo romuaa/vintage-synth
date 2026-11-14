@@ -54,11 +54,13 @@ private:
     void mirrorChanged (int index, bool valueChanged) override;
     void mirrorIdle (double nowMs) override;
     void updateStates();
+    void rememberLevels();
     void recomputePictures (bool fromLive);
     float value (int index, bool fromLive) const;
     void placeHandles (bool fromLive);
 
     UiContext& ctx;
+    shell::EditorState& editorState;
     Panel chorusPanel, delayPanel, reverbPanel;
     ChorusView chorusView;
     DelayView delayView;

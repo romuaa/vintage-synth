@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "EditorRig.h"
+#include "NullGraphicsContext.h"
 
 #include "common/engine/KeyRouter.h"
 #include "common/fx/Chorus.h"
@@ -325,13 +326,18 @@ TEST_CASE ("Delay picture: echoes are cut at the axis end and when they are inau
         const float x = axis.positionOf (t);
         CHECK (x > last);
         last = x;
-        CHECK (axis.valueAt (x) == Approx (t).margin (1.0e-6));
+        CHECK (axis.timeAt (x) == Approx (t).margin (1.0e-6));
     }
     CHECK (axis.positionOf (6.0) == Approx (310.0f));
     CHECK (axis.positionOf (0.0) == Approx (10.0f));
-    // A short delay's echoes stay apart (at least 8 px for 12 echoes of 50 ms), a long one's too (2 s: two echoes 100+ px apart).
-    CHECK (axis.positionOf (0.1) - axis.positionOf (0.05) > 8.0f);
-    CHECK (axis.positionOf (4.0) - axis.positionOf (2.0) > 40.0f);
+    // Readable from 10 ms to 6 s on a 300 px axis: the first four echoes of a 10 ms delay are at least 8 px
+    // apart and the input is 25 px from the first; a 2 s delay's two echoes (2 s, 4 s) are 25 px apart.
+    const auto fast = delayPicture (0.01, 0.9f, false, 6.0);
+    REQUIRE (fast.count >= 5);
+    CHECK (axis.positionOf (fast.echoes[0].timeSec) - axis.positionOf (0.0) > 25.0f);
+    for (int i = 1; i < 4; ++i)
+        CHECK (axis.positionOf (fast.echoes[static_cast<size_t> (i)].timeSec) - axis.positionOf (fast.echoes[static_cast<size_t> (i) - 1].timeSec) > 8.0f);
+    CHECK (axis.positionOf (4.0) - axis.positionOf (2.0) > 25.0f);
 
     const ReverbTimeAxis rev (10.0f, 300.0f);
     last = -1.0f;
@@ -376,6 +382,34 @@ TEST_CASE ("Chorus picture equals the real chorus: the tap delays follow the blo
     }
     CHECK_FALSE (chorusPicture (0).active());
     CHECK (chorusTapMs (chorusPicture (0), 1.234, false) == Approx (fx::Chorus::kCentreMs));
+}
+
+TEST_CASE ("Chorus view: off draws no delay (the line lies on the dry level), the caption says plus-minus, the 8 ms label is clear of the curves", "[ui][m7c][pictures]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    auto& view = rig.editor->getEffectsPage().getChorusView();
+    rig.set ("fx.chorus.mode", 0.0f);
+    rig.tick();
+    CHECK (view.caption().startsWith ("Chorus is off"));
+    for (const float x : { 0.1f, 0.4f, 0.7f })
+        for (const bool anti : { false, true })
+        {
+            const float px = view.plotArea().getX() + x * view.plotArea().getWidth();
+            CHECK (view.tapAtX (px, anti) == Approx (0.0f).margin (1.0e-6));
+            CHECK (view.yOfMs (view.tapAtX (px, anti)) == Approx (view.plotArea().getBottom()));
+        }
+    for (const float mode : { 1.0f, 2.0f })
+    {
+        rig.set ("fx.chorus.mode", mode);
+        rig.tick();
+        CHECK (view.caption().contains (juce::String::fromUTF8 ("\xc2\xb1")));
+        CHECK_FALSE (view.caption().contains ("+-"));
+        // The curves stay below the top label (the label occupies the first 14 px of the plot).
+        const auto pic = chorusPicture (static_cast<int> (mode));
+        CHECK (view.yOfMs (pic.centreMs + pic.depthMs) > view.plotArea().getY() + 16.0f);
+        CHECK (view.yOfMs (pic.centreMs - pic.depthMs) < view.plotArea().getBottom() - 16.0f); // and above the "dry" label
+    }
 }
 
 TEST_CASE ("Reverb picture: pre-delay gap, then -60 dB at pre-delay + decay time", "[ui][m7c][pictures]")
@@ -838,7 +872,49 @@ TEST_CASE ("Power switch: off stores the level and writes 0, on writes it back (
     CHECK (handler->getCurrentState().isChecked());
 }
 
-TEST_CASE ("Effects handles: the delay handle writes time and repeats, the reverb handles pre-delay and decay; gestures balanced", "[ui][m7c][effects][gestures]")
+TEST_CASE ("Power switch: the last audible level is remembered whatever set it, so Off then On returns to it", "[ui][m7c][effects]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    auto& fx = rig.editor->getEffectsPage();
+    auto& level = rig.param ("fx.delay.level");
+    auto& state = rig.proc.getEditorState();
+
+    hostWrite (level, 0.8f); // automation
+    rig.tick();
+    hostWrite (level, 0.0f);
+    rig.tick();
+    CHECK_FALSE (fx.getDelayPower().isOn());
+    CHECK (state.fxLastLevel[0].load() == Approx (0.8f));
+    fx.getDelayPower().press();
+    CHECK (level.getValue() == Approx (0.8f));
+
+    fx.getSlider ("fx.delay.level").getModel().typed (0.5f); // the user
+    rig.tick();
+    hostWrite (level, 0.0f);
+    rig.tick();
+    fx.getDelayPower().press();
+    CHECK (level.getValue() == Approx (0.5f));
+
+    rig.proc.getPresets().selectProgram (12); // a program change: its audible level (if any) is the one remembered
+    rig.tick();
+    const float programLevel = rig.param ("fx.reverb.level").getValue();
+    hostWrite (rig.param ("fx.reverb.level"), 0.0f);
+    rig.tick();
+    fx.getReverbPower().press();
+    CHECK (rig.param ("fx.reverb.level").getValue() == Approx (programLevel > 0.0f ? programLevel : 0.35f));
+
+    // An editor opened while a level is on knows it (the session's saved level may be older).
+    hostWrite (level, 0.7f);
+    rig.tick();
+    state.fxLastLevel[0].store (0.35f);
+    rig.editor.reset();
+    rig.open();
+    rig.tick();
+    CHECK (state.fxLastLevel[0].load() == Approx (0.7f));
+}
+
+TEST_CASE ("Effects handles: after a drag and a tick every handle is under the pointer in x and y; gestures balanced", "[ui][m7c][effects][gestures]")
 {
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
     EditorRig rig;
@@ -850,56 +926,63 @@ TEST_CASE ("Effects handles: the delay handle writes time and repeats, the rever
     rig.tick();
     const int outsideBefore = host.valuesOutsideGesture; // the test's own host writes above
 
-    // Delay handle: x moves the time (the second echo at twice the time), y the repeats (relative).
+    // The expectation is the pointer itself, not a formula of the page's: a wrong pixels-per-range,
+    // a wrong time factor or a wrong axis would leave the handle behind or ahead of the pointer.
+    const auto expectUnderPointer = [] (ui::GraphHandle& h, juce::Point<float> start, float dx, float dy, const char* what) {
+        INFO (what << ": start " << start.toString() << " pointer moved " << dx << ", " << dy << ", handle now " << h.getCentre().toString());
+        CHECK (h.getCentre().x == Approx (start.x + dx).margin (1.0));
+        CHECK (h.getCentre().y == Approx (start.y + dy).margin (1.0));
+        CHECK (handleFollows (h));
+    };
+
+    // Delay handle (ping-pong lane): x moves the time, y the repeats.
     auto& dh = fx.getDelayHandle();
     auto& dm = dh.getModel();
-    const auto c = dh.getCentre();
-    dm.mouseDown (c.x, c.y, c.x, false);
-    dm.mouseDrag (c.x + 30.0f, c.y - 20.0f, false);
-    const auto& dview = fx.getDelayView();
-    const float expectedTime = map::delayTimeFromSec (static_cast<float> (dview.timeAtHandleX (c.x + 30.0f)));
-    const float expectedFb = rig.param ("fx.delay.feedback").getDefaultValue() + 20.0f / (dview.laneHeight() / map::kDelayMaxFeedback);
-    CHECK (rig.param ("fx.delay.time").getValue() == Approx (expectedTime).margin (1.0e-4));
-    CHECK (rig.param ("fx.delay.feedback").getValue() == Approx (expectedFb).margin (1.0e-4));
-    CHECK (rig.param ("fx.delay.time").getValue() > rig.param ("fx.delay.time").getDefaultValue());
-    CHECK (host.openCount() == 2);
-    dm.mouseUp();
-    CHECK (host.openCount() == 0);
-    rig.tick();
-    CHECK (handleFollows (fx.getDelayHandle()));
-    // The handle stands where the second echo's top is: the picture and the handle agree.
-    const auto pic = fx.getDelayView().picture();
-    CHECK (fx.getDelayHandle().getCentre().x == Approx (fx.getDelayView().timeAxis().positionOf (pic.echoes[1].timeSec)).margin (0.01));
-    CHECK (fx.getDelayHandle().getCentre().y
-           == Approx (fx.getDelayView().handleAt (static_cast<double> (map::delayTimeSec (rig.param ("fx.delay.time").getValue())),
-                                                  pic.echoes[1].height, rig.param ("fx.delay.ping_pong").getValue() > 0.5f).y).margin (0.01));
+    for (const auto [dx, dy] : { std::pair<float, float> { 30.0f, -20.0f }, { -60.0f, 25.0f }, { 45.0f, -10.0f } })
+    {
+        const auto c = dh.getCentre();
+        dm.mouseDown (c.x, c.y, c.x, false);
+        dm.mouseDrag (c.x + dx, c.y + dy, false);
+        CHECK (host.openCount() == 2);
+        dm.mouseUp();
+        CHECK (host.openCount() == 0);
+        rig.tick();
+        expectUnderPointer (dh, c, dx, dy, "delay handle");
+    }
+    CHECK (rig.param ("fx.delay.time").getValue() > 0.0f);
 
-    // Reverb: pre-delay handle (x only), then the decay handle (x only; the tail's end = pre-delay + decay).
+    // Reverb pre-delay handle: x only (the pointer's y is ignored); the tail's end moves with it.
     auto& ph = fx.getPreDelayHandle();
-    auto& pm = ph.getModel();
-    const auto pc = ph.getCentre();
-    pm.mouseDown (pc.x, pc.y, pc.x, false);
-    pm.mouseDrag (pc.x + 40.0f, pc.y + 90.0f, false); // y does nothing
-    pm.mouseUp();
-    const float expectedPre = map::reverbPreDelayFromSec (static_cast<float> (fx.getReverbView().timeAxis().timeAt (pc.x + 40.0f)));
-    CHECK (rig.param ("fx.reverb.predelay").getValue() == Approx (expectedPre).margin (1.0e-4));
-    rig.tick();
-    auto& eh = fx.getDecayHandle();
-    auto& em = eh.getModel();
-    const auto ec = eh.getCentre();
-    em.mouseDown (ec.x, ec.y, ec.x, false);
-    em.mouseDrag (ec.x - 25.0f, ec.y, false);
-    em.mouseUp();
-    const double pre = static_cast<double> (map::reverbPreDelaySec (rig.param ("fx.reverb.predelay").getValue()));
-    const float expectedDecay = map::reverbDecayFromSec (static_cast<float> (fx.getReverbView().timeAxis().timeAt (ec.x - 25.0f) - pre));
-    CHECK (rig.param ("fx.reverb.decay").getValue() == Approx (expectedDecay).margin (1.0e-4));
-    CHECK (rig.param ("fx.reverb.decay").getValue() < rig.param ("fx.reverb.decay").getDefaultValue());
-    rig.tick();
-    CHECK (handleFollows (fx.getPreDelayHandle()));
-    CHECK (handleFollows (fx.getDecayHandle()));
+    {
+        const auto pc = ph.getCentre();
+        auto& pm = ph.getModel();
+        pm.mouseDown (pc.x, pc.y, pc.x, false);
+        pm.mouseDrag (pc.x + 40.0f, pc.y + 90.0f, false);
+        pm.mouseUp();
+        rig.tick();
+        expectUnderPointer (ph, pc, 40.0f, 0.0f, "pre-delay handle");
+    }
+    // Reverb decay handle: x only.
+    for (const float dx : { -25.0f, 60.0f })
+    {
+        auto& eh = fx.getDecayHandle();
+        const auto ec = eh.getCentre();
+        auto& em = eh.getModel();
+        em.mouseDown (ec.x, ec.y, ec.x, false);
+        em.mouseDrag (ec.x + dx, ec.y - 30.0f, false);
+        em.mouseUp();
+        rig.tick();
+        expectUnderPointer (eh, ec, dx, 0.0f, "decay handle");
+    }
     CHECK (host.openCount() == 0);
     CHECK (host.valuesOutsideGesture == outsideBefore);
     CHECK (host.nestedBegins == 0);
+
+    // The handle stands on the second echo of the picture.
+    const auto pic = fx.getDelayView().picture();
+    CHECK (dh.getCentre().x == Approx (fx.getDelayView().timeAxis().positionOf (pic.echoes[1].timeSec)).margin (0.5));
+    CHECK (dh.getCentre().y == Approx (fx.getDelayView().handleAt (static_cast<double> (map::delayTimeSec (rig.param ("fx.delay.time").getValue())),
+                                                                   pic.echoes[1].height, rig.param ("fx.delay.ping_pong").getValue() > 0.5f).y).margin (0.5));
 
     // Double-click resets what the handle writes.
     dm.doubleClick();
@@ -912,6 +995,28 @@ TEST_CASE ("Effects handles: the delay handle writes time and repeats, the rever
     CHECK (host.openCount() >= 1);
     rig.editor.reset();
     CHECK (host.openCount() == 0);
+}
+
+TEST_CASE ("Effects handles read the mirror: a host write moves them at the next tick, not before", "[ui][m7c][effects]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    auto& fx = rig.editor->getEffectsPage();
+    rig.set ("fx.delay.level", 0.4f);
+    rig.set ("fx.reverb.level", 0.4f);
+    rig.editor->selectPage (5, 0);
+    rig.tick();
+    const auto delay0 = fx.getDelayHandle().expectedCentre(), decay0 = fx.getDecayHandle().expectedCentre();
+    hostWrite (rig.param ("fx.delay.time"), 0.2f);
+    hostWrite (rig.param ("fx.reverb.decay"), 0.9f);
+    CHECK (fx.getDelayHandle().expectedCentre() == delay0);
+    CHECK (fx.getDecayHandle().expectedCentre() == decay0);
+    CHECK (fx.getDelayHandle().getCentre() == delay0);
+    rig.tick();
+    CHECK (fx.getDelayHandle().expectedCentre().getDistanceFrom (delay0) > 5.0f);
+    CHECK (fx.getDecayHandle().expectedCentre().getDistanceFrom (decay0) > 5.0f);
+    CHECK (handleFollows (fx.getDelayHandle()));
+    CHECK (handleFollows (fx.getDecayHandle()));
 }
 
 TEST_CASE ("Effects page: a handle is reachable at both ends of its range, the pictures stay inside their plots", "[ui][m7c][effects]")
@@ -982,59 +1087,82 @@ TEST_CASE ("Layout snapshot: the Play and Effects pages' component bounds equal 
 #if VS_SEQ_COUNT_ALLOCATIONS
 namespace
 {
-int countComponents (const juce::Component& c)
+/** Allocations of one call of `paintIt` on this thread (after one warm-up call, three measured: they must agree). */
+template <class F>
+int allocationsOf (F&& paintIt, bool& stable)
 {
-    int n = 1;
-    for (auto* child : c.getChildren())
-        if (child->isVisible())
-            n += countComponents (*child);
-    return n;
-}
-
-/** Allocations of one paint of `page` into an image that already exists. */
-int paintAllocations (juce::Component& page, juce::Image& image)
-{
-    juce::LowLevelGraphicsSoftwareRenderer renderer (image);
-    juce::Graphics g (renderer);
-    vs::seq::test::AllocationCounter counter;
-    page.paintEntireComponent (g, true);
-    return counter.count();
+    paintIt(); // warm-up
+    int counts[3];
+    for (int& c : counts)
+    {
+        vs::seq::test::AllocationCounter counter;
+        paintIt();
+        c = counter.count();
+    }
+    stable = counts[0] == counts[1] && counts[1] == counts[2];
+    return counts[0];
 }
 } // namespace
 
-TEST_CASE ("Paint allocations: repeated paints of the Play and Effects pages allocate the same number of times, no more per component than the Sound page", "[ui][m7c][alloc]")
+TEST_CASE ("Paint allocations: our own paint code of the new components allocates nothing (strings, paths and fonts are prepared on change)", "[ui][m7c][alloc]")
 {
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
     EditorRig rig;
+    auto& play = rig.editor->getPlayPage();
+    auto& fx = rig.editor->getEffectsPage();
+    NullGraphicsContext context;
+    juce::Graphics g (context);
+
+    const auto check = [&] (const juce::String& name, auto&& paintIt) {
+        bool stable = false;
+        const int before = context.calls;
+        const int n = allocationsOf (paintIt, stable);
+        INFO (name << ": " << n << " allocations per paint");
+        CHECK (context.calls > before); // the paint did reach the context
+        CHECK (stable);
+        CHECK (n == 0);
+    };
+    const auto checkAll = [&] (const juce::String& state) {
+        rig.tick();
+        rig.tick (2200.0); // the library draws a dashed marker (and allocates) for 2 s after a change from outside
+        rig.tick (100.0);
+        check ("KeyboardStrip, " + state, [&] { play.getStrip().paint (g); });
+        check ("PlayPage, " + state, [&] { play.paint (g); play.paintOverChildren (g); });
+        check ("ChorusView, " + state, [&] { fx.getChorusView().paint (g); });
+        check ("DelayView, " + state, [&] { fx.getDelayView().paint (g); });
+        check ("ReverbView, " + state, [&] { fx.getReverbView().paint (g); });
+        check ("PowerSwitch delay, " + state, [&] { fx.getDelayPower().paint (g); });
+        check ("PowerSwitch reverb, " + state, [&] { fx.getReverbPower().paint (g); });
+        check ("EffectsPage, " + state, [&] { fx.paint (g); });
+        // Handles are the library's (GraphHandle::paint): measured here so that a regression shows.
+        check ("GraphHandle, " + state, [&] { fx.getDelayHandle().paint (g); });
+    };
+
+    // Off: nothing sounds, the pictures are grey.
+    rig.set ("key.mode", 0.0f);
+    rig.set ("fx.delay.level", 0.0f);
+    rig.set ("fx.reverb.level", 0.0f);
+    rig.set ("fx.chorus.mode", 0.0f);
+    checkAll ("everything off");
+    // On: Split with keys held and sounding, both parts on one key in Dual, all three effects.
     rig.set ("key.mode", 2.0f);
     rig.set ("fx.delay.level", 0.4f);
     rig.set ("fx.reverb.level", 0.4f);
     rig.set ("fx.chorus.mode", 1.0f);
     rig.render (rig.samples (0.05), { noteOn (static_cast<int> (rig.now), 50), noteOn (static_cast<int> (rig.now), 70) }, 128);
-    // The renderer allocates inside its own drawing (edge tables per shape), so "at most 8 per
-    // component" (9.5) cannot be measured on a software renderer (the Sound page itself makes
-    // ~260 per component). What our code must not do is allocate more when painting again, or
-    // far more than the reference page: strings, paths and caches are prepared on value change.
-    double soundPerComponent = 0.0;
-    for (const auto page : { 0, 3, 5 })
+    checkAll ("split, keys held, effects on");
+    rig.set ("key.mode", 1.0f);
+    rig.render (rig.samples (0.02), { noteOn (static_cast<int> (rig.now), 60) }, 128);
+    checkAll ("dual, a key held by both parts");
+
+    // The reference: the library's own controls (they build their text on change, but Panel
+    // builds a header Path in paint). Reported, not asserted: they belong to M7a.
+    for (const auto& [name, comp] : { std::pair<const char*, juce::Component*> { "Slider", &fx.getSlider ("fx.delay.time") },
+                                      { "SegmentedSwitch", &fx.getPingPong() } })
     {
-        rig.editor->selectPage (page, 0);
-        rig.tick();
-        auto* comp = rig.editor->getFrame().currentPageComponent();
-        REQUIRE (comp != nullptr);
-        juce::Image image (juce::Image::ARGB, comp->getWidth(), comp->getHeight(), true);
-        paintAllocations (*comp, image); // warm-up: fonts, glyph caches
-        const int a = paintAllocations (*comp, image);
-        const int b = paintAllocations (*comp, image);
-        const int c = paintAllocations (*comp, image);
-        const double perComponent = static_cast<double> (a) / static_cast<double> (countComponents (*comp));
-        INFO ("page " << page << ": " << a << ", " << b << ", " << c << " allocations, " << perComponent << " per component");
-        CHECK (a == b);
-        CHECK (b == c);
-        if (page == 0)
-            soundPerComponent = perComponent;
-        else
-            CHECK (perComponent <= 1.5 * soundPerComponent);
+        bool stable = false;
+        const int n = allocationsOf ([&] { comp->paint (g); }, stable);
+        WARN (name << ": " << n << " allocations per paint (library control, not asserted)");
     }
 }
 #endif
@@ -1056,6 +1184,7 @@ TEST_CASE ("UI shots M7c: Play (Split with keys held) and Effects (everything on
     rig.set ("key.split_point", 60.0f);
     rig.set ("mix.balance", 0.3f);
     rig.set ("global.vintage", 0.4f);
+    // The Upper part is in Unison here, so its held key (67) shows no ring: that is correct.
     rig.set ("upper.assign.mode", 1.0f);
     rig.set ("upper.assign.unison_voices", 2.0f);
     rig.set ("lower.porta.time", 0.3f);
@@ -1066,7 +1195,7 @@ TEST_CASE ("UI shots M7c: Play (Split with keys held) and Effects (everything on
     rig.render (rig.samples (0.08), { noteOn (static_cast<int> (rig.now), 48), noteOn (static_cast<int> (rig.now), 52), noteOn (static_cast<int> (rig.now), 55),
                                       noteOn (static_cast<int> (rig.now), 67), noteOn (static_cast<int> (rig.now), 72) }, 128);
     rig.render (rig.samples (0.02), { noteOff (static_cast<int> (rig.now), 52) }, 128);
-    for (int scale : { 100, 200 })
+    for (int scale : { 75, 100, 200 })
     {
         rig.editor->setSizePercent (scale);
         for (const auto& [page, name] : { std::pair<int, const char*> { 3, "play" }, { 5, "effects" } })

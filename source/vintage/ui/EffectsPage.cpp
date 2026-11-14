@@ -11,6 +11,7 @@ constexpr int kPictureHeight = 250, kPanelWidth = 400, kInner = kPanelWidth - 2 
 
 EffectsPage::EffectsPage (UiContext& c, shell::EditorState& state)
     : ctx (c),
+      editorState (state),
       chorusPanel (c.theme, "Chorus", -1),
       delayPanel (c.theme, "Delay", -1),
       reverbPanel (c.theme, "Reverb", -1),
@@ -41,11 +42,14 @@ EffectsPage::EffectsPage (UiContext& c, shell::EditorState& state)
     chorusPanel.addAndMakeVisible (chorusView);
     chorusPanel.addAndMakeVisible (chorusMode);
     chorusPanel.addAndMakeVisible (chorusMix);
+    // The power switch belongs to the panel header: first in the panel's focus order.
+    delayPanel.addAndMakeVisible (delayPower);
     delayPanel.addAndMakeVisible (delayView);
-    for (auto* b : std::initializer_list<juce::Component*> { &pingPong, &delayTime, &delayFeedback, &delayDamping, &delayLevel, &delayPower })
+    for (auto* b : std::initializer_list<juce::Component*> { &pingPong, &delayTime, &delayFeedback, &delayDamping, &delayLevel })
         delayPanel.addAndMakeVisible (*b);
+    reverbPanel.addAndMakeVisible (reverbPower);
     reverbPanel.addAndMakeVisible (reverbView);
-    for (auto* b : std::initializer_list<juce::Component*> { &reverbPreDelay, &reverbDecay, &reverbDamping, &reverbLevel, &reverbPower })
+    for (auto* b : std::initializer_list<juce::Component*> { &reverbPreDelay, &reverbDecay, &reverbDamping, &reverbLevel })
         reverbPanel.addAndMakeVisible (*b);
 
     chorusMode.setTitle ("Chorus mode");
@@ -66,7 +70,8 @@ EffectsPage::EffectsPage (UiContext& c, shell::EditorState& state)
     // sized first so the feedback handle knows how many pixels a full range is.
     delayView.setBounds (0, 0, kInner, kPictureHeight);
     reverbView.setBounds (0, 0, kInner, kPictureHeight);
-    const float feedbackPxPerRange = delayView.laneHeight() / map::kDelayMaxFeedback;
+    // The handle's y is 0.95 x value x lane height, so the full range is 0.95 x the lane height in pixels.
+    const float feedbackPxPerRange = delayView.laneHeight() * map::kDelayMaxFeedback;
 
     // Delay: one handle on top of the second echo. Its x moves the delay time (the whole echo
     // train), its y the repeats: the second echo is `feedback` times as loud as the first.
@@ -102,6 +107,7 @@ EffectsPage::EffectsPage (UiContext& c, shell::EditorState& state)
     ctx.mirror.addIdleClient (this);
 
     setSize (kDesignWidth - kRail, kDesignHeight - kTopBar - kHelpLine);
+    rememberLevels();
     updateStates();
     recomputePictures (false);
 }
@@ -139,7 +145,20 @@ float EffectsPage::value (int index, bool fromLive) const
 void EffectsPage::mirrorChanged (int, bool valueChanged)
 {
     if (valueChanged)
+    {
         dirty = true; // pictures and rules follow once, at the end of the tick (mirrorIdle)
+        rememberLevels();
+    }
+}
+
+void EffectsPage::rememberLevels()
+{
+    // Whatever set a level above 0 (automation, a program, a slider, the switch), the switch brings
+    // that level back after Off: the last audible one.
+    const int levels[2] { iDelayLevel, iReverbLevel };
+    for (int i = 0; i < 2; ++i)
+        if (const float v = ctx.mirror.value (levels[i]); v > 0.0f)
+            editorState.fxLastLevel[i].store (v, std::memory_order_relaxed);
 }
 
 void EffectsPage::mirrorIdle (double)
@@ -182,7 +201,7 @@ void EffectsPage::updateStates()
 model::DelayPicture EffectsPage::expectedDelay() const
 {
     return model::delayPicture (static_cast<double> (map::delayTimeSec (value (iDelayTime, false))), map::delayFeedback (value (iDelayFeedback, false)),
-                                model::stepIndex (value (iPingPong, false), 2) == 1, delayView.timeAxis().hi);
+                                model::stepIndex (value (iPingPong, false), 2) == 1, delayView.timeAxis().endSec());
 }
 
 model::ReverbPicture EffectsPage::expectedReverb() const

@@ -7,6 +7,7 @@
 // draws is prepared when the value, the key mode or the feed's masks change; paint() only draws.
 
 #include "common/engine/UiFeed.h"
+#include "common/ui/PaintFonts.h"
 #include "common/ui/controls/BoundComponent.h"
 #include "common/ui/models/KeyboardModel.h"
 
@@ -82,7 +83,9 @@ private:
     int ownNote = 0;
     std::array<Bar, 2> bars;
     juce::StringArray octaveLabels;
-    juce::String pillText;
+    juce::String pillText, dragHint;
+    juce::Path markerTriangle;
+    PaintFonts fonts;
     Masks masks {};
     int repaints = 0;
 };

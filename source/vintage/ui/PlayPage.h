@@ -7,6 +7,7 @@
 // primary controls. The inactive rules of 9.3.9 are applied here (display only).
 
 #include "common/engine/UiFeed.h"
+#include "common/ui/PaintFonts.h"
 #include "common/ui/controls/Panel.h"
 #include "common/ui/controls/SegmentedSwitch.h"
 #include "common/ui/controls/Slider.h"
@@ -51,7 +52,8 @@ private:
     KeyboardStrip strip;
     Slider balance, vintage;
     PartControls parts[2];
-    juce::String sentence;
+    juce::String sentence, stripCaption, vintageCaption, glideCaption;
+    PaintFonts fonts;
     int modeIndex = -1;
     int assignIndex[2] { -1, -1 }, portaIndex[2] { -1, -1 };
 };

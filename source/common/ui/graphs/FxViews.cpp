@@ -17,7 +17,9 @@ juce::Colour pictureColour (bool on) { return on ? colour (Tok::AccentGlobal) : 
 
 // ---- ChorusView ----
 
-ChorusView::ChorusView (const Theme& t) : theme (t)
+ChorusView::ChorusView (const Theme& t)
+    : fonts (t), dryLabel ("dry (0 ms)"), topLabel (juce::String (static_cast<int> (kAxisMs)) + " ms"), endLabel ("4 s"),
+      footnote ("The wobble makes the sound wide and shimmering.")
 {
     setTitle ("Chorus picture");
 }
@@ -34,7 +36,9 @@ void ChorusView::setState (int newMode, float newMix)
     if (modeChanged)
     {
         const auto c = model::chorusPicture (mode);
-        note = mode == 0 ? juce::String ("Chorus is off") : "Delay of the two copies: " + juce::String (c.rateHz, 2) + " Hz, +-" + juce::String (c.depthMs, 2) + " ms";
+        note = mode == 0 ? juce::String ("Chorus is off: no delay")
+                         : "Delay of the two copies: " + juce::String (c.rateHz, 2) + " Hz, " + juce::String::fromUTF8 ("\xc2\xb1")
+                               + juce::String (c.depthMs, 2) + " ms";
         setDescription (mode == 0 ? juce::String ("Chorus off") : "Chorus " + juce::String (mode == 1 ? "I" : "II") + ": " + note);
         rebuild();
     }
@@ -47,8 +51,16 @@ void ChorusView::resized()
     rebuild();
 }
 
+float ChorusView::yOfMs (float ms) const noexcept
+{
+    return plot.getBottom() - juce::jlimit (0.0f, 1.0f, ms / kAxisMs) * plot.getHeight();
+}
+
 float ChorusView::tapAtX (float x, bool anti) const
 {
+    // Off: no delay at all, the picture's line lies on the dry level.
+    if (mode == 0)
+        return 0.0f;
     const double sec = static_cast<double> ((x - plot.getX()) / plot.getWidth()) * kWindowSec;
     return model::chorusTapMs (model::chorusPicture (mode), sec, anti);
 }
@@ -60,16 +72,12 @@ void ChorusView::rebuild()
     pathB.clear();
     if (plot.isEmpty())
         return;
-    const auto pic = model::chorusPicture (mode);
-    const auto yOf = [&] (float ms) {
-        return plot.getBottom() - juce::jlimit (0.0f, 1.0f, ms / fx::Chorus::kMaxDelayMs) * plot.getHeight();
-    };
     constexpr int points = 160;
     for (int i = 0; i <= points; ++i)
     {
         const float x = plot.getX() + plot.getWidth() * static_cast<float> (i) / static_cast<float> (points);
-        const double sec = kWindowSec * static_cast<double> (i) / static_cast<double> (points);
-        const float ya = yOf (model::chorusTapMs (pic, sec, false)), yb = yOf (model::chorusTapMs (pic, sec, true));
+        const float ya = yOfMs (tapAtX (x, false));
+        const float yb = yOfMs (tapAtX (x, true));
         if (i == 0)
         {
             pathA.startNewSubPath (x, ya);
@@ -89,16 +97,16 @@ void ChorusView::paint (juce::Graphics& g)
     const auto r = getLocalBounds().toFloat();
     g.setColour (colour (Tok::BgWindow));
     g.fillRoundedRectangle (r, 4.0f);
-    g.setFont (theme.font (kTextSmall));
+    g.setFont (fonts.small);
     g.setColour (colour (Tok::TextSecondary));
     drawFittedText (g, note, r.withHeight (22.0f).reduced (10.0f, 4.0f), juce::Justification::centredLeft);
-    // Axis: 0 ms = no delay (the dry sound, grey), 6 ms top.
+    // Axis: 0 ms = no delay (the dry sound), 8 ms at the top; the curves stay between 2 and 6 ms.
     g.setColour (colour (Tok::BgTrack));
     g.fillRect (plot.getX(), plot.getBottom() - 1.0f, plot.getWidth(), 2.0f);
     g.setColour (colour (Tok::TextSecondary));
-    g.drawText ("dry (0 ms)", juce::Rectangle<float> (plot.getX() + 2.0f, plot.getBottom() - 16.0f, 80.0f, 14.0f), juce::Justification::centredLeft, false);
-    g.drawText ("6 ms", juce::Rectangle<float> (plot.getX() + 2.0f, plot.getY() - 2.0f, 60.0f, 14.0f), juce::Justification::centredLeft, false);
-    g.drawText ("4 s", juce::Rectangle<float> (plot.getRight() - 40.0f, plot.getBottom() + 2.0f, 40.0f, 14.0f), juce::Justification::centredRight, false);
+    g.drawText (dryLabel, juce::Rectangle<float> (plot.getX() + 2.0f, plot.getBottom() - 16.0f, 80.0f, 14.0f), juce::Justification::centredLeft, false);
+    g.drawText (topLabel, juce::Rectangle<float> (plot.getX() + 2.0f, plot.getY() - 2.0f, 60.0f, 14.0f), juce::Justification::centredLeft, false);
+    g.drawText (endLabel, juce::Rectangle<float> (plot.getRight() - 40.0f, plot.getBottom() + 2.0f, 40.0f, 14.0f), juce::Justification::centredRight, false);
     if (mode != 0)
     {
         const float alpha = 0.35f + 0.65f * juce::jlimit (0.0f, 1.0f, mix);
@@ -113,8 +121,7 @@ void ChorusView::paint (juce::Graphics& g)
         g.strokePath (pathA, juce::PathStrokeType (2.0f));
     }
     g.setColour (colour (Tok::TextSecondary));
-    g.drawText ("The wobble makes the sound wide and shimmering.", r.withTrimmedTop (r.getHeight() - 22.0f).reduced (10.0f, 2.0f),
-                juce::Justification::centredLeft, true);
+    drawFittedText (g, footnote, r.withTrimmedTop (r.getHeight() - 22.0f).reduced (10.0f, 2.0f), juce::Justification::centredLeft);
 }
 
 std::unique_ptr<juce::AccessibilityHandler> ChorusView::createAccessibilityHandler()
@@ -124,23 +131,32 @@ std::unique_ptr<juce::AccessibilityHandler> ChorusView::createAccessibilityHandl
 
 // ---- DelayView ----
 
-DelayView::DelayView (const Theme& t) : GraphView (t)
+namespace
+{
+constexpr double kDelayTicks[] { 0.1, 0.5, 1.0, 2.0, 4.0 };
+constexpr float kHeaderRow = 18.0f;
+} // namespace
+
+DelayView::DelayView (const Theme& t) : GraphView (t), fonts (t), inputLabel ("input")
 {
     setTitle ("Delay picture");
-    tickLabels.add ("0.1 s");
-    tickLabels.add ("0.5 s");
-    tickLabels.add ("1 s");
-    tickLabels.add ("2 s");
-    tickLabels.add ("4 s");
+    laneLabels[0] = "L";
+    laneLabels[1] = "R";
+    tickLabels[0] = "100 ms";
+    tickLabels[1] = "0.5 s";
+    tickLabels[2] = "1 s";
+    tickLabels[3] = "2 s";
+    tickLabels[4] = "4 s";
 }
 
 void DelayView::resized()
 {
     plot = plotOf (getLocalBounds().toFloat());
-    laneH = juce::jmax (8.0f, (plot.getHeight() - 8.0f) * 0.5f);
+    lanesTop = plot.getY() + kHeaderRow;
+    laneH = juce::jmax (8.0f, (plot.getHeight() - kHeaderRow - 4.0f) * 0.5f);
     inputX = plot.getX() + 24.0f;
-    axis = model::delayTimeAxis (plot.getX() + 24.0f, plot.getWidth() - 24.0f - 10.0f);
-    pic = model::delayPicture (time, feedback, pingPong, axis.hi);
+    axis = model::delayTimeAxis (inputX, plot.getWidth() - 24.0f - 10.0f);
+    pic = model::delayPicture (time, feedback, pingPong, axis.endSec());
     ++recomputes;
     repaint();
 }
@@ -156,7 +172,7 @@ void DelayView::setState (double timeSec, float feedbackGain, bool newPingPong, 
     pingPong = newPingPong;
     on = newOn;
     timeText = newTimeText;
-    pic = model::delayPicture (time, feedback, pingPong, axis.hi);
+    pic = model::delayPicture (time, feedback, pingPong, axis.endSec());
     ++recomputes;
     setDescription ("Echoes every " + timeText + (pingPong ? ", bouncing left and right" : "") + (on ? "" : ". The delay is off."));
     repaint();
@@ -171,7 +187,7 @@ juce::Point<float> DelayView::handleAt (double timeSec, float feedbackGain, bool
 
 double DelayView::timeAtHandleX (float px) const noexcept
 {
-    return axis.valueAt (axis.clampPx (px)) * 0.5;
+    return axis.timeAt (axis.clampPx (px)) * 0.5;
 }
 
 void DelayView::paint (juce::Graphics& g)
@@ -180,17 +196,18 @@ void DelayView::paint (juce::Graphics& g)
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
     const auto accent = pictureColour (on);
 
-    // Time ruler: 1 ms ... 1 s.
-    g.setFont (theme.font (kTextSmall));
-    static constexpr double ticks[] { 0.1, 0.5, 1.0, 2.0, 4.0 };
+    // Time ruler below the lanes; "input" stands under the input bar (the start of the axis).
+    g.setFont (fonts.small);
     for (int i = 0; i < 5; ++i)
     {
-        const float x = axis.positionOf (ticks[i]);
+        const float x = axis.positionOf (kDelayTicks[i]);
         g.setColour (colour (Tok::BgTrack).withAlpha (0.5f));
-        g.drawVerticalLine (juce::roundToInt (x), plot.getY(), plot.getBottom());
+        g.drawVerticalLine (juce::roundToInt (x), lanesTop, plot.getBottom());
         g.setColour (colour (Tok::TextSecondary));
         g.drawText (tickLabels[i], juce::Rectangle<float> (x - 24.0f, plot.getBottom() + 2.0f, 48.0f, 14.0f), juce::Justification::centred, false);
     }
+    g.setColour (colour (Tok::TextSecondary));
+    g.drawText (inputLabel, juce::Rectangle<float> (inputX - 24.0f, plot.getBottom() + 2.0f, 48.0f, 14.0f), juce::Justification::centred, false);
 
     // Two lanes, left on top, right below; the input is the grey bar at the start.
     for (int lane = 0; lane < 2; ++lane)
@@ -199,13 +216,9 @@ void DelayView::paint (juce::Graphics& g)
         g.setColour (colour (Tok::BgTrack));
         g.fillRect (plot.getX(), bottom - 1.0f, plot.getWidth(), 1.0f);
         g.setColour (colour (Tok::TextSecondary));
-        g.drawText (lane == 0 ? "L" : "R", juce::Rectangle<float> (plot.getX() + 1.0f, bottom - laneH, 12.0f, 14.0f), juce::Justification::centred, false);
-        g.setColour (colour (Tok::TextSecondary));
+        g.drawText (laneLabels[lane], juce::Rectangle<float> (plot.getX() + 1.0f, bottom - laneH, 12.0f, 14.0f), juce::Justification::centred, false);
         g.fillRect (inputX - 3.0f, bottom - laneH, 6.0f, laneH);
     }
-    g.setColour (colour (Tok::TextSecondary));
-    g.drawText ("time", juce::Rectangle<float> (plot.getRight() - 40.0f, plot.getBottom() + 2.0f, 40.0f, 14.0f), juce::Justification::centredRight, false);
-    g.drawText ("input", juce::Rectangle<float> (inputX + 6.0f, plot.getY() + 1.0f, 40.0f, 14.0f), juce::Justification::centredLeft, false);
 
     for (int i = 0; i < pic.count; ++i)
     {
@@ -215,32 +228,52 @@ void DelayView::paint (juce::Graphics& g)
         g.setColour (accent.withAlpha (juce::jlimit (0.5f, 1.0f, 0.5f + e.height * 0.5f)));
         for (int lane = 0; lane < 2; ++lane)
             if (e.lane == 2 || e.lane == lane)
-                g.fillRect (x - 4.0f, laneBottom (lane) - h, 8.0f, h);
+                g.fillRect (x - 3.0f, laneBottom (lane) - h, 6.0f, h);
     }
 
+    // The delay time: a bracket from the input to the first echo, its text above it.
+    const float x0 = inputX, x1 = axis.positionOf (time);
+    const float y = plot.getY() + kHeaderRow - 4.0f;
     g.setColour (colour (on ? Tok::TextSecondary : Tok::TextDisabled));
-    g.setFont (theme.font (kTextSmall, true));
-    const juce::String caption = on ? "echoes every " + timeText : "OFF: delay level is 0";
-    g.drawText (caption, juce::Rectangle<float> (plot.getX() + 80.0f, plot.getY() + 1.0f, plot.getWidth() - 88.0f, 14.0f), juce::Justification::centredRight,
-                true);
+    g.fillRect (x0, y, juce::jmax (1.0f, x1 - x0), 1.0f);
+    g.fillRect (x0, y - 3.0f, 1.0f, 7.0f);
+    g.fillRect (x1, y - 3.0f, 1.0f, 7.0f);
+    g.setFont (fonts.smallBold);
+    const float w = 72.0f;
+    const float tx = juce::jlimit (plot.getX() + 14.0f, plot.getRight() - w, (x0 + x1) * 0.5f - w * 0.5f);
+    g.drawText (timeText, juce::Rectangle<float> (tx, plot.getY(), w, 13.0f), juce::Justification::centred, true);
 }
 
 // ---- ReverbView ----
 
-ReverbView::ReverbView (const Theme& t) : GraphView (t)
+ReverbView::ReverbView (const Theme& t) : GraphView (t), fonts (t), timeLabel ("time"), floorLabel ("-60 dB"), topLabel ("0 dB")
 {
     setTitle ("Reverb picture");
-    tickLabels.add ("0");
-    tickLabels.add ("100 ms");
-    tickLabels.add ("1 s");
-    tickLabels.add ("10 s");
+    tickLabels[0] = "0";
+    tickLabels[1] = "100 ms";
+    tickLabels[2] = "1 s";
+    tickLabels[3] = "10 s";
 }
 
 void ReverbView::resized()
 {
     plot = plotOf (getLocalBounds().toFloat());
     axis = model::ReverbTimeAxis (plot.getX() + 16.0f, plot.getWidth() - 16.0f - 10.0f);
+    rebuild();
+}
+
+void ReverbView::rebuild()
+{
     ++recomputes;
+    wedge.clear();
+    if (! plot.isEmpty())
+    {
+        const float xs = axis.positionOf (pic.preDelaySec), xe = axis.positionOf (pic.endSec);
+        wedge.startNewSubPath (xs, topY());
+        wedge.lineTo (xe, floorY());
+        wedge.lineTo (xs, floorY());
+        wedge.closeSubPath();
+    }
     repaint();
 }
 
@@ -254,19 +287,19 @@ void ReverbView::setState (float preDelaySec, float decaySec, bool newOn, const 
     pic = next;
     on = newOn;
     decayText = newDecayText;
-    ++recomputes;
+    caption = on ? "fades by 60 dB in " + decayText : juce::String ("OFF: reverb level is 0");
     setDescription ("The tail starts after " + juce::String (preDelaySec * 1000.0f, 0) + " ms and fades by 60 dB in " + decayText + (on ? "" : ". The reverb is off."));
-    repaint();
+    rebuild();
 }
 
 juce::Point<float> ReverbView::preDelayHandleAt (float preDelaySec) const noexcept
 {
-    return { axis.axis.clampPx (axis.positionOf (static_cast<double> (preDelaySec))), topY() };
+    return { axis.clampPx (axis.positionOf (static_cast<double> (preDelaySec))), topY() };
 }
 
 juce::Point<float> ReverbView::decayHandleAt (float preDelaySec, float decaySec) const noexcept
 {
-    return { axis.axis.clampPx (axis.positionOf (static_cast<double> (preDelaySec) + static_cast<double> (decaySec))), floorY() };
+    return { axis.clampPx (axis.positionOf (static_cast<double> (preDelaySec) + static_cast<double> (decaySec))), floorY() };
 }
 
 void ReverbView::paint (juce::Graphics& g)
@@ -275,7 +308,7 @@ void ReverbView::paint (juce::Graphics& g)
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
     const auto accent = pictureColour (on);
 
-    g.setFont (theme.font (kTextSmall));
+    g.setFont (fonts.small);
     static constexpr double ticks[] { 0.0, 0.1, 1.0, 10.0 };
     for (int i = 0; i < 4; ++i)
     {
@@ -286,33 +319,26 @@ void ReverbView::paint (juce::Graphics& g)
         g.drawText (tickLabels[i], juce::Rectangle<float> (x - 24.0f, plot.getBottom() + 2.0f, 48.0f, 14.0f), juce::Justification::centred, false);
     }
     g.setColour (colour (Tok::TextSecondary));
-    g.drawText ("time", juce::Rectangle<float> (plot.getRight() - 40.0f, plot.getBottom() + 2.0f, 40.0f, 14.0f), juce::Justification::centredRight, false);
+    g.drawText (timeLabel, juce::Rectangle<float> (plot.getRight() - 40.0f, plot.getBottom() + 2.0f, 40.0f, 14.0f), juce::Justification::centredRight, false);
 
     // The input (grey spike), the -60 dB line, the tail: silent for the pre-delay, then a straight
     // line in dB reaching -60 dB at pre-delay + decay time.
     const float x0 = axis.positionOf (0.0), xs = axis.positionOf (pic.preDelaySec), xe = axis.positionOf (pic.endSec);
-    g.setColour (colour (Tok::TextSecondary));
     g.fillRect (x0 - 1.5f, topY(), 3.0f, floorY() - topY());
     g.setColour (colour (Tok::BgTrack));
     g.fillRect (plot.getX(), floorY(), plot.getWidth(), 1.0f);
     g.setColour (colour (Tok::TextSecondary));
-    g.drawText ("-60 dB", juce::Rectangle<float> (plot.getRight() - 52.0f, floorY() - 15.0f, 52.0f, 14.0f), juce::Justification::centredRight, false);
-    g.drawText ("0 dB", juce::Rectangle<float> (plot.getRight() - 52.0f, plot.getY(), 52.0f, 14.0f), juce::Justification::centredRight, false);
+    g.drawText (floorLabel, juce::Rectangle<float> (plot.getRight() - 52.0f, floorY() - 15.0f, 52.0f, 14.0f), juce::Justification::centredRight, false);
+    g.drawText (topLabel, juce::Rectangle<float> (plot.getRight() - 52.0f, plot.getY(), 52.0f, 14.0f), juce::Justification::centredRight, false);
 
-    juce::Path wedge;
-    wedge.startNewSubPath (xs, topY());
-    wedge.lineTo (xe, floorY());
-    wedge.lineTo (xs, floorY());
-    wedge.closeSubPath();
     g.setColour (accent.withAlpha (0.22f));
     g.fillPath (wedge);
     g.setColour (accent);
     g.drawLine (xs, topY(), xe, floorY(), 2.0f);
     g.drawLine (x0, topY(), xs, topY(), 1.0f);
 
-    g.setFont (theme.font (kTextSmall, true));
+    g.setFont (fonts.smallBold);
     g.setColour (colour (on ? Tok::TextSecondary : Tok::TextDisabled));
-    const juce::String caption = on ? "fades by 60 dB in " + decayText : "OFF: reverb level is 0";
     g.drawText (caption, juce::Rectangle<float> (plot.getRight() - 260.0f, plot.getY() + 18.0f, 252.0f, 14.0f), juce::Justification::centredRight, true);
 }
 } // namespace vs::ui

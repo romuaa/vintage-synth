@@ -13,10 +13,14 @@ Anything marked **(review)** is a judgement call that the product owner may want
   key (Dual) Lower stands left and Upper right, so a part is never a colour alone.
 - **Delay picture.** Echo n is `feedback^(n-1)` as loud as the first (the engine writes input +
   feedback x output into the line, `Delay.h`), not `feedback^n` as the 9.4 row reads: the test
-  compares the picture with the real delay. The time axis is the **square root of time**, 0 to 6 s
-  (linear crowds short delays, logarithmic crowds long ones). The handle stands on top of the
-  **second** echo: x moves the time (a pixel shift moves every echo equally), y the repeats (the
-  second echo's height *is* the feedback gain). In ping-pong the handle moves to the right lane.
+  compares the picture with the real delay. The time axis is **logarithmic in (t + 10 ms)**, 0 to
+  6 s, the reverb picture's kind of axis (linear crowds short delays, plain logarithmic cannot show
+  0, the square root crowded a 10 ms delay into a few pixels): echoes of a 10 ms delay stay 8 px
+  apart on a 300 px axis, a 2 s delay's second echo at 4 s is inside. The handle stands on top of the
+  **second** echo: x moves the time (the pointer and the handle move together exactly; tested), y the
+  repeats (the second echo's height *is* the feedback gain; 0.95 x the lane height is the full
+  range). In ping-pong the handle moves to the right lane. The time is written above a bracket
+  from the input to the first echo.
 - **Reverb picture.** The tail starts after the pre-delay and falls 60 dB over the decay time, so
   the RT60 point is at pre-delay + decay (the engine's `decaySeconds` counts from the tail's start).
   The time axis is logarithmic in (t + 10 ms), 0 to 30 s. The decay handle's x is the end of the
@@ -28,10 +32,16 @@ Anything marked **(review)** is a judgement call that the product owner may want
   grey and the other controls dimmed while the level is 0. The switch acts on the live level, so a
   host write between two ticks is respected. Delay and reverb open **off** in a new program (their
   default level is 0), which is what the page shows.
-- **Paint allocations (9.5).** "At most 8 per component" cannot be measured with the software
-  renderer, which allocates inside its own drawing (the Sound page makes about 260 per component).
-  The test asserts that repeated paints allocate identically and that the new pages need no more per
-  component than 1.5 x the Sound page's; strings, paths and caches are prepared on value change.
+- **Paint allocations (9.5).** Measured through a no-op graphics context (`tests/ui/NullGraphicsContext.h`,
+  reusable by other pages), so renderer allocations vanish and what is counted is our own paint code:
+  0 for every new component, in every state, stable over repeated paints. Strings, paths and fonts
+  are prepared on change (`PaintFonts` keeps the few font sizes a component draws with, because
+  `Theme::font` builds a Font, one allocation, per call). The library's Slider (2 per paint),
+  SegmentedSwitch (3) and Panel (header Path) still allocate; reported, not asserted (M7a code).
+- **Power switch** remembers the last audible level (`EditorState::fxLastLevel`) whenever the
+  mirror sees a level above 0, from any source, and when the editor opens; Off then On returns to it.
+- **Time text** (shared change, both plugins): milliseconds from 9.95 ms are whole numbers, below
+  one decimal; seconds two decimals (`juce::String (float, 0)` printed "44.7214 ms").
 
 ## M7a results: editor foundation and Sound page (2026-11-14)
 

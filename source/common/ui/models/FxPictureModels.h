@@ -52,44 +52,37 @@ inline DelayPicture delayPicture (double timeSec, float feedbackGain, bool pingP
     return p;
 }
 
-/** The delay picture's time axis: the square root of the time, 0 .. 6 s. Linear time would crowd
-    the echoes of a short delay into a few pixels, logarithmic time would crowd the echoes of a long
-    one; the square root keeps both readable and is still monotonic for the handle. */
-struct SqrtAxis
+/** A time axis that is logarithmic in (t + shift): 0 is on the axis, short times get room, long
+    times fit. The delay picture uses 10 ms and 6 s (echoes of a 10 ms delay stay apart, a 2 s delay's
+    second echo at 4 s is still inside), the reverb picture 10 ms and 30 s. Monotonic and exactly
+    invertible, so a handle's x and the parameter it writes agree. */
+struct LogTimeAxis
 {
-    float start = 0.0f, length = 100.0f;
-    double hi = 6.0; // seconds at `start + length`
-
-    float positionOf (double sec) const noexcept
-    {
-        const double t = sec <= 0.0 ? 0.0 : std::sqrt (sec / hi);
-        return start + static_cast<float> (t) * length;
-    }
-    double valueAt (float px) const noexcept
-    {
-        const double t = static_cast<double> ((px - start) / length);
-        return t <= 0.0 ? 0.0 : hi * t * t;
-    }
-    float clampPx (float px) const noexcept { return std::clamp (px, start, start + length); }
+    static constexpr double kShiftSec = 0.01;
+    LogAxis axis;
+    LogTimeAxis() = default;
+    LogTimeAxis (float startPx, float lengthPx, double endSec) : axis { startPx, lengthPx, kShiftSec, endSec + kShiftSec } {}
+    float positionOf (double sec) const noexcept { return axis.positionOf ((sec < 0.0 ? 0.0 : sec) + kShiftSec); }
+    double timeAt (float px) const noexcept { return axis.valueAt (px) - kShiftSec; }
+    float clampPx (float px) const noexcept { return axis.clampPx (px); }
+    double endSec() const noexcept { return axis.hi - kShiftSec; }
 };
 
-inline SqrtAxis delayTimeAxis (float startPx, float lengthPx) noexcept
+inline constexpr double kDelayAxisEndSec = 6.0, kReverbAxisEndSec = 30.0;
+
+inline LogTimeAxis delayTimeAxis (float startPx, float lengthPx) noexcept
 {
-    return { startPx, lengthPx, 6.0 };
+    return { startPx, lengthPx, kDelayAxisEndSec };
 }
 
 // ---- Reverb ----
 
-/** Reverb time axis: logarithmic in (t + 10 ms), so 0 and the short pre-delays have room and the
-    long tails fit: 0 .. 30 s. */
-struct ReverbTimeAxis
+/** Reverb time axis (see LogTimeAxis): 0 .. 30 s. */
+struct ReverbTimeAxis : LogTimeAxis
 {
-    static constexpr double kShiftSec = 0.01, kEndSec = 30.0;
-    LogAxis axis;
+    static constexpr double kEndSec = kReverbAxisEndSec;
     ReverbTimeAxis() = default;
-    ReverbTimeAxis (float startPx, float lengthPx) : axis { startPx, lengthPx, kShiftSec, kEndSec + kShiftSec } {}
-    float positionOf (double sec) const noexcept { return axis.positionOf (sec + kShiftSec); }
-    double timeAt (float px) const noexcept { return axis.valueAt (px) - kShiftSec; }
+    ReverbTimeAxis (float startPx, float lengthPx) : LogTimeAxis (startPx, lengthPx, kEndSec) {}
 };
 
 /** The tail: silent for the pre-delay, then a straight line in dB reaching -60 dB at

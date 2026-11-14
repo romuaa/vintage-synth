@@ -29,7 +29,11 @@ PlayPage::PlayPage (UiContext& c, const UiFeed& feed)
       mode (c, "key.mode", {}, -1, { "Whole", "Dual", "Split" }),
       strip (c, feed),
       balance (c, "mix.balance", juce::String::fromUTF8 ("Balance Lower \xe2\x86\x94 Upper"), -1, Slider::Style::Horizontal, true),
-      vintage (c, "global.vintage", "Vintage (analog drift and part-to-part looseness)", -1)
+      vintage (c, "global.vintage", "Vintage (analog drift and part-to-part looseness)", -1),
+      stripCaption ("Drag the split marker, or press a key, to choose the split key. Dots show the keys you hold; rings show the notes sounding."),
+      vintageCaption ("0 is clean. More adds slow pitch drift and small differences between voices."),
+      glideCaption ("Glide between notes (portamento)"),
+      fonts (c.theme)
 {
     setTitle ("Play");
     setComponentID ("play");
@@ -153,26 +157,25 @@ void PlayPage::paint (juce::Graphics& g)
 
 void PlayPage::paintOverChildren (juce::Graphics& g)
 {
-    const auto& theme = ctx.theme;
     g.setColour (colour (Tok::TextPrimary));
-    g.setFont (theme.font (kText));
+    g.setFont (fonts.text);
     const auto layout = layoutPanel.getBounds().toFloat();
     drawFittedText (g, sentence, juce::Rectangle<float> (layout.getX() + 360.0f, layout.getY() + 38.0f, 500.0f, 32.0f), juce::Justification::centredLeft);
     g.setColour (colour (Tok::TextSecondary));
-    g.setFont (theme.font (kTextSmall));
-    drawFittedText (g, "Drag the split marker, or press a key, to choose the split key. Dots show the keys you hold; rings show the notes sounding.",
+    g.setFont (fonts.small);
+    drawFittedText (g, stripCaption,
                     juce::Rectangle<float> (layout.getX() + 12.0f, layout.getBottom() - 22.0f, 1200.0f, 16.0f), juce::Justification::centredLeft);
 
     const auto character = characterPanel.getBounds().toFloat();
-    drawFittedText (g, "0 is clean. More adds slow pitch drift and small differences between voices.",
+    drawFittedText (g, vintageCaption,
                     juce::Rectangle<float> (character.getX() + 792.0f, character.getY() + 34.0f, 420.0f, 36.0f), juce::Justification::centredLeft);
 
     for (int p = 0; p < 2; ++p)
     {
         const auto panel = partPanel[p].getBounds().toFloat();
         g.setColour (colour (Tok::TextSecondary));
-        g.setFont (theme.font (kText, true));
-        drawFittedText (g, "Glide between notes (portamento)", juce::Rectangle<float> (panel.getX() + 12.0f, panel.getY() + 190.0f, 570.0f, 18.0f),
+        g.setFont (fonts.textBold);
+        drawFittedText (g, glideCaption, juce::Rectangle<float> (panel.getX() + 12.0f, panel.getY() + 190.0f, 570.0f, 18.0f),
                         juce::Justification::centredLeft);
         g.setColour (colour (Tok::BgTrack));
         g.fillRect (panel.getX() + 12.0f, panel.getY() + 188.0f, 570.0f, 1.0f);

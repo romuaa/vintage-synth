@@ -3,7 +3,7 @@
 namespace vs::ui
 {
 PowerSwitch::PowerSwitch (UiContext& c, const juce::String& levelId, const juce::String& effectName, std::atomic<float>& lastLevel)
-    : BoundComponent (c, levelId, effectName + " power", -1, "PowerSwitch", Placement::Secondary), last (lastLevel), effect (effectName)
+    : BoundComponent (c, levelId, effectName + " power", -1, "PowerSwitch", Placement::Secondary), last (lastLevel), effect (effectName), fonts (c.theme)
 {
     setHelp (*this, "ui.fx_power", effectName + " power", ctx.help);
     setAccent (colour (Tok::AccentGlobal));
@@ -49,8 +49,8 @@ void PowerSwitch::paint (juce::Graphics& g)
     g.setColour (on ? accent() : colour (Tok::TextDisabled));
     g.drawRoundedRectangle (r.reduced (0.5f), r.getHeight() * 0.5f, 1.0f);
     g.setColour (on ? colour (Tok::TextOnAccent) : colour (Tok::TextSecondary));
-    g.setFont (ctx.theme.font (metrics::kTextSmall, true));
-    g.drawText (on ? "ON" : "OFF", r, juce::Justification::centred, false);
+    g.setFont (fonts.smallBold);
+    g.drawText (on ? onText : offText, r, juce::Justification::centred, false);
     if (markerAlpha > 0.0f)
         drawExternalMarker (g, r.reduced (2.0f), {}, markerAlpha, ctx.theme, false);
     if (hasKeyboardFocus (false))

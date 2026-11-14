@@ -32,8 +32,9 @@ private:
 } // namespace
 
 KeyboardStrip::KeyboardStrip (UiContext& c, const UiFeed& f, const juce::String& splitId, const juce::String& modeId)
-    : BoundComponent (c, splitId, "Split key", -1, "KeyboardStrip"), feed (f), model (handle)
+    : BoundComponent (c, splitId, "Split key", -1, "KeyboardStrip"), feed (f), model (handle), fonts (c.theme)
 {
+    dragHint = juce::String::fromUTF8 ("\xe2\x97\x82 drag \xe2\x96\xb8");
     setAccent (colour (Tok::AccentGlobal));
     modeIndex = ctx.mirror.indexOf (modeId);
     jassert (modeIndex >= 0);
@@ -126,6 +127,8 @@ void KeyboardStrip::prepare()
     const float x = keys.getX() + geometry.markerX (splitNote);
     const float w = static_cast<float> (getWidth());
     pill = juce::Rectangle<float> (juce::jlimit (0.0f, juce::jmax (0.0f, w - kPillWidth), x - kPillWidth * 0.5f), 2.0f, kPillWidth, kPillHeight);
+    markerTriangle.clear();
+    markerTriangle.addTriangle (x - 6.0f, keys.getBottom() + 5.0f, x + 6.0f, keys.getBottom() + 5.0f, x, keys.getBottom() - 4.0f);
 }
 
 bool KeyboardStrip::has (const Masks& m, int slot, int note) noexcept
@@ -314,7 +317,6 @@ void KeyboardStrip::paintDots (juce::Graphics& g, int note) const
 void KeyboardStrip::paint (juce::Graphics& g)
 {
     using namespace metrics;
-    const auto& theme = ctx.theme;
     const bool split = mode == 2;
 
     // Bars over the keys: each part's range. Dual: two stacked bars over every key.
@@ -326,7 +328,7 @@ void KeyboardStrip::paint (juce::Graphics& g)
             if (mode == 0 && p == 1) // Upper does not play in Whole mode: a quiet line says so
             {
                 g.setColour (colour (Tok::TextDisabled));
-                g.setFont (theme.font (kTextSmall));
+                g.setFont (fonts.small);
                 drawFittedText (g, bar.text, barArea.withTrimmedLeft (4.0f).withTop (barArea.getCentreY()), juce::Justification::centredLeft);
             }
             continue;
@@ -344,7 +346,7 @@ void KeyboardStrip::paint (juce::Graphics& g)
         g.setColour (accentFor (p));
         g.fillRect (r);
         g.setColour (colour (Tok::TextOnAccent));
-        g.setFont (theme.font (mode == 1 ? kTextSmall : kText, true));
+        g.setFont (mode == 1 ? fonts.smallBold : fonts.textBold);
         drawFittedText (g, bar.text, r.reduced (6.0f, 0.0f), juce::Justification::centredLeft);
     }
 
@@ -360,7 +362,7 @@ void KeyboardStrip::paint (juce::Graphics& g)
 
     // Octave names on the C keys.
     g.setColour (colour (Tok::BgWindow));
-    g.setFont (theme.font (kTextSmall, true));
+    g.setFont (fonts.smallBold);
     for (int i = 0, n = geometry.low(); n <= geometry.high(); n += 12, ++i)
     {
         const auto r = keyBounds (n);
@@ -372,18 +374,16 @@ void KeyboardStrip::paint (juce::Graphics& g)
     const float alpha = split ? 1.0f : 0.45f;
     g.setColour (colour (Tok::TextPrimary).withAlpha (alpha));
     g.fillRect (mx - 1.0f, pill.getBottom(), 2.0f, keys.getBottom() - pill.getBottom());
-    juce::Path tri;
-    tri.addTriangle (mx - 6.0f, keys.getBottom() + 5.0f, mx + 6.0f, keys.getBottom() + 5.0f, mx, keys.getBottom() - 4.0f);
-    g.fillPath (tri);
+    g.fillPath (markerTriangle);
     g.setColour (colour (Tok::TextPrimary).withAlpha (alpha));
     g.fillRoundedRectangle (pill, pill.getHeight() * 0.5f);
     g.setColour (colour (Tok::TextOnAccent));
-    g.setFont (theme.font (kText, true));
+    g.setFont (fonts.textBold);
     drawFittedText (g, pillText, pill, juce::Justification::centred);
     g.setColour (colour (Tok::TextSecondary));
-    g.setFont (theme.font (kTextSmall));
+    g.setFont (fonts.small);
     const bool roomRight = pill.getRight() + 72.0f < static_cast<float> (getWidth());
-    g.drawText (juce::String::fromUTF8 ("\xe2\x97\x82 drag \xe2\x96\xb8"),
+    g.drawText (dragHint,
                 roomRight ? juce::Rectangle<float> (pill.getRight() + 6.0f, pill.getY(), 64.0f, pill.getHeight())
                           : juce::Rectangle<float> (pill.getX() - 70.0f, pill.getY(), 64.0f, pill.getHeight()),
                 roomRight ? juce::Justification::centredLeft : juce::Justification::centredRight, false);
