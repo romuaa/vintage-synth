@@ -13,7 +13,13 @@ reference panel's arrangement (owner decision).
 
 ## Open decisions (do not assume — ask if work depends on them)
 
-None right now. When a new one comes up, list it here; once decided, move it to "Decisions".
+- **B-Side (`docs/architecture.md` 8.12):** Q1 identity `Bsy1` / `com.exitium.bside`; Q2 two parts;
+  Q3 Init chip model (B proposed); Q4 reference emulator: download, licence, external adapter,
+  committing reference data; Q5 fitted, not copied, analog constants; Q6 B-Side alias budgets
+  (8.4.5); Q7 note-off at its sample; Q8 default restart policy Clean. Agents build against the
+  defaults in 8.12 until decided; nothing is downloaded before Q4 is approved.
+
+When a new one comes up, list it here; once decided, move it to "Decisions".
 
 ## Decisions
 
@@ -92,7 +98,14 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   decision); the output stage (fixed −6.02 dB trim, soft limiter `master.limiter` /
   `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
   owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
-  **Next:** B-Side S1; the owner's by-ear notes on single factory programs; M7 UI direction.
+  The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
+- **B-Side S1 contract is written** (architecture section 8, 2026-11-14), awaiting Q1–Q8 (open
+  decisions). **Next:** S1a, the shared processor skeleton (no agent may edit Vintage's
+  processor or editor in parallel), then S1b/S1c.
+- **M7 UI direction (owner, 2026-11-14):** a tabbed workspace, one purpose per full page (Sound,
+  Shape, Play, Arp+Seq, Effects, Browser), as simple as possible, sliders instead of knobs (knobs
+  are hard with a mouse), graphs for visualisation. Wireframe drafts are being iterated outside
+  the repository; no UI code before the owner approves a draft.
 - MIDI Program Change timing: accepted as is for now (owner will test later).
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone

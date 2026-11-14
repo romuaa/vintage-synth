@@ -3,6 +3,14 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## M7 UI direction (owner, 2026-11-14)
+
+| Decision | Reason |
+|---|---|
+| **Tabbed workspace: every purpose gets the full window** (Sound, Shape, Play, Arp+Seq, Effects, Browser), with a slim persistent frame. Chosen from three wireframe concepts; a single signal-flow page seemed to be missing features and a both-parts-at-once page was far too busy. | Better visibility and larger controls that are easier with a mouse. |
+| **Sliders, not round knobs,** for continuous controls. | Knobs are hard to use with a mouse. |
+| **As simple as possible; graphs for visualisation and intuition.** A new user must be able to see how to set up the arpeggiator without a manual. | Owner's requirement. |
+
 ## B-Side S1 contract (2026-11-14)
 
 Contract: `docs/architecture.md` section 8. All (review); the owner decisions it waits for are
