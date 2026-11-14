@@ -56,7 +56,8 @@ set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/FactoryBank.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetBar.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/InstrumentEditor.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/InstrumentEditor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/ShellSupport.cpp)
 set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/presets/VintagePresets.cpp
