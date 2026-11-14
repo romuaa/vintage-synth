@@ -104,7 +104,8 @@ When a new one comes up, list it here; once decided, move it to "Decisions".
   processor or editor in parallel), then S1b/S1c.
 - **M7 UI direction (owner, 2026-11-14):** a tabbed workspace, one purpose per full page (Sound,
   Shape, Play, Arp+Seq, Effects, Browser), as simple as possible, sliders instead of knobs (knobs
-  are hard with a mouse), graphs for visualisation. Wireframe drafts are being iterated outside
+  are hard with a mouse), graphs for visualisation. Every control and graph follows host
+  automation and program changes live. Wireframe drafts are being iterated outside
   the repository; no UI code before the owner approves a draft.
 - MIDI Program Change timing: accepted as is for now (owner will test later).
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
