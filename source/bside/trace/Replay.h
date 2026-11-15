@@ -2,8 +2,8 @@
 
 // The replay driver (docs/architecture.md 8.9.4): it sets the chip up from the trace, advances it
 // to each write's cycle, writes, and compares the digital state with the reference at every
-// checkpoint. It is a template over the chip so it can be proven against a stub now and run
-// against the real chip (S2) unchanged. JUCE-free.
+// checkpoint. It is a template over the chip: the tests prove it against a stub, and
+// ChipReplay.h binds it to the real chip (source/bside/chip/, S2a). JUCE-free.
 //
 // Chip requirements (the contract's interface, 8.4.7):
 //   void advanceCycles (std::uint64_t cycles) noexcept;       // digital state only

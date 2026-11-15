@@ -5,6 +5,69 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2a fidelity pass — the digital core follows the per-cycle specification 8.15 (2026-11-14)
+- `source/bside/chip/` rewritten to `docs/architecture.md` 8.15 (which wins over 8.4.3): power-on state
+  (accumulators 0x555555, noise 0x7ffffe, envelopes 0xaa in release with a reset pending, Model B read
+  latch 0x555); step order (a) oscillator advance, (b) envelopes, (c) outputs 1, 2, 3, (d) sync; the noise
+  register's latch and 2-step pipeline after a bit-19 rise, the first-shift flag, the fill under the test
+  bit and the shift when it is cleared, the write-back table of 8.15.3; the triangle `<< 1` shape, the ring
+  fold with XOR NOT, the pulse comparison of the previous step, the Model A top-bit pull-down, the Model B
+  read latch, the hold and fade of a deselected output; envelope phase, counter and divider pipelines with
+  their precedence, the 32 767-position rate counter, the divider period as a state, lost gate-offs, the
+  gate and rate-write rules; the timing constants per model. `stepCycle` stays normative; `advanceCycles`
+  is rebuilt on the new state (per-oscillator jumps between sync-relevant rises, envelope jumps between
+  non-trivial steps) and proven equal to it. The combined-waveform table stays the AND placeholder.
+- `bside_trace` replays every committed trace through the chip (`replayChipExact`, `ShapeExemption.h`):
+  exact at every checkpoint with the 8.15.8 exemption (shape-dependent fields marked from the writes and
+  the chip's per-step events, counted per trace; a `d_*` trace with any exemption fails); the envelope
+  traces also as Model A; a second chip driven by `advanceCycles` must equal the stepped one in its full
+  state at every checkpoint. Result: 76 traces, 81 replays, 0 mismatches (`d_*` 20 075 checkpoints all
+  exact, `c_*` 921 exact and 4 315 exempt, `a_*` 902 exact). The analog test stays skipped (no audio path).
+- Tests: the row tests are rewritten per 8.15 rule (the 8.4.3 expectations that 8.15 contradicts are
+  replaced); the naive stepper (`ChipStepperTests.cpp`) is rewritten from 8.15 and compares every state
+  field; the five formerly ambiguous cases are kept as regression sequences; the equivalence tests compare
+  the full new state and the fill events.
+- Judgement calls and the specification gaps found: `docs/decisions.md`, "B-Side S2a fidelity pass".
+- Review round 1: a combined-waveform table is used for two or more of triangle, saw and pulse, or pulse
+  with noise (`wave::usesTable`); noise with only triangle or only saw is exact, so `c_9_*`/`c_a_*` are now
+  exact tests of the write-back path (0 exempt, asserted, as for every `d_*` and `a_*` trace). An
+  accumulator exemption also ends at a certain sync reset; the tracker keeps the noise register and the
+  noise output apart. `[replay]` lines list per field the exempt and the differing checkpoints. New unit
+  tests: the table rule, every way an exemption ends, the 8-bit envelope wrap (cycles named from
+  `d_env_cases_b`/`d_env_rates_b`), the Smooth-mode latch-step copy into the noise output. `c_*` exempt
+  checkpoints 4 315 -> 3 915 of 5 236; still 0 mismatches.
+
+### B-Side S2a — the chip's digital core (2026-11-14)
+- Digital unit gate by an independent test agent: `tests/bside/unit/ChipStepperTests.cpp`, a naive per-cycle
+  stepper written from 8.4.1-8.4.3 alone, compared field by field with `stepCycle` and `advanceCycles` after
+  every cycle/write and at random mid-gap points (10^7 cycles per model by default, `bside_unit
+  "[.stepper-long]"` 10^8). No defect found; five ambiguous contract sentences are pinned by
+  `[ambiguity]` tests with minimal sequences (both readings shown).
+- `source/bside/chip/` (JUCE-free, no allocation, noexcept, trivially copyable): register file of 8.4.1,
+  three 24-bit oscillators with a 32-bit fraction for Smooth input, sync (with the chain case), ring, test
+  bit, 23-bit noise registers clocked on bit-19 rises with the combined-waveform write-back, three
+  envelope generators (15-bit rate counters, exponential divider latched at the threshold values, delay
+  quirk, freeze at 0, gate edges), the read registers 0x1B and 0x1C, `ChipClock` (32.32 cycles per
+  internal sample), and `wave::` (the 12-bit waveform outputs S2b renders from).
+- `Chip::stepCycle` is the normative per-cycle definition (header of `Chip.h`); `advanceCycles` is a
+  closed-form fast path proven equal to it (10^7 random cycles with random writes per model in ctest;
+  `bside_unit "[.chip-long]"` runs 10^8). An event sink reports sync resets and noise clocks at their
+  cycle: the seam for S2b's band-limited rendering. No waveform rendering, filter, DAC or output yet.
+- `source/bside/trace/ChipReplay.h`: the replay driver bound to the real chip (`setupChip`,
+  `snapshotChip` in the 20-field `.bsref` order, `replayChip`); the stub-based replay tests are unchanged.
+- Tests (`bside_unit`): every row of 8.4.3, the fast path against stepping (states and events), block
+  size 1/7/61/512 and internal rate independence of the digital state, replay with the real chip.
+- Judgement calls where 8.4.3 says "confirm" or is silent: `docs/decisions.md` (all review).
+- Review round 1: events are self-contained (`SyncResetEvent` with the source's sub-cycle crossing and
+  the target's phase, `NoiseClockEvent`, new `NoiseWriteBackEvent`); a sink must not read the chip; the
+  noise events follow `Sink::kWantsNoiseEvents` in both paths; time, sample, envelope and event-order
+  conventions in the `Chip.h` header, `ChipClock::position` for sub-sample positions. Accessors assert
+  0..2; a default-constructed chip advances at the default clock and rate; Authentic rounds half away
+  from zero; `setFilter` keeps the external-input bit at 0. New tests: sync chains in every rotation and
+  all three together, no write-back under the test bit, every snapshot field (incl. the dividers) with
+  its own value. Four rows in `docs/decisions.md` are now marked known open deviations (attack from 0xff,
+  write and pipeline delays, test-bit noise reset, oscillator-3 read with no waveform).
+
 ### B-Side reference data: contract 8.15 and owner decision (2026-11-14, `bside/reference-data`)
 - `docs/architecture.md` 8.15 "Amendments from the reference data": the per-cycle specification of
   the chip's digital core (step order, envelope pipelines and precedence, lost gate-off, sync after
