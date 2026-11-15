@@ -154,8 +154,11 @@ TEST_CASE ("combined waveforms: rows without a table and the noise combinations"
 
 TEST_CASE ("combined waveforms: building the tables and preparing a chip allocate nothing", "[bside][chip][shapes]")
 {
+    // Counted: the work of the first use (buildTables for both models, which is all the function-local
+    // static's constructor does) and a chip's construction and prepare. The first use itself cannot be
+    // forced inside a shared test executable (another test may have built the statics already); its only
+    // other step, the thread-safe static guard, does not allocate.
     auto t = std::make_unique<combined::ShapeTables>();
-    Chip c;
 #if VS_SEQ_COUNT_ALLOCATIONS
     {
         vs::seq::test::AllocationCounter probe;
@@ -167,6 +170,7 @@ TEST_CASE ("combined waveforms: building the tables and preparing a chip allocat
 #endif
     combined::buildTables (combined::fittedParams (Model::A), *t);
     combined::buildTables (combined::fittedParams (Model::B), *t);
+    Chip c;
     Config cfg;
     cfg.model = Model::A;
     c.prepare (cfg);

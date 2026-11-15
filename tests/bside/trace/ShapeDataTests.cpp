@@ -7,6 +7,7 @@
 #include "../shapes/ShapeData.h"
 
 #include "bside/chip/CombinedWaveforms.h"
+#include "bside/trace/ChipReplay.h"
 #include "bside/trace/Sha256.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -78,7 +79,6 @@ const std::map<std::string, Tolerance> kTolerance {
     { "s_noise_f_b", { 1.0, 0.0 } },
     { "s_pn_noise_b", { 1.0, 0.0 } },
     { "s_pn_index_b", { 59.0 / 64.0, 0.0244 } },
-    { "s_latch_b", { 1.0, 0.0 } },
 };
 } // namespace
 
@@ -166,9 +166,14 @@ TEST_CASE ("shape data: pulse with noise depends on the noise output itself, not
 TEST_CASE ("shape data: the fitted tables against the measurements, within the stated tolerances", "[trace][shapes]")
 {
     const auto errs = shapes::errorsByPlan (loaded(), chip::combined::fittedTables (chip::Model::A), chip::combined::fittedTables (chip::Model::B));
+    std::size_t fitted = 0;
     for (const auto& lp : loaded())
     {
+        if (lp.spec.kind == shapes::Kind::latch)
+            continue; // no shape samples: the latch tests below
+        ++fitted;
         const auto& e = errs.at (lp.spec.name);
+        REQUIRE (e.samples > 0);
         const double bits = e.bitsObserved == 0 ? 0.0 : static_cast<double> (e.bitsWrong) / static_cast<double> (e.bitsObserved);
         std::printf ("[shapes] %-14s %5zu samples, %5zu exact (%6.2f%%), observed bits wrong %.3f%%, max %3d, rms %6.2f (rd1B steps)\n",
                      lp.spec.name.c_str(), e.samples, e.exact, 100.0 * e.exactRate(), 100.0 * bits, e.maxError, e.rms());
@@ -178,8 +183,52 @@ TEST_CASE ("shape data: the fitted tables against the measurements, within the s
         CHECK (e.exactRate() >= t.minExact);
         CHECK (bits <= t.maxBits);
     }
-    CHECK (kTolerance.size() == loaded().size());
+    CHECK (kTolerance.size() == fitted);
 }
+
+namespace
+{
+/** rd1B of our chip (fitted tables) at every checkpoint of a committed trace, in schedule order. */
+std::vector<std::uint8_t> chipReads (const std::string& name)
+{
+    const auto tr = trace::readTrace (shapes::slurp (kShapes / (name + ".bstrace")));
+    REQUIRE (tr.ok);
+    std::vector<trace::Checkpoint> schedule;
+    REQUIRE (trace::checkpointSchedule (tr.trace, schedule));
+    // stepCycle is normative; a second chip on advanceCycles must equal it at every checkpoint.
+    chip::Chip c, fast;
+    trace::setupChip (c, tr.trace);
+    trace::setupChip (fast, tr.trace);
+    std::vector<std::uint8_t> reads;
+    std::size_t fastDiffs = 0;
+    for (const auto& cp : schedule)
+    {
+        const std::uint64_t to = cp.kind == trace::Checkpoint::Kind::afterWrite ? tr.trace.writes[cp.write].cycle : cp.cycle;
+        while (c.cycle() < to)
+            c.stepCycle();
+        fast.advanceCycles (to - fast.cycle());
+        if (cp.kind == trace::Checkpoint::Kind::afterWrite)
+        {
+            const auto& w = tr.trace.writes[cp.write];
+            c.write (w.reg, w.value);
+            fast.write (w.reg, w.value);
+        }
+        fastDiffs += fast.state() == c.state() ? 0u : 1u;
+        reads.push_back (c.read (chip::reg::osc3Output));
+    }
+    CHECK (fastDiffs == 0);
+    return reads;
+}
+
+const shapes::LoadedPlan& planNamed (const std::string& name)
+{
+    for (const auto& lp : loaded())
+        if (lp.spec.name == name)
+            return lp;
+    FAIL ("no plan " << name);
+    return loaded().front();
+}
+} // namespace
 
 TEST_CASE ("shape data: the Model B read latch across waveform changes (8.15.2 (c) step 5)", "[trace][shapes]")
 {
@@ -231,4 +280,65 @@ TEST_CASE ("shape data: the Model B read latch across waveform changes (8.15.2 (
     CHECK (shape2 == 30);
     CHECK (andShift3 == 40);
     CHECK (shape3 == 5);
+
+    // Our chip on the same trace (fitted tables, shape latch): per switch kind, how many of the reads that
+    // follow it equal the reference. An honest count: low where the data contradict the shape latch
+    // (event 3) and where our fitted T3 or T6 differ from the measured shapes.
+    const auto ours = chipReads ("s_latch_b");
+    REQUIRE (ours.size() > latch->latch.back().read1Point);
+    int chip1 = 0, chip2a = 0, chip2b = 0, chip3 = 0;
+    for (const auto& e : latch->latch)
+    {
+        const bool r1 = ours[e.read1Point] == e.read1;
+        if (e.event == 1)
+            chip1 += r1 ? 1 : 0;
+        else if (e.event == 2)
+        {
+            chip2a += r1 ? 1 : 0;
+            chip2b += ours[e.read2Point] == e.read2 ? 1 : 0;
+        }
+        else
+            chip3 += r1 ? 1 : 0;
+    }
+    std::printf ("[latch] our chip reproduces: event 1 %d, event 2 pulse step %d and return %d, event 3 %d (of 40 each)\n", chip1, chip2a,
+                 chip2b, chip3);
+    CHECK (chip1 == 29);
+    CHECK (chip2a == 40);
+    CHECK (chip2b == 31);
+    CHECK (chip3 == 5);
+}
+
+TEST_CASE ("shape data: pulse with noise leaves the Model B read latch alone (our chip against s_latch_pn_b)", "[trace][shapes]")
+{
+    // s_latch_pn_b: triangle + saw (3) at frequency 0x1000; at index X one step (event 4) or two steps
+    // (event 5) of pulse with noise, then triangle + saw again; one step later a probe shows the read of
+    // that return step: the latch. Pulse with noise has no triangle or saw bit, so the latch must still
+    // hold the triangle + saw shape latched at X. The reference: every return read equals the measured
+    // T3(X). Our chip must reproduce every return read where its fitted T3 agrees with the measured one,
+    // and give exactly its own T3(X) at all of them (a chip whose pulse-with-noise step touched the latch
+    // fails both).
+    std::map<int, int> t3;
+    for (const auto& s : planNamed ("s_sweep_3_b").samples)
+        t3[s.index] = s.value;
+    const auto& lp = planNamed ("s_latch_pn_b");
+    INFO (lp.error);
+    REQUIRE (lp.error.empty());
+    REQUIRE (lp.latch.size() == 60);
+    const auto ours = chipReads ("s_latch_pn_b");
+    const auto& table = chip::combined::fittedTables (chip::Model::B);
+    int refLatched = 0, chipAgrees = 0, chipOwnShape = 0, fitAgrees = 0;
+    for (const auto& e : lp.latch)
+    {
+        const auto fittedT3 = static_cast<int> (table.wave[3][e.index] >> 4);
+        refLatched += e.read2 == t3.at (e.index) ? 1 : 0;
+        fitAgrees += fittedT3 == t3.at (e.index) ? 1 : 0;
+        chipAgrees += ours[e.read2Point] == e.read2 ? 1 : 0;
+        chipOwnShape += ours[e.read2Point] == fittedT3 ? 1 : 0;
+    }
+    std::printf ("[latch] pulse with noise: reference keeps the latch %d of 60; our fitted T3 equals the measured %d; our chip reproduces %d, "
+                 "reads its own T3 %d\n",
+                 refLatched, fitAgrees, chipAgrees, chipOwnShape);
+    CHECK (refLatched == 60);
+    CHECK (chipOwnShape == 60);
+    CHECK (chipAgrees == fitAgrees);
 }

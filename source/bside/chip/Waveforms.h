@@ -8,6 +8,7 @@
 #include "bside/chip/ChipTypes.h"
 #include "bside/chip/CombinedWaveforms.h"
 
+#include <cassert>
 #include <cstdint>
 
 namespace vs::bside::chip::wave
@@ -80,7 +81,10 @@ constexpr std::uint32_t noiseKeepMask (std::uint16_t out) noexcept { return (kNo
 inline std::uint16_t shape (const combined::ShapeTables& t, std::uint8_t waveBits, std::uint16_t ix, std::uint16_t noiseOutput) noexcept
 {
     if ((waveBits & 15u) == combined::kPulseNoise)
+    {
+        assert ((noiseOutput & 0x00fu) == 0); // a noise output (bits 3..0 are always 0), not an index
         return t.pulseNoise[(noiseOutput >> 4) & 0xffu];
+    }
     return t.wave[waveBits & 15u][ix & 0xfffu];
 }
 

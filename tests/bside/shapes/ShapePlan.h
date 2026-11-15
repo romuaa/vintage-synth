@@ -30,6 +30,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,7 @@ struct PlanSpec
     std::uint64_t seed = 0;
     std::vector<std::pair<std::uint32_t, std::uint64_t>> steps; // noise: explicit (frequency / 0x1000, delay) instead
     int fills = 3;         // noise: fill steps of the refill under the test bit before each sample
+    int latchSet = 1;      // latch: 1 = events 1..3 (s_latch_b), 2 = events 4..5 (s_latch_pn_b)
 };
 
 struct PlannedSample
@@ -59,7 +61,7 @@ struct PlannedSample
     int steps = 1;                             // index = ((acc + steps x F) >> 12) & 0xfff
     std::uint32_t expectedAcc = 0;             // spot/noise: the accumulator the plan expects at accWrite
     bool checkAcc = false;
-    int event = 0;                             // latch: 1 = 3 -> 6, 2 = 3 -> 4 -> 6, 3 = 3 -> 2
+    int event = 0; // latch: 1 = 3 -> 6, 2 = 3 -> 4 -> 6, 3 = 3 -> 2, 4 = 3 -> c -> 3, 5 = 3 -> c, c -> 3
     std::size_t readWrite2 = 0;                // latch event 2: the read after the second switch
 };
 
@@ -135,6 +137,12 @@ constexpr std::uint16_t kLatchIndices1[] { 0x3fe, 0x77e, 0x7b3, 0x7be, 0x7cf, 0x
 constexpr std::uint16_t kLatchIndices2[] { 0x3ff, 0x79e, 0x7b4, 0x7c4, 0x7d2, 0x7df, 0x7ea, 0x7f3, 0x7ff, 0xaff, 0xbaf, 0xbbb, 0xbc7, 0xbd3,
                                            0xbde, 0xbeb, 0xbf2, 0xbf8, 0xcf7, 0xd3b, 0xd55, 0xd63, 0xd87, 0xdbb, 0xdcf, 0xddb, 0xde4, 0xdef,
                                            0xdf6, 0xe0f, 0xe18, 0xe74, 0xe96, 0xea3, 0xedb, 0xeea, 0xef0, 0xef7, 0xf34, 0xf46 };
+/** Indices of the pulse-with-noise latch experiment: where the measured triangle + saw shape (Model B) is
+    not 0 in bits 11..4, so a latch overwritten by the pulse-with-noise step would show. */
+constexpr std::uint16_t kLatchIndices4[] { 0xfc,  0x2fe, 0x3fc, 0x5fe, 0x7e8, 0x7f6, 0x9f8, 0xbf2, 0xcfc, 0xec1, 0xecf, 0xedd, 0xeeb, 0xef9, 0xf07,
+                                           0xf15, 0xf23, 0xf31, 0xf3f, 0xf4d, 0xf5b, 0xf69, 0xf77, 0xf85, 0xf93, 0xfa1, 0xfaf, 0xfbd, 0xfcb, 0xfd9 };
+constexpr std::uint16_t kLatchIndices5[] { 0xff,  0x3f1, 0x3ff, 0x6fd, 0x7eb, 0x7f9, 0x9fb, 0xbf5, 0xcff, 0xec4, 0xed2, 0xee0, 0xeee, 0xefc, 0xf0a,
+                                           0xf18, 0xf26, 0xf34, 0xf42, 0xf50, 0xf5e, 0xf6c, 0xf7a, 0xf88, 0xf96, 0xfa4, 0xfb2, 0xfc0, 0xfce, 0xfdc };
 constexpr std::uint16_t kLatchIndices3[] { 0x10,  0x75,  0xda,  0x13f, 0x1a4, 0x209, 0x26e, 0x2d3, 0x338, 0x39d, 0x402, 0x467, 0x4cc, 0x531,
                                            0x596, 0x5fb, 0x660, 0x6c5, 0x72a, 0x78f, 0x7f4, 0x859, 0x8be, 0x923, 0x988, 0x9ed, 0xa52, 0xab7,
                                            0xb1c, 0xb81, 0xbe6, 0xc4b, 0xcb0, 0xd15, 0xd7a, 0xddf, 0xe44, 0xea9, 0xf0e, 0xf73 };
@@ -221,10 +229,17 @@ inline Plan buildPlan (const PlanSpec& s)
         w.write (16, 0x0e, 0x00);
         w.write (16, 0x0f, 0x10);
         w.write (kRelease, 0x12, 0x30);
-        for (int ev = 1; ev <= 3; ++ev)
-            for (const auto x : ev == 1 ? kLatchIndices1 : ev == 2 ? kLatchIndices2 : kLatchIndices3)
+        // Set 2 (events 4, 5): one or two steps of pulse with noise, then back to triangle + saw and a probe
+        // write (0x15 := 00) one step later; its read shows whether pulse with noise touched the latch.
+        const int first = s.latchSet == 1 ? 1 : 4, last = s.latchSet == 1 ? 3 : 5;
+        for (int ev = first; ev <= last; ++ev)
+            for (const auto x : ev == 1 ? std::span<const std::uint16_t> (kLatchIndices1)
+                                : ev == 2 ? std::span<const std::uint16_t> (kLatchIndices2)
+                                : ev == 3 ? std::span<const std::uint16_t> (kLatchIndices3)
+                                : ev == 4 ? std::span<const std::uint16_t> (kLatchIndices4)
+                                          : std::span<const std::uint16_t> (kLatchIndices5))
             {
-                const std::uint64_t c = kRelease + std::uint64_t { 4096 } * static_cast<std::uint64_t> (static_cast<unsigned> (ev - 1)) + std::uint64_t { x };
+                const std::uint64_t c = kRelease + std::uint64_t { 4096 } * static_cast<std::uint64_t> (static_cast<unsigned> (ev - first)) + std::uint64_t { x };
                 PlannedSample o;
                 o.event = ev;
                 o.expectedAcc = static_cast<std::uint32_t> (x) << 12;
@@ -240,14 +255,21 @@ inline Plan buildPlan (const PlanSpec& s)
                     o.readWrite = w.write (c + 1, 0x12, 0x60);
                     o.readWrite2 = w.write (c + 2, 0x12, 0x30);
                 }
-                else
+                else if (ev == 3)
                 {
                     o.accWrite = w.write (c, 0x12, 0x20);
                     o.readWrite = w.write (c + 1, 0x12, 0x30);
                 }
+                else
+                {
+                    const std::uint64_t back = c + (ev == 4 ? 1 : 2);
+                    o.accWrite = w.write (c, 0x12, 0xc0);
+                    o.readWrite = w.write (back, 0x12, 0x30);
+                    o.readWrite2 = w.write (back + 1, 0x15, 0x00);
+                }
                 p.samples.push_back (o);
             }
-        end = kRelease + 3 * 4096 + 8;
+        end = kRelease + static_cast<std::uint64_t> (last - first + 1) * 4096 + 8;
     }
     else
     {
@@ -385,6 +407,9 @@ inline std::vector<PlanSpec> allPlans()
             s.kind = Kind::latch;
             s.name = "s_latch_b";
             v.push_back (s);
+            s.latchSet = 2;
+            s.name = "s_latch_pn_b";
+            v.push_back (s);
         }
     }
     return v;
@@ -472,7 +497,8 @@ struct LatchEvent
 {
     int event = 0;
     std::uint16_t index = 0;
-    std::uint8_t read1 = 0, read2 = 0; // read2: event 2 only
+    std::uint8_t read1 = 0, read2 = 0;      // read2: events 2, 4 and 5
+    std::size_t read1Point = 0, read2Point = 0; // their checkpoints (indices into the reference)
 };
 
 inline bool extractLatch (const Plan& plan, const trace::Trace& t, const trace::Reference& r, std::vector<LatchEvent>& out, std::string& why)
@@ -498,9 +524,13 @@ inline bool extractLatch (const Plan& plan, const trace::Trace& t, const trace::
         LatchEvent e;
         e.event = o.event;
         e.index = static_cast<std::uint16_t> (acc >> 12);
-        e.read1 = static_cast<std::uint8_t> (r.points[byWrite[o.readWrite]].state.v[18]);
-        if (o.event == 2)
-            e.read2 = static_cast<std::uint8_t> (r.points[byWrite[o.readWrite2]].state.v[18]);
+        e.read1Point = byWrite[o.readWrite];
+        e.read1 = static_cast<std::uint8_t> (r.points[e.read1Point].state.v[18]);
+        if (o.event == 2 || o.event >= 4)
+        {
+            e.read2Point = byWrite[o.readWrite2];
+            e.read2 = static_cast<std::uint8_t> (r.points[e.read2Point].state.v[18]);
+        }
         out.push_back (e);
     }
     return true;

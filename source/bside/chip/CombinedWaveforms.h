@@ -114,8 +114,11 @@ constexpr double kMinMargin = 1.0e-6;
 
 /** The complete step-2 shape (8.15.2 (c)) for every waveform-bit value 0..15 and index: triangle, saw,
     0xfff for pulse or noise alone, the triangle or saw for those with noise, the combined shapes
-    otherwise. Entry 0 (no waveform) is unused and 0; entry 0xc is unused (pulse with noise takes
-    `pulseNoise`, indexed by the noise output's bits 11..4). */
+    otherwise. Entry 0 (no waveform) is unused and 0; entry 0xc is unused zeros (pulse with noise takes
+    `pulseNoise`, indexed by the noise output's bits 11..4). ONLY wave::shape() (Waveforms.h) is a valid
+    way to read a shape: indexing `wave[0xc]` directly gives 0, not the pulse-with-noise shape (in debug
+    builds wave::shape asserts that its noise-output argument has bits 3..0 clear, as every noise
+    output has). */
 struct ShapeTables
 {
     std::array<std::array<std::uint16_t, 4096>, 16> wave {};

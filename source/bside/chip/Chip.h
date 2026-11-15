@@ -58,7 +58,9 @@
 //       (c) step 6 changed the register; register and noise output after it. Write-back mode is never
 //       jumped, so these events come in step order.
 //   Changes made by a write (the noise shift when the test bit is cleared, the accumulator reset when it
-//   is set) carry no event: a renderer splits the sample at the write and reads the state there.
+//   is set) carry no event: a renderer splits the sample at the write and reads the state there. The same
+//   holds for powerOnKeepingTime() (accumulators, outputs and envelopes jump to power-on) and
+//   clearEnvelopeCounters(): no event; the renderer splits the sample where it calls them.
 // ORDER. Within one step: noise clocks (oscillator 1..3, part (a)), write-backs (1..3, part (c)), sync
 // resets (by source 1..3, part (d)). A jump contains noise clocks only and reports them OSCILLATOR BY
 // OSCILLATOR (each in time order), NOT by time across oscillators. Stable-sorted by cycle, the events
@@ -334,7 +336,10 @@ public:
     /** The 12-bit digital output of oscillator n (0..2) as the last step computed it (8.15.2 (c); held
         and fading while no waveform is selected). */
     std::uint16_t output (int n) const noexcept { return osc[checked (n)].out; }
-    /** The step-2 shape tables in use (the combined-waveform values; S2b renders from the same tables). */
+    /** The step-2 shape tables in use (the combined-waveform values; S2b renders from the same tables).
+        Read a shape only through wave::shape (tables, waveform bits, index, noise output): for pulse with
+        noise (waveform bits 0xc) the shape is `pulseNoise[noise output >> 4]` and the row `wave[0xc]` is
+        unused zeros. */
     const combined::ShapeTables& shapeTables() const noexcept { return *shapes; }
     float cutoffSmooth() const noexcept { return cutoff; }
     std::uint8_t registerValue (std::uint8_t r) const noexcept { return r < reg::kWritable ? regs[r] : std::uint8_t { 0 }; }
