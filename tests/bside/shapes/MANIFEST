@@ -7,12 +7,20 @@
 #   every trace outside the repository:
 #     for t in <dir>/*.bstrace; do "$BS_ORACLE" "$t" --ref "${t%.bstrace}.bsref" --spec <scratch>/x.bsspec; done
 #   The .bsspec outputs are not used and not committed (these traces measure the digital read-back only).
-# Fit: `bside_shapefit fit tests/bside/shapes source/bside/chip/CombinedWaveformParams.cpp` (deterministic;
-#   it continues from the committed parameters); errors: `bside_shapefit report tests/bside/shapes`.
+# Fit (from the repository root, after building bside_shapefit):
+#     bside_shapefit fit tests/bside/shapes source/bside/chip/CombinedWaveformParams.cpp
+#   runs deterministic rounds from the committed parameters until a round changes nothing (a fixed point);
+#     bside_shapefit verify tests/bside/shapes
+#   checks that the committed parameters are that fixed point (exit 1 otherwise; about 1 minute);
+#     bside_shapefit report tests/bside/shapes
+#   prints the fit errors. After a refit: re-pin the table hashes (bside_unit, CombinedWaveformTests.cpp)
+#   and bless tests/bside/trace/exemption-budget.txt (BS_BLESS_EXEMPTION_BUDGET=<that path> bside_trace).
 # emulator-commit / adapter-commit: as in each reference's header.
 emulator-commit 5393471a02a505ff43aa710148b2d35289b72c31
 adapter-commit d7c10fa981c5dbd11f2ebfa5bfbf122a3b98b06f
 # file <sha256> <name>
+file 54b477cb1d145f26b8032dcbdb4404d81cbe3621faefc1abfac6ed239aa71d81 s_latch_b.bsref
+file f0ba4e0922b3c59b754f53ce896f3eae06db0f3600937a6419f64ee300f8d24b s_latch_b.bstrace
 file 55787142bc35320e7f08b8e719ebffd07ba814b206c5b0eb30c55c14b509a48c s_noise_b_a.bsref
 file 7a9623a6b16fbf8494aab6c3ac8cf76ed6ae5b7deac735f447c701223e7985a7 s_noise_b_a.bstrace
 file f58bd278401a49768c73830dd46f4b93b4ab1879fe9cc82f5e35bb8d4da4516c s_noise_b_b.bsref
@@ -33,6 +41,14 @@ file 236705b499542f2021219303ea15c223caecf8dc9dbffd389f9cdbc682eebd36 s_noise_f_
 file d446d6123566d1045bee3eb40a79689543b947210d73629537a88bfcc57164d1 s_noise_f_a.bstrace
 file 3cf74372439e49c43f7c654c0103354fee484dcbe7c551461200500303cead99 s_noise_f_b.bsref
 file 8bde6b729db00fbf7a43fa906bc5b92164db2ad1451621c732d4eb76a0b0b7c2 s_noise_f_b.bstrace
+file 5081aae2c9a8ee9c58247df2e04d307c9e0dc3937e6ca72fb2aac608b0b624b3 s_pn_index_a.bsref
+file d1a628c98586ac9f58e38e07ac0b01a8ad3b6959ae3c1f034e6b43dda44f3319 s_pn_index_a.bstrace
+file fd4442da7a2764f0bf386b4ff00093b160c70622bfe9747d2b7edabecc28ba54 s_pn_index_b.bsref
+file 275c2f0be7414140cb5fb2313ceae919a5f62651e8f03e133acfe8178c211a85 s_pn_index_b.bstrace
+file 9dec7686d4cbd931132d9150d30d2f8aefa2991fc893a0292d0c4c6fe0b7537c s_pn_noise_a.bsref
+file 7226d6b248d02d337dab2769b4313ada7e757cb1105dbc878fac1a144188f8a2 s_pn_noise_a.bstrace
+file 81f1b1c044df5c0586170b677a1b3460ed54fd229619041dfe79bb342dd4a2fd s_pn_noise_b.bsref
+file 057c755583bf6c9af531d75b4df0b5b661c5da374125f65dcdba4ce216060395 s_pn_noise_b.bstrace
 file f1f70de3ee4fc398c47b965b08eb0817acbf564ad4c783d95e61e2685c477c71 s_pw_5_a_40.bsref
 file eafe54707df3020bfc4418e8024a82239b0c202e144d81d4b3e8195f5526a827 s_pw_5_a_40.bstrace
 file cd1e2ce7005efbd764c58183c549e4791937607aac63b809aefb601eedec2381 s_pw_5_a_a0.bsref
