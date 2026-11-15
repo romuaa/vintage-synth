@@ -154,7 +154,7 @@ public:
     BrowserPage (UiContext& ctx, presets::PresetManager& manager, std::function<int()> editedPart);
     ~BrowserPage() override;
 
-    /** Chip and stripe colour of the category with this index (final colours come with M7f). */
+    /** Chip and stripe colour of the category with this index (placeholder hues, final set is an owner decision; see Theme). */
     static juce::Colour categoryColour (int index);
 
     // ---- State and introspection for tests ----

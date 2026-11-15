@@ -5,6 +5,23 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M7f editor polish (2026-11-15)
+- Paint allocates nothing in any component: `Slider`, `SegmentedSwitch` and `Toggle` lay their label, value
+  and captions out when the value or size changes (`PreparedText::setLine` reproduces `Graphics::drawText`
+  exactly), `Theme` owns the paint fonts, and `Panel`, the page-rail icons, the frame, the Browser and
+  Sound pages and the preset name button make their strings, fonts and paths once. New test
+  `PaintAllocationTests` walks every component of every page (both parts, three states).
+- Accessibility: the Browser grid (list; press loads), category chips and tone source switch (groups with
+  a settable value), the arp mode and pattern switches (named), a spoken name for a pressed key ("C4,
+  Upper"). New `AccessibilityInventoryTests`: every clickable component has a role, a name, keyboard
+  focus and a place in the Tab order, or an allow-list reason.
+- Keyboard strip (owner decision): a held key is tinted in the holding part's colour (Dual: both, Lower in
+  the upper half), a sounding note is a small outlined bar at the foot of the key; no dots or rings.
+  Pixel test of the rendered strip.
+- Theme tokens for repeated radii, picture alphas, the white-key colour and key mixes, the category hue
+  parameters and the preset button's font sizes (values unchanged; all pictures compared byte for byte).
+- One shared no-op graphics context for the UI tests.
+
 ### B-Side S2b-1 second review: stronger tests (2026-11-15)
 - Exemption budget is a golden: equality, unknown and duplicate keys fail, a bless run fails after writing.
 - New measurement `s_latch_pn_b`: pulse with noise leaves the Model B latch alone (60 of 60); a test runs
