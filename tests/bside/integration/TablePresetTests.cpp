@@ -1037,7 +1037,10 @@ TEST_CASE ("B-Side tables: two parts in one seqlock window commit both tables or
     });
     const auto start = std::chrono::steady_clock::now();
     int applied = 0;
-    while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds (1500))
+    // At least 1.5 s; then on until the abort path has run at least once (on a loaded machine or under a
+    // sanitizer the two threads may not collide within 1.5 s), 20 s at most.
+    const auto elapsed = [&] { return std::chrono::steady_clock::now() - start; };
+    while (elapsed() < std::chrono::milliseconds (1500) || (aborted.load() == 0 && elapsed() < std::chrono::seconds (20)))
     {
         pm.applyProgram (programs[static_cast<size_t> (applied % 100)], 5, false, false);
         ++applied;

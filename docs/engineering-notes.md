@@ -3,6 +3,25 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S2a fidelity pass (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The exemption of 8.15.8, implemented as its list of fields, failed three Model A `c_*` traces (`c_3_a`, `c_6_a`, `c_7_a`: acc3 from cycle 1 162; `c_ring_3_a`: acc3 from 1 040; `c_ring_order_a`: acc2 and rd1B from 2 563). | The list names the sync target of a pulled-down oscillator, not the pulled-down oscillator itself, nor the ring-modulated output that reads it. | Mark exempt fields by following every flow of the per-cycle rules from a combined-waveform table value (`ShapeExemption.h`), not by a list; run the literal list against the data too and report the difference as a contract gap. |
+| The naive stepper's counter went to -1 where the chip's wrapped to 0xff. | A release step at counter 0 is possible when an attack phase cleared the freeze before any attack step; 8.15.4 writes "counter - 1" without the width. | Give every counter of a naive model the hardware's width; a random driver reaches such corners (5 to 11 times per 10^7 cycles here). |
+| The fast path became 2 to 4 times slower (21 to 45 ns per internal sample at 96 kHz against 10 to 12, scratch benchmark on a loaded machine). | The pipelined envelope makes 3 of every 9 cycles of a rate-0 envelope non-trivial (pending, reset, divider pipeline), and every such cycle is a real envelope step. | Acceptable for S2a (about 0.2 to 0.5 % of a core per chip). Reviewer's measurements (round 1): 22 to 48 ns per internal sample depending on the envelope rate, and **226 ns in noise write-back mode** (noise with another waveform), which steps every cycle. Two equivalent cheaper forms for S4 (not implemented): the periodic envelope loops (sustain hold, frozen at 0, release at a constant divider) computed with modular arithmetic up to the next event; and jumping a locked noise register: register 0, latch 0, noise output 0 and the first-shift flag clear is a fixed point of both the write-back and the shift. |
+| The exemption list ended exemptions too late and started one where no table exists. | Noise with only triangle or only saw was treated as a table case (every waveform with two bits), and a certain sync reset (acc := 0) did not end an accumulator exemption. All 400 exempt checkpoints of `c_9_*` and `c_a_*` were equal anyway: a sign that nothing there depended on a table. | Count, per exempt field, how many checkpoints actually differ (`exemptFieldsText`); an exemption that never differs is a hypothesis to test, not evidence. Every way an exemption ends needs a unit test when the data has none. |
+
+## B-Side S2a: chip digital core (2026-11-14)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The fast path's event list differed from the per-cycle one although every state matched. | A closed-form jump reports the noise clocks of oscillator 1, then 2, then 3; stepping reports them cycle by cycle. | State the order in the sink contract (per oscillator in cycle order) and compare the stable-sorted lists. A renderer consumes events per oscillator. |
+| Counting bit crossings in closed form overflows silently for long jumps. | `phase + jump × increment` exceeds 64 bits; the phase survives (2^64 is a multiple of the 2^56 wrap) but the crossing count does not, so a test that compares only phases misses it. Jumping frozen envelopes removed the 32 767-cycle bound that envelope events used to give. | Cap every closed-form jump (`kMaxSkip`) so the unwrapped sum fits; compare the noise registers, not only the accumulators. |
+| A sink that read the chip inside a callback saw different states from the fast path and from stepping. | A closed-form jump advances the oscillators one after the other, so mid-jump the chip is in no real state. | Events carry everything a renderer needs (phases, increments, register, output); a sink must never read the chip. Tests compare the full payloads. |
+| Write-back mode (noise plus another waveform) is never jumped. | The write-back depends on every cycle's output. | It costs about 8 ns per cycle (reviewer's measurement), about 0.8 % of a core per chip in that mode at the 50 Hz clock: count it in the S4 CPU budget (a voice that locked its noise up stays expensive until the waveform changes) and expect long traces with such writes to replay slowly. |
+| The mutation runs found untested rules (sync chain rotations, write-back under the test bit, snapshot field order). | Row tests used one orientation and fields with equal or zero values. | Test every rotation of a three-way rule; give every field in a mapping test its own non-zero value so a swap shows. |
+| An equivalence test against the code's own per-cycle step cannot catch a wrong definition. | Both paths share `stepCycle`. | The fast path is proven by the equivalence test; the definition by the 8.4.3 row tests and by an independent stepper written from the contract by someone else. Check the equivalence test with mutations of the fast path (S2a: 7 mutations, 5 caught, the 2 others proven equivalent). |
 ## B-Side reference data (2026-11-14)
 
 | Problem | Cause | Fix / rule |
@@ -228,6 +247,7 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | JUCE 9 warns (→ error) on `JUCE_DISPLAY_SPLASH_SCREEN`. | Don't define it. |
 | `AudioFormat::createWriterFor(OutputStream*, …)` is deprecated (→ error). | Use the `AudioFormatWriterOptions` overload. |
 | `-Wimplicit-int-float-conversion` in a test. | Warnings are errors in tests too; cast explicitly. |
+| A thread test that asserts "the rare path ran at least once" within a fixed time failed once in the Linux sanitizer step (0 collisions in 1.5 s on a loaded machine), after passing many times. | A test that needs a collision runs until it has seen one, with a generous upper limit; a fixed short window only proves something on an idle machine. |
 | GCC (Linux step only) fails with `-Wshadow` on a constructor parameter that has the name of a member of a JUCE base class; Clang accepts it. | Name constructor parameters so they cannot collide with base-class members (found in M7a's `CheckableHandler`); run the Linux step before handing over. |
 | Hosting a VST3 in a console test app. | `juce_add_console_app` + `JUCE_PLUGINHOST_VST3=1` + `juce_audio_processors_headless`; register formats with `addHeadlessDefaultFormatsToManager`. |
 
