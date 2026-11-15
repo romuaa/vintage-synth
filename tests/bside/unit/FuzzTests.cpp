@@ -43,14 +43,16 @@ namespace
 {
 std::atomic<std::size_t> gLive { 0 };
 std::atomic<std::size_t> gPeak { 0 };
+std::atomic<std::size_t> gAllocations { 0 };
 
 #if ! BS_FUZZ_ASAN
-void* countedAlloc (std::size_t n)
+[[gnu::noinline]] void* countedAlloc (std::size_t n)
 {
     void* p = std::malloc (n + 16);
     if (p == nullptr)
         return nullptr;
     *static_cast<std::size_t*> (p) = n;
+    gAllocations.fetch_add (1, std::memory_order_relaxed);
     const auto live = gLive.fetch_add (n, std::memory_order_relaxed) + n;
     auto peak = gPeak.load (std::memory_order_relaxed);
     while (live > peak && ! gPeak.compare_exchange_weak (peak, live, std::memory_order_relaxed))
@@ -59,7 +61,7 @@ void* countedAlloc (std::size_t n)
     return static_cast<char*> (p) + 16;
 }
 
-void countedFree (void* p) noexcept
+[[gnu::noinline]] void countedFree (void* p) noexcept
 {
     if (p == nullptr)
         return;
@@ -106,6 +108,12 @@ void operator delete[] (void* p, std::size_t) noexcept { countedFree (p); }
 void operator delete (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
 void operator delete[] (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
 #endif
+
+namespace bst
+{
+std::size_t totalAllocations() { return gAllocations.load(); }
+bool allocationsAreCounted() { return ! BS_FUZZ_ASAN; }
+} // namespace bst
 
 using namespace bst;
 using namespace vs::bside::trace;

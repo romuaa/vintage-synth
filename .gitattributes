@@ -1,3 +1,4 @@
 # Reference data is hashed byte for byte (tests/bside/reference/MANIFEST, the trace SHA-256 in every
 # .bsref/.bsspec): never convert its line endings on checkout.
 tests/bside/reference/** -text
+tests/bside/golden/** -text

@@ -3,6 +3,17 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S2c: patch program engine (2026-11-15)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A block-split comparison failed only when the timeline changed a host parameter. | A host change takes effect at the next sync or tick, and a block boundary is a sync: the effect moves with the block size. That is the contract's block-rate parameters, not an engine fault. | Compare block splits on timelines without host changes; test host changes by the cycle at which `sync` is called. |
+| `-Wswitch-enum` (clang, an error) rejects a `switch` with `default` over `Op`. | The flag wants every enumerator listed. | List every enumerator in each case group, with a comment, instead of `default`. |
+| A class with a virtual destructor and a user-declared destructor failed `-Wdeprecated-copy-with-dtor` when a derived class was moved. | The implicit copy of the abstract sink is deprecated next to a declared destructor. | Default the copy and move operations in the abstract base (protected). |
+| `new int (5)` followed by `delete` did not move the allocation counter. | The optimiser removes the pair. | A test of a counter must use the allocation (sum a `std::vector`), and check the counter itself first. |
+| A hand-derived golden, an independent model of the contract and the engine agreed on every line at the first run. | Three artefacts written from one reading agree even where the reading is wrong. | They prove the code does what the reading says, not that the reading is right: the readings are listed in `docs/decisions.md` for a person to judge. |
+| Golden trace files with a leading `#` comment line still read as traces. | The reader accepts comments before the header. | Put the kind of each golden (hand-derived or model) in its first line. |
+
 ## B-Side S2a fidelity pass (2026-11-14)
 
 | Problem | Cause | Fix / rule |

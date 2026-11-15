@@ -15,7 +15,8 @@ set(BS_JUCEFREE_SOURCES
     ${PROJECT_SOURCE_DIR}/source/bside/trace/Compare.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/trace/SpecAnalysis.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/trace/AnalogMeasure.cpp
-    ${PROJECT_SOURCE_DIR}/source/bside/chip/Chip.cpp)
+    ${PROJECT_SOURCE_DIR}/source/bside/chip/Chip.cpp
+    ${PROJECT_SOURCE_DIR}/source/bside/engine/ProgramEngine.cpp)
 
 add_library(bs_juce_free STATIC ${BS_JUCEFREE_SOURCES})
 target_include_directories(bs_juce_free PUBLIC ${PROJECT_SOURCE_DIR}/source)
@@ -42,8 +43,12 @@ add_executable(bside_unit
     unit/ChipEquivalenceTests.cpp
     unit/ChipReplayTests.cpp
     unit/IndependentModelTests.cpp
-    unit/ChipStepperTests.cpp)
+    unit/ChipStepperTests.cpp
+    unit/ProgramEngineTests.cpp
+    unit/ProgramEngineGoldenTests.cpp
+    unit/ProgramEnginePropertyTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
+target_compile_definitions(bside_unit PRIVATE BS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 set_target_properties(bside_unit PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
 include(${PROJECT_SOURCE_DIR}/external/Catch2/extras/Catch.cmake)
