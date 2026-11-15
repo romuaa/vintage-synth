@@ -112,13 +112,14 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   held-key order, audio byte-identical), Browser (grid, categories, search, tone loading) and the
   program menu on the program name. Each page reviewed independently and fixed; the placeholder
   page is removed; time parameters now print whole milliseconds ("45 ms").
-- **M7f (editor polish) is ready on `m7/f-polish`, awaiting the owner's merge approval:** held
+- **M7f (editor polish) is merged to `main`** (owner tried it and approved, 2026-11-15): held
   keys tinted and sounding notes marked on the keyboard strip (owner decision; no dots), no
   allocation in the editor's own paint code (whole-editor test; the dashed external-change
   outline is the known exception), accessibility handlers for the Browser grid, chips and tone
   switch with an inventory test over the whole editor, theme tokens, one shared test graphics
-  context. Reviewed independently and fixed. **Open for the owner:** final category colours, a
-  top-bar redesign, playing from the computer keyboard; no real screen-reader pass was done.
+  context. Reviewed independently and fixed. **Deferred by the owner ("later"):** final category
+  colours, a top-bar redesign, digits of equal width, playing from the computer keyboard. No real
+  screen-reader pass was done.
 - **M7a (editor foundation) is merged to `main`** (owner tried it and approved, 2026-11-14): the
   custom editor frame (page rail, part switch with tint, preset bar, output meter and limiter
   popover, help line and bubbles, 75–200 % scaling), the Sound page with live pictures, placeholder
