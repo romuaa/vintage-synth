@@ -5,6 +5,22 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2b-2 — band-limited waveform rendering (2026-11-15)
+- `Chip::render` / `Chip::renderUntil` (`source/bside/chip/ChipRender.cpp`, design in `Chip.h` "RENDERING"):
+  per oscillator the band-limited waveform after the waveform converter, times the envelope converter,
+  summed (filter, mixer, volume and board filters follow in S3). BLEP/BLAMP from the shared table at every
+  edge, reset and write, placed at its exact sub-sample time; combined waveforms as exact band-limited
+  staircases; noise as band-limited sample-and-hold; sync resets predicted from the source's line; Model A
+  pull-down predicted; writes split a sample at their cycle (`renderUntil`). Latency 8 internal samples.
+- `source/bside/chip/RenderTables.*`: converter model (resistor ladder; Model A ratio 2.2 unterminated,
+  Model B ideal) and the combined-waveform step tables, built at prepare.
+- Tests (`ChipRenderTests.cpp`, `RenderReferenceTests.cpp`): alias budgets of 8.4.5 at every internal rate
+  of 4.4 (all rows pass except three Model A combined shapes: a known shortfall, isolated to the BLEP
+  kernel, test marked should-fail); digital state after rendering equals stepping (random writes, both
+  models, any split); bit-identical audio across block sizes; state independent of the internal rate; no
+  allocation; exact write timing and latency; noise spectra within 0.18 dB of the reference (allowed 1.5).
+- `chip_bench` (tests/bside/benchmarks): ns per internal sample per chip, typical and worst case.
+
 ### B-Side S2b-1 second review: stronger tests (2026-11-15)
 - Exemption budget is a golden: equality, unknown and duplicate keys fail, a bless run fails after writing.
 - New measurement `s_latch_pn_b`: pulse with noise leaves the Model B latch alone (60 of 60); a test runs

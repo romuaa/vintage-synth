@@ -3,6 +3,18 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S2b-2: band-limited rendering (2026-11-15)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Hard sync aliased at -40 to -70 dB near coincident edges (ratios 1.0031, 1.9969). | The digital core reports a reset only at the cycle after the source's crossing, up to two cycles after the crossing itself; by then the rendered line had already passed the target's own edge. | Predict resets from the source's rendered line and let the digital event confirm them; a renderer must never learn about a discontinuity after it has rendered past it. |
+| Combined waveforms with the pulse aliased at -50 to -75 dB from mip-mapped tables. | A band-limited table times a hard gate is not band-limited; BLEP and BLAMP fix only the jump and the slope at the edge. | Shapes with few value changes per period: render the staircase exactly (one BLEP per change). Measure the changes before choosing tables. |
+| Ring modulation on a combined staircase aliased at -46 dB. | The renderer tracked only the cell of the last value change; after a ring flip (the other half of the table) that cell was stale. | Re-derive the current cell from the phase whenever the table offset changes. |
+| A pulse gate stayed open forever after a Model A pull-down. | The next pulse edge was computed from the gate's state, which assumed a monotonic line. | After any phase jump, re-read the (one cycle late) comparison from the new line one cycle later. |
+| Model A combined shapes stop about 10 dB short of -96 dB; no code change helped. | The shared BLEP kernel attenuates what folds into the band by only about 85 dB, and single-cell spikes have flat spectra. | Isolate a budget failure with a kernel experiment before tuning anything else; record it as a decision instead of loosening the gate (should-fail test). |
+| A tool command was blocked although it only edited source. | The command text contained a member access ending in "env[" after a dot, which the hook reads as the forbidden file name. | Edit such lines with the Edit tool, not through shell text. |
+| Typical rendering costs about 52 ns per internal sample per chip at 96 kHz, about 3 times the digital core. | Per sample: a line simulation, three sweeps, the re-anchoring and the ring buffers, even when nothing happens. | Room for S4: skip the sweep of an oscillator without events in the sample (value, slope and next event cached), keep the envelope product out of the ring, vectorise the BLEP window; measure with `chip_bench` before and after. |
+
 ## B-Side S2b-1: combined-waveform tables (2026-11-15)
 
 | Problem | Cause | Fix / rule |
