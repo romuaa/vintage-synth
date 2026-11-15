@@ -111,8 +111,14 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   preview computed by the real arpeggiator; small audio-thread additions for the playing step and
   held-key order, audio byte-identical), Browser (grid, categories, search, tone loading) and the
   program menu on the program name. Each page reviewed independently and fixed; the placeholder
-  page is removed; time parameters now print whole milliseconds ("45 ms"). **Next:** M7f (polish:
-  accessibility of chips and grid, Slider and SegmentedSwitch paint allocations, final colours).
+  page is removed; time parameters now print whole milliseconds ("45 ms").
+- **M7f (editor polish) is ready on `m7/f-polish`, awaiting the owner's merge approval:** held
+  keys tinted and sounding notes marked on the keyboard strip (owner decision; no dots), no
+  allocation in the editor's own paint code (whole-editor test; the dashed external-change
+  outline is the known exception), accessibility handlers for the Browser grid, chips and tone
+  switch with an inventory test over the whole editor, theme tokens, one shared test graphics
+  context. Reviewed independently and fixed. **Open for the owner:** final category colours, a
+  top-bar redesign, playing from the computer keyboard; no real screen-reader pass was done.
 - **M7a (editor foundation) is merged to `main`** (owner tried it and approved, 2026-11-14): the
   custom editor frame (page rail, part switch with tint, preset bar, output meter and limiter
   popover, help line and bubbles, 75–200 % scaling), the Sound page with live pictures, placeholder
@@ -215,6 +221,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   13. S2b-1 and S2c: combined-waveform tables (`constinit`, `constexpr` array fills, hexadecimal
       float literals, table hashes pinned across compilers but never computed by MSVC or on
       x86_64), the program engine, the allocation counter's `BS_NOINLINE` (2026-11-15).
+  14. M7f: accessibility handlers, prepared text in controls, the editor walk's class-name
+      parser (its MSVC branch has never run) (2026-11-15).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.

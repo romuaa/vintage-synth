@@ -168,6 +168,15 @@ where a row here is worded differently.
 | **Left, needs an owner decision:** the final `cat.0`...`cat.11` category colours (still placeholder HSV hues; 9.2.3 asks for >= 3:1 on the panel); the custom top bar redesign (the program name stays the shared preset bar's button); tabular figures (JUCE 9 has no OpenType feature switch). | Colour and layout choices, and a JUCE limit. |
 | **Left, outside the editor's files or needs a screen-reader pass:** the feed's sequencer step, step count, held-key order and live cutoff (U4: audio code); per-segment radio children of `SegmentedSwitch`, the help line as a live region, focus order inside pages beyond reading order, the second (y) parameter of a graph handle through accessibility (all need a real macOS/Windows screen-reader pass); the dashed marker outline still allocates for the 2 s a marker shows. | Not done; none of them blocks keyboard use. |
 
+## Owner decisions after trying the pages and hearing the engine (2026-11-15)
+- **Keyboard strip: held keys are tinted, sounding notes get a small mark;** the dots and rings
+  are gone (they read as buttons). Contract 9.3.4.
+- **Program engine, confirmed by the owner ("engine ok")** after hearing the snare example with
+  and without it: once a note is released, the patch table cannot raise the gate again (S2c row
+  12). The owner also accepted, without an audible example, that Clean and Precondition clear a
+  still-high gate before a retrigger (row 8) and that Authentic applies no part of the restart
+  section (row 5).
+
 ## Play page keys play notes (owner request, 2026-11-15; details review)
 - **Owner:** clicking the keys on the Play page must play. Contract 9.3.4 "Playing the keys".
 - **(review) The split marker moves only by its pill** (drag, arrows, wheel, double-click); a press
