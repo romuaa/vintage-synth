@@ -234,7 +234,7 @@ void LfoView::paint (juce::Graphics& g)
     using namespace metrics;
     const auto r = getLocalBounds().toFloat();
     g.setColour (colour (Tok::BgWindow));
-    g.fillRoundedRectangle (r, 4.0f);
+    g.fillRoundedRectangle (r, metrics::kRadiusControl);
     if (axis.width <= 0.0f)
         return;
     const auto plot = plotArea();
@@ -243,19 +243,19 @@ void LfoView::paint (juce::Graphics& g)
     for (int i = 0; i < tickText.size(); ++i)
     {
         const float x = axis.x0 + axis.width * static_cast<float> (i + 1) / kTicks;
-        g.setColour (colour (Tok::BgTrack).withAlpha (0.5f));
+        g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kGridAlpha));
         g.drawVerticalLine (juce::roundToInt (x), plot.getY(), plot.getBottom());
         g.setColour (colour (Tok::TextSecondary));
         g.drawText (tickText[i], juce::Rectangle<float> (x - 28.0f, plot.getBottom() + 12.0f, 56.0f, 14.0f), juce::Justification::centred, false);
     }
-    g.setColour (colour (Tok::BgTrack).withAlpha (0.9f));
+    g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kAxisAlpha));
     g.drawHorizontalLine (juce::roundToInt (plot.getCentreY()), plot.getX(), plot.getRight());
 
     g.setColour (colour (Tok::TextSecondary).withAlpha (0.14f));
     g.fillPath (wedge);
     g.setColour (colour (Tok::TextSecondary).withAlpha (0.6f));
     g.fillPath (startMarker);
-    g.setColour (accentColour.withAlpha (0.7f));
+    g.setColour (accentColour.withAlpha (metrics::kCurveAlpha));
     g.fillPath (delayDashed);
     g.setColour (accentColour);
     g.fillPath (waveStroke);
@@ -264,7 +264,7 @@ void LfoView::paint (juce::Graphics& g)
 
     const auto pill = [&] (const juce::String& text, juce::Rectangle<float> area) {
         g.setColour (colour (Tok::BgWindow).withAlpha (0.8f));
-        g.fillRoundedRectangle (area, 3.0f);
+        g.fillRoundedRectangle (area, metrics::kRadiusSmall);
         g.setColour (colour (Tok::TextPrimary));
         g.drawText (text, area.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
     };

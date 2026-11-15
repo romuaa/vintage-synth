@@ -88,6 +88,9 @@ ArpSeqPage::ArpSeqPage (UiContext& c, UiFeed& f, juce::AudioProcessorValueTreeSt
     binding.bind (state);
     setTitle ("Arp + Seq");
     setComponentID ("arpseq.page");
+    // Their labels are empty (the large switch and the pattern cards carry no label row), so name them for screen readers.
+    modeSwitch.setTitle ("Arpeggiator and sequencer mode");
+    pattern.setTitle ("Arpeggio pattern");
 
     modeIdx = c.mirror.indexOf (ParamID::arpMode);
     targetIdx = c.mirror.indexOf (ParamID::arpTarget);
@@ -115,7 +118,7 @@ ArpSeqPage::ArpSeqPage (UiContext& c, UiFeed& f, juce::AudioProcessorValueTreeSt
             else
             {
                 g.setColour (i == 0 ? lower : upper);
-                g.fillRoundedRectangle (seg, 3.0f);
+                g.fillRoundedRectangle (seg, metrics::kRadiusSmall);
             }
         }
         else
@@ -398,7 +401,7 @@ void ArpSeqPage::paint (juce::Graphics& g)
     const auto mode = panelBounds (0).toFloat();
     g.setColour (colour (Tok::BgPanel));
     g.fillRoundedRectangle (mode, static_cast<float> (kRadius));
-    g.setFont (ctx.theme.font (kText));
+    g.setFont (ctx.theme.fonts().text);
     g.setColour (colour (Tok::TextSecondary));
     drawFittedText (g, playsThrough, { 816.0f, 8.0f, 300.0f, 20.0f }, juce::Justification::centredLeft);
     g.setColour (colour (Tok::TextPrimary));
@@ -407,7 +410,7 @@ void ArpSeqPage::paint (juce::Graphics& g)
 
 void ArpSeqPage::paintOverChildren (juce::Graphics& g)
 {
-    g.setFont (ctx.theme.font (kTextSmall));
+    g.setFont (ctx.theme.fonts().small);
     g.setColour (colour (Tok::TextSecondary));
     if (view == 0)
     {

@@ -100,5 +100,13 @@ private:
     int curveRecomputes = 0, scopeRecomputes = 0;
     int crossModIndex = -1;
     std::map<juce::String, int> indices; // suffix -> mirror index, built once
+    // Captions made once: a literal converted to a juce::String in paint() allocates (9.5).
+    struct Captions
+    {
+        const juce::String link { juce::String::fromUTF8 ("2 \xe2\x86\x92 1") }, offAtZero { "off at 0" }, osc1 { "Osc 1" }, osc2 { "Osc 2" },
+            toFilter { "goes to the filter >" }, steepness { "Steepness" },
+            dragHint { "Drag the dots: cutoff left/right, resonance up/down; high-pass left/right. Dashed: the other steepness." },
+            overTime { "How the filter moves over time: see the Envelopes and LFO pages." }, signalPath { "Signal path of this part" };
+    } captions;
 };
 } // namespace vs::ui

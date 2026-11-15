@@ -464,3 +464,43 @@ TEST_CASE ("Play keys: the editor's notes feed the arpeggiator and obey the hold
         CHECK_FALSE (rig.proc.getLowerPart().isSounding());
     }
 }
+
+TEST_CASE ("Play keys: a pressed key is named to screen readers with the part that plays it, once per new note", "[ui][play][keys][a11y]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    PlayRig rig;
+    auto& strip = rig.strip();
+    std::vector<juce::String> heard;
+    strip.announce = [&] (const juce::String& s) { heard.push_back (s); };
+
+    rig.set ("key.mode", 2.0f); // Split at C4 (60)
+    rig.set ("key.split_point", 60.0f);
+    rig.tick();
+    strip.mouseDown (mouseAt (strip, onKey (strip, 48)));
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 48))); // the same key: nothing new
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 52))); // keys crossed on the way are not announced
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 62)));
+    CHECK (heard.size() == 1);
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 67)));
+    CHECK (heard.size() == 1);
+    strip.mouseUp (mouseAt (strip, onKey (strip, 67)));
+    REQUIRE (heard.size() == 2); // the press, and the note where the glide ends
+    CHECK (heard[0] == "C3, Lower");
+    CHECK (heard[1] == "G4, Upper");
+
+    // Pressing and releasing on the same note says it once; a glide that comes back to its first key says nothing more.
+    strip.mouseDown (mouseAt (strip, onKey (strip, 50)));
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 53)));
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 50)));
+    strip.mouseUp (mouseAt (strip, onKey (strip, 50)));
+    CHECK (heard.size() == 3);
+    CHECK (heard[2] == "D3, Lower");
+
+    rig.set ("key.mode", 1.0f); // Dual: both parts
+    rig.tick();
+    strip.mouseDown (mouseAt (strip, onKey (strip, 72)));
+    strip.mouseUp (mouseAt (strip, onKey (strip, 72)));
+    REQUIRE (heard.size() == 4);
+    CHECK (heard[3] == "C5, Lower and Upper");
+    CHECK (strip.lastAnnouncement() == heard[3]);
+}

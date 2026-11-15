@@ -11,6 +11,7 @@
 // common/ui/models/ProgramModels.h and tested there.
 
 #include "common/presets/PresetActions.h"
+#include "common/ui/PaintFonts.h"
 #include "common/ui/ParamMirror.h"
 #include "common/ui/PreparedText.h"
 #include "common/ui/controls/BoundComponent.h"
@@ -63,6 +64,10 @@ public:
     bool keyPressed (const juce::KeyPress&) override;
     void focusGained (FocusChangeType) override { repaintSelected(); }
     void focusLost (FocusChangeType) override { repaintSelected(); }
+    /** Role list; the title names the selected program, the press action loads it. */
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+    /** Names the grid for screen readers ("Programs, selected A1 Init") and announces the change. */
+    void setSelectionDescription (const juce::String& selected);
 
 private:
     struct Cell
@@ -116,6 +121,9 @@ public:
     bool keyPressed (const juce::KeyPress&) override;
     void focusGained (FocusChangeType) override { repaint(); }
     void focusLost (FocusChangeType) override { repaint(); }
+    /** Role group whose value is the chosen category ("All" or its name); typing a category name chooses it. */
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+    juce::String activeLabel() const;
 
     static constexpr int kChipH = 26, kMinW = 64, kMaxW = 150, kAllW = 56, kMoreW = 80, kGap = 4, kDot = 14, kPad = 10;
 
@@ -146,7 +154,7 @@ public:
     BrowserPage (UiContext& ctx, presets::PresetManager& manager, std::function<int()> editedPart);
     ~BrowserPage() override;
 
-    /** Chip and stripe colour of the category with this index (final colours come with M7f). */
+    /** Chip and stripe colour of the category with this index (placeholder hues, final set is an owner decision; see Theme). */
     static juce::Colour categoryColour (int index);
 
     // ---- State and introspection for tests ----

@@ -19,9 +19,33 @@ public:
     {
         juce::GlyphArrangement arrangement;
         arrangement.addFittedText (f, text, area.getX(), area.getY(), area.getWidth(), area.getHeight(), justification, maxLines, 1.0f);
+        prepared = true;
         font = f;
+        origin = {};
         glyphs.clear();
         positions.clear();
+        for (int i = 0; i < arrangement.getNumGlyphs(); ++i)
+        {
+            const auto& pg = arrangement.getGlyph (i);
+            glyphs.push_back (static_cast<std::uint16_t> (pg.getGlyphIndex()));
+            positions.push_back ({ pg.getLeft(), pg.getBaselineY() });
+        }
+        bytes = glyphs.capacity() * sizeof (std::uint16_t) + positions.capacity() * sizeof (juce::Point<float>);
+    }
+    /** One line exactly as Graphics::drawText (text, area, justification, useEllipsesIfTooBig) would draw it:
+        the same arrangement, drawn at the same offset, so the picture does not change. */
+    void setLine (const juce::String& text, const juce::Font& f, juce::Rectangle<float> area, juce::Justification justification)
+    {
+        glyphs.clear();
+        positions.clear();
+        prepared = true;
+        font = f;
+        origin = area.getPosition();
+        if (text.isEmpty())
+            return;
+        juce::GlyphArrangement arrangement;
+        arrangement.addCurtailedLineOfText (f, text, 0.0f, 0.0f, area.getWidth(), true);
+        arrangement.justifyGlyphs (0, arrangement.getNumGlyphs(), 0.0f, 0.0f, area.getWidth(), area.getHeight(), justification);
         for (int i = 0; i < arrangement.getNumGlyphs(); ++i)
         {
             const auto& pg = arrangement.getGlyph (i);
@@ -34,8 +58,11 @@ public:
     {
         glyphs.clear();
         positions.clear();
+        prepared = true;
     }
     bool isEmpty() const noexcept { return glyphs.empty(); }
+    /** True once set() or setLine() ran (also for text with no glyphs). */
+    bool isPrepared() const noexcept { return prepared; }
     /** Heap bytes held (for the memory budget test). */
     size_t memoryBytes() const noexcept { return bytes; }
 
@@ -47,7 +74,7 @@ public:
         auto& context = g.getInternalContext();
         context.saveState();
         context.setFont (font);
-        context.drawGlyphs (glyphs, positions, juce::AffineTransform());
+        context.drawGlyphs (glyphs, positions, juce::AffineTransform::translation (origin.x, origin.y));
         context.restoreState();
     }
 
@@ -61,6 +88,8 @@ public:
 
 private:
     juce::Font font { juce::FontOptions {} };
+    juce::Point<float> origin;
+    bool prepared = false;
     std::vector<std::uint16_t> glyphs;
     std::vector<juce::Point<float>> positions;
     size_t bytes = 0;

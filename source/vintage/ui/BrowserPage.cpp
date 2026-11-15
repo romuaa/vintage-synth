@@ -29,6 +29,27 @@ ProgramGrid::ProgramGrid (const Theme& t) : theme (t)
     setComponentID ("browser.grid");
 }
 
+std::unique_ptr<juce::AccessibilityHandler> ProgramGrid::createAccessibilityHandler()
+{
+    juce::AccessibilityActions actions;
+    juce::Component::SafePointer<ProgramGrid> self (this);
+    actions.addAction (juce::AccessibilityActionType::press, [self] {
+        if (self != nullptr && self->onLoad)
+            self->onLoad (self->selectedSlot);
+    });
+    return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::list, std::move (actions));
+}
+
+void ProgramGrid::setSelectionDescription (const juce::String& selected)
+{
+    const auto title = "Programs, selected " + selected;
+    if (title == getTitle())
+        return;
+    setTitle (title);
+    if (auto* h = getAccessibilityHandler())
+        h->notifyAccessibilityEvent (juce::AccessibilityEvent::titleChanged);
+}
+
 juce::Rectangle<int> ProgramGrid::cellBounds (int slot) const
 {
     const int row = slot / 8, col = slot % 8;
@@ -203,7 +224,7 @@ void ProgramGrid::paint (juce::Graphics& g)
         const float alpha = c.lit ? 1.0f : 0.3f;
         const bool isSelected = slot == selectedSlot, isCurrent = slot == currentSlot;
         g.setColour ((isSelected ? colour (Tok::BgTrack) : colour (Tok::BgPanel)).withMultipliedAlpha (alpha));
-        g.fillRoundedRectangle (r, 4.0f);
+        g.fillRoundedRectangle (r, metrics::kRadiusControl);
         g.setColour (c.stripe.withMultipliedAlpha (alpha));
         g.fillRoundedRectangle (r.withWidth (5.0f), 2.0f);
         g.setColour (colour (Tok::TextPrimary).withMultipliedAlpha (alpha));
@@ -213,7 +234,7 @@ void ProgramGrid::paint (juce::Graphics& g)
         if (isCurrent)
         {
             g.setColour (colour (Tok::TextPrimary).withMultipliedAlpha (alpha));
-            g.drawRoundedRectangle (r.reduced (1.0f), 4.0f, 2.0f);
+            g.drawRoundedRectangle (r.reduced (1.0f), metrics::kRadiusControl, 2.0f);
             if (modifiedDot)
             {
                 g.setColour (colour (Tok::Warn));
@@ -364,12 +385,40 @@ int ChipStrip::chipAt (juce::Point<int> p) const
     return -2;
 }
 
+juce::String ChipStrip::activeLabel() const
+{
+    return activeChip == 0 ? juce::String ("All") : chips[static_cast<size_t> (activeChip - 1)].label;
+}
+
+std::unique_ptr<juce::AccessibilityHandler> ChipStrip::createAccessibilityHandler()
+{
+    struct Value final : juce::AccessibilityTextValueInterface
+    {
+        explicit Value (ChipStrip& s) : strip (s) {}
+        bool isReadOnly() const override { return false; }
+        juce::String getCurrentValueAsString() const override { return strip.activeLabel(); }
+        void setValueAsString (const juce::String& text) override
+        {
+            if (text.equalsIgnoreCase ("All"))
+                strip.choose (0);
+            for (int i = 0; i < strip.numChips(); ++i)
+                if (strip.chips[static_cast<size_t> (i)].label.equalsIgnoreCase (text.trim()))
+                    strip.choose (i + 1);
+        }
+        ChipStrip& strip;
+    };
+    return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::group, juce::AccessibilityActions{},
+                                                         juce::AccessibilityHandler::Interfaces { std::make_unique<Value> (*this) });
+}
+
 void ChipStrip::choose (int index)
 {
     index = juce::jlimit (0, numChips(), index);
     if (index == activeChip)
         return;
     activeChip = index;
+    if (auto* h = getAccessibilityHandler())
+        h->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
     repaint();
     if (onChoose)
         onChoose (index);
@@ -484,7 +533,11 @@ void ChipStrip::paint (juce::Graphics& g)
 class BrowserPage::SelectedInfo final : public juce::Component
 {
 public:
-    explicit SelectedInfo (const Theme& t) : theme (t) { setInterceptsMouseClicks (false, false); setAccessible (false); }
+    explicit SelectedInfo (const Theme& t) : nameFont (t.font (kTextLarge, true)), fonts (t)
+    {
+        setInterceptsMouseClicks (false, false);
+        setAccessible (false);
+    }
     void setProgram (const juce::String& n, const juce::String& m, const juce::String& cat, juce::Colour c)
     {
         if (n == name && m == meta && cat == category && c == dot)
@@ -499,10 +552,10 @@ public:
     {
         auto r = getLocalBounds().toFloat();
         g.setColour (colour (Tok::TextPrimary));
-        g.setFont (theme.font (kTextLarge, true));
+        g.setFont (nameFont);
         drawFittedText (g, name, r.removeFromTop (32.0f), juce::Justification::centredLeft);
         g.setColour (colour (Tok::TextSecondary));
-        g.setFont (theme.font (kText));
+        g.setFont (fonts.text);
         drawFittedText (g, meta, r.removeFromTop (20.0f), juce::Justification::centredLeft);
         auto row = r.removeFromTop (22.0f);
         g.setColour (dot);
@@ -513,7 +566,8 @@ public:
     const juce::String& shownName() const noexcept { return name; }
 
 private:
-    const Theme& theme;
+    juce::Font nameFont; // fonts made once: paint() allocates nothing (9.5)
+    PaintFonts fonts;
     juce::String name, meta, category;
     juce::Colour dot;
 };
@@ -521,7 +575,7 @@ private:
 class BrowserPage::ToneSourceSwitch final : public juce::Component
 {
 public:
-    explicit ToneSourceSwitch (const Theme& t) : theme (t)
+    explicit ToneSourceSwitch (const Theme& t) : fonts (t)
     {
         setWantsKeyboardFocus (true);
         setTitle ("Take its tone");
@@ -534,24 +588,25 @@ public:
             return;
         index = i;
         repaint();
+        if (auto* h = getAccessibilityHandler())
+            h->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
         if (notify && onChange)
             onChange (index);
     }
     std::function<void (int)> onChange;
     void paint (juce::Graphics& g) override
     {
-        static constexpr const char* names[] { "Lower tone", "Upper tone" };
         const float w = static_cast<float> (getWidth()) * 0.5f;
         for (int i = 0; i < 2; ++i)
         {
             const auto r = juce::Rectangle<float> (static_cast<float> (i) * w, 0.0f, w, static_cast<float> (getHeight())).reduced (1.0f);
             const bool on = i == index;
             g.setColour (on ? accentFor (i) : colour (Tok::BgWindow));
-            g.fillRoundedRectangle (r, 4.0f);
+            g.fillRoundedRectangle (r, metrics::kRadiusControl);
             g.setColour (colour (Tok::BgTrack));
-            g.drawRoundedRectangle (r, 4.0f, 1.0f);
+            g.drawRoundedRectangle (r, metrics::kRadiusControl, 1.0f);
             g.setColour (on ? colour (Tok::TextOnAccent) : colour (Tok::TextPrimary));
-            g.setFont (theme.font (kText, on));
+            g.setFont (on ? fonts.textBold : fonts.text);
             drawFittedText (g, names[i], r, juce::Justification::centred);
         }
         if (hasKeyboardFocus (false))
@@ -571,9 +626,23 @@ public:
     }
     void focusGained (FocusChangeType) override { repaint(); }
     void focusLost (FocusChangeType) override { repaint(); }
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override
+    {
+        struct Value final : juce::AccessibilityTextValueInterface
+        {
+            explicit Value (ToneSourceSwitch& s) : sw (s) {}
+            bool isReadOnly() const override { return false; }
+            juce::String getCurrentValueAsString() const override { return sw.names[sw.index]; }
+            void setValueAsString (const juce::String& text) override { sw.set (text.containsIgnoreCase ("upper") ? 1 : 0, true); }
+            ToneSourceSwitch& sw;
+        };
+        return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::group, juce::AccessibilityActions{},
+                                                             juce::AccessibilityHandler::Interfaces { std::make_unique<Value> (*this) });
+    }
 
 private:
-    const Theme& theme;
+    PaintFonts fonts;
+    const juce::String names[2] { "Lower tone", "Upper tone" }; // made once: paint() allocates nothing (9.5)
     int index = 0;
 };
 
@@ -583,8 +652,7 @@ private:
 
 juce::Colour BrowserPage::categoryColour (int index)
 {
-    const int i = ((index % 12) + 12) % 12;
-    return juce::Colour::fromHSV (static_cast<float> (i) / 12.0f, 0.55f, 0.85f, 1.0f);
+    return vs::ui::categoryColour (index);
 }
 
 BrowserPage::BrowserPage (UiContext& c, presets::PresetManager& manager, std::function<int()> part)
@@ -775,7 +843,7 @@ void BrowserPage::refreshState()
     if (meta.author.isNotEmpty())
         line += "   by " + meta.author;
     info->setProgram (meta.name, line, categoryName, categoryColour (group < 0 ? 0 : group));
-    grid.setTitle ("Programs, selected " + presets.positionName (selected) + " " + meta.name);
+    grid.setSelectionDescription (presets.positionName (selected) + " " + meta.name);
 
     // The selected program's Upper tone is not heard when its key mode is Whole.
     bool heard = true;

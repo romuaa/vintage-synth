@@ -521,6 +521,175 @@ TEST_CASE ("Play page: the inactive rules of 9.3.9 follow the parameters", "[ui]
     CHECK (rig.param ("upper.porta.mode").getValue() == Approx (1.0f));
 }
 
+namespace
+{
+bool sameRgb (juce::Colour a, juce::Colour b, int tolerance = 1)
+{
+    return std::abs (a.getRed() - b.getRed()) <= tolerance && std::abs (a.getGreen() - b.getGreen()) <= tolerance
+           && std::abs (a.getBlue() - b.getBlue()) <= tolerance;
+}
+
+/** WCAG 2 contrast ratio of two opaque colours. */
+float contrastRatio (juce::Colour a, juce::Colour b)
+{
+    const auto lum = [] (juce::Colour c) {
+        const auto lin = [] (float v) { return v <= 0.03928f ? v / 12.92f : std::pow ((v + 0.055f) / 1.055f, 2.4f); };
+        return 0.2126f * lin (c.getFloatRed()) + 0.7152f * lin (c.getFloatGreen()) + 0.0722f * lin (c.getFloatBlue());
+    };
+    const float l1 = lum (a), l2 = lum (b);
+    return (std::max (l1, l2) + 0.05f) / (std::min (l1, l2) + 0.05f);
+}
+
+/** The strip as pixels, and the pixel of a key at a fraction of its height (x: the key's centre unless given). */
+struct StripPixels
+{
+    explicit StripPixels (ui::KeyboardStrip& s)
+        : strip (s), image (s.createComponentSnapshot (s.getLocalBounds(), false, 1.0f))
+    {
+    }
+    juce::Colour at (int note, float fractionOfHeight, float dx = 0.0f) const
+    {
+        const auto k = strip.getGeometry().keyRect (note);
+        const auto keys = strip.keysArea();
+        const int x = static_cast<int> (keys.getX() + k.x + k.w * 0.5f + dx);
+        const int y = static_cast<int> (keys.getY() + k.y + k.h * fractionOfHeight);
+        return image.getPixelAt (x, y);
+    }
+    juce::Colour atPoint (juce::Point<float> p) const { return image.getPixelAt (static_cast<int> (p.x), static_cast<int> (p.y)); }
+    /** Pixel `up` px above the key's bottom edge. */
+    juce::Colour fromBottom (int note, float up, float dx = 0.0f) const
+    {
+        const auto k = strip.getGeometry().keyRect (note);
+        const auto keys = strip.keysArea();
+        return image.getPixelAt (static_cast<int> (keys.getX() + k.x + k.w * 0.5f + dx), static_cast<int> (keys.getY() + k.y + k.h - up));
+    }
+    ui::KeyboardStrip& strip;
+    juce::Image image;
+};
+} // namespace
+
+TEST_CASE ("Keyboard strip pixels: a held key carries its part's colour, a sounding note a small mark at the foot, no rings", "[ui][play][keys][pixels]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    rig.editor->selectPage (3, 0);
+    auto& strip = rig.editor->getPlayPage().getStrip();
+    const auto lower = ui::accentFor (0), upper = ui::accentFor (1);
+    const auto paleLower = lower.interpolatedWith (juce::Colours::white, 0.6f);
+    const auto paleUpper = upper.interpolatedWith (juce::Colours::white, 0.6f);
+    const auto darkLower = lower.interpolatedWith (ui::colour (ui::Tok::BgWindow), 0.62f);
+    rig.set ("key.mode", 2.0f);
+    rig.set ("key.split_point", 60.0f);
+    rig.tick();
+
+    // Nothing held: the keys show the key mode's own pale (white) and dark (black) tints.
+    {
+        StripPixels px (strip);
+        CHECK (sameRgb (px.at (48, 0.3f), paleLower));
+        CHECK (sameRgb (px.at (67, 0.3f), paleUpper));
+        CHECK (sameRgb (px.at (49, 0.3f), darkLower)); // C#3, a black key
+    }
+
+    // Hold C3 (Lower, white), C#3 (Lower, black) and G4 (Upper, white).
+    rig.render (rig.samples (0.05), { noteOn (static_cast<int> (rig.now), 48), noteOn (static_cast<int> (rig.now), 49), noteOn (static_cast<int> (rig.now), 67) }, 128);
+    rig.tick();
+    {
+        StripPixels px (strip);
+        CHECK (sameRgb (px.at (48, 0.3f), lower));
+        CHECK (sameRgb (px.at (48, 0.68f, 6.0f), lower)); // the whole key (below the black keys), not a spot
+        CHECK (sameRgb (px.at (49, 0.3f), lower));       // black key
+        CHECK (sameRgb (px.at (67, 0.3f), upper));
+        CHECK (sameRgb (px.at (50, 0.3f), paleLower));   // D3 is not held: unchanged
+        CHECK (sameRgb (px.at (65, 0.3f), paleUpper));
+        // No ring: the pixel where the old ring stood is the key's own colour.
+        CHECK (sameRgb (px.at (50, 0.3f, 3.0f), paleLower));
+    }
+
+    // Release C3: held colour gone at once; the note still sounds, so its mark stays (in its own row above the octave name).
+    rig.render (rig.samples (0.01), { noteOff (static_cast<int> (rig.now), 48) }, 128);
+    rig.tick();
+    REQUIRE (strip.drawsSounding (0, 48));
+    REQUIRE_FALSE (strip.drawsHeld (0, 48));
+    const auto dark = ui::colour (ui::Tok::BgWindow);
+    {
+        StripPixels px (strip);
+        const auto mark = strip.soundingMarkArea (48, false);
+        CHECK (sameRgb (px.at (48, 0.3f), paleLower));
+        CHECK (sameRgb (px.atPoint (mark.getCentre()), lower));                       // the mark's bar
+        CHECK (sameRgb (px.atPoint ({ mark.getCentreX(), mark.getY() + 0.8f }), dark)); // its outline
+        CHECK (sameRgb (px.atPoint ({ mark.getCentreX(), mark.getY() - 3.0f }), paleLower));
+        const auto none = strip.soundingMarkArea (50, false); // D3 does not sound: no mark
+        CHECK (sameRgb (px.atPoint (none.getCentre()), paleLower));
+    }
+    // A mark on a held key stays visible: the outline contrasts with the held tint and the bar with the outline
+    // (white key held by Upper, black key held by Lower: both colours, light and dark key).
+    for (const int note : { 67, 49 })
+    {
+        StripPixels px (strip);
+        const int part = note == 67 ? 1 : 0;
+        REQUIRE (strip.drawsHeld (part, note));
+        REQUIRE (strip.drawsSounding (part, note));
+        const auto mark = strip.soundingMarkArea (note, false);
+        const auto bar = px.atPoint (mark.getCentre());
+        const auto outline = px.atPoint ({ mark.getCentreX(), mark.getY() + 0.8f });
+        const auto under = px.atPoint ({ mark.getX() - 1.5f, mark.getCentreY() }); // the held key beside the mark
+        INFO ("note " << note);
+        CHECK (sameRgb (bar, part == 1 ? upper : lower));
+        CHECK (sameRgb (under, part == 1 ? upper : lower));
+        CHECK (contrastRatio (outline, under) >= 3.0f);
+        CHECK (contrastRatio (bar, outline) >= 3.0f);
+    }
+
+    // Dual: a key held by both parts shows both colours, Lower in the upper half, Upper in the lower half.
+    rig.set ("key.mode", 1.0f);
+    rig.render (rig.samples (0.02), { noteOn (static_cast<int> (rig.now), 72) }, 128);
+    rig.tick();
+    REQUIRE (strip.drawsHeld (0, 72));
+    REQUIRE (strip.drawsHeld (1, 72));
+    {
+        StripPixels px (strip);
+        CHECK (sameRgb (px.at (72, 0.25f), lower));
+        CHECK (sameRgb (px.at (72, 0.75f, -6.0f), upper)); // away from the foot mark
+    }
+}
+
+TEST_CASE ("Keyboard strip: the sounding mark never meets an octave name, in any key mode, size or window", "[ui][play][keys]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    rig.editor->selectPage (3, 0);
+    auto& strip = rig.editor->getPlayPage().getStrip();
+    for (const int percent : { 75, 100, 200 })
+        for (const int mode : { 0, 1, 2 })
+            for (const int low : { 36, 48, 60 })
+            {
+                rig.editor->setSizePercent (percent);
+                rig.set ("key.mode", static_cast<float> (mode));
+                strip.getModel().typed (static_cast<float> (low + 12)); // moves the window with the split note where it must
+                rig.tick();
+                int whiteKeys = 0;
+                for (int n = strip.getGeometry().low(); n <= strip.getGeometry().high(); ++n)
+                    for (const bool both : { false, true })
+                    {
+                        const auto mark = strip.soundingMarkArea (n, both);
+                        INFO ("note " << n << " mode " << mode << " size " << percent << (both ? " both parts" : " one part"));
+                        if (n % 12 == 0) // only C keys carry an octave name
+                            CHECK_FALSE (mark.intersects (strip.octaveLabelArea (n)));
+                        const auto key = strip.keysArea().getPosition();
+                        const auto k = strip.getGeometry().keyRect (n);
+                        const juce::Rectangle<float> keyRect (key.x + k.x, key.y + k.y, k.w, k.h);
+                        CHECK (keyRect.expanded (0.01f).contains (mark)); // inside its own key
+                        whiteKeys += (both && ! ui::model::isBlackKey (n)) ? 1 : 0;
+                    }
+                CHECK (whiteKeys > 20);
+                // Every white key has its mark in the same row.
+                const float row = strip.soundingMarkArea (60, false).getY() - strip.keysArea().getY();
+                for (int n = strip.getGeometry().low(); n <= strip.getGeometry().high(); ++n)
+                    if (! ui::model::isBlackKey (n))
+                        CHECK (strip.soundingMarkArea (n, false).getY() - strip.keysArea().getY() == Approx (row));
+            }
+}
+
 TEST_CASE ("Keyboard strip: held keys, sounding notes and the part colours come from the feed and the key mode", "[ui][m7c][play]")
 {
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
@@ -1183,15 +1352,10 @@ TEST_CASE ("Paint allocations: our own paint code of the new components allocate
     rig.render (rig.samples (0.02), { noteOn (static_cast<int> (rig.now), 60) }, 128);
     checkAll ("dual, a key held by both parts");
 
-    // The reference: the library's own controls (they build their text on change, but Panel
-    // builds a header Path in paint). Reported, not asserted: they belong to M7a.
+    // The library's own controls: Slider and SegmentedSwitch prepare their text and fonts on change too.
     for (const auto& [name, comp] : { std::pair<const char*, juce::Component*> { "Slider", &fx.getSlider ("fx.delay.time") },
                                       { "SegmentedSwitch", &fx.getPingPong() } })
-    {
-        bool stable = false;
-        const int n = allocationsOf ([&] { comp->paint (g); }, stable);
-        WARN (name << ": " << n << " allocations per paint (library control, not asserted)");
-    }
+        check (name, [&] { comp->paint (g); });
 }
 #endif
 
@@ -1249,4 +1413,32 @@ TEST_CASE ("UI shots M7c: Play (Split with keys held) and Effects (everything on
     juce::FileOutputStream stream (file);
     REQUIRE (stream.openedOk());
     REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+}
+
+TEST_CASE ("UI shots: the Play page's keyboard strip with held and sounding keys in each key mode", "[.uishots]")
+{
+    const auto dir = juce::SystemStats::getEnvironmentVariable ("VS_UISHOT_DIR", {});
+    if (dir.isEmpty())
+        SKIP ("VS_UISHOT_DIR not set");
+    const juce::File out (dir);
+    REQUIRE (out.createDirectory());
+    for (const auto& [mode, name] : { std::pair<int, const char*> { 0, "whole" }, { 1, "dual" }, { 2, "split" } })
+    {
+        EditorRig rig;
+        rig.set ("key.mode", static_cast<float> (mode));
+        rig.set ("key.split_point", 60.0f);
+        rig.editor->selectPage (3, 0);
+        rig.tick();
+        rig.render (rig.samples (0.08), { noteOn (static_cast<int> (rig.now), 48), noteOn (static_cast<int> (rig.now), 49), noteOn (static_cast<int> (rig.now), 52),
+                                          noteOn (static_cast<int> (rig.now), 67), noteOn (static_cast<int> (rig.now), 72) }, 128);
+        rig.render (rig.samples (0.02), { noteOff (static_cast<int> (rig.now), 52) }, 128); // released, still sounding
+        rig.tick();
+        auto& strip = rig.editor->getPlayPage().getStrip();
+        const auto image = strip.createComponentSnapshot (strip.getLocalBounds(), true, 2.0f);
+        const auto file = out.getChildFile (juce::String ("keystrip_") + name + ".png");
+        file.deleteFile();
+        juce::FileOutputStream stream (file);
+        REQUIRE (stream.openedOk());
+        REQUIRE (juce::PNGImageFormat().writeImageToStream (image, stream));
+    }
 }

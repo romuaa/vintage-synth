@@ -31,7 +31,9 @@ public:
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
 private:
-    const Theme& theme;
+    PaintFonts fonts;
+    juce::Font headerFont; // made once: paint() allocates nothing (9.5)
+    const juce::String outputText { "OUTPUT" }, reductionText { "Limiter reduction" };
     SegmentedSwitch limiter;
     Slider ceiling;
     float reduction = 0.0f;
@@ -120,6 +122,10 @@ private:
     bool isPartPage() const;
 
     UiContext& ctx;
+    PaintFonts fonts;
+    juce::Font editingFont; // "Editing: LOWER": made once, paint() allocates nothing (9.5)
+    const juce::String editingLower { "Editing: LOWER" }, editingUpper { "Editing: UPPER" }, showingWhole { "Showing: whole instrument" },
+        lowerText { "LOWER" }, upperText { "UPPER" };
     std::vector<Page> pages;
     juce::Component& presetArea;
     PartSwitch partSwitch;

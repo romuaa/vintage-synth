@@ -26,6 +26,7 @@ enum class Tok
     TextOnAccent,
     Focus,
     Warn,
+    KeyWhite, // the white piano key's base (key tints mix a part accent into it)
     Marker // "changed by something other than this editor" (9.1.5); never the focus colour or shape
 };
 
@@ -35,12 +36,27 @@ juce::Colour colour (Tok t) noexcept;
 juce::Colour accentFor (int part) noexcept;
 /** Header / frame tint of part 0 / 1; any other value: the panel colour. */
 juce::Colour tintFor (int part) noexcept;
+/** Colour of the program category with this index (12 placeholder hues; the final set is an owner decision). */
+juce::Colour categoryColour (int index) noexcept;
 
 namespace metrics
 {
 // Logical pixels at 100 % (9.2.3, 9.2.4).
 inline constexpr int kGrid = 4, kGutter = 12, kPad = 12, kRow = 32, kSegment = 28, kTrack = 6, kThumbW = 14, kThumbH = 20,
                      kRadius = 6, kHandleRadius = 10, kHeader = 28, kLabelRow = 18;
+// Radii of controls (kRadius is the panel's).
+inline constexpr float kRadiusControl = 4.0f, kRadiusSmall = 3.0f;
+// Alphas and mixes of the pictures (the values drawn since M7a; one place for the grey scale of graphs).
+inline constexpr float kInactiveAlpha = 0.4f;   // inactive accents and tracks (9.2.1)
+inline constexpr float kMinorGridAlpha = 0.4f;  // minor grid lines of a picture
+inline constexpr float kGridAlpha = 0.5f;       // grid lines under a picture
+inline constexpr float kAxisAlpha = 0.9f;       // axes, beat lines, the zero line
+inline constexpr float kCurveAlpha = 0.7f;      // a curve drawn in its accent
+inline constexpr float kAreaAlpha = 0.22f;      // the area under such a curve
+inline constexpr float kKeyWhiteMix = 0.6f, kKeyBlackMix = 0.62f; // how much of the part accent a white / black key takes
+// Preset name button (the shared preset bar): name and chevron sizes.
+inline constexpr float kTextPresetName = 16.0f, kTextChevron = 12.0f;
+inline constexpr float kCategorySaturation = 0.55f, kCategoryValue = 0.85f; // placeholder category hues (owner decision pending)
 inline constexpr float kTextSmall = 11.0f, kText = 13.0f, kTextHeader = 15.0f, kTextEditing = 18.0f, kTextLarge = 22.0f;
 // Editor frame (9.2.4).
 inline constexpr int kDesignWidth = 1360, kDesignHeight = 784, kTopBar = 48, kHelpLine = 24, kRail = 112;
@@ -72,6 +88,13 @@ struct EmbeddedFonts
     juce::Typeface::Ptr regular, semibold;
 };
 
+/** The fonts a paint routine draws with, made once per theme: `Theme::font` builds a Font on every call, so
+    paint() takes these instead (docs/architecture.md 9.5: nothing is made while painting). */
+struct ThemeFonts
+{
+    juce::Font small, smallBold, text, textBold, badgeBold, headerBold, editingBold, largeBold;
+};
+
 /** The look of one editor: fonts and the LookAndFeel for JUCE-drawn parts (menus, text fields). */
 class Theme final : public juce::LookAndFeel_V4
 {
@@ -81,6 +104,8 @@ public:
     /** Logical-pixel font; semibold for headers and lit text. */
     juce::Font font (float px, bool semibold = false) const;
     bool hasEmbeddedFont() const noexcept { return regularFace != nullptr; }
+    /** The fonts for paint(), made when the theme was. */
+    const ThemeFonts& fonts() const noexcept { return themeFonts; }
 
     // juce::LookAndFeel
     juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;
@@ -91,6 +116,7 @@ public:
 
 private:
     juce::Typeface::Ptr regularFace, semiboldFace;
+    ThemeFonts themeFonts;
 };
 
 /** Draws text truncated with an ellipsis (layout never depends on text metrics, 9.2.4). */
