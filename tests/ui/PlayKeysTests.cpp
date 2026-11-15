@@ -478,17 +478,29 @@ TEST_CASE ("Play keys: a pressed key is named to screen readers with the part th
     rig.tick();
     strip.mouseDown (mouseAt (strip, onKey (strip, 48)));
     strip.mouseDrag (mouseAt (strip, onKey (strip, 48))); // the same key: nothing new
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 52))); // keys crossed on the way are not announced
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 62)));
+    CHECK (heard.size() == 1);
     strip.mouseDrag (mouseAt (strip, onKey (strip, 67)));
+    CHECK (heard.size() == 1);
     strip.mouseUp (mouseAt (strip, onKey (strip, 67)));
-    REQUIRE (heard.size() == 2);
+    REQUIRE (heard.size() == 2); // the press, and the note where the glide ends
     CHECK (heard[0] == "C3, Lower");
     CHECK (heard[1] == "G4, Upper");
+
+    // Pressing and releasing on the same note says it once; a glide that comes back to its first key says nothing more.
+    strip.mouseDown (mouseAt (strip, onKey (strip, 50)));
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 53)));
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 50)));
+    strip.mouseUp (mouseAt (strip, onKey (strip, 50)));
+    CHECK (heard.size() == 3);
+    CHECK (heard[2] == "D3, Lower");
 
     rig.set ("key.mode", 1.0f); // Dual: both parts
     rig.tick();
     strip.mouseDown (mouseAt (strip, onKey (strip, 72)));
     strip.mouseUp (mouseAt (strip, onKey (strip, 72)));
-    REQUIRE (heard.size() == 3);
-    CHECK (heard[2] == "C5, Lower and Upper");
-    CHECK (strip.lastAnnouncement() == heard[2]);
+    REQUIRE (heard.size() == 4);
+    CHECK (heard[3] == "C5, Lower and Upper");
+    CHECK (strip.lastAnnouncement() == heard[3]);
 }

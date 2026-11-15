@@ -25,6 +25,7 @@ class KeyboardStrip final : public BoundComponent
 {
 public:
     static constexpr int kPillRow = 26, kBarRow = 30;
+    static constexpr float kLabelRow = 16.0f; // the octave names' row at the foot of a white key
 
     /** `notes`: where the keys play (the processor's UiNotes); nullptr: the keys play nothing. */
     KeyboardStrip (UiContext& ctx, const UiFeed& feed, UiNotes* notes, const juce::String& splitId = "key.split_point",
@@ -44,6 +45,10 @@ public:
     juce::Rectangle<float> pillBounds() const noexcept { return pill; }
     const juce::String& barText (int partIndex) const noexcept { return bars[static_cast<size_t> (partIndex & 1)].text; }
     int repaintCount() const noexcept { return repaints; }
+    /** Where the octave name of a C key is drawn, and the outer rectangle (outline included) of its sounding mark
+        (`bothParts`: Lower and Upper side by side), in this component's coordinates. They never intersect. */
+    juce::Rectangle<float> octaveLabelArea (int note) const noexcept;
+    juce::Rectangle<float> soundingMarkArea (int note, bool bothParts) const noexcept;
     /** The note this strip's mouse plays now (-1: none) and its velocity (tests). */
     int playingNote() const noexcept { return playing; }
     int playingVelocity() const noexcept { return playingVel; }
@@ -91,6 +96,7 @@ private:
     juce::Rectangle<float> keyBounds (int note) const noexcept;
     void paintKey (juce::Graphics&, int note) const;
     void paintSounding (juce::Graphics&, int note) const;
+    void speakPlayingNote();
     /** The keys' note at `p` (keys' coordinates) or -1; plays it instead of the current note. */
     void playAt (juce::Point<float> p);
     void releaseNote();
@@ -100,6 +106,7 @@ private:
     UiNotes* notes = nullptr;
     int playing = -1, playingVel = 0; // the note the mouse plays now
     juce::String announcement;
+    int spokenNote = -1; // the note last announced in this press
     bool playGesture = false;         // mouse-down on the keys until mouse-up
     float grabOffset = 0.0f;          // pill drag: pointer x minus the marker's x at the press
     int modeIndex = -1;

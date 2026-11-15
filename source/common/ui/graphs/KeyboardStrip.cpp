@@ -97,9 +97,17 @@ void KeyboardStrip::playAt (juce::Point<float> p)
     playingVel = geometry.velocityAt (note, p.y);
     if (notes != nullptr)
         notes->noteOn (note, playingVel);
-    // Screen readers: name the note that was pressed and who plays it ("C4, Upper").
-    const int owner = model::ownerMask (mode, splitNote, note);
-    announcement = noteName (note) + (owner == 3 ? ", Lower and Upper" : (owner == 2 ? ", Upper" : ", Lower"));
+}
+
+void KeyboardStrip::speakPlayingNote()
+{
+    // Screen readers: name the note and who plays it ("C4, Upper"); said on the press and where a glide ends,
+    // not for every key a drag crosses.
+    if (playing < 0 || playing == spokenNote)
+        return;
+    spokenNote = playing;
+    const int owner = model::ownerMask (mode, splitNote, playing);
+    announcement = noteName (playing) + (owner == 3 ? ", Lower and Upper" : (owner == 2 ? ", Upper" : ", Lower"));
     if (announce)
         announce (announcement);
     else
@@ -257,8 +265,12 @@ void KeyboardStrip::mouseDown (const juce::MouseEvent& e)
         return;
     }
     playGesture = keys.contains (e.position);
+    spokenNote = -1;
     if (playGesture)
+    {
         playAt (local (e));
+        speakPlayingNote();
+    }
 }
 
 void KeyboardStrip::mouseDrag (const juce::MouseEvent& e)
@@ -280,6 +292,7 @@ void KeyboardStrip::mouseUp (const juce::MouseEvent&)
     if (playGesture)
     {
         playGesture = false;
+        speakPlayingNote(); // the note where a glide ends
         releaseNote();
         return;
     }
@@ -371,27 +384,50 @@ void KeyboardStrip::paintKey (juce::Graphics& g, int note) const
     g.drawRect (r, 1.0f);
 }
 
-/** The sounding mark: a short bar at the foot of the key in the part's colour, outlined in the window colour so
-    it shows on a held key of the same colour. Both parts: Lower left, Upper right. Right-aligned in the key, clear of the C keys' octave name. */
+juce::Rectangle<float> KeyboardStrip::octaveLabelArea (int note) const noexcept
+{
+    const auto r = keyBounds (note);
+    return r.withTop (r.getBottom() - kLabelRow).withTrimmedLeft (3.0f);
+}
+
+namespace
+{
+constexpr float kMarkH = 3.0f, kMarkGap = 2.0f, kMarkOutline = 2.0f;
+float markWidth (bool black) { return black ? 5.0f : 7.0f; }
+} // namespace
+
+juce::Rectangle<float> KeyboardStrip::soundingMarkArea (int note, bool bothParts) const noexcept
+{
+    const auto r = keyBounds (note);
+    const bool black = model::isBlackKey (note);
+    const float w = markWidth (black), total = bothParts ? 2.0f * w + kMarkGap : w;
+    const float outerH = kMarkH + 2.0f * kMarkOutline;
+    // White keys: one row of its own just above the octave-name row, the same on every white key, so a mark never meets a name.
+    // Black keys (they carry no name): at the foot.
+    const float y = black ? r.getBottom() - 4.0f - outerH : r.getBottom() - kLabelRow - 3.0f - outerH;
+    return { r.getCentreX() - total * 0.5f - kMarkOutline, y, total + 2.0f * kMarkOutline, outerH };
+}
+
+/** The sounding mark: a short bar in the part's colour inside a 2 px outline in the window colour, so it shows on a
+    held key of the same colour (the dark outline contrasts with every held tint) and on the pale and dark key tints.
+    Both parts: Lower left, Upper right. */
 void KeyboardStrip::paintSounding (juce::Graphics& g, int note) const
 {
     const bool sounding[2] { drawsSounding (0, note), drawsSounding (1, note) };
     if (! (sounding[0] || sounding[1]))
         return;
-    const auto r = keyBounds (note);
     const bool black = model::isBlackKey (note);
-    const float w = black ? 5.0f : 7.0f, h = 3.0f, gap = 2.0f, inset = 3.0f;
-    const float y = r.getBottom() - h - 3.0f;
+    const float w = markWidth (black);
     const bool both = sounding[0] && sounding[1];
+    const auto outer = soundingMarkArea (note, both);
     for (int p = 0; p < 2; ++p)
     {
         if (! sounding[p])
             continue;
-        const float right = r.getRight() - inset; // right-aligned, clear of the octave name on the C keys
-        const float x = both ? right - (p == 0 ? 2.0f * w + gap : w) : right - w;
-        const juce::Rectangle<float> bar (x, y, w, h);
+        const float x = outer.getX() + kMarkOutline + (both && p == 1 ? w + kMarkGap : 0.0f);
+        const juce::Rectangle<float> bar (x, outer.getY() + kMarkOutline, w, kMarkH);
         g.setColour (colour (Tok::BgWindow));
-        g.fillRect (bar.expanded (1.0f));
+        g.fillRect (bar.expanded (kMarkOutline));
         g.setColour (accentFor (p));
         g.fillRect (bar);
     }
@@ -446,8 +482,7 @@ void KeyboardStrip::paint (juce::Graphics& g)
     g.setFont (fonts.smallBold);
     for (int i = 0, n = geometry.low(); n <= geometry.high(); n += 12, ++i)
     {
-        const auto r = keyBounds (n);
-        g.drawText (octaveLabels[i], r.withTop (r.getBottom() - 16.0f).withTrimmedLeft (3.0f), juce::Justification::centredLeft, false);
+        g.drawText (octaveLabels[i], octaveLabelArea (n), juce::Justification::centredLeft, false);
     }
 
     // Sounding marks last, so a held key's tint never covers them.
