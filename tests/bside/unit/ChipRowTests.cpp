@@ -439,8 +439,10 @@ TEST_CASE ("chip 8.15.2 (c): triangle, saw, pulse and noise shapes; ring folds w
     CHECK (wave::triangle (0xc00) == 0x7fe);
     CHECK (wave::triangle (0xfff) == 0x000);
     CHECK (wave::saw (0xabc) == 0xabc);
-    CHECK (wave::shape (Model::A, wave::kPulse, 0x123) == 0xfff);
-    CHECK (wave::shape (Model::B, wave::kNoise, 0x123) == 0xfff);
+    CHECK (wave::shape (combined::fittedTables (Model::A), wave::kPulse, 0x123) == 0xfff);
+    CHECK (wave::shape (combined::fittedTables (Model::B), wave::kNoise, 0x123) == 0xfff);
+    CHECK (wave::shape (combined::fittedTables (Model::B), wave::kTri | wave::kNoise, 0x123) == wave::triangle (0x123));
+    CHECK (wave::shape (combined::fittedTables (Model::A), wave::kSaw | wave::kNoise, 0x123) == 0x123);
     // Ring (saw clear): bit 11 := own bit 23 XOR NOT source bit 23.
     CHECK (wave::index (0x400000, ctrl::ring | ctrl::triangle, 0x800000) == 0x400); // 0 ^ !1 = 0
     CHECK (wave::index (0x400000, ctrl::ring | ctrl::triangle, 0x000000) == 0xc00); // 0 ^ !0 = 1

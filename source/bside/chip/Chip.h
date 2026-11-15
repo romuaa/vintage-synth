@@ -244,10 +244,13 @@ public:
     Chip() noexcept
     {
         clock.prepare (cfg.clockHz, cfg.internalRate);
+        shapes = &combined::tablesFor (cfg.model, cfg.shapes);
         reset();
     }
 
-    /** Model, clock and internal rate; resets the chip. Allocates nothing (no member owns memory). */
+    /** Model, clock, internal rate and shape set; resets the chip. Allocates nothing (no member owns
+        memory): the combined-waveform tables are process-wide and built on their first use, which this
+        call (or the constructor) makes, never a step. */
     void prepare (const Config& c) noexcept;
     /** Power-on state at cycle 0 (8.15.1; the configuration is kept). */
     void reset() noexcept;
@@ -320,6 +323,8 @@ public:
     /** The 12-bit digital output of oscillator n (0..2) as the last step computed it (8.15.2 (c); held
         and fading while no waveform is selected). */
     std::uint16_t output (int n) const noexcept { return osc[checked (n)].out; }
+    /** The step-2 shape tables in use (the combined-waveform values; S2b renders from the same tables). */
+    const combined::ShapeTables& shapeTables() const noexcept { return *shapes; }
     float cutoffSmooth() const noexcept { return cutoff; }
     std::uint8_t registerValue (std::uint8_t r) const noexcept { return r < reg::kWritable ? regs[r] : std::uint8_t { 0 }; }
 
@@ -453,7 +458,7 @@ private:
         const std::uint8_t c = ctl (n);
         const std::uint16_t ix = wave::index (ownAcc, c, sourceAcc);
         OutParts p;
-        p.shape = wave::shape (cfg.model, wave::bits (c), ix);
+        p.shape = wave::shape (*shapes, wave::bits (c), ix);
         p.pulseMask = (c & ctrl::pulse) == 0 || (c & ctrl::test) != 0 || pulsePrev ? std::uint16_t { 0xfff } : std::uint16_t { 0 };
         p.noiseMask = (c & ctrl::noise) != 0 ? osc[idx (n)].noiseOut : std::uint16_t { 0xfff };
         return p;
@@ -700,6 +705,7 @@ private:
     void skip (std::uint64_t j, Sink& sink) noexcept;
 
     Config cfg {};
+    const combined::ShapeTables* shapes = nullptr; // never null after construction (CombinedWaveforms.h)
     ChipClock clock {};
     std::array<Osc, 3> osc {};
     std::array<Env, 3> env {};

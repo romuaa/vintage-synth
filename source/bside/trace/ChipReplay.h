@@ -15,11 +15,13 @@ namespace vs::bside::trace
 {
 inline chip::Model chipModel (Model m) noexcept { return m == Model::A ? chip::Model::A : chip::Model::B; }
 
-/** Configures model and clock from the trace (Authentic resolution) and resets the chip to cycle 0. */
-inline void setupChip (chip::Chip& c, const Trace& t, chip::Model model) noexcept
+/** Configures model and clock from the trace (Authentic resolution) and resets the chip to cycle 0.
+    `shapes`: the combined-waveform shape set (the fitted one unless a test compares with the placeholder). */
+inline void setupChip (chip::Chip& c, const Trace& t, chip::Model model, chip::ShapeSet shapes = chip::Config {}.shapes) noexcept
 {
     chip::Config cfg;
     cfg.model = model;
+    cfg.shapes = shapes;
     cfg.clockHz = t.clockHz;
     cfg.authentic = true;
     c.prepare (cfg);
@@ -103,7 +105,8 @@ inline std::string exemptFieldsText (const ExactReplayResult& r)
 }
 
 inline ExactReplayResult replayChipExact (const Trace& trace, std::string_view traceBytes, const Reference& reference,
-                                          std::optional<chip::Model> model = std::nullopt, bool exemptOwnPullDown = true)
+                                          std::optional<chip::Model> model = std::nullopt, bool exemptOwnPullDown = true,
+                                          chip::ShapeSet shapes = chip::Config {}.shapes)
 {
     ExactReplayResult r;
     std::string why;
@@ -116,8 +119,8 @@ inline ExactReplayResult replayChipExact (const Trace& trace, std::string_view t
     checkpointSchedule (trace, schedule);
     const chip::Model m = model.value_or (chipModel (trace.model));
     chip::Chip stepped, fast;
-    setupChip (stepped, trace, m);
-    setupChip (fast, trace, m);
+    setupChip (stepped, trace, m, shapes);
+    setupChip (fast, trace, m, shapes);
     ShapeExemption tracker (m, exemptOwnPullDown);
     ShapeExemptionSink sink { &tracker };
     auto advanceTo = [&] (std::uint64_t c) {

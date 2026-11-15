@@ -18,6 +18,7 @@
 
 #include "bside/chip/Chip.h"
 #include "bside/chip/ChipTypes.h"
+#include "bside/chip/CombinedWaveforms.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -185,11 +186,12 @@ struct NaiveChip
     // ---- 8.15.2 (c) ----
     std::uint16_t combinedShape (int w, std::uint16_t index) const
     {
-        // Our placeholder table (Waveforms.h, wave::combined), restated: AND of the selected triangle and saw.
-        std::uint16_t v = 0xfff;
-        if (w & 1) v &= triangleOf (index);
-        if (w & 2) v &= index;
-        return v;
+        // The combined-waveform shapes are data, not logic: the stepper reads the same fitted tables as the
+        // chip (CombinedWaveforms.h; their values are tested against the reference by bside_trace). Noise
+        // with only the triangle or only the saw uses no table (8.15.2 (c) step 2).
+        if (w == 9) return triangleOf (index);
+        if (w == 10) return index;
+        return vs::bside::chip::combined::fittedTables (model).wave[static_cast<std::size_t> (w)][index];
     }
     static std::uint16_t triangleOf (std::uint16_t index)
     {

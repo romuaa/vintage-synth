@@ -257,14 +257,17 @@ TEST_CASE ("reference data: digital replay against our chip, exact at every chec
     CHECK (families["c"].traces > 0);
 }
 
-TEST_CASE ("reference data: the exemption covers real differences in the combined-waveform traces", "[trace][reference][chip]")
+TEST_CASE ("reference data: our fitted shapes against the S2a placeholder in the combined-waveform traces", "[trace][reference][chip]")
 {
-    // Our combined-waveform tables are placeholders (8.15.8), so some exempt checkpoints must actually
-    // differ from the reference; otherwise the exemption would be untested.
+    // The exempt fields (8.15.8) of every c_* trace, replayed once with the placeholder shapes (before S2b)
+    // and once with our fitted tables: per trace and field, how many exempt checkpoints differ from the
+    // reference ([shapes-replay] lines). The fitted tables must not differ more often in any trace and
+    // field, and must differ less often over all c_* traces. Exemptions are marked from the trace and
+    // the chip's events, so both runs exempt the same checkpoints.
     const auto all = traces();
     if (all.empty())
         SKIP ("no reference data committed");
-    std::size_t exemptAndDifferent = 0;
+    std::size_t before = 0, after = 0, exempt = 0;
     for (const auto& path : all)
     {
         const auto name = path.stem().string();
@@ -275,10 +278,30 @@ TEST_CASE ("reference data: the exemption covers real differences in the combine
         const auto rr = readReference (slurp (kDir / (name + ".bsref")));
         REQUIRE (tr.ok);
         REQUIRE (rr.ok);
-        const auto r = replayChipExact (tr.trace, bytes, rr.reference);
-        exemptAndDifferent += r.exempt - r.exemptButEqual;
+        const auto old = replayChipExact (tr.trace, bytes, rr.reference, std::nullopt, true, vs::bside::chip::ShapeSet::placeholder);
+        const auto now = replayChipExact (tr.trace, bytes, rr.reference, std::nullopt, true, vs::bside::chip::ShapeSet::fitted);
+        INFO (name);
+        REQUIRE (old.error.empty());
+        REQUIRE (now.error.empty());
+        CHECK (now.mismatched == 0);
+        for (int k = 0; k < kStateFields; ++k)
+        {
+            const auto i = static_cast<std::size_t> (k);
+            CHECK (old.exemptPerField[i] == now.exemptPerField[i]);
+            if (now.exemptPerField[i] == 0)
+                continue;
+            std::printf ("[shapes-replay] %-16s %-5s exempt %4zu: differing placeholder %4zu, fitted %4zu (now agreeing %4zu)\n", name.c_str(),
+                         kStateFieldNames[k], now.exemptPerField[i], old.differPerField[i], now.differPerField[i],
+                         now.exemptPerField[i] - now.differPerField[i]);
+            INFO (kStateFieldNames[k]);
+            CHECK (now.differPerField[i] <= old.differPerField[i]);
+            before += old.differPerField[i];
+            after += now.differPerField[i];
+            exempt += now.exemptPerField[i];
+        }
     }
-    CHECK (exemptAndDifferent > 0);
+    std::printf ("[shapes-replay] all c_* traces: exempt field checkpoints %zu, differing placeholder %zu, fitted %zu\n", exempt, before, after);
+    CHECK (after < before);
 }
 
 TEST_CASE ("reference data: analog tolerances against our chip", "[trace][reference][chip]")

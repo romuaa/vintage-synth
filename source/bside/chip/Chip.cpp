@@ -11,6 +11,7 @@ void Chip::prepare (const Config& c) noexcept
 {
     cfg = c;
     clock.prepare (cfg.clockHz, cfg.internalRate);
+    shapes = &combined::tablesFor (cfg.model, cfg.shapes);
     reset();
 }
 
