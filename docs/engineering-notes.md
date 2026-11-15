@@ -3,6 +3,17 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S2b-1: combined-waveform tables (2026-11-15)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A Model A sweep of a saw combination never got above index 0x800. | The top-bit pull-down (8.15.2 (c) step 4) sends the accumulator back to the lower half whenever the output's bit 11 is 0. | Measure such entries one step at a time between sync resets (oscillator 2 resets oscillator 3 every 4096 cycles without a write); take the index from the reference's own accumulator, never from the plan alone. |
+| The first pulse-with-noise samples looked like a table of the index. | The noise output decays with the time since the refill, and the index grew with that time: the two were correlated. Steps with a noise shift also changed the mask before the output. | Randomise frequency and delay independently, skip planned steps that meet a shift, read the mask from the reference's register. Then the value turned out to depend on the noise output only. |
+| Model B tables came out shifted by one index. | Model B reads the latch of the previous triangle/saw step. | Map each Model B read to the accumulator one checkpoint earlier; confirm with spot samples (identical). |
+| The adapter's `.bsspec` of a long noise trace would be megabytes. | Spectral frames for about 100 s of chip time. | Commit only `.bstrace` and `.bsref` for read-back measurements. |
+| Tables computed with `exp` and a linear solve could differ between platforms. | Libraries and FMA contraction round differently in the last bits. | Keep every decision a margin away from its threshold (tested) and pin a hash of the built tables in a test that runs on every platform. |
+| The random-start fit landed in different local minima from run to run of an exploration script. | Discrete objective (wrong bits), plateaus. | Deterministic generator per table, start from the committed parameters, pattern search plus joint random moves; never accept a worse refit. |
+
 ## B-Side S2a fidelity pass (2026-11-14)
 
 | Problem | Cause | Fix / rule |
