@@ -315,12 +315,17 @@ LevelFit fitLevels (const tr::Spec& ref, const tr::Spec& ours, int first)
 
 TEST_CASE ("rendered converters against the reference features (envelope converter levels, waveform harmonics)", "[trace][reference][render][dac]")
 {
-    // Tolerances (no number in 8.9.4 for the converters; ours, from the measurement, with margin):
-    // envelope converter (a_env_dac_*, 256 counter values, about 300 frames after the start): rms 0.3 dB,
-    // worst frame 1.0 dB; waveform converter (a_dac_*, s16 saw 110 Hz, s17 saw 1 kHz, s19 pulse 110 Hz):
-    // harmonics 2..8 above -60 dB relative to the fundamental within 0.6 dB. The triangle segment (s18) is
-    // not compared: the reference's triangle has even harmonics (-34 dB A / -40 dB B at the second) that a
-    // converter linear in its bits cannot make; a nonlinearity after the converters, for S3.
+    // Tolerances (no number in 8.9.4 for the converters; ours, just above what our converter model
+    // achieves, so that a coarser model fails): envelope converter (a_env_dac_*, 256 counter values, every
+    // frame from the second on; Model B from frame 23: the reference's first frames carry a power-on step
+    // decaying through the board's high-pass, -12.5 dB at frame 0 down to below -40 dB at frame 17, S3's):
+    // Model A rms 0.15 dB, worst frame 0.75 dB (measured 0.13 / 0.70); Model B rms 0.10 dB, worst 0.40 dB
+    // (0.09 / 0.36). Waveform converter (a_dac_*, s16 saw 110 Hz, s17 saw 1 kHz): harmonics 2..8 above
+    // -60 dB relative to the fundamental within 0.35 dB on Model A, 0.15 dB on Model B (measured 0.2 / 0.3
+    // and 0.1 / 0.1; the reference gives levels in steps of 0.1 dB). Not compared: the pulse (s19), two
+    // levels only, which any converter maps alike (its harmonics follow from the width alone); the
+    // triangle (s18), whose reference has even harmonics (-34 dB A / -40 dB B at the second) that a converter
+    // linear in its bits cannot make: a nonlinearity after the converters, for S3.
     for (const char* name : { "a_env_dac_a", "a_env_dac_b", "a_dac_a", "a_dac_b" })
     {
         const auto t = tr::readTrace (slurp (kDir / (std::string (name) + ".bstrace")));
@@ -332,22 +337,21 @@ TEST_CASE ("rendered converters against the reference features (envelope convert
         std::string why;
         REQUIRE (tr::analyseRender (t.trace, s.spec.traceSha256, y, ours, &why));
         const bool envTrace = std::string (name).find ("env") != std::string::npos;
+        const bool modelB = std::string (name).back() == 'b';
         if (envTrace)
         {
-            const auto f = fitLevels (s.spec, ours, 24);
+            const auto f = fitLevels (s.spec, ours, modelB ? 23 : 1);
             WARN (name << ": envelope converter, " << f.frames << " frames after one gain of " << f.gain << " dB: rms " << f.rms << " dB, worst "
                        << f.worst << " dB (frame " << f.worstFrame << ")");
-            CHECK (f.frames > 200);
-            CHECK (f.rms <= 0.3);
-            CHECK (f.worst <= 1.0);
+            CHECK (f.frames > 300);
+            CHECK (f.rms <= (modelB ? 0.10 : 0.15));
+            CHECK (f.worst <= (modelB ? 0.40 : 0.75));
             continue;
         }
         REQUIRE (s.spec.segments.size() >= 20);
-        const double f0s[] { 110.0, 1000.0, 0.0, 110.0 };
-        for (int k = 0; k < 4; ++k)
+        const double f0s[] { 110.0, 1000.0 };
+        for (int k = 0; k < 2; ++k) // the saws (see above)
         {
-            if (k == 2)
-                continue; // the triangle (see above)
             const auto& rs = s.spec.segments[static_cast<std::size_t> (16 + k)];
             const auto& os = ours.segments[static_cast<std::size_t> (16 + k)];
             const double f0 = static_cast<double> (t.trace.clockHz) * std::round (f0s[k] * 16777216.0 / 985248.0) / 16777216.0;
@@ -360,7 +364,7 @@ TEST_CASE ("rendered converters against the reference features (envelope convert
                     worst = std::max (worst, std::abs (dr - dm));
             }
             WARN (name << " " << rs.name << ": harmonics 2..8 against the reference, worst " << worst << " dB");
-            CHECK (worst <= 0.6);
+            CHECK (worst <= (modelB ? 0.15 : 0.35));
         }
     }
 }

@@ -7,6 +7,9 @@
 //   noise    noise with a second waveform (write-back: the core steps every cycle) on all three
 //   silent, typicalA, sawsA, comb12kA/B: the S2b-2 review's cases (a silent chip; the typical patch on Model A;
 //            three Model A saws; three combined waveforms at 12 kHz, which Smooth allows)
+//   noisesrc, landA: the second review's cases (a noise+saw source in per-cycle mode syncing one target and
+//            ringing another; Model A saw combinations at 3 kHz with a control write every tick, which
+//            re-decides their pull-downs at the chip's landings)
 // Each case renders 4 s of chip time in blocks of 64 samples with its writes at their exact cycles
 // (renderUntil); the best of 5 runs is reported.
 
@@ -166,5 +169,28 @@ int main()
     for (int i = 0; i < 3; ++i)
         r[i] = nsPerSample (Model::B, rates[i], combined12k, noTick);
     std::printf ("%-8s %10.1f %10.1f %10.1f   (three combined waveforms at 12 kHz, Model B)\n", "comb12kB", r[0], r[1], r[2]);
+    // the second review's cases
+    auto noiseSrcSetup = [] (Chip& c) {
+        setOsc (c, 0, 3000.0, 2048.0f, ctrl::noise | ctrl::saw | ctrl::gate);           // per-cycle source
+        setOsc (c, 1, 7480.0, 2048.0f, ctrl::saw | ctrl::sync | ctrl::gate);            // synced by it
+        setOsc (c, 2, 5000.0, 2048.0f, ctrl::triangle | ctrl::ring | ctrl::gate);       // ring from oscillator 2
+    };
+    for (int i = 0; i < 3; ++i)
+        r[i] = nsPerSample (Model::A, rates[i], noiseSrcSetup, noTick);
+    std::printf ("%-8s %10.1f %10.1f %10.1f   (noise+saw source syncing and ringing, Model A)\n", "noisesrc", r[0], r[1], r[2]);
+    auto landSetup = [] (Chip& c) {
+        const double f = 3000.0 * 16777216.0 / 985248.0;
+        setOsc (c, 0, f, 1024.0f, ctrl::triangle | ctrl::saw | ctrl::gate);
+        setOsc (c, 1, f * 1.01, 3000.0f, ctrl::saw | ctrl::pulse | ctrl::gate);
+        setOsc (c, 2, f * 0.99, 2048.0f, ctrl::triangle | ctrl::saw | ctrl::pulse | ctrl::gate);
+    };
+    auto landTick = [] (Chip& c, std::uint64_t t) {
+        const std::uint8_t waves[] { ctrl::triangle | ctrl::saw, ctrl::saw | ctrl::pulse, ctrl::triangle | ctrl::saw | ctrl::pulse };
+        for (int n = 0; n < 3; ++n)
+            c.write (static_cast<std::uint8_t> (7 * n + 4), static_cast<std::uint8_t> (waves[(t + static_cast<std::uint64_t> (n)) % 3] | ctrl::gate));
+    };
+    for (int i = 0; i < 3; ++i)
+        r[i] = nsPerSample (Model::A, rates[i], landSetup, landTick);
+    std::printf ("%-8s %10.1f %10.1f %10.1f   (Model A saw combinations at 3 kHz, a control write every tick)\n", "landA", r[0], r[1], r[2]);
     return 0;
 }

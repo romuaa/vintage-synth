@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <functional>
@@ -126,10 +127,13 @@ TEST_CASE ("render: against the chip's own output stream (ring and sync from a p
         double tol;  // dB at about 220 Hz (the 1 kHz case allows 12 dB more)
         vs::bside::chip::ShapeSet shapes = vs::bside::chip::ShapeSet::fitted;
         double lineDiv = 1.0; // the lines: the increment of lineOsc divided by this (ring: 5, source at 3/5)
+        int obs = 1;          // the oscillator observed (and the only one with a gate)
+        double hzScale = 1.0; // hz of this case = the loop's hz x this
     };
-    for (const double hz : { 220.7, 1001.3 })
+    for (const double baseHz : { 220.7, 1001.3 })
     {
-        const double extra = hz > 500.0 ? 12.0 : 0.0;
+        const double hz = baseHz;
+        const double extra = baseHz > 500.0 ? 12.0 : 0.0;
         const std::vector<Case> cases {
             { "Model A saw (baseline)", Model::A, [=] (Chip& c) { setOsc (c, 1, regOf (hz), 2048.0f, 0x21); }, 1, -55.0 },
             { "Model A triangle ring, source triangle+saw (pulled down)", Model::A,
@@ -150,6 +154,39 @@ TEST_CASE ("render: against the chip's own output stream (ring and sync from a p
             // With the fitted shapes every pull-down happens at cell 0x800; the S2a placeholder shapes (the AND
             // of triangle and saw) keep bit 11 up to cell 0xc00, so their pull-down comes later in the upper
             // half: the pulse gate must then be re-read from the new line, and a source keeps its rise (syncs).
+            // noise with the saw on Model A (per-cycle mode): pulled down where the output's bit 11 is clear,
+            // which depends on the noise output; the renderer takes these sources' flips and resets from the chip.
+            // Under write-back the noise output locks to 0, the source is pulled down at once and never syncs:
+            // the target runs free (compared at its own lines)
+            { "Model A saw sync, source noise+saw (0xA0, per-cycle)", Model::A,
+              [=] (Chip& c) { setOsc (c, 0, regOf (hz * 0.377), 2048.0f, 0xa0); setOsc (c, 1, regOf (hz), 2048.0f, 0x23); }, 1, -45.0 },
+            { "Model A saw sync, source noise+triangle+saw+pulse (0xF0, per-cycle)", Model::A,
+              [=] (Chip& c) { setOsc (c, 0, regOf (hz * 0.377), 2048.0f, 0xf0); setOsc (c, 1, regOf (hz), 2048.0f, 0x23); }, 1, -45.0 },
+            { "Model A triangle ring, source noise+saw (0xA0, per-cycle)", Model::A,
+              [=] (Chip& c) { setOsc (c, 0, regOf (hz * 0.6), 2048.0f, 0xa0); setOsc (c, 1, regOf (hz), 2048.0f, 0x15); }, 1, -45.0,
+              vs::bside::chip::ShapeSet::fitted, 5.0 },
+            { "Model A triangle ring, source noise+triangle+saw+pulse (0xF0, per-cycle)", Model::A,
+              [=] (Chip& c) { setOsc (c, 0, regOf (hz * 0.6), 2048.0f, 0xf0); setOsc (c, 1, regOf (hz), 2048.0f, 0x15); }, 1, -45.0,
+              vs::bside::chip::ShapeSet::fitted, 5.0 },
+            // oscillator 1 reads oscillator 3 before oscillator 3's pull-down: a one-cycle glitch per rise
+            { "Model A triangle ring on oscillator 1, source oscillator 3 triangle+saw (pulled down, one-cycle glitch)", Model::A,
+              [=] (Chip& c) { setOsc (c, 2, regOf (hz * 0.6), 2048.0f, 0x30); setOsc (c, 0, regOf (hz), 2048.0f, 0x15); }, 0, -50.0,
+              vs::bside::chip::ShapeSet::fitted, 5.0, 0 },
+            { "Model A triangle ring on oscillator 1, source oscillator 3 noise+saw (per-cycle, glitch)", Model::A,
+              [=] (Chip& c) { setOsc (c, 2, regOf (hz * 0.6), 2048.0f, 0xa0); setOsc (c, 0, regOf (hz), 2048.0f, 0x15); }, 0, -45.0,
+              vs::bside::chip::ShapeSet::fitted, 5.0, 0 },
+            { "placeholder shapes, Model A triangle ring on oscillator 1, source oscillator 3 triangle+saw (later pull-down, glitch)", Model::A,
+              [=] (Chip& c) { setOsc (c, 2, regOf (hz * 0.6), 2048.0f, 0x30); setOsc (c, 0, regOf (hz), 2048.0f, 0x15); }, 0, -45.0,
+              vs::bside::chip::ShapeSet::placeholder, 5.0, 0 },
+            { "Model B triangle ring on oscillator 1, source oscillator 3 saw", Model::B,
+              [=] (Chip& c) { setOsc (c, 2, regOf (hz * 0.6), 2048.0f, 0x20); setOsc (c, 0, regOf (hz), 2048.0f, 0x15); }, 0, -50.0,
+              vs::bside::chip::ShapeSet::fitted, 5.0, 0 },
+            // the pulse gate at the rise, decided at whole cycles: widths just below 2048 (placeholder shapes)
+            // (fixed frequencies, the reviewer's: 800 Hz in the first pass, 2346 Hz in the second)
+            { "placeholder shapes, Model A saw+pulse width 2047 (gate at the rise, whole cycles)", Model::A,
+              [=] (Chip& c) { setOsc (c, 1, regOf (baseHz < 500.0 ? 800.0 : 2346.0), 2047.0f, 0x61); }, 1, -30.0, vs::bside::chip::ShapeSet::placeholder },
+            { "placeholder shapes, Model A saw+pulse width 2040 (gate at the rise, whole cycles)", Model::A,
+              [=] (Chip& c) { setOsc (c, 1, regOf (baseHz < 500.0 ? 1500.0 : 2346.0), 2040.0f, 0x61); }, 1, -30.0, vs::bside::chip::ShapeSet::placeholder },
             { "Model B triangle ring, source saw", Model::B,
               [=] (Chip& c) { setOsc (c, 0, regOf (hz * 0.6), 2048.0f, 0x20); setOsc (c, 1, regOf (hz), 2048.0f, 0x15); }, 1, -50.0 , vs::bside::chip::ShapeSet::fitted, 5.0 },
             { "Model B triangle ring, source silent", Model::B,
@@ -172,7 +209,8 @@ TEST_CASE ("render: against the chip's own output stream (ring and sync from a p
             Chip probe = makeChipWith (cs.m, 96000.0, cs.shapes);
             cs.setup (probe);
             const double line = lineOf (probe, cs.lineOsc) / cs.lineDiv; // compared at the multiples of this line
-            const double e = streamError (cs.m, 96000.0, cs.setup, line, 1, 8000.0, cs.shapes);
+            const double e = streamError (cs.m, 96000.0, cs.setup, line, cs.obs, 8000.0, cs.shapes);
+            UNSCOPED_INFO (cs.name << " at " << hz << " Hz: " << e);
             INFO (cs.name << " at " << hz << " Hz: complex error " << e << " dB re the strongest line (allowed " << cs.tol + extra << ")");
             CHECK (e <= cs.tol + extra);
         }
@@ -182,16 +220,17 @@ TEST_CASE ("render: against the chip's own output stream (ring and sync from a p
 TEST_CASE ("render: no corrections and a physical peak over random patches without sync chains, both models", "[render][fuzz]")
 {
     bst::Rng rng (77);
-    const std::uint8_t waves[] { 0x10, 0x20, 0x40, 0x30, 0x50, 0x60, 0x70, 0x00, 0x80, 0x90 };
+    // every waveform combination, the noise ones included (per-cycle mode: 0xa0, 0xb0, 0xc0, 0xe0, 0xf0)
+    const std::uint8_t waves[] { 0x10, 0x20, 0x40, 0x30, 0x50, 0x60, 0x70, 0x00, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0 };
     int checked = 0;
-    for (int trial = 0; trial < 160; ++trial)
+    for (int trial = 0; trial < 200; ++trial)
     {
         const Model m = rng.chance (50) ? Model::A : Model::B;
         const double rate = rateConfigs()[rng.below (7)].internalRate;
         Chip c = makeChip (m, rate);
         std::uint8_t ct[3] {};
         for (int n = 0; n < 3; ++n)
-            ct[n] = static_cast<std::uint8_t> (waves[rng.below (10)] | (rng.chance (50) ? ctrl::sync : 0) | (rng.chance (25) ? ctrl::ring : 0) | ctrl::gate);
+            ct[n] = static_cast<std::uint8_t> (waves[rng.below (16)] | (rng.chance (50) ? ctrl::sync : 0) | (rng.chance (25) ? ctrl::ring : 0) | ctrl::gate);
         // no sync chains (a synced oscillator whose own source is synced too: 8.15.2 (d)'s exception)
         bool chain = false;
         for (int n = 0; n < 3; ++n)
@@ -227,6 +266,369 @@ TEST_CASE ("render: no corrections and a physical peak over random patches witho
     CHECK (checked > 60);
 }
 
+namespace
+{
+/** One write of a schedule: all three oscillators (kind 0: controls), or oscillator n only (1: frequency,
+    2: width, 3: the test bit). The registers it holds are the full state after the write. */
+struct ScheduledWrite
+{
+    std::uint64_t at = 0;
+    int kind = 0;
+    int n = 0;
+    double f[3] {};
+    float pw[3] {};
+    std::uint8_t ct[3] {};
+};
+
+void applyWrite (Chip& c, const ScheduledWrite& w)
+{
+    for (int q = 0; q < 3; ++q)
+        if (w.kind == 0 || q == w.n)
+            setOsc (c, q, w.f[q], w.pw[q], w.ct[q]);
+}
+
+struct Schedule
+{
+    Model m = Model::A;
+    vs::bside::chip::ShapeSet shapes = vs::bside::chip::ShapeSet::fitted;
+    double rate = 96000.0;
+    ScheduledWrite initial;
+    std::vector<ScheduledWrite> writes;
+    std::uint64_t total = 240000; // cycles rendered
+};
+
+/** A random patch (noise combinations, sync and ring included; no sync chains, 8.15.2 (d)) and about 70
+    writes at random cycles: controls, frequency, width, test bit. Widths are whole: a fractional width is
+    rendered continuous (pulseWidthSmooth), the chip compares the integer part. */
+Schedule randomSchedule (bst::Rng& rng)
+{
+    static constexpr std::uint8_t waves[] { 0x10, 0x20, 0x40, 0x30, 0x50, 0x60, 0x70, 0x00, 0x80, 0x90, 0xa0, 0xc0, 0xf0, 0xb0, 0xe0 };
+    Schedule s;
+    s.m = rng.chance (50) ? Model::A : Model::B;
+    s.shapes = rng.chance (33) ? vs::bside::chip::ShapeSet::placeholder : vs::bside::chip::ShapeSet::fitted;
+    s.rate = rateConfigs()[rng.below (7)].internalRate;
+    const bool syncRing = rng.chance (60);
+    auto pick = [&] (std::uint8_t* ct) {
+        for (int n = 0; n < 3; ++n)
+            ct[n] = static_cast<std::uint8_t> (waves[rng.below (static_cast<std::uint32_t> (std::size (waves)))]
+                                               | (syncRing && rng.chance (50) ? ctrl::sync : 0) | (syncRing && rng.chance (25) ? ctrl::ring : 0) | ctrl::gate);
+        for (int n = 0; n < 3; ++n)
+            if ((ct[n] & ctrl::sync) != 0 && (ct[vs::bside::chip::detail::syncSource (n)] & ctrl::sync) != 0)
+                ct[n] = static_cast<std::uint8_t> (ct[n] & ~ctrl::sync);
+    };
+    auto freq = [&] {
+        const int r = rng.range (0, 4);
+        return r == 0 ? static_cast<double> (rng.below (65536)) : r == 1 ? 60000.0 + rng.below (5536) + 0.37
+               : r == 2 ? 2000.0 + rng.below (30000) * 1.0001 : r == 3 ? rng.below (2000) + 0.5 : 65535.0;
+    };
+    ScheduledWrite cur;
+    pick (cur.ct);
+    for (int n = 0; n < 3; ++n)
+    {
+        cur.f[n] = freq();
+        cur.pw[n] = static_cast<float> (rng.below (4096));
+    }
+    s.initial = cur;
+    std::uint64_t at = 20000;
+    while (true)
+    {
+        at += static_cast<std::uint64_t> (rng.range (300, 6000));
+        if (at + 3000 > s.total)
+            break;
+        ScheduledWrite w = cur;
+        w.at = at;
+        w.kind = static_cast<int> (rng.below (4));
+        w.n = static_cast<int> (rng.below (3));
+        if (w.kind == 0)
+            pick (w.ct);
+        else if (w.kind == 1)
+            w.f[w.n] = rng.chance (20) ? freq() : rng.below (65536) + 0.25;
+        else if (w.kind == 2)
+            w.pw[w.n] = static_cast<float> (rng.below (4096));
+        else
+            w.ct[w.n] = static_cast<std::uint8_t> (w.ct[w.n] ^ ctrl::test);
+        s.writes.push_back (w);
+        cur = w;
+    }
+    return s;
+}
+
+struct ScheduleResult
+{
+    std::uint64_t corrections = 0;
+    double worst = 0.0; // the largest difference of the smoothed signals (full scale 1 per oscillator)
+    double rms = 0.0;
+};
+
+/** Renders a schedule (whole blocks with render() up to just before each write, then renderUntil() to the
+    write's cycle) and compares it with the chip's own digital output stream of the same schedule (every
+    cycle: the three converter values times their envelopes). Both are smoothed by the same Gaussian (sigma
+    20 cycles, about -3 dB at 9 kHz): a misprediction (a wrong line, a lost edge, a wrong ring state, until
+    the next correction or for good) shows as a difference of up to the full scale; what remains without one
+    is the chip's own sampling at the clock rate (a combined waveform with narrow cells, sampled every cycle,
+    beats against its period; the rendering is the continuous waveform), up to about 0.25 at the highest
+    frequencies, 0.04 typical. */
+ScheduleResult runSchedule (const Schedule& s)
+{
+    Chip r = makeChipWith (s.m, s.rate, s.shapes);
+    applyWrite (r, s.initial);
+    const double cps = cyclesPerSample (r);
+    std::vector<float> y;
+    std::vector<float> block (256);
+    auto renderTo = [&] (std::uint64_t at) {
+        while (static_cast<double> (r.cycle()) + (256.0 + 2.0) * cps < static_cast<double> (at))
+        {
+            std::fill (block.begin(), block.end(), 0.0f);
+            r.render (block.data(), 256);
+            y.insert (y.end(), block.begin(), block.end());
+        }
+        while (r.cycle() < at)
+        {
+            std::fill (block.begin(), block.end(), 0.0f);
+            const int done = r.renderUntil (block.data(), 256, at);
+            y.insert (y.end(), block.begin(), block.begin() + done);
+        }
+    };
+    for (const auto& w : s.writes)
+    {
+        renderTo (w.at);
+        applyWrite (r, w);
+    }
+    renderTo (s.total);
+
+    // the digital twin: the same writes at the same cycles; the value after each step holds for one cycle
+    const auto& T = vs::bside::chip::render::tablesFor (s.m, s.shapes);
+    Chip d = makeChipWith (s.m, s.rate, s.shapes);
+    applyWrite (d, s.initial);
+    std::vector<double> v;
+    v.reserve (static_cast<std::size_t> (s.total));
+    std::size_t next = 0;
+    while (d.cycle() < s.total)
+    {
+        while (next < s.writes.size() && s.writes[next].at == d.cycle())
+            applyWrite (d, s.writes[next++]);
+        d.stepCycle();
+        double sum = 0.0;
+        for (int n = 0; n < 3; ++n)
+            sum += static_cast<double> (T.wave[d.output (n) & 0xfffu]) * static_cast<double> (T.envelope[d.envelope (n)]);
+        v.push_back (sum);
+    }
+
+    constexpr double sigma = 20.0;
+    const int reach = static_cast<int> (4.0 * sigma);
+    const auto lpDigital = [&] (double tc) {
+        double sum = 0.0, wsum = 0.0;
+        const auto c0 = static_cast<std::int64_t> (std::floor (tc));
+        for (std::int64_t c = c0 - reach; c <= c0 + reach; ++c)
+        {
+            if (c < 1 || c > static_cast<std::int64_t> (v.size()))
+                continue;
+            const double x = (static_cast<double> (c) + 0.5 - tc) / sigma; // v[c - 1] holds over [c, c + 1)
+            const double g = std::exp (-0.5 * x * x);
+            sum += g * v[static_cast<std::size_t> (c - 1)];
+            wsum += g;
+        }
+        return sum / wsum;
+    };
+    const double sigmaS = sigma / cps;
+    const int reachS = static_cast<int> (std::ceil (4.0 * sigmaS));
+    const auto lpRendered = [&] (int i) {
+        double sum = 0.0, wsum = 0.0;
+        for (int k = i - reachS; k <= i + reachS; ++k)
+        {
+            const double x = (k - i) / sigmaS;
+            const double g = std::exp (-0.5 * x * x);
+            sum += g * static_cast<double> (y[static_cast<std::size_t> (k)]);
+            wsum += g;
+        }
+        return sum / wsum;
+    };
+    ScheduleResult res;
+    res.corrections = r.renderCorrections();
+    const int from = static_cast<int> (8000.0 / cps) + reachS; // after the attack
+    const int to = static_cast<int> (y.size()) - reachS - 1;
+    double sum = 0.0;
+    int count = 0;
+    for (int i = from; i < to; ++i)
+    {
+        const double tc = (i - Chip::kLatencySamples) * cps; // rendered sample i: the start of internal sample i - latency
+        const double e = std::abs (lpRendered (i) - lpDigital (tc));
+        res.worst = std::max (res.worst, e);
+        sum += e * e;
+        ++count;
+    }
+    res.rms = std::sqrt (sum / std::max (count, 1));
+    return res;
+}
+} // namespace
+
+TEST_CASE ("render: random write schedules against the chip's own stream (noise combinations, sync, ring, test bit)", "[render][stream][schedule]")
+{
+    bst::Rng rng (2024);
+    double worst = 0.0, rms = 0.0;
+    for (int trial = 0; trial < 120; ++trial)
+    {
+        const Schedule s = randomSchedule (rng);
+        const auto res = runSchedule (s);
+        INFO ("trial " << trial << ", " << (s.m == Model::A ? "Model A" : "Model B") << ", " << s.rate << " Hz, controls " << int (s.initial.ct[0]) << " "
+                       << int (s.initial.ct[1]) << " " << int (s.initial.ct[2]) << ": corrections " << res.corrections << ", worst " << res.worst << ", rms " << res.rms);
+        CHECK (res.corrections == 0);
+        CHECK (res.worst <= 0.3);
+        CHECK (res.rms <= 0.03);
+        worst = std::max (worst, res.worst);
+        rms = std::max (rms, res.rms);
+    }
+    UNSCOPED_INFO ("largest smoothed difference " << worst << ", largest rms " << rms);
+}
+
+TEST_CASE ("render: against the chip's own stream, two cases the random schedules found, and oscillator 1's glitch", "[render][stream][schedule]")
+{
+    // (0) oscillator 1's ring source oscillator 3 is a Model A triangle+saw, pulled down at every rise:
+    // oscillator 1 sees the rise for one cycle (8.15.2 (c) step 1), a one-cycle flip of its triangle at
+    // every rise; without it the smoothed difference is about 0.016, with it 0.001 to 0.002
+    for (const double f : { 3800.0, 17000.0 })
+    {
+        Schedule s;
+        s.m = Model::A;
+        s.rate = 96000.0;
+        s.total = 160000;
+        s.initial.ct[0] = 0x15;
+        s.initial.ct[2] = 0x30;
+        s.initial.f[0] = f;
+        s.initial.f[2] = 0.6 * f;
+        s.initial.pw[0] = s.initial.pw[1] = s.initial.pw[2] = 2048.0f;
+        const auto res = runSchedule (s);
+        INFO ("triangle ring on oscillator 1, source oscillator 3 triangle+saw, frequency " << f << ": worst " << res.worst);
+        CHECK (res.worst <= 0.006);
+    }
+    // (1) oscillator 1's ring source (oscillator 3) in step with it: same frequency and phase from power-on,
+    // so both top bits change at the same instant: the source's change must still be taken (an inverted ring
+    // for half of every period otherwise)
+    for (const double f : { 1000.0, 65535.0 })
+    {
+        Schedule s;
+        s.m = Model::B;
+        s.rate = 128000.0;
+        s.total = 120000;
+        s.initial.ct[0] = 0x15;
+        s.initial.ct[2] = 0x20;
+        s.initial.f[0] = s.initial.f[2] = f;
+        s.initial.pw[0] = s.initial.pw[1] = s.initial.pw[2] = 2048.0f;
+        const auto res = runSchedule (s);
+        INFO ("triangle ring on oscillator 1, source saw at the same frequency " << f << ": worst " << res.worst);
+        CHECK (res.worst <= 0.05);
+    }
+    // (2) a pulse synced by a per-cycle source (noise+saw) after a write: a reset that the sweep reaches more
+    // than a cycle late must still emit the gate's falling edge one cycle after it (a pulse stuck high until
+    // the next rising edge, which then inverts it, otherwise)
+    {
+        Schedule s;
+        s.m = Model::B;
+        s.rate = 96000.0;
+        s.total = 90000;
+        s.initial.ct[0] = 0x86;
+        s.initial.ct[1] = 0x01;
+        s.initial.ct[2] = 0x60;
+        s.initial.f[0] = 64348.37;
+        s.initial.f[1] = 61099.37;
+        s.initial.f[2] = 18003.6;
+        s.initial.pw[0] = 1539.0f;
+        s.initial.pw[1] = 3047.0f;
+        s.initial.pw[2] = 864.0f;
+        ScheduledWrite w = s.initial;
+        w.at = 47402;
+        w.kind = 0;
+        w.ct[0] = 0xa4;
+        w.ct[1] = 0x43;
+        w.f[1] = 56585.25;
+        s.writes.push_back (w);
+        const auto res = runSchedule (s);
+        INFO ("pulse synced by a noise+saw source, after a write: worst " << res.worst);
+        CHECK (res.worst <= 0.1);
+    }
+}
+
+TEST_CASE ("render: writes a few cycles into a sample, no prediction error above rounding", "[render][corrections]")
+{
+    // The review's harness, smaller: random patches (noise combinations, sync, ring, test bit, both models,
+    // both shape sets, every rate), blocks of 256 samples, and a write 1 to 40 cycles into the next sample
+    // after a third of them: all three controls, a frequency, a width, or a mix. Corrections below 1e-4 of
+    // a period round the sub-cycle time of a sync reset (docs/decisions.md S2b-2 row 17); a larger one is a
+    // prediction the chip did not make (a pull-down, a reset, a ring state) and is counted here.
+    static constexpr std::uint8_t waves[] { 0x10, 0x20, 0x40, 0x30, 0x50, 0x60, 0x70, 0x00, 0x80, 0x90, 0xa0, 0xc0, 0xf0 };
+    const char* names[] { "mixed writes", "frequency writes", "width writes", "control writes" };
+    std::uint64_t large = 0, all = 0;
+    for (int mode = 0; mode < 4; ++mode)
+    {
+        std::uint64_t modeLarge = 0;
+        for (int trial = 0; trial < 300; ++trial)
+        {
+            bst::Rng rng (static_cast<std::uint64_t> (1000003 * trial + 77 * mode + 5));
+            const Model m = rng.chance (50) ? Model::A : Model::B;
+            const auto shapes = rng.chance (33) ? vs::bside::chip::ShapeSet::placeholder : vs::bside::chip::ShapeSet::fitted;
+            Chip c = makeChipWith (m, rateConfigs()[rng.below (7)].internalRate, shapes);
+            std::uint8_t ct[3] {};
+            auto pick = [&] {
+                for (int n = 0; n < 3; ++n)
+                    ct[n] = static_cast<std::uint8_t> (waves[rng.below (static_cast<std::uint32_t> (std::size (waves)))] | (rng.chance (50) ? ctrl::sync : 0)
+                                                       | (rng.chance (25) ? ctrl::ring : 0) | ctrl::gate | (rng.below (40) == 0 ? ctrl::test : 0));
+                for (int n = 0; n < 3; ++n)
+                    if ((ct[n] & ctrl::sync) != 0 && (ct[vs::bside::chip::detail::syncSource (n)] & ctrl::sync) != 0)
+                        ct[n] = static_cast<std::uint8_t> (ct[n] & ~ctrl::sync);
+            };
+            pick();
+            double f[3];
+            float pw[3];
+            for (int n = 0; n < 3; ++n)
+            {
+                const int r = rng.range (0, 4);
+                f[n] = r == 0 ? static_cast<double> (rng.below (65536)) : r == 1 ? 60000.0 + rng.below (5536) + 0.37
+                       : r == 2 ? 2000.0 + rng.below (30000) * 1.0001 : r == 3 ? rng.below (2000) + 0.5 : 65535.0;
+                pw[n] = static_cast<float> (rng.below (4096));
+                setOsc (c, n, f[n], pw[n], ct[n]);
+            }
+            std::vector<float> y (256);
+            for (int b = 0; b < 80; ++b)
+            {
+                c.render (y.data(), 256);
+                if (! rng.chance (33))
+                    continue;
+                std::vector<float> part (64);
+                c.renderUntil (part.data(), 64, c.cycle() + 1 + rng.below (40));
+                const int n = static_cast<int> (rng.below (3));
+                const int kind = mode == 0 ? static_cast<int> (rng.below (4)) : mode;
+                if (kind == 3)
+                {
+                    pick();
+                    for (int q = 0; q < 3; ++q)
+                        setOsc (c, q, f[q], pw[q], ct[q]);
+                }
+                else if (kind == 1)
+                {
+                    f[n] = rng.below (65536) + 0.25;
+                    setOsc (c, n, f[n], pw[n], ct[n]);
+                }
+                else if (kind == 2)
+                {
+                    pw[n] = static_cast<float> (rng.below (4096));
+                    setOsc (c, n, f[n], pw[n], ct[n]);
+                }
+                else
+                {
+                    ct[n] = static_cast<std::uint8_t> (ct[n] ^ ctrl::test);
+                    setOsc (c, n, f[n], pw[n], ct[n]);
+                }
+            }
+            modeLarge += c.renderLargeCorrections();
+            all += c.renderCorrections();
+        }
+        INFO (names[mode] << ": " << modeLarge << " corrections above 1e-4 of a period in 300 patches");
+        CHECK (modeLarge == 0);
+        large += modeLarge;
+    }
+    UNSCOPED_INFO ("corrections above 1e-4 of a period " << large << ", in all " << all);
+}
+
 TEST_CASE ("render: the first samples after activation or reset start on the chip's value (no step from 0)", "[render][start]")
 {
     for (const Model m : { Model::A, Model::B })
@@ -249,29 +651,61 @@ TEST_CASE ("render: the first samples after activation or reset start on the chi
     }
 }
 
-TEST_CASE ("render: Model A converter terms switch once on a slow glide and not on a vibrato around the limit", "[render][hysteresis]")
+TEST_CASE ("render: Model A converter terms switch at their limits on a slow glide, at most once on a vibrato around a limit", "[render][hysteresis]")
 {
-    // At 96 kHz index bit 4's square stops at 96000 / 2^8 = 375 Hz (dropped at 375 Hz, taken back below
-    // 300 Hz): a glide from 225 to 525 Hz and back switches twice; a +-3 % vibrato around 375 Hz never.
-    for (const int mode : { 0, 1 })
+    // At 96 kHz index bit 4's square toggles once per sample at 96000 / 2^8 = 375 Hz (bit 3's at 187.5 Hz):
+    // a bit is dropped at its limit and taken back only below half of it. Cases: a glide 150 -> 525 -> 150 Hz
+    // switches three times (bit 3 dropped at 187.5 Hz, bit 4 at 375 Hz; on the way down bit 4 back below
+    // 187.5 Hz, bit 3 not, which would need 93.75 Hz); a +-3 % vibrato around 375 Hz never (it starts at the
+    // limit, where the bit is already left out); the reviewers' +-12 % vibrato around 90 % of the limit
+    // (crossing it on every cycle, 23 switches in 2 s with the old band of 0.8) at most once.
+    struct Case
+    {
+        const char* name;
+        double centre, depth, cycles;
+        bool glide;
+        unsigned most, least;
+    };
+    const Case cases[] { { "glide 150 -> 525 -> 150 Hz", 0.0, 0.0, 0.0, true, 3, 3 },
+                         { "vibrato +-3 % around 375 Hz", 1.0, 0.03, 12.0, false, 0, 0 },
+                         { "vibrato +-12 % around 337.5 Hz (90 % of the limit), 6 Hz for 2 s", 0.9, 0.12, 12.0, false, 1, 0 } };
+    for (const auto& cs : cases)
     {
         Chip c = makeChip (Model::A, 96000.0);
         const double limitHz = 96000.0 / 256.0;
+        const int blocks = cs.glide ? 1500 : 3000; // 64 samples each: 1 s or 2 s
         std::uint64_t switchesBefore = 0;
-        for (int block = 0; block < 1500; ++block)
+        for (int block = 0; block < blocks; ++block)
         {
-            const double x = block / 1500.0;
-            const double hz = mode == 0 ? limitHz * (0.6 + 0.8 * std::sin (3.14159265358979323846 * x)) // up and down once
-                                        : limitHz * (1.0 + 0.03 * std::sin (2.0 * 3.14159265358979323846 * 12.0 * x));
+            const double x = block / static_cast<double> (blocks);
+            const double hz = cs.glide ? limitHz * (0.4 + 1.0 * std::sin (3.14159265358979323846 * x)) // up and down once
+                                       : limitHz * cs.centre * (1.0 + cs.depth * std::sin (2.0 * 3.14159265358979323846 * cs.cycles * x));
             setOsc (c, 0, regOf (hz), 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
             renderSamples (c, 64);
             if (block == 10)
                 switchesBefore = c.renderConverterSwitches();
         }
         const auto switches = c.renderConverterSwitches() - switchesBefore;
-        INFO ((mode == 0 ? "glide 225 -> 525 -> 225 Hz" : "vibrato +-3 % around 375 Hz") << ": " << switches << " switches");
-        CHECK (switches == (mode == 0 ? 2u : 0u));
+        INFO (cs.name << ": " << switches << " switches");
+        CHECK (switches <= cs.most);
+        CHECK (switches >= cs.least);
     }
+}
+
+TEST_CASE ("render: a change of waveform starts the converter terms afresh and counts no switch", "[render][hysteresis]")
+{
+    // saw and pulse (no converter terms) alternating at 80 % of the limit: the saw's terms are found anew on
+    // each change (no hysteresis carried over from the pulse, whose state is not a converter state), and a
+    // change of waveform is no switch
+    Chip c = makeChip (Model::A, 96000.0);
+    const double hz = 0.8 * 96000.0 / 256.0;
+    for (int block = 0; block < 400; ++block)
+    {
+        const bool saw = (block / 20) % 2 == 0;
+        setOsc (c, 0, regOf (hz), 2048.0f, static_cast<std::uint8_t> ((saw ? ctrl::saw : ctrl::pulse) | ctrl::gate));
+        renderSamples (c, 64);
+    }
+    CHECK (c.renderConverterSwitches() == 0u);
 }
 
 TEST_CASE ("render: a write right after render() lands at its own cycle", "[render][timing]")

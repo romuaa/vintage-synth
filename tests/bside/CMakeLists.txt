@@ -57,8 +57,7 @@ add_executable(bside_unit
     unit/ChipRenderKaiserTests.cpp
     unit/ChipRenderStreamTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
-target_compile_definitions(bside_unit PRIVATE BS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
-    BS_RENDER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/render")
+target_compile_definitions(bside_unit PRIVATE BS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 set_target_properties(bside_unit PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
 include(${PROJECT_SOURCE_DIR}/external/Catch2/extras/Catch.cmake)

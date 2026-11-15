@@ -5,6 +5,24 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2b-2 second review fixes (2026-11-16)
+- Fixes: sync and ring from noise+saw sources (taken from the digital core); oscillator 1's one-cycle glitch
+  of its source oscillator 3; the pull-down's pulse gate at the rise from whole cycles; the Model A
+  pull-down followed landing by landing above one cell per step (rises, writes, corrections); predictions
+  across a write (pending pull-downs and resets, offU rescaled with the frequency, ring state after the
+  sources' pull-downs); two lines crossing at the same instant (an inverted ring); a pulse edge lost after a
+  reset reached late (a stuck gate).
+- Hysteresis of the Model A converter bits: taken back below half the limit; seeded afresh on a waveform
+  change.
+- Fades of a deselected output on the long kernel.
+- Tests: random write schedules against the chip's own output stream (`[schedule]`, noise combinations,
+  sync, ring, test bit) with two regression cases; noise combinations in the random-patch test; fades and
+  per-cycle noise combinations in the write-discontinuity gate; `[dac]` tightened (from the second frame,
+  tolerances just above the model's figures, saws only); the short-kernel golden replaced by an
+  independent model of a free-running saw (`[kernel]`); hysteresis cases of the review.
+- `Chip::renderLargeCorrections()` (corrections above 1e-4 of a period) and a test with writes a few cycles
+  into a sample (`[corrections]`); `chip_bench`: a noise+saw source case and a control-write-per-tick case.
+
 ### B-Side S2b-2 review fixes (2026-11-15)
 - Fix: sync and ring from a Model A saw combination (the line simulation now applies the pull-down).
 - The stronger kernel (8 zero crossings, Kaiser beta 12, double precision) for every pulse and combined-

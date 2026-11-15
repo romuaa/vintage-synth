@@ -346,8 +346,12 @@ public:
     int renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noexcept;
 
     /** Times the renderer had to move a rendered line back onto the digital phase (a band-limited
-        correction; a diagnostic for tests: 0 in every configuration the gates measure). */
+        correction; a diagnostic for tests: 0 over the tests' random patches and write schedules; writes a
+        few cycles into a sample still give rare ones, almost all below 4e-6 of a period: docs/decisions.md
+        S2b-2 row 17). */
     std::uint64_t renderCorrections() const noexcept { return rs.corrections; }
+    /** The corrections larger than 1e-4 of a period (the others round the sub-cycle time of a sync reset). */
+    std::uint64_t renderLargeCorrections() const noexcept { return rs.largeCorrections; }
     /** Times the set of Model A converter bits rendered as square waves changed with the frequency (each a
         small band-limited step; hysteresis keeps a vibrato around a limit from repeating it). */
     std::uint64_t renderConverterSwitches() const noexcept { return rs.converterSwitches; }
@@ -774,8 +778,19 @@ private:
         bool ringFlip = false;   // ... and the source's top bit is low: index bit 11 inverted
         bool longKernel = false; // this oscillator's steps use the long kernel (Model A combined waveform)
         bool pending = false;    // a predicted sync reset the digital core has not confirmed yet
+        bool pendingPull = false; // the pending event is a Model A pull-down (renderPullDown, renderLanding)
         std::uint64_t pendingStart = 0; // ... predicted at pendingT cycles after this sample start
         double pendingT = 0.0;
+        bool glitchPending = false;     // a ring flip back carried into the next stretch (oscillator 1's source)
+        std::uint64_t cmpCycle = ~std::uint64_t { 0 }; // the cycle of the last write, and the pulse comparison
+        bool cmpHigh = false;                            // the chip's next step used then
+        bool landPull = false;          // a pull-down scheduled at the chip's own landing (renderLanding)
+        bool landHold = false;          // ... and no other pull-down until the line leaves the upper half
+        std::uint64_t landStart = 0;
+        double landT = 0.0;
+        bool shownTop = false;          // per-cycle source: the top bit last shown to its ring target
+        std::uint64_t glitchStart = 0;
+        double glitchT = 0.0;
         std::uint16_t held = 0;  // the digital value shown in noise, per-cycle and off modes
         std::array<double, kRing> buf {}; // double: a nearly silent shape on a large offset keeps its detail
         std::array<float, kRing> env {};
@@ -791,8 +806,9 @@ private:
         double sweepT = 0.0;      // how far the oscillators' lines have been rendered, cycles since C_s
         double cps = 1.0;         // cycles per internal sample
         std::array<RenderOsc, 3> osc {};
-        std::array<double, 3> leftValue {}, leftSlope {}; // captured before a write
+        std::array<double, 3> leftValue {}, leftSlope {}, leftSlopeU {}; // captured before a write
         std::uint64_t corrections = 0; // re-anchorings that moved a line (diagnostic)
+        std::uint64_t largeCorrections = 0; // of those, the ones above 1e-4 of a period
         std::uint64_t converterSwitches = 0; // changes of the set of Model A converter bits rendered (diagnostic)
     };
     struct PieceEvents; // ChipRender.cpp
@@ -806,8 +822,10 @@ private:
     void renderSyncOsc (int n) noexcept;
     void renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept;
     void renderLines (PieceEvents& ev, double tEnd) noexcept;
-    bool renderPullDown (int n, double t) noexcept;
-    int renderPullCell (int n, int cell) const noexcept;
+    bool renderPullDown (int n, double t, bool atWrite) noexcept;
+    int renderPullCell (int n, int cell, double tCross) const noexcept;
+    bool renderGateAtRise (int n, double tCross) const noexcept;
+    void renderLanding (int n, double tw) noexcept;
     void renderEmit (int n, double t, double dv, double ds) noexcept;
     void renderEmitWith (int n, double t, double dv, double ds, bool longKernel) noexcept;
     double renderSlopeU (int n) const noexcept; // periods per cycle
@@ -1011,8 +1029,8 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // BlepTable (pulses and combined waveforms: the stronger kernel, RenderTables.h), placed at the event's exact time (a sub-sample position; events up to one sample back are
 // allowed and corrected in the samples already written). The naive value is taken at the sample's end,
 // the output is the per-oscillator ring buffer kLatencySamples (8) samples later, times the envelope.
-// Steps on the short kernel come out exactly as with the short kernel alone, delayed by the difference
-// of the two kernels' lengths (0 today; tested bit for bit against a golden of the short-only renderer).
+// Steps on the short kernel are that kernel's own steps at their exact time, kLatencySamples late (tested
+// against an independent sum of its steps: a free-running saw, "[kernel]"; steps at writes, "[timing]").
 //
 // PER WAVEFORM (the mode follows the control register):
 //   triangle, saw   closed form: g x (the continuous 12-bit value) plus, for the Model A converter, every
@@ -1024,24 +1042,37 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 //   combined        (two or more of triangle, saw, pulse; no noise) an exact band-limited staircase: every
 //                   change of d (shape (index)) between index cells is a BLEP; the pulse gate, the ring
 //                   fold (half a table further) and phase jumps are exact too. Model A combinations with
-//                   the saw pull their top bit down (8.15.2 (c) step 4): predicted from the line where it
-//                   enters an upper-half cell whose output has bit 11 clear.
+//                   the saw pull their top bit down (8.15.2 (c) step 4) in the first step whose landing
+//                   cell has output bit 11 clear: from a rise the line is pulled where it enters such a
+//                   cell (the gate as the chip compared it, at whole cycles); after a write or a correction
+//                   inside the upper half the chip's own landings are followed (renderLanding) and the
+//                   pull-down is scheduled at the landing.
 //   noise           sample-and-hold of d (noise output), a step at each noise clock's exact cycle.
 //   noise + another (write-back) per-cycle mode: the digital output itself, a step wherever it changes.
-//   none            the held, fading digital output.
+//   none            the held, fading digital output (its steps on the long kernel).
 // SYNC. The digital core resets a target at the cycle after its source's top bit rose; the rendered reset
 // lies at the source's crossing, up to two cycles earlier. It is predicted from the source's line (a joint
 // simulation of the three lines per piece) and the digital reset confirms it and sets offU = the target's
 // advance between the two. A prediction the digital core does not confirm within three cycles (the
 // sync-chain exception of 8.15.2 (d)) is undone by re-anchoring: at every sample end each line is
 // re-anchored on the digital phase, and a disagreement is corrected band-limited and counted
-// (renderCorrections(); 0 in every configuration the tests measure).
+// (renderCorrections(): 0 over the tests' random patches and write schedules; with many writes rare,
+// almost all below 4e-6 of a period; docs/decisions.md S2b-2 row 17).
+// offU is a sub-cycle time held as a phase: a frequency write rescales it (and the line of an unconfirmed
+// reset), so rendered and digital line stay less than a cycle apart in time.
+// A source in per-cycle mode (noise with another waveform) is not predicted: its top-bit changes come from
+// the digital accumulator cycle by cycle, its targets' resets from the digital core. Oscillator 1 reads
+// oscillator 3's top bit before oscillator 3's pull-down: it sees such a rise for one cycle (a flip and the
+// flip back one cycle later). Two lines crossing at the same instant are both taken.
 // The simulation applies the Model A pull-down as the sweep does: a saw combination pulled down in its
 // first upper-half cell never rises, so it neither syncs nor shows its top bit (8.15.2 (c) step 4, (d)).
 // RING flips the triangle (or the table) where the source's top bit changes, from the same simulation.
 // WRITES (write, setOscillator, powerOnKeepingTime) take effect at their exact cycle: renderUntil stops
 // inside a sample at the requested cycle, the write captures every line's value before and after, and the
-// difference is a BLEP/BLAMP at that cycle. A write right after render() (at a sample boundary) is placed at
+// difference is a BLEP/BLAMP at that cycle. What the chip has not done yet is decided again with the new
+// controls: a predicted pull-down ends (the line goes back to the digital phase), a reset whose sync bit
+// was cleared is dropped, pull-downs inside an upper half follow the chip's landings, and the ring state is
+// taken after the sources' pull-downs. A write right after render() (at a sample boundary) is placed at
 // its cycle too, with the values taken at the sample end (less than one cycle apart).
 // THE DIGITAL STATE is advanced only by advanceCycles / stepCycle, exactly as without rendering (tested
 // for random write sequences, both models, every block split and internal rate).

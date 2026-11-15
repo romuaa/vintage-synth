@@ -5,6 +5,7 @@
 
 #include "bside/chip/Chip.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -36,13 +37,14 @@ int iminFor (double periodsPerSample) noexcept
     return 11;
 }
 
-/** iminFor with hysteresis (S2b-2 review): a bit is dropped as soon as it would toggle once per sample,
-    but taken back only once it toggles at most 0.8 times per sample, so a vibrato around the limit does
-    not switch it back and forth (each switch is a small band-limited step). */
+/** iminFor with hysteresis (S2b-2 reviews): a bit is dropped as soon as it would toggle once per sample, but
+    taken back only once it toggles at most 0.5 times per sample (its square wave then lies below a quarter
+    of the internal rate; between, its content lies above 22 kHz at every internal rate, so leaving it out
+    changes nothing audible). A vibrato would have to span an octave to switch it back and forth. */
 int iminWithHysteresis (double periodsPerSample, int current) noexcept
 {
     const int must = iminFor (periodsPerSample);      // bits below this one alias
-    const int may = iminFor (periodsPerSample / 0.8); // bits from this one on are clearly below the limit
+    const int may = iminFor (periodsPerSample / 0.5); // bits from this one on are clearly below the limit
     if (must > current)
         return must;
     if (may < current)
@@ -117,7 +119,9 @@ template <bool kStep>
 struct RenderSinkT
 {
     static constexpr bool kWantsNoiseEvents = true;
+    static constexpr bool kWantsStepEvents = kStep; // per-cycle mode: which oscillator was pulled down
     void* self = nullptr;
+    std::array<bool, 3> pulled {};
     void (*onSync) (void*, const SyncResetEvent&) noexcept = nullptr;
     void (*onNoise) (void*, int, std::uint64_t, std::uint16_t) noexcept = nullptr;
     // Per-cycle mode: a step's sync resets are passed on after its pull-downs (part (c) comes before (d)).
@@ -135,6 +139,11 @@ struct RenderSinkT
     }
     void noiseClock (const NoiseClockEvent& e) noexcept { onNoise (self, e.osc, e.cycle, e.output); }
     void noiseWriteBack (const NoiseWriteBackEvent&) noexcept {} // write-back runs in per-cycle mode
+    void oscStep (const OscStepEvent& e) noexcept
+    {
+        if (e.pulledDown)
+            pulled[static_cast<std::size_t> (e.osc)] = true;
+    }
 };
 } // namespace
 
@@ -330,6 +339,16 @@ double Chip::renderNextLineEvent (int n, double t, double slope, double& ue, int
                         best = th;
                     }
                 }
+                if (v.landPull)
+                {
+                    const double tl = static_cast<double> (v.landStart) - static_cast<double> (rs.start) + v.landT;
+                    if (tl < best)
+                    {
+                        ue = v.u + slope * (tl - t);
+                        kind = 4;
+                        best = tl;
+                    }
+                }
                 if ((ctl (n) & ctrl::pulse) == 0)
                     return best;
             }
@@ -369,7 +388,27 @@ double Chip::renderNextLineEvent (int n, double t, double slope, double& ue, int
 
 // ---- Model A pull-down, predicted from the line ----
 
-int Chip::renderPullCell (int n, int cell) const noexcept
+bool Chip::renderGateAtRise (int n, double tCross) const noexcept
+{
+    // The pulse comparison the chip uses in the first cycle of the upper half was made in the cycle before,
+    // on the whole-cycle accumulator (8.15.2 (c)): find that cycle on the digital line (the rendered line
+    // minus offU) and compare its index with the integer width, as the chip does.
+    if ((ctl (n) & ctrl::pulse) == 0 || (ctl (n) & ctrl::test) != 0)
+        return true;
+    const double slope = renderSlopeU (n);
+    if (! (slope > 0.0))
+        return rs.osc[idx (n)].gate;
+    const double tD = tCross + rs.osc[idx (n)].offU / slope; // the digital line crosses its top bit here
+    const double e = std::ceil (tD - 1.0e-9);                // the first whole cycle in the upper half
+    const RenderOsc& v = rs.osc[idx (n)];
+    if (std::abs (static_cast<double> (rs.start) + e - 1.0 - static_cast<double> (v.cmpCycle)) < 0.5)
+        return v.cmpHigh; // made in the step a write followed: as the write found it
+    const double uPrev = 0.5 - slope * (tD - (e - 1.0));     // the digital phase one cycle before
+    const auto ix = static_cast<std::uint32_t> (std::floor (frac01 (uPrev) * 4096.0)) & 0xfffu;
+    return ix >= osc[idx (n)].pw;
+}
+
+int Chip::renderPullCell (int n, int cell, double tCross) const noexcept
 {
     // Where the line of a Model A saw combination, entering `cell` (or the upper half) from below, is pulled
     // down: the first cell from there whose output has bit 11 clear, the pulse gate (one cycle late)
@@ -380,38 +419,103 @@ int Chip::renderPullCell (int n, int cell) const noexcept
     const int c = std::max (cell, 2048);
     if ((ctl (n) & ctrl::pulse) != 0)
     {
-        const double lag = 4096.0 * renderSlopeU (n); // the comparison reads the line one cycle back
-        if (static_cast<double> (c) - lag < static_cast<double> (osc[idx (n)].pwSmooth))
+        // entering the upper half: the gate as the chip decides it (renderGateAtRise); already inside it: the
+        // rendered gate (the gate only closes at a wrap, so inside the upper half it can only have opened)
+        const bool open = cell <= 2048 ? renderGateAtRise (n, tCross) : rs.osc[idx (n)].gate;
+        if (! open)
             return c;
     }
     return rtab->steps[static_cast<std::size_t> (slot)].firstClear[static_cast<std::size_t> (c)];
 }
 
-bool Chip::renderPullDown (int n, double t) noexcept
+bool Chip::renderPullDown (int n, double t, bool atWrite) noexcept
 {
     // 8.15.2 (c) step 4: Model A, a combination with the saw: in a cell of the upper half whose output has
     // bit 11 clear, the accumulator's top bit is cleared. The renderer does it where the line enters such a
     // cell (or where the pulse gate closes in one); the digital core does it in the cycle it lands there,
-    // up to one cycle later (re-anchoring waits three cycles, as for a predicted sync reset).
+    // up to one cycle later (re-anchoring waits three cycles, as for a predicted sync reset). After a write
+    // inside the upper half the chip's own landings decide instead (renderLanding).
     RenderOsc& v = rs.osc[idx (n)];
     if (cfg.model != Model::A || v.mode != rmTable || (ctl (n) & ctrl::saw) == 0)
         return false;
     const auto cell = static_cast<std::size_t> (static_cast<std::uint64_t> (v.k) & 0xfffu);
     if (cell < 2048)
+    {
+        v.landHold = false; // the line has left the upper half: the ordinary rule again
         return false;
+    }
+    if (v.landHold)
+        return false; // a write left the line inside the upper half: the chip's own landings decide (renderLanding)
     const int slot = render::tableSlot (static_cast<std::uint8_t> (wave::bits (ctl (n)) & 7u));
     if (slot < 0)
         return false;
     const bool pulse = (ctl (n) & ctrl::pulse) != 0;
-    const bool high = (rtab->steps[static_cast<std::size_t> (slot)].shape[cell] & 0x800u) != 0 && (! pulse || v.gate);
+    // the pulse gate: at a write, the chip's own comparison for its next step; entering the upper half, as
+    // the chip decides it at whole cycles; inside it, the rendered gate (it only opens there)
+    const bool open = ! pulse || (ctl (n) & ctrl::test) != 0 || (atWrite ? osc[idx (n)].pulseHigh : cell == 2048 ? renderGateAtRise (n, t) : v.gate);
+    if (pulse && cell == 2048 && open && ! atWrite)
+        v.gate = true; // the chip's gate is open in this first upper-half cycle; the rendered one follows it
+    const bool high = (rtab->steps[static_cast<std::size_t> (slot)].shape[cell] & 0x800u) != 0 && open;
     if (high)
         return false;
     v.u -= 0.5;
     v.k -= 2048;
     v.pending = true;
+    v.pendingPull = true;
     v.pendingStart = rs.start;
     v.pendingT = t;
     return true;
+}
+
+// ---- a write inside the upper half: the chip's own landings ----
+
+void Chip::renderLanding (int n, double tw) noexcept
+{
+    // After a write the line of a Model A saw combination may sit inside the upper half, where the chip pulls
+    // it down in the first step whose landing cell (whole cycles: up to 16 cells apart) has output bit 11
+    // clear, or whose pulse comparison (made one step earlier, on the previous landing) is low. The continuous
+    // line would see cells the chip skips, so the step is found here from the accumulator itself, exactly, and
+    // the pull-down scheduled for it. Bounded: 4096 steps (half a period at one cell per step or more; a
+    // slower line visits every cell, and the line's own rule takes over where the search ends).
+    RenderOsc& v = rs.osc[idx (n)];
+    v.landPull = false;
+    v.landHold = false;
+    if (cfg.model != Model::A || v.mode != rmTable || (ctl (n) & ctrl::saw) == 0 || (ctl (n) & ctrl::test) != 0)
+        return;
+    const Osc& o = osc[idx (n)];
+    if (o.inc == 0)
+        return;
+    if ((o.phase & kPhaseMsb) == 0)
+        return; // the lower half: the next rise is the line's own rule
+    if (frac01 (v.u) < 0.5 && std::abs (frac01 (v.u - renderDigitalU (n, rs.sweepT) - v.offU + 0.5) - 0.5) > 0.25)
+        return; // the rendered line is already down (a pull-down the chip makes in its next step)
+    // (otherwise the line is still in step with the chip, inside its upper half or, less than a cycle ahead,
+    // already past the wrap: a pull-down the chip makes before its wrap moves it by half a period too)
+    const int slot = render::tableSlot (static_cast<std::uint8_t> (wave::bits (ctl (n)) & 7u));
+    if (slot < 0)
+        return;
+    const auto& shape = rtab->steps[static_cast<std::size_t> (slot)].shape;
+    const bool pulse = (ctl (n) & ctrl::pulse) != 0;
+    v.landHold = true; // from here until the line leaves the upper half, only these landings decide
+    bool gate = o.pulseHigh; // the comparison the next step uses
+    std::uint64_t phase = o.phase;
+    for (int k = 1; k <= 4096; ++k)
+    {
+        phase = (phase + o.inc) & kPhaseMask;
+        if ((phase & kPhaseMsb) == 0)
+            return; // wrapped first: no pull-down
+        const auto cell = static_cast<std::size_t> ((phase >> 44) & 0xfffu);
+        const bool high = (shape[cell] & 0x800u) != 0 && (! pulse || gate);
+        if (! high)
+        {
+            v.landPull = true;
+            v.landStart = rs.start;
+            v.landT = tw + static_cast<double> (k - 1); // in the cycle that ends with the step that pulls
+            return;
+        }
+        gate = cell >= o.pw;
+    }
+    v.landHold = false; // not decided within 4096 steps (a slow line, below one cell per step): the line's own rule
 }
 
 // ---- emitting a discontinuity ----
@@ -497,13 +601,19 @@ void Chip::renderSyncOsc (int n) noexcept
 {
     RenderOsc& v = rs.osc[idx (n)];
     const std::uint8_t c = ctl (n);
+    const std::uint8_t previousMode = rs.active && v.mode != rmOff ? v.mode : std::uint8_t { rmOff };
     v.mode = renderMode (n);
+    v.landPull = false;
+    v.landHold = false;
     const double slope = renderSlopeU (n);
     if (! v.pending) // a predicted, unconfirmed sync reset: the digital phase has not been reset yet
         v.u = frac01 (renderDigitalU (n, rs.sweepT) + v.offU);
     const double rate = slope * rs.cps;
-    const int imin = v.mode == rmTable ? 0 : (! rtab->dac.ideal && (v.mode == rmTri || v.mode == rmSaw)) ? iminWithHysteresis (rate, v.imin) : 11;
-    if (imin != v.imin && (v.mode == rmTri || v.mode == rmSaw) && ! rtab->dac.ideal)
+    // the hysteresis continues only from a triangle or saw; any other previous mode starts it afresh
+    const bool converterTerms = ! rtab->dac.ideal && (v.mode == rmTri || v.mode == rmSaw);
+    const bool continues = converterTerms && (previousMode == rmTri || previousMode == rmSaw);
+    const int imin = v.mode == rmTable ? 0 : converterTerms ? (continues ? iminWithHysteresis (rate, v.imin) : iminFor (rate)) : 11;
+    if (continues && imin != v.imin)
         ++rs.converterSwitches;
     v.imin = imin;
     v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));
@@ -511,6 +621,7 @@ void Chip::renderSyncOsc (int n) noexcept
     v.longKernel = v.mode == rmTable || v.mode == rmPulse; // combined waveforms and pulse edges (docs/decisions.md S2b-2)
     v.gate = gateAt (v.u, slope, osc[idx (n)].pwSmooth, (c & ctrl::test) != 0);
     v.gateCheckU = -1.0;
+    v.shownTop = (osc[idx (n)].phase & kPhaseMsb) != 0;
     v.held = v.mode == rmNoise ? osc[idx (n)].noiseOut : osc[idx (n)].out;
 }
 
@@ -561,6 +672,7 @@ void Chip::renderBeforeChange() noexcept
         const double u = rs.osc[idx (n)].u - slope * (rs.sweepT - tw); // the line at the change's cycle
         rs.leftValue[idx (n)] = renderValueAt (n, u);
         rs.leftSlope[idx (n)] = renderDerivativeAt (n, u) * slope * rs.cps;
+        rs.leftSlopeU[idx (n)] = slope;
     }
 }
 
@@ -575,20 +687,48 @@ void Chip::renderAfterChange (int testSetMask) noexcept
     const double tw = static_cast<double> (cycleCount - rs.start);
     for (int n = 0; n < 3; ++n)
     {
+        RenderOsc& v = rs.osc[idx (n)];
+        v.cmpCycle = cycleCount; // the pulse comparison the chip's next step uses, as the write found it
+        v.cmpHigh = osc[idx (n)].pulseHigh;
         if (((testSetMask >> n) & 1) != 0)
         {
-            rs.osc[idx (n)].offU = 0.0; // the accumulator was set: rendered and digital phase agree again
-            rs.osc[idx (n)].pending = false;
+            v.offU = 0.0; // the accumulator was set: rendered and digital phase agree again
+            v.pending = false;
         }
+        // offU is a sub-cycle time (where a sync reset fell between two of the chip's steps) held as a phase:
+        // a new frequency rescales it, so rendered and digital line stay less than one cycle apart in time
+        const double s0 = rs.leftSlopeU[idx (n)];
+        if (s0 > 0.0)
+        {
+            v.offU *= renderSlopeU (n) / s0;
+            // likewise a predicted sync reset not yet confirmed: the line since the reset is that time
+            if (v.pending && ! v.pendingPull)
+                v.u *= renderSlopeU (n) / s0;
+        }
+        // A write ends the wait for a predicted pull-down: the line goes back to the digital phase
+        // (renderSyncOsc), pulled if the chip has made it, and if not, the chip decides it with the new
+        // controls (renderLanding, renderPullDown below). A predicted sync reset whose sync bit the write
+        // cleared will not come: dropped likewise.
+        if (v.pending && (v.pendingPull || (ctl (n) & ctrl::sync) == 0))
+            v.pending = false;
         renderSyncOsc (n);
     }
     for (int n = 0; n < 3; ++n)
     {
         RenderOsc& v = rs.osc[idx (n)];
+        renderLanding (n, tw);
+        if (! v.landPull && renderPullDown (n, tw, true))
+            v.gateCheckU = v.u + renderSlopeU (n);
+    }
+    for (int n = 0; n < 3; ++n) // after the sources' pull-downs at the write
+    {
+        RenderOsc& v = rs.osc[idx (n)];
         v.ringFlip = v.ring && frac01 (rs.osc[idx (detail::syncSource (n))].u) < 0.5;
+    }
+    for (int n = 0; n < 3; ++n)
+    {
+        RenderOsc& v = rs.osc[idx (n)];
         const double slope = renderSlopeU (n);
-        if (renderPullDown (n, tw))
-            v.gateCheckU = v.u + slope;
         const double u = v.u - slope * (rs.sweepT - tw);
         const double wr = renderValueAt (n, u);
         const double sr = renderDerivativeAt (n, u) * slope * rs.cps;
@@ -646,13 +786,27 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
             }
             else if (kind == 2)
                 v.gate = ! v.gate;
-            else
+            else if (kind == 3)
             {
                 // one cycle after a phase jump the comparison reads the new line
                 v.gate = gateAt (v.u, slope, osc[ni].pwSmooth, test);
                 v.gateCheckU = -1.0;
             }
-            if (renderPullDown (n, t))
+            if (kind == 4)
+            {
+                // the pull-down the chip makes at the landing renderLanding found
+                v.landPull = false;
+                v.landHold = false;
+                v.u -= 0.5;
+                v.k = static_cast<std::int64_t> (std::floor (frac01 (v.u) / sigmaOf (v.imin)));
+                v.u = frac01 (v.u);
+                v.pending = true;
+                v.pendingPull = true;
+                v.pendingStart = rs.start;
+                v.pendingT = t;
+                v.gateCheckU = v.u + slope;
+            }
+            else if (renderPullDown (n, t, false))
                 v.gateCheckU = v.u + slope;
             const double wr = renderValue (n, v.u);
             const double sr = renderDerivative (n, v.u);
@@ -667,6 +821,7 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
         const double wl = renderValueAt (n, v.u - back);
         const double sl = renderDerivativeAt (n, v.u - back);
         double uAfter = v.u - back;
+        double lateEdge = -1.0; // a falling pulse edge one cycle after a reset that this sweep reaches late
         if (td <= th && td <= tr)
         {
             const auto& d = ev->jumps[ni][static_cast<std::size_t> (id++)];
@@ -674,9 +829,12 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
             {
                 case PieceEvents::kJumpSync:
                 case PieceEvents::kJumpSyncPending:
+                    v.landPull = false;
+                    v.landHold = false;
                     v.u = test ? 0.0 : slope * (t - d.t);
                     uAfter = 0.0;
                     v.pending = d.kind == PieceEvents::kJumpSyncPending;
+                    v.pendingPull = false;
                     if (v.pending)
                     {
                         v.pendingStart = rs.start;
@@ -684,6 +842,8 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
                     }
                     else
                         v.offU = test ? 0.0 : d.off;
+                    if (! test && v.gate && (v.mode == rmPulse || (v.mode == rmTable && (ctl (n) & ctrl::pulse) != 0)) && t - d.t >= 1.0 - 1.0e-9)
+                        lateEdge = d.t + 1.0;
                     break;
                 default: // kJumpConfirm
                     v.offU = test ? 0.0 : d.off;
@@ -697,7 +857,17 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
             // already lies one cycle on (a falling edge at the next wrap of the delayed line, u = slope)
         }
         else if (th <= tr)
+        {
             v.held = ev->held[ni][static_cast<std::size_t> (ih++)].value;
+            if (v.mode == rmOff)
+            {
+                // a fade step of a deselected output: on the stronger kernel too (a step of up to half the
+                // output, which may follow a pulse); the step is emitted here and the generic emit skipped
+                const double wr = renderValueAt (n, uAfter);
+                renderEmitWith (n, tn, wr - wl, 0.0, true);
+                continue;
+            }
+        }
         else
         {
             v.ringFlip = v.ring && ! ev->flips[src][static_cast<std::size_t> (ir++)].top;
@@ -716,6 +886,16 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
         const double wr = renderValueAt (n, uAfter);
         const double sr = renderDerivativeAt (n, uAfter);
         renderEmit (n, tn, wr - wl, (sr - sl) * rate);
+        if (lateEdge >= 0.0)
+        {
+            // the gate's falling edge (one cycle after the reset) lies already behind the sweep position:
+            // emitted at its own time, as the next line event would have
+            const double uf = v.u - slope * (t - lateEdge);
+            const double hl = renderValueAt (n, uf);
+            const double hs = renderDerivativeAt (n, uf);
+            v.gate = false;
+            renderEmit (n, lateEdge, renderValueAt (n, uf) - hl, (renderDerivativeAt (n, uf) - hs) * rate);
+        }
     }
     if (tEnd > t)
         v.u += slope * (tEnd - t);
@@ -735,7 +915,7 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
 {
     constexpr double kMatch = 1.0e-3; // cycles between a predicted and a digital reset of the same crossing
     std::array<double, 3> u {}, slope {}, pullU {};
-    std::array<bool, 3> top {}, wanted {}, synced {}, pulls {};
+    std::array<bool, 3> top {}, wanted {}, synced {}, pulls {}, digital {};
     for (int n = 0; n < 3; ++n)
     {
         const auto ni = idx (n);
@@ -746,11 +926,20 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
         // a Model A saw combination is pulled down in the upper half (8.15.2 (c) step 4): its top bit falls
         // where renderSweep's renderPullDown will pull it, and a rise it cannot keep syncs nothing
         pulls[ni] = cfg.model == Model::A && rs.osc[ni].mode == rmTable && (ctl (n) & ctrl::saw) != 0 && slope[ni] > 0.0;
+        // a source in per-cycle mode (noise with another waveform) is not predicted: its output, and on
+        // Model A its pull-down (which depends on the noise output), are known only cycle by cycle, so its
+        // ring flips come from the digital accumulator (renderPiece) and its sync resets from the digital core
+        digital[ni] = rs.osc[ni].mode == rmCycle;
         pullU[ni] = -1.0;
-        if (pulls[ni] && top[ni])
+        if (pulls[ni] && rs.osc[ni].landPull)
+        {
+            const double tl = static_cast<double> (rs.osc[ni].landStart) - static_cast<double> (rs.start) + rs.osc[ni].landT;
+            pullU[ni] = u[ni] + slope[ni] * std::fmax (tl - rs.sweepT, 0.0);
+        }
+        else if (pulls[ni] && top[ni] && ! rs.osc[ni].landHold)
         {
             const double base = std::floor (u[ni]);
-            const int c = renderPullCell (n, static_cast<int> ((u[ni] - base) * 4096.0));
+            const int c = renderPullCell (n, static_cast<int> ((u[ni] - base) * 4096.0), rs.sweepT);
             if (c < 4096)
                 pullU[ni] = base + static_cast<double> (c) / 4096.0;
         }
@@ -760,15 +949,53 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
         const auto tg = idx (detail::syncTarget (n));
         wanted[idx (n)] = rs.osc[tg].ring || synced[tg];
     }
+    // A ring flip of oscillator 1's source (oscillator 3) that falls after the stretch rendered now: the end
+    // of a one-cycle glitch (see below), carried over
+    for (int n = 0; n < 3; ++n)
+    {
+        RenderOsc& v = rs.osc[idx (n)];
+        if (! v.glitchPending)
+            continue;
+        const double when = static_cast<double> (v.glitchStart) - static_cast<double> (rs.start) + v.glitchT;
+        if (when <= tEnd)
+        {
+            if (wanted[idx (n)] && ! digital[idx (n)])
+                ev.addFlip (n, std::fmax (when, rs.sweepT), false);
+            v.glitchPending = false;
+        }
+    }
     if (! wanted[0] && ! wanted[1] && ! wanted[2] && ev.rawCount[0] == 0 && ev.rawCount[1] == 0 && ev.rawCount[2] == 0)
         return; // no sync, no ring, no digital jump: nothing couples the lines
+    // Oscillator 1 reads oscillator 3's top bit before oscillator 3's own output step (8.15.2 (c) step 1):
+    // where oscillator 3 is pulled down, oscillator 1 still sees the top bit of that cycle, one cycle longer
+    // than oscillators 2 and 3 see their sources'. The flip back of that source is placed one cycle later.
+    auto flipBack = [&] (int n, double when) noexcept {
+        const auto ni = idx (n);
+        if (! wanted[ni])
+            return;
+        if (detail::syncTarget (n) != 0)
+        {
+            ev.addFlip (n, when, false);
+            return;
+        }
+        const double late = when + 1.0;
+        if (late <= tEnd)
+            ev.addFlip (n, late, false);
+        else
+        {
+            RenderOsc& v = rs.osc[ni];
+            v.glitchPending = true;
+            v.glitchStart = rs.start;
+            v.glitchT = late;
+        }
+    };
     auto settle = [&] (int n, double when) noexcept {
         const auto ni = idx (n);
         const bool now = frac01 (u[ni]) >= 0.5;
         if (now != top[ni])
         {
             top[ni] = now;
-            if (wanted[ni])
+            if (wanted[ni] && ! digital[ni])
                 ev.addFlip (n, when, now);
         }
     };
@@ -782,10 +1009,13 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
         for (int n = 0; n < 3; ++n)
         {
             const auto ni = idx (n);
-            if (! (slope[ni] > 0.0))
+            if (! (slope[ni] > 0.0) || digital[ni])
                 continue;
-            const double uh = (std::floor (2.0 * u[ni]) + 1.0) * 0.5;
-            const double th = t + (uh - u[ni]) / slope[ni];
+            // the next half-period boundary; one reached exactly at another line's crossing (lines in step: the
+            // same frequency and phase) is still to be taken, now
+            const bool unsettled = (frac01 (u[ni]) >= 0.5) != top[ni];
+            const double uh = unsettled ? u[ni] : (std::floor (2.0 * u[ni]) + 1.0) * 0.5;
+            const double th = unsettled ? t : t + (uh - u[ni]) / slope[ni];
             if (th < tc)
             {
                 tc = th;
@@ -831,7 +1061,18 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
             const auto ci = idx (cs);
             u[ci] = uc - 0.5 + slope[ci] * (t - tc);
             pullU[ci] = -1.0;
-            settle (cs, tc);
+            if (frac01 (u[ci]) < 0.5)
+            {
+                top[ci] = false;
+                flipBack (cs, tc);
+            }
+            else if (! top[ci])
+            {
+                // the line had run past its wrap (renderLanding): half a period on, it is up again
+                top[ci] = true;
+                if (wanted[ci] && ! digital[ci])
+                    ev.addFlip (cs, tc, true);
+            }
             continue;
         }
         if (crossing)
@@ -842,10 +1083,16 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
             {
                 // the top bit rises: pulled down at once (no rise, no sync), later, or never
                 const double base = std::floor (uc);
-                const int c = renderPullCell (cs, 2048);
+                const int c = renderPullCell (cs, 2048, tc);
                 if (c == 2048)
                 {
                     u[ci] -= 0.5;
+                    // no rise for the sync and for oscillators 2 and 3; oscillator 1 sees it for one cycle
+                    if (wanted[ci] && detail::syncTarget (cs) == 0)
+                    {
+                        ev.addFlip (cs, tc, true);
+                        flipBack (cs, tc);
+                    }
                     continue;
                 }
                 pullU[ci] = c < 4096 ? base + static_cast<double> (c) / 4096.0 : -1.0;
@@ -930,7 +1177,7 @@ void Chip::renderPiece (std::uint64_t k, bool toSampleEnd) noexcept
         const RenderOsc& sv = ch.rs.osc[idx (e.source)];
         const double srcSlope = static_cast<double> (e.sourceIncrement) / kTwo56;
         // the source's RENDERED line crossed its top bit (offset from a sync of its own included)
-        const double before = std::fmin (std::fmax ((static_cast<double> (e.sourcePhase) / kTwo56 + sv.offU - 0.5) / srcSlope, 0.0), 2.0);
+        const double before = std::fmin (std::fmax ((static_cast<double> (e.sourcePhase) / kTwo56 + sv.offU - 0.5) / srcSlope, -1.0), 2.0);
         const double eRel = static_cast<double> (e.cycle - ch.rs.start);
         const double tStar = eRel - before;
         // the target's rendered phase runs from 0 at tStar; its digital phase from 0 at E (this ignores a
@@ -950,13 +1197,37 @@ void Chip::renderPiece (std::uint64_t k, bool toSampleEnd) noexcept
         sink.onSync = onSync;
         sink.onNoise = onNoise;
         std::array<std::uint16_t, 3> last {};
+        // the top bit each per-cycle source shows to its ring target: the accumulator after the step, or, for
+        // oscillator 1 reading oscillator 3, before oscillator 3's pull-down of that step
+        std::array<bool, 3> ringFeed {}, view {};
         for (int n = 0; n < 3; ++n)
+        {
             last[idx (n)] = rs.osc[idx (n)].held;
+            ringFeed[idx (n)] = rs.osc[idx (n)].mode == rmCycle && rs.osc[idx (detail::syncTarget (n))].ring;
+            view[idx (n)] = rs.osc[idx (n)].shownTop; // carried across pieces: a glitch can end in the next one
+        }
         for (std::uint64_t i = 0; i < k; ++i)
         {
             sink.pendingCount = 0;
+            sink.pulled = {};
             stepCycle (sink);
             const double eRel = static_cast<double> (cycleCount - rs.start);
+            for (int n = 0; n < 3; ++n)
+            {
+                const auto ni = idx (n);
+                if (! ringFeed[ni])
+                    continue;
+                const bool after = (osc[ni].phase & kPhaseMsb) != 0;
+                const bool seen = after || (detail::syncTarget (n) == 0 && sink.pulled[ni]);
+                if (seen != view[ni])
+                {
+                    view[ni] = seen;
+                    ev.addFlip (n, eRel, seen);
+                }
+            }
+            for (int n = 0; n < 3; ++n)
+                if (ringFeed[idx (n)])
+                    rs.osc[idx (n)].shownTop = view[idx (n)];
             for (int i2 = 0; i2 < sink.pendingCount; ++i2)
                 onSync (&ctx, sink.pending[static_cast<std::size_t> (i2)]);
             for (int n = 0; n < 3; ++n)
@@ -1031,7 +1302,15 @@ float Chip::renderFinishSample() noexcept
 
         // Re-anchor the line on the digital phase (no drift). They agree up to rounding unless a predicted
         // sync reset is still unconfirmed (then wait, at most three cycles) or a prediction was wrong (then
-        // the line moves, band-limited).
+        // the line moves, band-limited). A per-cycle oscillator renders the chip's own output and its ring and
+        // sync come from the chip too: its line only follows the accumulator (on Model A pulled down by the
+        // noise-dependent rule, which the line does not predict), silently.
+        if (v.mode == rmCycle)
+        {
+            v.pending = false;
+            v.u = frac01 (renderDigitalU (n, rs.tEnd) + v.offU);
+            continue;
+        }
         if (v.pending)
         {
             if (static_cast<double> (cycleCount - v.pendingStart) - v.pendingT < 3.0)
@@ -1043,6 +1322,8 @@ float Chip::renderFinishSample() noexcept
         if (std::abs (ua - v.u) > 1.0e-9)
         {
             ++rs.corrections;
+            if (std::abs (ua - v.u) > 1.0e-4)
+                ++rs.largeCorrections; // a prediction error, not the rounding of a sub-cycle sync time
             const double wl = renderValue (n, v.u);
             const double sl = renderDerivative (n, v.u);
             v.u = frac01 (ua);

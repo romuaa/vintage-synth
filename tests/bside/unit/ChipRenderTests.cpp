@@ -228,44 +228,65 @@ constexpr std::uint64_t kTick = 19656; // the 50 Hz system's frame (8.4.2)
 
 /** Write discontinuities (8.4.5): oscillator 2 at about hz, its control written at every tick (at exact
     cycles). `mode` 0: the waveform switches every tick (triangle, saw, pulse in turn); 1: a test-bit reset
-    every tick (set at the tick, cleared 300 cycles later; saw). The signal repeats exactly every three ticks
-    (mode 0, the frequency an exact multiple of 1 / 3 ticks) or every tick (mode 1). */
-AliasResult measureWrites (Model m, int mode, double hz, const RateConfig& rc)
+    every tick (set at the tick, cleared 300 cycles later; saw, or `noiseWave`, a noise combination, which
+    the reset restarts identically); 2: a pulse deselected every other tick (the output held, then fading).
+    The signal repeats exactly every three ticks (mode 0, the frequency an exact multiple of 1 / 3 ticks),
+    two (mode 2) or every tick (mode 1). */
+AliasResult measureWrites (Model m, int mode, double hz, const RateConfig& rc, std::uint8_t noiseWave = 0)
 {
     Chip c = makeChip (m, rc.internalRate);
-    const std::uint64_t period = mode == 0 ? 3 * kTick : kTick;
+    const std::uint64_t period = mode == 0 ? 3 * kTick : mode >= 2 ? 2 * kTick : kTick;
     const double periods = std::max (1.0, std::round (hz * static_cast<double> (period) / 985248.0));
     const double f = periods * 16777216.0 / static_cast<double> (period);
     setOsc (c, 1, f, 1300.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
     std::uint64_t index = 0;
     const std::uint8_t waves[3] { ctrl::triangle, ctrl::saw, ctrl::pulse };
+    const std::uint8_t resetWave = noiseWave != 0 ? noiseWave : ctrl::saw;
     auto write = [&] (Chip& ch, std::uint64_t i) {
         if (mode == 0)
             ch.write (0x0b, static_cast<std::uint8_t> (waves[i % 3] | ctrl::gate));
+        else if (mode == 2)
+            ch.write (0x0b, static_cast<std::uint8_t> (((i % 2) == 0 ? ctrl::pulse : 0) | ctrl::gate)); // deselected: held, then fading
         else
-            ch.write (0x0b, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate | ((i % 2) == 0 ? ctrl::test : 0)));
+            ch.write (0x0b, static_cast<std::uint8_t> (resetWave | ctrl::gate | ((i % 2) == 0 ? ctrl::test : 0)));
     };
     const std::uint64_t first = 1000;
-    const std::uint64_t step = mode == 0 ? kTick : 0;
+    const std::uint64_t step = mode == 0 || mode == 2 ? kTick : 0;
     // the signal's own lines lie every lineHz; the analysis needs at least 20 bins between two of them
     // (the window's main lobe is +-7 bins)
     const double lineHz = 985248.0 / static_cast<double> (period);
     int n = 1 << 14;
     while (rc.internalRate / n > lineHz / 20.0)
         n <<= 1;
-    // mode 1 alternates set (at the tick) and clear (300 cycles later): two writes per tick
-    if (mode == 1)
+    // mode 1 alternates set (at the tick) and clear (300 cycles later): two writes per tick; mode 3 (a noise
+    // combination after noise): every other tick a test-bit reset (set, cleared 300 cycles later, noise), at
+    // the tick between the switch to the combination (its output from the noise register's bits, until the
+    // write-back has cleared them)
+    if (mode == 1 || mode == 3)
     {
         std::vector<float> y;
         const int total = kWarmup + n;
         y.assign (static_cast<std::size_t> (total), 0.0f);
         int done = 0;
-        auto at = [&] (std::uint64_t i) { return first + (i / 2) * kTick + ((i % 2) == 0 ? 0u : 300u); };
+        auto at = [&] (std::uint64_t i) {
+            if (mode == 1)
+                return first + (i / 2) * kTick + ((i % 2) == 0 ? 0u : 300u);
+            return first + (i / 3) * 2 * kTick + ((i % 3) == 0 ? 0u : (i % 3) == 1 ? 300u : kTick);
+        };
+        auto write3 = [&] (Chip& ch, std::uint64_t i) {
+            const std::uint8_t v = (i % 3) == 0 ? static_cast<std::uint8_t> (ctrl::noise | ctrl::test) : (i % 3) == 1 ? ctrl::noise : noiseWave;
+            ch.write (0x0b, static_cast<std::uint8_t> (v | ctrl::gate));
+        };
         while (done < total)
         {
             done += c.renderUntil (y.data() + done, total - done, at (index));
             if (c.cycle() == at (index))
-                write (c, index++);
+            {
+                if (mode == 1)
+                    write (c, index++);
+                else
+                    write3 (c, index++);
+            }
         }
         y.erase (y.begin(), y.begin() + kWarmup);
         auto r = offGridAlias (windowedMagnitudes (y), rc.internalRate, rc.band, lineHz, 8.0);
@@ -282,23 +303,34 @@ AliasResult measureWrites (Model m, int mode, double hz, const RateConfig& rc)
 
 TEST_CASE ("render: alias budget, write discontinuities every tick (<= -90 dB to 2 kHz)", "[render][alias][writes]")
 {
+    // modes (measureWrites): 0 waveform switch, 1 test-bit reset, 2 a pulse deselected (its held output
+    // fading, on the long kernel), 3 a noise combination after noise (per-cycle output, on the short kernel)
+    struct Row
+    {
+        int mode;
+        std::uint8_t noiseWave;
+        const char* name;
+    };
+    const Row rows[] { { 0, 0, "waveform switch" }, { 1, 0, "test-bit reset" }, { 2, 0, "pulse deselected (fade)" },
+                       { 3, 0xa0, "noise+saw after noise" }, { 3, 0xc0, "noise+pulse after noise" }, { 3, 0xf0, "noise+tri+saw+pulse after noise" } };
     for (const Model m : { Model::B, Model::A })
-        for (const int mode : { 0, 1 })
+        for (const auto& row : rows)
         {
             double worst = -300.0;
             for (const auto& rc : rateConfigs())
                 for (const double hz : { 110.0, 1000.0, 2000.0 })
                 {
-                    const auto a = measureWrites (m, mode, hz, rc);
-                    INFO ((m == Model::A ? "Model A" : "Model B") << (mode == 0 ? ", waveform switch" : ", test-bit reset") << ", " << rc.internalRate
-                                                                << " Hz internal, " << hz << " Hz: worst " << a.worstDb << " dB at " << a.worstHz << " Hz");
+                    if (row.mode >= 2 && hz < 999.0)
+                        continue; // the frequency hardly matters to these: one per rate
+                    const auto a = measureWrites (m, row.mode, hz, rc, row.noiseWave);
+                    INFO ((m == Model::A ? "Model A, " : "Model B, ") << row.name << ", " << rc.internalRate << " Hz internal, " << hz << " Hz: worst " << a.worstDb
+                                                                       << " dB at " << a.worstHz << " Hz");
                     CHECK (a.worstDb <= -90.0);
                     CHECK (a.worstDb > -299.0); // something was measured: bins exist between the lines
                     CHECK (a.corrections == 0);
                     worst = std::max (worst, a.worstDb);
                 }
-            WARN ((m == Model::A ? "Model A" : "Model B") << (mode == 0 ? " waveform switch every tick" : " test-bit reset every tick")
-                                                        << ": worst alias over all rates " << fmt (worst) << " dB");
+            WARN ((m == Model::A ? "Model A " : "Model B ") << row.name << " every tick: worst alias over all rates " << fmt (worst) << " dB");
         }
 }
 
@@ -642,102 +674,44 @@ TEST_CASE ("render: alias report per budget row and internal rate", "[.render-re
             }
 }
 
-namespace
+TEST_CASE ("render: a free-running Model B saw is the ramp minus the short kernel's steps at its wraps, kLatencySamples late", "[render][kernel]")
 {
-/** The patches of the shift test: random schedules on both models whose waveforms never use the long
-    kernel (no pulse, no combined waveform: a pulse bit is dropped, a combination keeps its saw or its
-    triangle; noise combinations stay, they render per cycle on the short kernel). */
-std::vector<float> shiftPatch (Model m)
-{
-    bst::Rng r (m == Model::A ? 4242 : 4243);
-    auto sched = randomSchedule (r, 60000, 260);
-    auto strip = [] (std::uint8_t v) {
-        if ((v & ctrl::noise) == 0)
-        {
-            v = static_cast<std::uint8_t> (v & ~ctrl::pulse);
-            if ((v & ctrl::triangle) != 0 && (v & ctrl::saw) != 0)
-                v = static_cast<std::uint8_t> (v & ~ctrl::triangle);
-        }
-        return v;
+    // Built independently of the renderer: the continuous ramp of the digital phase (no converter terms on
+    // Model B), minus one band-limited unit step (Chip::ShortBlep, integrated) at each wrap's exact time,
+    // delayed by kLatencySamples. Complements "[timing]" (steps at writes): this covers the steps the line
+    // itself makes (wraps inside samples at every sub-sample position), on the short kernel.
+    const auto& T = vs::bside::chip::render::tablesFor (Model::B, vs::bside::chip::ShapeSet::fitted);
+    const auto& blep = Chip::ShortBlep::get();
+    auto blepCum = [&] (double x) {
+        if (x <= -8.0)
+            return 0.0;
+        if (x > 8.0)
+            return 1.0;
+        const int j = static_cast<int> (std::ceil (x)) - 1;
+        return static_cast<double> (blep.step (j, static_cast<float> (x - j))) + (j >= 0 ? 1.0 : 0.0);
     };
-    for (auto& c : sched)
-    {
-        if (c.kind == 0 && c.reg % 7 == 4)
-            c.value = strip (c.value);
-        if (c.kind == 1)
-            c.in.control = strip (c.in.control);
-    }
-    Chip c = makeChip (m, 96000.0);
-    return renderSchedule (c, sched, sched.back().cycle + 3000, 97);
-}
-} // namespace
-
-// Generator (hidden): writes the shift test's golden (the renderer before the long kernel) to $BS_GOLDEN_OUT.
-TEST_CASE ("render: dump the shift golden", "[.render-golden-dump]")
-{
-    const char* path = std::getenv ("BS_GOLDEN_OUT");
-    REQUIRE (path != nullptr);
-    std::FILE* f = std::fopen (path, "w");
-    REQUIRE (f != nullptr);
-    for (const Model m : { Model::B, Model::A })
-    {
-        const auto y = shiftPatch (m);
-        std::fprintf (f, "%s %zu\n", m == Model::A ? "A" : "B", y.size());
-        for (const float v : y)
+    for (const double rate : { 96000.0, 192000.0 })
+        for (const double hz : { 1234.5, 4567.8 })
         {
-            std::uint32_t bits = 0;
-            std::memcpy (&bits, &v, 4);
-            std::fprintf (f, "%08x\n", bits);
+            Chip c = makeChip (Model::B, rate);
+            setOsc (c, 0, std::floor (hz * 16777216.0 / 985248.0) + 0.37, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+            const double phi0 = static_cast<double> (c.phase (0)) / 72057594037927936.0;
+            const double slope = static_cast<double> (c.increment (0)) / 72057594037927936.0; // periods per cycle
+            const double cps = cyclesPerSample (c);
+            const auto y = renderSamples (c, 12000);
+            const double scale = static_cast<double> (T.dac.g) * 4096.0;
+            double worst = 0.0;
+            for (int i = 4000; i < 12000; ++i)
+            {
+                const double t = (i - Chip::kLatencySamples) * cps; // the start of internal sample i - latency
+                const double ramp = phi0 + slope * t;
+                double steps = std::floor (phi0 + slope * (t - 9.0 * cps)); // wraps long passed
+                for (double k = steps + 1.0; k <= std::floor (phi0 + slope * (t + 9.0 * cps)) + 0.5; k += 1.0)
+                    steps += blepCum (static_cast<double> (i) - ((k - phi0) / slope / cps + Chip::kLatencySamples));
+                const double model = (scale * (ramp - steps) - static_cast<double> (T.dac.center)) * static_cast<double> (T.envelope[255]);
+                worst = std::max (worst, std::abs (static_cast<double> (y[static_cast<std::size_t> (i)]) - model));
+            }
+            INFO (rate << " Hz, saw " << hz << " Hz: largest difference " << worst);
+            CHECK (worst < 1.0e-6); // float rounding (measured 3e-8)
         }
-    }
-    std::fclose (f);
-}
-
-TEST_CASE ("render: steps on the short kernel come out as before, only delayed to the long kernel's latency", "[render][shift]")
-{
-    // tests/bside/render/shift-golden.txt is the output of this renderer with every step on the short
-    // kernel (the long one switched off while the golden was made; "[.render-golden-dump]"), on patches that
-    // never use the long kernel (shiftPatch: no pulse, no combined waveform). Today's output must be that
-    // output delayed by kLatencySamples - 8 samples (0: both kernels have 8 zero crossings): bit for bit with
-    // the compiler that made the golden (Apple Clang); other compilers may contract floating-point
-    // expressions differently, so elsewhere it must agree within float rounding. Pulse and combined
-    // waveforms use the long kernel and are not covered by this golden (their own alias and timing tests).
-    std::FILE* f = std::fopen (BS_RENDER_DIR "/shift-golden.txt", "r");
-    REQUIRE (f != nullptr);
-    constexpr int shift = Chip::kLatencySamples - 8;
-    for (const Model m : { Model::B, Model::A })
-    {
-        char name = 0;
-        std::size_t count = 0;
-        REQUIRE (std::fscanf (f, " %c %zu", &name, &count) == 2);
-        REQUIRE (name == (m == Model::A ? 'A' : 'B'));
-        std::vector<float> old (count);
-        for (auto& v : old)
-        {
-            unsigned bits = 0;
-            REQUIRE (std::fscanf (f, " %x", &bits) == 1);
-            const auto b32 = static_cast<std::uint32_t> (bits);
-            std::memcpy (&v, &b32, 4);
-        }
-        const auto now = shiftPatch (m);
-        REQUIRE (now.size() == old.size());
-        double worst = 0.0;
-        std::size_t differing = 0;
-        for (std::size_t i = 0; i + shift < now.size(); ++i)
-        {
-            const double d = std::abs (static_cast<double> (now[i + shift]) - static_cast<double> (old[i]));
-            worst = std::max (worst, d);
-            differing += d > 0.0 ? 1u : 0u;
-        }
-        for (std::size_t i = 0; i < static_cast<std::size_t> (shift); ++i)
-            CHECK (! (std::abs (now[i]) > 0.0f)); // the longer pre-roll is silent
-        WARN ((m == Model::A ? "Model A (no table)" : "Model B") << ": " << now.size() - shift << " samples compared after a shift of " << shift
-                                                                  << ": " << differing << " differ, worst " << worst);
-#if defined(__APPLE__) && defined(__clang__)
-        CHECK (differing == 0);
-#else
-        CHECK (worst < 1.0e-6);
-#endif
-    }
-    std::fclose (f);
 }

@@ -21,7 +21,7 @@ namespace vs::dsp
 
     One table per (zero crossings, Kaiser beta in tenths): `BlepTable` is the instance Vintage uses (8 zero
     crossings, beta 8.0, float, unchanged); an instrument that needs more stop-band attenuation or precision
-    instantiates another one (B-Side: beta 11 in double precision for pulse edges and combined waveforms,
+    instantiates another one (B-Side: beta 12 in double precision for pulse edges and combined waveforms,
     docs/decisions.md S2b-2); a longer one delays its output by its own kZeroCrossings.
 */
 template <int ZeroCrossings, int KaiserBetaTenths, class Sample = float>
