@@ -105,6 +105,14 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
   owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
+- **M7b–M7e (all editor pages) are merged to `main`** (owner tried them and approved,
+  2026-11-15; the Play page keys play notes at the owner's request): Envelopes and LFO (pictures from the real envelope and LFO code), Play
+  (keyboard strip whose keys play notes) and Effects (pictures, on/off switches), Arp + Seq (step grid, pattern cards,
+  preview computed by the real arpeggiator; small audio-thread additions for the playing step and
+  held-key order, audio byte-identical), Browser (grid, categories, search, tone loading) and the
+  program menu on the program name. Each page reviewed independently and fixed; the placeholder
+  page is removed; time parameters now print whole milliseconds ("45 ms"). **Next:** M7f (polish:
+  accessibility of chips and grid, Slider and SegmentedSwitch paint allocations, final colours).
 - **M7a (editor foundation) is merged to `main`** (owner tried it and approved, 2026-11-14): the
   custom editor frame (page rail, part switch with tint, preset bar, output meter and limiter
   popover, help line and bubbles, 75–200 % scaling), the Sound page with live pictures, placeholder
@@ -115,8 +123,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   approves before code); clicking the preset name must open a list of the programs, grouped by
   purpose (Horns, Keys, Leads, Noise, Radical, Strings, ...). **Next:** that redesign, then
   M7b–M7e; only the page list in `VintageEditor::buildPages` is a serial edit.
-- **B-Side S2a (chip digital core) is ready on `bside/s2a-digital-core`, awaiting the owner's merge
-  approval:** `source/bside/chip/` follows the per-cycle specification (8.15); every committed
+- **B-Side S2a (chip digital core) is merged to `main`** (PR #24, owner approved 2026-11-15):
+  `source/bside/chip/` follows the per-cycle specification (8.15); every committed
   trace replays without a mismatch (`bside_trace`; fields that depend on a combined-waveform
   table are exempt until S2b, counted per trace), and eight real tunes replay exactly
   (developer-only, outside the repository). An independent model written from the contract alone
@@ -189,6 +197,9 @@ None right now. When a new one comes up, list it here; once decided, move it to 
      `if constexpr` on MSVC), short JSON escapes for control characters (2026-11-14).
   10. Reference data: `bside_trace`, `SpecAnalysis`, `AnalogMeasure`, byte-exact reference files
       (`.gitattributes`, no line-ending conversion on Windows) (2026-11-14).
+  11. M7b–M7e: the editor pages, `PresetActions`, new `PresetManager` accessors, the feed's
+      held-key order, the editor → audio note queue (`UiNotes`); the zero-allocation paint tests
+      run on macOS only (2026-11-15).
   12. S2a: the chip digital core and its tests (JUCE-free; 64-bit arithmetic and bit fields
       that MSVC has never compiled) (2026-11-15).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
@@ -220,7 +231,7 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 ```
 source/common/    shared by all instruments; must not include anything from source/vintage/ or source/bside/
   dsp/            FastMath, DspUtil, BlepTable (JUCE-free)
-  engine/         NoteEvent, EventParser, VoiceAllocator, KeyRouter, PartMixer, UiFeed (audio → editor)
+  engine/         NoteEvent, EventParser, VoiceAllocator, KeyRouter, PartMixer, UiFeed (audio → editor), UiNotes (editor → audio notes)
                   (JUCE-free), Oversampler
   fx/             Chorus, Delay, Reverb, SoftLimiter (JUCE-free)
   seq/            arpeggiator and step sequencer (JUCE-free)
@@ -234,7 +245,8 @@ source/common/    shared by all instruments; must not include anything from sour
                   stage, bypass, programs, state), InstrumentEditor (preset bar + generic editor),
                   EditorState (JUCE-free; saved as the `UiState` child of a session)
 source/vintage/   this instrument: PluginProcessor.* (VintageSynthProcessor : shell::BiTimbralProcessor),
-                  ui/ (VintageEditor, PageList, SoundPage, PlaceholderPage; one file pair per page)
+                  ui/ (VintageEditor, PageList and one file pair per page: Sound, Envelopes, Lfo, Play,
+                  ArpSeq, Effects, Browser)
   dsp/            Oscillator, Filters, Envelope, Lfo, Drift (JUCE-free)
   engine/         Voice, Part, Modulation (shared per-part modulation), OscPath (the oscillator
                   path shared by Voice and the editor's oscilloscope)

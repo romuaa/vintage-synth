@@ -1,0 +1,15 @@
+editor 0 0 2040 1176 scale 1.5000
+arpseq.page 112 48 1248 712
+  1 Pick a pattern 0 124 616 264
+    arp.pattern 12 36 592 124
+    arp.octaves 12 176 270 54
+  2 Set speed and feel 628 124 620 264
+    arp.rate 12 36 596 48
+    arp.gate 12 100 284 44
+    arp.swing 324 100 284 44
+    arp.tempo 12 164 284 44
+    arp.hold 324 172 220 32
+  3 Preview: what will play (example chord C E G) 0 400 1248 312
+    Arpeggiator preview 12 36 1224 264
+  arp.mode 12 14 780 74
+  arp.target 816 30 420 44

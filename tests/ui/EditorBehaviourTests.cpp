@@ -9,6 +9,7 @@
 
 #include "EditorRig.h"
 
+#include <set>
 #include <thread>
 
 using namespace vs;
@@ -77,6 +78,8 @@ TEST_CASE ("Repaint scope: one automated parameter repaints only its own control
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
     EditorRig rig;
     auto& mirror = rig.editor->getMirror();
+    rig.editor->setSizePercent (100); // repaint areas are in editor pixels, the page area in logical ones
+    rig.editor->setVisible (true);    // an invisible component forwards no repaint request to its cached image
     auto* recorder = new RepaintRecorder();
     rig.editor->setCachedComponentImage (recorder); // owned by the editor
     const auto page = rig.editor->getFrame().pageArea();
@@ -85,27 +88,39 @@ TEST_CASE ("Repaint scope: one automated parameter repaints only its own control
     {
         rig.editor->selectPage (0, part);
         rig.tick();
+        std::set<juce::String> shown; // parameters with a control on the Sound page of this part
+        for (const auto& e : rig.editor->getRegistry().entries())
+            if (e.placement == ui::Placement::Primary && e.page == "sound" && e.part == part)
+                shown.insert (e.paramId);
         for (int i = 0; i < mirror.size(); ++i)
         {
             auto& p = mirror.parameter (i);
+            rig.tick (3000.0); // earlier markers have faded: only this change repaints
             hostWrite (p, p.getValue() > 0.5f ? 0.1f : 0.9f);
             recorder->clear();
             rig.tick();
             INFO ("part " << part << ": " << p.paramID);
             CHECK (recorder->all == 0);
-            long long total = 0;
+            if (shown.count (p.paramID) > 0)
+                CHECK (! recorder->areas.empty()); // a control that is on screen does repaint
+            juce::RectangleList<int> repainted; // the union: overlapping requests count once
             for (const auto& a : recorder->areas)
             {
                 CHECK (a.getWidth() * a.getHeight() < pageArea / 3); // the filter graph is the largest
-                total += static_cast<long long> (a.getWidth()) * a.getHeight();
+                repainted.add (a);
             }
+            long long total = 0;
+            for (const auto& r : repainted)
+                total += static_cast<long long> (r.getWidth()) * r.getHeight();
             CHECK (total < pageArea / 2);
         }
     }
     // Cross mod repaints its slider and the small caption only.
+    rig.tick (3000.0);
     hostWrite (rig.param ("upper.vco1.cross_mod"), 0.0f);
     recorder->clear();
     rig.tick();
+    CHECK (! recorder->areas.empty());
     for (const auto& a : recorder->areas)
         CHECK (a.getHeight() <= 160);
     rig.editor->setCachedComponentImage (nullptr);
@@ -299,7 +314,9 @@ TEST_CASE ("The AUTO badge never overlaps the label or the value, on every slide
             CHECK (s->getLocalBounds().toFloat().contains (badge));
             ++checked;
         }
-    CHECK (checked > 100);
+    // Counted: the horizontal sliders wide enough for the AUTO badge, on every page (55 with all seven pages built).
+    // Step bars, graph handles and switches are not sliders. Set the bound just under the real count.
+    CHECK (checked > 54);
 }
 
 TEST_CASE ("High-pass handle: moves for every value change over its whole range and stays inside the graph", "[ui][editor][graphs]")

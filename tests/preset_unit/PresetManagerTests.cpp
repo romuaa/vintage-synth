@@ -1764,17 +1764,21 @@ TEST_CASE ("Menu results after the bar is gone, or a dismissed menu, do nothing"
     std::unique_ptr<juce::AudioProcessorEditor> editor (rig.proc.createEditor());
     auto* ed = dynamic_cast<VintageSynthEditor*> (editor.get());
     REQUIRE (ed != nullptr);
-    juce::Component::SafePointer<PresetBar> bar (const_cast<PresetBar*> (&ed->getBar()));
+    // The menus call back through these functions with a weak reference to the bar's PresetActions.
+    juce::WeakReference<PresetActions> bar (&const_cast<PresetBar&> (ed->getBar()).getActions());
+    REQUIRE (bar != nullptr);
     // Dismissed (0) while open: nothing.
-    PresetBar::handleLoadMenuResult (bar, 0);
-    PresetBar::handleSaveMenuResult (bar, 0);
+    PresetActions::handleLoadMenuResult (bar, 0);
+    PresetActions::handleSaveMenuResult (bar, 0);
+    PresetActions::handleSaveAsMenuResult (bar, 0);
     // The editor closes while a menu is open; JUCE then calls back with 0 (or anything): nothing.
     editor.reset();
     CHECK (bar == nullptr);
-    for (int choice : { 0, 1, 2, 3, 10, 11 })
+    for (int choice : { 0, 1, 2, 3, 10, 11, 100, 105 })
     {
-        PresetBar::handleLoadMenuResult (bar, choice);
-        PresetBar::handleSaveMenuResult (bar, choice);
+        PresetActions::handleLoadMenuResult (bar, choice);
+        PresetActions::handleSaveMenuResult (bar, choice);
+        PresetActions::handleSaveAsMenuResult (bar, choice);
     }
     CHECK (sameValues (rig.raw(), before));
     CHECK (rig.presets().currentIndex() == 2);

@@ -32,6 +32,7 @@ public:
     std::function<void()> onChange;
     void setAccent (juce::Colour c) { accentColour = c; repaint(); }
     void setMarkerAlpha (float a);
+    float getMarkerAlpha() const noexcept { return markerAlpha; }
     void cancelInteraction() { model.cancel(); }
     /** "1.28 kHz, VCF Resonance 5.5": the parameters' own text (screen readers, tests). */
     juce::String valueText() const;

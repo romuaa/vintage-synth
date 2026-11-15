@@ -153,6 +153,104 @@ where a row here is worded differently.
 - Consequence the owner should know: on Model A, hard sync from an oscillator that plays a
   combined waveform may fire at different moments than in the reference, as far as our fitted
   shape differs from it. If that turns out audible on real tunes, the remedy is "follow fully".
+## Play page keys play notes (owner request, 2026-11-15; details review)
+- **Owner:** clicking the keys on the Play page must play. Contract 9.3.4 "Playing the keys".
+- **(review) The split marker moves only by its pill** (drag, arrows, wheel, double-click); a press
+  on the keys plays and no longer sets the split. This replaces "a press or drag anywhere on the
+  strip sets the split key" below.
+- **(review) Velocity from the vertical position** in the key (top 40, bottom 127); dragging glides
+  one note at a time; dragging off the keys releases the note.
+- **(review) Bypass ignores the editor's keys** like the host's MIDI. An editor note and a host note
+  of the same pitch share one key: the first release ends it (as with merged MIDI).
+- **One queue for ons and offs with reserved room for every off** (`UiNotes`), after the review
+  showed that a separate path for offs cannot keep its order with the ons. At most 32 notes on.
+
+## M7c results: Play and Effects pages (2026-11-14, all review)
+- **Keyboard strip.** Six octaves C to C (73 keys), default C1 to C7; the window shifts by whole
+  octaves so the split key keeps an octave of room (`KeyboardGeometry::windowFor`), but never while
+  the strip's own drag is running (the keys must not slide under the pointer). A press or drag
+  anywhere on the strip sets the split key (black keys win where the pointer is over their upper
+  part); Whole shows the Upper bar as "not played in Whole", Dual two stacked bars, Split two bars
+  that meet at the marker. Held keys are filled dots, sounding notes rings; with both parts on one
+  key (Dual) Lower stands left and Upper right, so a part is never a colour alone.
+- **Delay picture.** Echo n is `feedback^(n-1)` as loud as the first (the engine writes input +
+  feedback x output into the line, `Delay.h`), not `feedback^n` as the 9.4 row reads: the test
+  compares the picture with the real delay. The time axis is **logarithmic in (t + 10 ms)**, 0 to
+  6 s, the reverb picture's kind of axis (linear crowds short delays, plain logarithmic cannot show
+  0, the square root crowded a 10 ms delay into a few pixels): echoes of a 10 ms delay stay 8 px
+  apart on a 300 px axis, a 2 s delay's second echo at 4 s is inside. The handle stands on top of the
+  **second** echo: x moves the time (the pointer and the handle move together exactly; tested), y the
+  repeats (the second echo's height *is* the feedback gain; 0.95 x the lane height is the full
+  range). In ping-pong the handle moves to the right lane. The time is written above a bracket
+  from the input to the first echo.
+- **Reverb picture.** The tail starts after the pre-delay and falls 60 dB over the decay time, so
+  the RT60 point is at pre-delay + decay (the engine's `decaySeconds` counts from the tail's start).
+  The time axis is logarithmic in (t + 10 ms), 0 to 30 s. The decay handle's x is the end of the
+  tail minus the live pre-delay.
+- **Chorus picture.** Not a waveform but the delay of the two taps over four seconds (centre
+  +- depth x the block's own rounded-triangle LFO at the mode's rate): it shows what the effect
+  does and is checked against the real chorus.
+- **Power switches** are secondary bindings of the level; "Delay - OFF" in the header, the picture
+  grey and the other controls dimmed while the level is 0. The switch acts on the live level, so a
+  host write between two ticks is respected. Delay and reverb open **off** in a new program (their
+  default level is 0), which is what the page shows.
+- **Paint allocations (9.5).** Measured through a no-op graphics context (`tests/ui/NullGraphicsContext.h`,
+  reusable by other pages), so renderer allocations vanish and what is counted is our own paint code:
+  0 for every new component, in every state, stable over repeated paints. Strings, paths and fonts
+  are prepared on change (`PaintFonts` keeps the few font sizes a component draws with, because
+  `Theme::font` builds a Font, one allocation, per call). The library's Slider (2 per paint),
+  SegmentedSwitch (3) and Panel (header Path) still allocate; reported, not asserted (M7a code).
+- **Power switch** remembers the last audible level (`EditorState::fxLastLevel`) whenever the
+  mirror sees a level above 0, from any source, and when the editor opens; Off then On returns to it.
+- **Time text** (shared change, both plugins): milliseconds from 9.95 ms are whole numbers, below
+  one decimal; seconds two decimals (`juce::String (float, 0)` printed "44.7214 ms").
+## M7d results: Arp + Seq page (2026-11-14)
+
+| Decision | Why |
+|---|---|
+| **The preview runs the engine's own `seq::ArpSeq` offline** (`models/ArpPreviewModel.h`) with the settings from `ArpParamBinding::read`; the test compares it note for note with what the real processor delivers to the part. The Arpeggiator view previews with the mode forced to Arp, so it is meaningful while the mode is Off or Sequencer. | The contract (9.4): the picture cannot disagree with the sound, and there is no second implementation of the pattern logic. |
+| **The feed now carries `seqStep` and the held-key order** (the `ArpSeq` accessors `lastSeqStep()` and `keys()`); `stepCount` stays 0 (nothing reads it). `seqStep` is −1 unless the mode is Sequencer and a pattern plays. | Only what the page needs; one counter less in the audio thread. |
+| **The preview plays held keys at velocity 0.8** (the feed carries key order, not velocities), like the example chord. (review) | Velocity only shades the bars; it does not change which notes play or when. |
+| **Hold sits in the "Timing and feel" panel in both views** (the contract's table), not in the pattern panel as in the Arp wireframe. | One panel, one place for it; the table is the specification. |
+| **Pitch bars are orange and velocity bars teal, as in the Seq wireframe;** the legend under the grid says so. The Plays-through switch shows Lower and Upper in their part colours. | The wireframe's reading aid; the part colours keep their meaning on the one switch that names parts. |
+| **When both parts play the arpeggio (Dual, Both) each note in the preview is split in two halves, Lower above Upper.** | Two identical bars on top of each other would hide one part. |
+| **The pattern cards and the large mode switch use new additive hooks of `SegmentedSwitch`** (`setSegmentPainter`, `setLargeStyle`); with no painter nothing changes. | The contract asks for icon cards and a 22 px mode switch; one control type stays one class. |
+| **Paint allocations (9.5 "at most 8 per component") cannot be met with JUCE's CoreGraphics context:** a bar that only fills rectangles costs 34 to 72 allocations inside the renderer. The test checks that every repeated paint costs exactly the same (our code allocates nothing: strings and paths are prepared when a value changes), within 96 per leaf component. (review) | The number in 9.5 was an estimate; what protects the audio and the user is "nothing of ours allocates and the cost does not grow". |
+## M7b results: Envelopes and LFO pages (2026-11-14)
+
+| Decision | Why |
+|---|---|
+| **The Envelopes page follows the wireframe: "what it does" sits under a divider inside each envelope's panel,** not as a third panel (the contract's table lists it as its own panel). The titles are the derived ones of 9.3.2. (review) | The wireframe is the owner-approved direction; the table groups parameters, not rectangles. |
+| **Envelope shape = the real RC curve of `dsp::Envelope`, run once per segment at 256 samples per segment** (the display rate that makes the segment's time 256 samples). As a fraction of its segment the curve does not depend on the time, only on the sustain, so the picture is cheap and exact; the handles sit on the segment ends (the decay end is 99 % of the way to the sustain, so up to 1 % of the level above the plateau handle). | 9.4. The test compares every segment end and the middle of long segments with an `Envelope` rendered at 48 kHz (0.5 %). |
+| **When Envelope 1 is Inverted the axis moves to the middle of the picture** (level range 1 … -1), the shape stays above it at half the height, and a faint mirrored ghost is drawn below. The handles follow. (review) | A true mirror needs the same height under the axis as above it; clipping the ghost or drawing it at another scale would misstate what the filter does. Envelope 2 has no inverted mode and never shows a ghost. |
+| **Time labels under the envelope handles are the parameters' own text, spread so they never overlap** (`spreadLabels`). | The slider values are one row below; the labels sit at the handles as 9.3.2 asks. |
+| **The LFO picture's point i is the value at time (i + 1) / 1000 of the window,** so the fade-in ends exactly on the delay handle and a whole cycle ends exactly on the cycle handle (tested). The preview runs at 1000 / window Hz with the engine's own `Lfo`, so the 1 ms edge smoother of the real LFO acts on square and saw edges only in the 0.5 s window. | The contract fixes 1000 points over the window; the offset makes handle and curve agree. |
+| **The LFO window is kept while a handle is dragged; a delay dragged past the window stops at its edge,** and the window is chosen again at mouse-up. | 9.3.3: the picture must not rescale under the pointer. |
+| **Pulse width controls dim (display only) when neither oscillator's waveform is Pulse** (9.3.9), with "(no effect in this mode)" in their accessibility description. | Contract. |
+| **`Panel::setText` repaints only the header strip** (shared change). | A title that follows a parameter (Envelope panels) must not repaint the panel's controls and pictures. |
+| **Review round 1 (orchestrator decisions): the LFO's delay reads "Delay until full strength";** the picture shows the handle on the fade-in's envelope line (a faint wedge from a non-draggable "starts" marker at half the delay to the handle) with "Full strength after 800 ms (drag)"; with no delay neither caption shows. Random and Noise are previewed after two cycles of pre-roll (the real LFO is free-running) and say "Example: different every time". | The engine is silent for the first half of the delay and reaches full strength at the delay time; the old words and a handle on the zero line did not say so. |
+| **LFO window rule:** windows 0.5 ... 50 s; the delay and the first whole cycle always inside (cycle end within 80 %, never clamped); the window is kept through a drag and after it while the delay handle is at most 90 % along and the cycle handle between 10 % and 90 % (the 10 % only where a smaller window exists), else chosen again at release. | Handles must not jump on release, and a handle must never sit at an edge it is not at. |
+| **During a drag the dragged parameters show the user's value** (the handle model's drag value) in both pictures; the host's contesting writes show the marker only; nothing is written at mouse-up (9.1.5). | Contract. |
+| **The contract's paint budget "≤ 8 allocations per component" cannot hold for any component that draws text:** the software renderer allocates about 35 times per `drawText` and 5-30 per path fill (measured). The tests assert that repeated paints cost the same and that nothing is built in `paint()` by construction (strings, paths and the stroked outlines are prepared on change). (review) | The budget needs a different measure (a count of our own calls) or a different number; left for M7f. |
+| **Parameter text of times is odd for non-round values** ("158.489 ms", "63.0957 ms": `juce::String (float, 0)` prints as many decimals as needed in `formatSeconds`, `ParamFactory.cpp`). Not changed here (shared display text, also shown by hosts); the sliders' value slot truncates it. (review) | Found while building the pages; a one-line fix to `formatSeconds` is for the orchestrator, because it changes what hosts display. |
+## M7e results: Browser, `PresetActions`, program menu (2026-11-14)
+
+| Decision | Why |
+|---|---|
+| **A fourth read accessor, `PresetManager::slotValue (slot, paramIndex)`,** returns the stored plain value of one parameter in a slot of the bank shown (NaN out of range). (review: contract 9.3.7 names three) | The contract asks the Browser to mark the Upper tone "(not heard in this program)" for a program in Whole mode, but `slotMeta` carries no sound data. A copy of one float under the existing lock is the smallest door. |
+| **The "(not heard)" mark is a note line under the tone-source switch** ("Upper tone: not heard in this program (Whole mode)"), shown while the selected program's `key.mode` is Whole, not text inside the segment. (review) | Segments have a fixed width (layout never depends on text metrics, 9.2.4); the caption would not fit. |
+| **`bankGeneration` also changes when a program is stored into or renamed in a user bank and when a session's bank is resolved**, not only when another bank is set. A rename or store of the current slot's name without a new generation is caught by comparing the 64 names when the manager broadcasts a change. | The grid must show what the bank holds; the generation was already the "stale lookup" guard, so storing and renaming now also invalidate an in-flight write of the same bank (the later write reports "The bank changed while it was being written"). |
+| **Choosing a bank in the bank chooser shows that bank in the grid; it loads the bank's first program only when the current sound is not modified** (as Load bank file does). A modified sound is kept. (review, round 1) | Switching to the factory bank must not discard unsaved edits without a word. Other user banks are reached with "Load bank file..." (which still loads A1). |
+| **Save (Browser) = store in the current slot when a user bank is shown and the sound is not detached; otherwise a "Save as" menu** (program file, a copy of the bank as a new user bank, and "Store in slot of this user bank" with the 64 slots and their names). The top bar keeps its Load and Save menus (now `PresetActions`) with the "Store in this slot" item, so B-Side's bar is unchanged. (review) | Contract 9.3.7. A copy of the factory bank is the way to get a user bank in which to store. Overwriting another slot shows that slot's name in the menu. |
+| **The program name in the shared preset bar is a button** (click, Enter or Space opens the program menu); the same bar is B-Side's, so B-Side gets the menu too, without "Open Browser". | One bar, no fork; the bar is the top bar's preset area until the custom top bar redesign (M7f). |
+| **The category chips are as wide as their text (64 to 150 px; longer names are cut in the middle with an ellipsis; the help line names the full category on hover) on two rows; when the bank has more categories than fit, the last place is "More..." with a menu of the rest.** (review) | A bank may have up to 64 distinct categories; chip width is fixed (no text metrics). The factory bank has 17. |
+| **Chip and stripe colours are `categoryColour (index mod 12)`, placeholder hues (HSV, S 0.55, V 0.85).** (review, M7f) | Final `cat.*` colours come with M7f. |
+| **Search and a category apply together (a cell must match both); search is case-insensitive for ASCII only.** | Simple, predictable; the contract's search row names substring match only. |
+| **The grid and the chips draw from prepared glyph runs (`common/ui/PreparedText.h`) and allocate nothing in `paint()`; there is no image cache. A change repaints only the cells involved.** Worst-case cache: the prepared text of 64 cells with 40-character names (about 0.1 MB; the test prints the figure). (round 1) | A whole-grid image would be about 32 MB at 200 % on a 2x display, over the 30 MB budget of 9.5. `GlyphArrangement::draw` and `drawText` allocate on every call, so text is laid out when the bank changes and handed to the graphics context directly. |
+| **The Vintage top bar's Save is the contract's Save** (`PresetBar::smartSave`, set by the Vintage editor): in place for a user bank slot, else the Save as menu. The second plugin's bar keeps its Save menu. The Vintage bar also has a compact layout (`setCompactLayout`): no Init button (it is on the Browser page), a short bank label, and the program name takes the rest (236 px at 100 %). (round 1) | Contract 9.3.7; a 20-character name must fit. |
+| **A menu choice that names a slot or an index is refused when the bank changed while the menu was open** (the menu captures `bankGeneration()`): "The bank changed; nothing was saved/loaded." (round 1) | The slot would be another program in another bank. |
+| **Open item for M7f: accessibility of the chip strip, the tone-source switch and the grid selection** (each is one component with its own keys; screen readers get the title and, for the grid, the selected program in the title only). | Not built in M7e. |
+| **Selection follows the current program (a host program change, `<`, `>`, the menu); clicking only selects.** | The grid then always shows where the sound came from; loading is explicit (double-click, Enter, Load program). |
 
 ## M7a results: editor foundation and Sound page (2026-11-14)
 

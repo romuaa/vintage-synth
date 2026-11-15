@@ -58,6 +58,7 @@ set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetFiles.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/FactoryBank.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/presets/PresetBar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/InstrumentEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/shell/ShellSupport.cpp
@@ -67,7 +68,15 @@ set(VS_COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/BoundComponent.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/Slider.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/SegmentedSwitch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/StepTypeToggle.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/StepGrid.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/PianoRollView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/GraphView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/KeyboardStrip.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/FxViews.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/controls/PowerSwitch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/EnvelopeView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/graphs/LfoView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/FrameParts.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/common/ui/frame/EditorFrame.cpp)
 set(VS_VINTAGE_SOURCES
@@ -79,7 +88,12 @@ set(VS_VINTAGE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/engine/Part.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/VintageEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/SoundPage.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/PlaceholderPage.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/PlayPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/EffectsPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/ArpSeqPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/EnvelopesPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/LfoPage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/vintage/ui/BrowserPage.cpp)
 set(VS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${VS_VINTAGE_SOURCES})
 
 target_sources(VintageSynth PRIVATE ${VS_PLUGIN_SOURCES})

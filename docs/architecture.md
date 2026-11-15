@@ -2002,7 +2002,7 @@ Time labels under the handles are the parameters' text.
 |---|---|---|---|---|
 | LFO | Waveform | `<p>.lfo.waveform` | segmented | |
 | | Rate | `<p>.lfo.rate` | slider | cycle handle x |
-| | Delay before it starts | `<p>.lfo.delay` | slider | delay handle x |
+| | Delay until full strength | `<p>.lfo.delay` | slider | delay handle x |
 | The pitch (vibrato) | Amount | `<p>.vcomod.lfo_mod` | slider | |
 | | Pitch goes to | `<p>.vcomod.target` | segmented | "Osc 1", "Both", "Osc 2"; note "also for the Envelope 1 pitch amount" |
 | The pulse width | Amount | `<p>.vcomod.pwm` | slider | |
@@ -2010,8 +2010,17 @@ Time labels under the handles are the parameters' text.
 | The filter (wah) | Amount | `<p>.vcf.lfo_mod` | slider | |
 | The volume (tremolo) | Amount | `<p>.vca.lfo_mod` | segmented | 0, 1, 2, 3 |
 
-`LfoView`: linear time axis; window = the smallest of 0.5, 1, 2, 5, 10, 20 s that holds the delay
-plus two cycles (20 s at most), chosen when not dragging and kept during a drag.
+`LfoView`: linear time axis; window = one of 0.5, 1, 2, 5, 10, 20, 50 s. Outside a drag the window
+always holds the delay and the first whole cycle, so no handle is ever clamped; the smallest window
+that holds the delay plus two cycles is preferred while the first cycle ends within 80 % of it. The
+window is kept during a drag, and after release as long as the delay handle is at most 90 % along
+and the cycle handle between 10 % and 90 %; otherwise it is chosen again at release (amended after
+the M7b review: handles jumped by up to 500 px at mouse-up).
+The engine is silent for the first half of the delay and then fades in linearly, reaching full
+strength at the delay time (`dsp::Lfo`): the picture shows a faint "starts" marker at delay / 2 and a
+fade wedge that ends at the delay handle, captioned "Full strength after ...". Random and Noise are
+previewed after two pre-roll cycles (the real LFO is free-running) with the caption "Example:
+different every time".
 | Handle | Drag x |
 |---|---|
 | Delay (end of the fade-in) | `lfo.delay` = `map::lfoDelayFromSec (t)`, 0–5 s |
@@ -2038,6 +2047,34 @@ The mod wheel's vibrato amount is on Play (`mod.wheel_vco`).
 key is always visible with one octave to spare. Whole: all keys Lower; Dual: two stacked bars over
 every key; Split: keys `< split_point` Lower, the rest Upper (the `KeyRouter` rule). Dots on keys
 from `UiFeed::part[p].held` (filled) and `.sounding` (ring).
+
+**Playing the keys (owner, 2026-11-15).** Pressing a key on the strip plays that note; the split
+marker moves only by its pill (drag, arrows, wheel, double-click), no longer by a press on the keys.
+- Press = note on; release = note off; dragging onto another key releases the old note and plays
+  the new one (one note at a time per mouse). Velocity follows the vertical position in the key:
+  top = 40, bottom = 127, linear, fixed for that note. A press outside the keys plays nothing.
+- The note is released when the mouse is released, the strip is hidden or destroyed (page change,
+  editor closed), the editor stops showing (checked by its timer), or `cancelInteraction()` runs; a
+  press ended that way plays nothing more until the next press. No note may hang.
+- Path (`common/engine/UiNotes.h`, JUCE-free, owned by the processor like `UiFeed`): a fixed-size
+  wait-free single-writer/single-reader queue of `{note, velocity}` (velocity 0 = off; capacity 64;
+  ons and offs travel in the one queue, in order; a note on is accepted only while the queue has
+  room for it and for the off of every note then on, so an off always fits behind its own on and
+  can neither be lost nor overtake a later on; a note on that does not fit is dropped and its off
+  is then never sent; at most 32 notes can be on at once). Dragging off the keys
+  releases the note until the pointer is on a key again. In bypassed blocks the editor's notes are
+  drained and dropped, like the host's MIDI. The message thread writes; the audio thread drains it at the start
+  of every block (bypassed blocks too) and adds the notes as channel-1 note messages at offset 0 to
+  the same event list as the host's MIDI, before that block's host events. From there they are
+  ordinary notes: key mode, split, arp/seq, hold pedal and the `held`/`sounding` dots apply.
+- `prepareToPlay` and `reset` empty the queue and release every editor-held note. With an empty
+  queue the block is bit-identical to before (render regression unchanged); the drain costs one
+  acquire load. No allocation, lock or system call on either side.
+- Tests (9.6): press, drag across three keys and release produce exactly the expected on/off
+  sequence in the processor's output (a sounding block, then silence after the release tail); the
+  velocity rule; hiding the page mid-press sends the off; a 1000-press burst with a stalled audio
+  thread leaves no note sounding once it drains; the split pill still works and a press on the keys
+  no longer moves the split.
 
 #### 9.3.5 Arp + Seq (global page; 58)
 | Panel | Label | ID | Control | Captions / graph |
@@ -2103,6 +2140,9 @@ grey. Chorus needs no switch (its mode has Off).
 | Save | user bank and a slot: `storeInBank (currentIndex)`; factory bank or detached: opens "Save as…" (program file or a user bank slot) | existing |
 | Tone files | "Save tone…" / "Load tone file…" for the edited part | existing `saveToneFile` / `loadToneFile` |
 - The top bar's `<` `>`, name and Save are the same flows on every page.
+- As built in M7e: a fourth accessor `float slotValue (int slot, int paramIndex) const` (copy of one
+  stored value, any thread) serves the "(not heard in this program)" mark; choosing a bank in the
+  chooser shows it and loads its first program only when the current program is not modified.
 - `PresetActions` takes over `PresetBar`'s menus and async file choosers unchanged; `PresetBar` calls
   it and keeps its tests (it is still B-Side's bar until S6).
 
@@ -2113,6 +2153,11 @@ grey. Chorus needs no switch (its mode has Off).
 | Limiter Off / On | `master.limiter` | segmented, in the output popover (the LIMIT chip shows the state and opens the popover; it writes nothing) |
 | Ceiling | `master.limiter.ceiling` | slider in the output popover; inactive while the limiter is Off |
 
+- **Top bar as built in M7e (Vintage):** `<` `>`, slot, bank name, the program name button (236 px
+  at 100 %: a 20-character name fits), Load..., Save. There is no Init button in the Vintage top bar
+  (Init is on the Browser page); B-Side's bar keeps its buttons. Save is the Browser's Save (9.3.7).
+  A menu choice that names a slot is refused with a message when `bankGeneration()` changed while
+  the menu was open.
 - **Program menu (owner, 2026-11-14; built in M7e):** clicking the program name in the top bar
   opens a menu of the current bank's 64 programs, grouped by `category` in order of first
   appearance (empty → "Uncategorised"), one submenu per category when the bank has more than one
@@ -2172,7 +2217,7 @@ by the engine's own JUCE-free code with the parameters' own mappings.
 | Envelope shapes | `dsp::Envelope` run per segment at a display rate of 256 samples per segment, sustain from the parameter | the four times via `map::envTimeSec` | the drawn level at each segment end equals an `Envelope` rendered at 48 kHz at the same instants (± 0.5 %) |
 | LFO waveform | `dsp::Lfo` (fixed preview seed) at 1000 points over the window, `trigger()` at 0 | `map::lfoRateHz`, `map::lfoDelaySec`, waveform | drawn points equal a direct `Lfo` run |
 | Arp preview | two `seq::ArpSeq` instances (one per target part) run offline: settings from `ArpParamBinding::read`, transport playing at 120 bpm from ppq 0, 48 kHz, the preview notes as note-ons at offset 0, chunks of 4096 into a preallocated output (`kRecommendedCapacity`) | every `arp.*`/`seq.*` parameter; held order from the feed | the preview's notes, step positions and lengths equal the events the **processor** delivers to the part for the same chord and settings (rendered offline) |
-| Delay picture | echoes at `n × map::delayTimeSec`, heights `map::delayFeedback^n`, alternating L/R with ping-pong | delay parameters | value checks |
+| Delay picture | echoes at `n × map::delayTimeSec`, heights `map::delayFeedback^(n−1)` (the first echo has the height of the input; as the engine), alternating L/R with ping-pong | delay parameters | value checks |
 | Reverb picture | pre-delay gap `map::reverbPreDelaySec`, then a −60 dB line at `map::reverbDecaySec` | reverb parameters | value checks |
 | Live cutoff marker (U4) | `UiFeed::part[p].liveCutoffLog2` drawn on the frequency axis | feed | marker equals the stored value |
 
@@ -2187,7 +2232,7 @@ by the engine's own JUCE-free code with the parameters' own mappings.
 | Editor open | ≤ 250 ms to first paint | UI bench |
 | Memory per open editor | ≤ 30 MB (grid caches) | manual |
 | Audio thread | feed only (9.1.4): `voice_bench`/`fx_bench` ±1 %, no allocation (existing `processBlock` allocation test) | existing gates |
-| Paint | our code allocates nothing in `paint()`: strings, paths and preview data are prepared on value change; a repeated paint with unchanged values makes the same small number of (renderer-internal) allocations every time, ≤ 8 per component | allocation test with `tests/seq_unit/AllocationCounter.h` |
+| Paint | our code allocates nothing in `paint()`: strings, paths and preview data are prepared on value change; painted through a no-op graphics context (so renderer-internal allocations do not count) our paint code makes a fixed number of allocations per page, 0 wherever no text is laid out in paint, and the same for every repeated paint (amended after the M7b–M7e reviews: the software renderer alone allocates hundreds of times per component, so "≤ 8 per component" could not be measured) | allocation test with `tests/seq_unit/AllocationCounter.h` |
 | Open/close | 200 editor open/close cycles: no leak (JUCE leak detector in debug, ASan on Linux), no growth of processor-side state | test |
 | Multiple instances | no static mutable state in `common/ui` except an immutable shared font holder (`juce::SharedResourcePointer`); two processors with two open editors stay independent | test |
 

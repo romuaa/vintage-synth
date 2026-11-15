@@ -1,0 +1,43 @@
+editor 0 0 2040 1176 scale 1.5000
+Editor 0 0 1360 784
+  Pages 0 48 112 712
+    page.sound 12 12 88 82
+    page.envelopes 12 102 88 82
+    page.lfo 12 192 88 82
+    page.play 12 282 88 82
+    page.arpseq 12 372 88 82
+    page.effects 12 462 88 82
+    page.browser 12 552 88 82
+  ui.part 12 8 200 32
+  - 396 8 510 32
+    < 4 3 28 26
+    > 34 3 28 26
+    Load... 396 3 52 26
+    Save... 454 3 52 26
+    - 96 3 56 26
+    - 68 3 28 26
+    - 154 3 236 26
+  ui.output 918 6 96 36
+  master.volume 1024 6 150 36
+  ui.limit 1184 10 70 28
+  Output settings 1258 10 26 28
+  Window size 1290 10 58 28
+  Help 0 760 1360 24
+  lfo.upper 112 48 1248 712
+    LFO (a slow wobble) 12 12 1224 352
+      Upper LFO waveform 12 36 1200 240
+        LFO delay 0 8 28 28
+        LFO cycle 304 97 28 28
+      upper.lfo.waveform 12 292 470 46
+      upper.lfo.rate 512 296 330 40
+      upper.lfo.delay 872 296 340 40
+    The pitch (vibrato) 12 402 297 298
+      upper.vcomod.lfo_mod 12 44 273 40
+      upper.vcomod.target 12 112 273 46
+    The pulse width 321 402 297 298
+      upper.vcomod.pwm 12 44 273 40
+      upper.vcomod.pwm_source 12 112 273 46
+    The filter (wah) 630 402 297 298
+      upper.vcf.lfo_mod 12 44 273 40
+    The volume (tremolo) 939 402 297 298
+      upper.vca.lfo_mod 12 44 273 46

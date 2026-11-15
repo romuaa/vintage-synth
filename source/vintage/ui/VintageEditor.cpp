@@ -1,7 +1,12 @@
 #include "vintage/ui/VintageEditor.h"
 
 #include "UiData.h"
-#include "vintage/ui/PlaceholderPage.h"
+#include "vintage/ui/ArpSeqPage.h"
+#include "vintage/ui/EffectsPage.h"
+#include "vintage/ui/EnvelopesPage.h"
+#include "vintage/ui/LfoPage.h"
+#include "vintage/ui/BrowserPage.h"
+#include "vintage/ui/PlayPage.h"
 #include "vintage/ui/SoundPage.h"
 
 namespace vs
@@ -22,23 +27,13 @@ std::vector<EditorFrame::Page> vintagePages()
 {
     return {
         { kVintagePageNames[0], "Sound", PageIcon::Sound, true, "Sound: the oscillators, the filter and the level of the edited part. Drag the dots on the curve." },
-        { kVintagePageNames[1], "Envelopes", PageIcon::Envelopes, true, "Envelopes: how the filter, pitch and loudness move on each note (placeholder until M7b)." },
-        { kVintagePageNames[2], "LFO", PageIcon::Lfo, true, "LFO: the slow wobble and what it moves (placeholder until M7b)." },
-        { kVintagePageNames[3], "Play", PageIcon::Play, false, "Play: keyboard layout, voices, glide and the mix of both parts (placeholder until M7c)." },
-        { kVintagePageNames[4], "Arp + Seq", PageIcon::ArpSeq, false, "Arp + Seq: the arpeggiator and the step sequencer (placeholder until M7d)." },
-        { kVintagePageNames[5], "Effects", PageIcon::Effects, false, "Effects: chorus, delay and reverb on both parts (placeholder until M7c)." },
-        { kVintagePageNames[6], "Browser", PageIcon::Browser, false, "Browser: programs and banks (until M7e: the preset bar at the top)." },
+        { kVintagePageNames[1], "Envelopes", PageIcon::Envelopes, true, "Envelopes: how the filter, pitch and loudness move on each note. Drag the dots on the shapes." },
+        { kVintagePageNames[2], "LFO", PageIcon::Lfo, true, "LFO: the slow wobble and what it moves. Drag the dots to set the delay and the speed." },
+        { kVintagePageNames[3], "Play", PageIcon::Play, false, "Play: how the two parts share the keyboard, and how each part is played. Press the keys to play; drag the split marker to move it." },
+        { kVintagePageNames[4], "Arp + Seq", PageIcon::ArpSeq, false, "Arp + Seq: pick a pattern or paint steps; the picture shows what the arpeggiator and the sequencer will play." },
+        { kVintagePageNames[5], "Effects", PageIcon::Effects, false, "Effects: chorus, delay and reverb on both parts, in signal order. Drag the dots on the pictures." },
+        { kVintagePageNames[6], "Browser", PageIcon::Browser, false, "Browser: pick a program from the grid, load it or just one of its sounds, and save your own." },
     };
-}
-
-/** The parameter's name without the part prefix ("Lower VCF Cutoff" -> "VCF Cutoff"). */
-juce::String shortName (juce::RangedAudioParameter& p)
-{
-    auto n = p.getName (64);
-    for (const char* pre : { "Lower ", "Upper " })
-        if (n.startsWith (pre))
-            return n.substring (6);
-    return n;
 }
 } // namespace
 
@@ -68,6 +63,9 @@ VintageEditor::VintageEditor (VintageSynthProcessor& p)
     frame.onPageChosen = [this] (int page) { selectPage (page, frame.getPart()); };
     frame.onPartChosen = [this] (int part) { selectPage (frame.getPage(), part); };
     frame.onSizeMenu = [this] { showSizeMenu(); };
+    bar.smartSave = true;         // Save: in place for a user bank, else Save as (9.3.7)
+    bar.setCompactLayout (true);  // the program name gets the room
+    bar.onOpenBrowser = [this] { selectPage (static_cast<int> (VintagePage::Browser), frame.getPart()); };
 
     keyModeIndex = mirror.indexOf ("key.mode");
     if (keyModeIndex >= 0)
@@ -105,8 +103,14 @@ VintageEditor::~VintageEditor()
     frame.closeOutputPopover();
     for (auto& s : sound)
         s->cancelInteraction();
-    for (auto& ph : placeholders)
-        ph->cancelInteraction();
+    for (auto& e : envelopes)
+        e->cancelInteraction();
+    for (auto& l : lfo)
+        l->cancelInteraction();
+    playPage->cancelInteraction();
+    effectsPage->cancelInteraction();
+    if (arpSeq != nullptr)
+        arpSeq->cancelInteraction();
     frame.cancelInteraction();
     mirror.unsubscribe (this);
     mirror.endAllGestures();
@@ -115,21 +119,6 @@ VintageEditor::~VintageEditor()
 
 void VintageEditor::buildPages()
 {
-    const auto prefix = [] (int part) { return juce::String (part == 0 ? kLowerPrefix : kUpperPrefix); };
-    const auto partItems = [&] (const std::vector<juce::String>& suffixes, int part) {
-        std::vector<PlaceholderPage::Item> items;
-        for (const auto& s : suffixes)
-            items.push_back ({ prefix (part) + s, shortName (mirror.parameter (mirror.indexOf (prefix (part) + s))), part });
-        return items;
-    };
-    const auto addPlaceholder = [&] (VintagePage page, int part, const juce::String& title, const juce::String& note,
-                                     std::vector<PlaceholderPage::Item> items) {
-        registry.setContext (kVintagePageNames[static_cast<size_t> (page)], part);
-        placeholders.push_back (std::make_unique<PlaceholderPage> (ctx, title, note, std::move (items)));
-        placeholderRefs.push_back ({ page, part, placeholders.back().get() });
-        frame.addPageComponent (static_cast<int> (page), part, *placeholders.back());
-    };
-
     for (int part = 0; part < 2; ++part)
     {
         registry.setContext (kVintagePageNames[0], part);
@@ -137,48 +126,30 @@ void VintageEditor::buildPages()
         sound[part]->onOpenEffects = [this] { selectPage (static_cast<int> (VintagePage::Effects), frame.getPart()); };
         frame.addPageComponent (0, part, *sound[part]);
 
-        const auto partName = juce::String (part == 0 ? "Lower" : "Upper");
-        addPlaceholder (VintagePage::Envelopes, part, "Envelopes (" + partName + ")",
-                        "Placeholder until M7b: every envelope parameter of this part, with plain sliders.", partItems (envelopeSuffixes(), part));
-        addPlaceholder (VintagePage::Lfo, part, "LFO (" + partName + ")", "Placeholder until M7b: every LFO and modulation parameter of this part.",
-                        partItems (lfoSuffixes(), part));
+        registry.setContext (kVintagePageNames[1], part);
+        envelopes[part] = std::make_unique<EnvelopesPage> (ctx, part);
+        frame.addPageComponent (static_cast<int> (VintagePage::Envelopes), part, *envelopes[part]);
+
+        registry.setContext (kVintagePageNames[2], part);
+        lfo[part] = std::make_unique<LfoPage> (ctx, part);
+        frame.addPageComponent (static_cast<int> (VintagePage::Lfo), part, *lfo[part]);
     }
 
     // Global pages: one component each (-1).
-    std::vector<PlaceholderPage::Item> play;
-    for (const char* id : { "key.mode", "key.split_point", "mix.balance", "global.vintage" })
-        play.push_back ({ id, shortName (mirror.parameter (mirror.indexOf (id))), -1 });
-    for (int part = 0; part < 2; ++part)
-        for (auto& item : partItems (playPartSuffixes(), part))
-        {
-            item.label = (part == 0 ? "Lower " : "Upper ") + item.label;
-            play.push_back (item);
-        }
-    addPlaceholder (VintagePage::Play, -1, "Play", "Placeholder until M7c: keyboard layout, character and both parts side by side.", std::move (play));
+    registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::Play)], -1);
+    playPage = std::make_unique<PlayPage> (ctx, feed, &static_cast<VintageSynthProcessor&> (processor).getUiNotes());
+    frame.addPageComponent (static_cast<int> (VintagePage::Play), -1, *playPage);
 
-    std::vector<PlaceholderPage::Item> arp, fx;
-    for (int i = 0; i < mirror.size(); ++i)
-    {
-        auto& p = mirror.parameter (i);
-        if (p.paramID.startsWith ("arp.") || p.paramID.startsWith ("seq."))
-            arp.push_back ({ p.paramID, shortName (p), -1 });
-        else if (p.paramID.startsWith ("fx."))
-            fx.push_back ({ p.paramID, shortName (p), -1 });
-    }
-    addPlaceholder (VintagePage::ArpSeq, -1, "Arp + Seq", "Placeholder until M7d: the arpeggiator, the step sequencer and its 16 steps.", std::move (arp));
-    addPlaceholder (VintagePage::Effects, -1, "Effects", "Placeholder until M7c: chorus, delay and reverb.", std::move (fx));
-    addPlaceholder (VintagePage::Browser, -1, "Browser",
-                    "Placeholder until M7e: load, save and initialise programs with the preset bar at the top of the window.", {});
+    registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::ArpSeq)], -1);
+    arpSeq = std::make_unique<ArpSeqPage> (ctx, feed, static_cast<VintageSynthProcessor&> (processor).getState(), editorState);
+    frame.addPageComponent (static_cast<int> (VintagePage::ArpSeq), -1, *arpSeq);
+    registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::Effects)], -1);
+    effectsPage = std::make_unique<EffectsPage> (ctx, editorState);
+    frame.addPageComponent (static_cast<int> (VintagePage::Effects), -1, *effectsPage);
+    registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::Browser)], -1);
+    browser = std::make_unique<BrowserPage> (ctx, static_cast<VintageSynthProcessor&> (processor).getPresets(), [this] { return frame.getPart(); });
+    frame.addPageComponent (static_cast<int> (VintagePage::Browser), -1, *browser);
     registry.setContext ("frame", -1);
-}
-
-PlaceholderPage& VintageEditor::getPlaceholder (VintagePage page, int part)
-{
-    for (const auto& r : placeholderRefs)
-        if (r.page == page && (r.part == part || r.part < 0))
-            return *r.component;
-    jassertfalse;
-    return *placeholderRefs.front().component;
 }
 
 void VintageEditor::selectPage (int page, int part)
@@ -247,8 +218,15 @@ void VintageEditor::onVBlank()
         tick (now);
 }
 
+void VintageEditor::releaseKeysIfHidden()
+{
+    if (! isShowing())
+        playPage->getStrip().endPlaying();
+}
+
 void VintageEditor::timerCallback()
 {
+    releaseKeysIfHidden();
     // Hosts and window systems may throttle vblank: then a 30 Hz timer drives the tick.
     const double now = juce::Time::getMillisecondCounterHiRes();
     if (isShowing() && now - lastVBlankMs > kVBlankTimeoutMs && now - lastTickMs >= kMinTickMs)

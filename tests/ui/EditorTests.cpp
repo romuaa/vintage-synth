@@ -173,7 +173,10 @@ TEST_CASE ("Registry: every parameter has exactly one primary control; secondari
                 CHECK (e.captions == (e.choices > 0 ? e.choices : steps));
             }
         }
-        CHECK (secondaries == 2 * 3); // the filter graph's cutoff, resonance and high-pass, per part
+        // Per part: the filter graph's 3 (cutoff, resonance, high-pass), the two envelope pictures' 5 each and the LFO
+        // picture's 2. Global: on Effects the delay handle (time, repeats), the reverb handles (pre-delay, decay time) and
+        // the two power switches (delay level, reverb level); the step grid's length flag.
+        CHECK (secondaries == 2 * (3 + 10 + 2) + 6 + 1);
     }
 }
 
