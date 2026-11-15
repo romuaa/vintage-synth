@@ -5,6 +5,17 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2b-2 review fixes (2026-11-15)
+- Fix: sync and ring from a Model A saw combination (the line simulation now applies the pull-down).
+- The stronger kernel (8 zero crossings, Kaiser beta 12, double precision) for every pulse and combined-
+  waveform step on both models; `BasicBlepTable` takes the sample type too (Vintage unchanged).
+- Gates extended: pulse widths 1 to 4095, combined waveforms at four widths, combined sync targets, sync
+  chains, ring on combined targets; a second, independent measurement (Kaiser window, 20 fundamentals);
+  comparison with the chip's own output stream; converter levels and harmonics against the reference;
+  no corrections over random patches; physical peak; timing through `render()`; smooth start; hysteresis.
+- Output pre-filled at activation; hysteresis for the Model A converter terms; tables built in place;
+  BLEP tables fetched in `prepare`; `chip_bench` cases of the review.
+
 ### B-Side S2b-2 follow-up: a stronger kernel for Model A's combined waveforms (2026-11-15)
 - `common/dsp/BlepTable.h`: `BasicBlepTable<zeroCrossings, betaTenths>`; `BlepTable` stays Vintage's
   8 / 8.0 (bit-identical tables; render goldens, alias gates and `voice_bench` unchanged).
