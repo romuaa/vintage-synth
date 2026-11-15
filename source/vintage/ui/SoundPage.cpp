@@ -31,9 +31,9 @@ public:
             const auto r = itemBounds (i);
             const bool self = i == 4;
             g.setColour (self ? accentFor (part) : colour (Tok::BgWindow));
-            g.fillRoundedRectangle (r, 4.0f);
+            g.fillRoundedRectangle (r, metrics::kRadiusControl);
             g.setColour (colour (Tok::BgTrack));
-            g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
+            g.drawRoundedRectangle (r.reduced (0.5f), metrics::kRadiusControl, 1.0f);
             g.setColour (self ? colour (Tok::TextOnAccent) : colour (Tok::TextPrimary));
             g.setFont (self ? theme.fonts().textBold : theme.fonts().text);
             g.drawText (items[i], r, juce::Justification::centred, false);

@@ -117,9 +117,9 @@ public:
             drawFittedText (g, pitchLabel, cell.removeFromTop (static_cast<float> (kValueRow)), juce::Justification::centred);
         }
         g.setColour (colour (Tok::BgWindow));
-        g.fillRoundedRectangle (cell, 4.0f);
+        g.fillRoundedRectangle (cell, metrics::kRadiusControl);
         g.setColour (colour (Tok::BgTrack).withAlpha (alpha));
-        g.drawRoundedRectangle (cell.reduced (0.5f), 4.0f, 1.0f);
+        g.drawRoundedRectangle (cell.reduced (0.5f), metrics::kRadiusControl, 1.0f);
 
         if (isPitch())
         {
@@ -150,7 +150,7 @@ public:
                 if (block.getHeight() < 6.0f)
                     block = block.withSizeKeepingCentre (block.getWidth(), 6.0f).withCentre ({ block.getCentreX(), y });
                 g.setColour (colour (Tok::AccentLower).withAlpha (alpha * (type == 0 ? 1.0f : 0.35f)));
-                g.fillRoundedRectangle (block, 3.0f);
+                g.fillRoundedRectangle (block, metrics::kRadiusSmall);
             }
         }
         else
@@ -158,7 +158,7 @@ public:
             const float y = valueY() - static_cast<float> (getY());
             auto fill = juce::Rectangle<float>::leftTopRightBottom (cell.getX() + 6.0f, y, cell.getRight() - 6.0f, cell.getBottom() - 3.0f);
             g.setColour (colour (Tok::AccentUpper).withAlpha (alpha * (type == 0 ? 1.0f : 0.45f)));
-            g.fillRoundedRectangle (fill, 3.0f);
+            g.fillRoundedRectangle (fill, metrics::kRadiusSmall);
         }
         if (markerAlpha > 0.0f)
             drawExternalMarker (g, cell.reduced (1.0f), {}, markerAlpha, ctx.theme, false);

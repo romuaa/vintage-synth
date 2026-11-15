@@ -8,8 +8,8 @@ double now() { return juce::Time::getMillisecondCounterHiRes(); }
 
 constexpr float kPillWidth = 92.0f, kPillHeight = 22.0f;
 
-juce::Colour whiteTint (int part) { return accentFor (part).interpolatedWith (juce::Colours::white, 0.6f); }
-juce::Colour blackTint (int part) { return accentFor (part).interpolatedWith (colour (Tok::BgWindow), 0.62f); }
+juce::Colour whiteTint (int part) { return accentFor (part).interpolatedWith (colour (Tok::KeyWhite), metrics::kKeyWhiteMix); }
+juce::Colour blackTint (int part) { return accentFor (part).interpolatedWith (colour (Tok::BgWindow), metrics::kKeyBlackMix); }
 
 /** Value interface for screen readers: the note name from the parameter, set through its parser. */
 class StripValue final : public juce::AccessibilityTextValueInterface

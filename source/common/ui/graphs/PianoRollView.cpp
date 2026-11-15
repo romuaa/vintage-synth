@@ -136,7 +136,7 @@ void PianoRollView::paint (juce::Graphics& g)
     using namespace metrics;
     const float alpha = dimmed ? 0.4f : 1.0f;
     g.setColour (colour (Tok::BgWindow));
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), metrics::kRadiusControl);
     if (plot.isEmpty())
         return;
 
@@ -152,7 +152,7 @@ void PianoRollView::paint (juce::Graphics& g)
     for (int b = 0; b < beatLabels.size(); ++b)
     {
         const float x = plot.getX() + static_cast<float> (b) * beatW;
-        g.setColour (colour (Tok::BgTrack).withAlpha (0.9f));
+        g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kAxisAlpha));
         g.drawVerticalLine (static_cast<int> (x), plot.getY(), plot.getBottom());
         g.setColour (colour (Tok::TextSecondary).withAlpha (alpha));
         drawFittedText (g, beatLabels[b], { x + 4.0f, 2.0f, beatW - 6.0f, kTop - 4.0f }, juce::Justification::centredLeft);
@@ -160,7 +160,7 @@ void PianoRollView::paint (juce::Graphics& g)
     for (int i = 0; i < rowLabels.size(); ++i)
     {
         const float y = rowY (rowLabelNotes[static_cast<size_t> (i)]);
-        g.setColour (colour (Tok::BgTrack).withAlpha (0.9f));
+        g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kAxisAlpha));
         g.drawHorizontalLine (static_cast<int> (y + rowH * 0.5f), plot.getX(), plot.getRight());
         g.setColour (colour (Tok::TextSecondary).withAlpha (alpha));
         drawFittedText (g, rowLabels[i], { 2.0f, y + rowH * 0.5f - 8.0f, kLabelRight - 2.0f, 16.0f }, juce::Justification::centredLeft);
@@ -176,7 +176,7 @@ void PianoRollView::paint (juce::Graphics& g)
         g.fillRoundedRectangle (b.rect, 2.0f);
     }
     g.setColour (colour (Tok::BgTrack));
-    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 4.0f, 1.0f);
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), metrics::kRadiusControl, 1.0f);
 }
 
 std::unique_ptr<juce::AccessibilityHandler> PianoRollView::createAccessibilityHandler()

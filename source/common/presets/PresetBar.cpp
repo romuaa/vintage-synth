@@ -1,5 +1,7 @@
 #include "common/presets/PresetBar.h"
 
+#include "common/ui/Theme.h"
+
 namespace vs::presets
 {
 /** The program name as a button: opens the program menu on a click, Enter or Space. */
@@ -34,19 +36,25 @@ public:
         const auto r = getLocalBounds().toFloat();
         const auto base = getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId);
         g.setColour (down ? base.brighter (0.25f) : (highlighted ? base.brighter (0.15f) : base.brighter (0.07f)));
-        g.fillRoundedRectangle (r, 4.0f);
+        g.fillRoundedRectangle (r, ui::metrics::kRadiusControl);
         if (hasKeyboardFocus (false))
         {
-            g.setColour (juce::Colours::white);
-            g.drawRoundedRectangle (r.reduced (1.0f), 4.0f, 2.0f);
+            g.setColour (ui::colour (ui::Tok::Focus));
+            g.drawRoundedRectangle (r.reduced (1.0f), ui::metrics::kRadiusControl, 2.0f);
         }
         auto textArea = r.reduced (8.0f, 0.0f);
         g.setColour (getLookAndFeel().findColour (juce::Label::textColourId));
-        g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+        g.setFont (nameFont);
         g.drawText (getButtonText(), textArea.withTrimmedRight (16.0f), juce::Justification::centredLeft, true);
-        g.setFont (juce::FontOptions (12.0f));
-        g.drawText ("v", textArea.removeFromRight (14.0f), juce::Justification::centred, false);
+        g.setFont (chevronFont);
+        g.drawText (chevron, textArea.removeFromRight (14.0f), juce::Justification::centred, false);
     }
+
+private:
+    // Made once: paint() allocates nothing (docs/architecture.md 9.5).
+    const juce::Font nameFont { juce::FontOptions (ui::metrics::kTextPresetName, juce::Font::bold) };
+    const juce::Font chevronFont { juce::FontOptions (ui::metrics::kTextChevron) };
+    const juce::String chevron { "v" };
 };
 
 PresetBar::PresetBar (PresetManager& manager) : presets (manager), actions (manager)

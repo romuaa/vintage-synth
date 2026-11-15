@@ -38,9 +38,9 @@ void PartSwitch::paint (juce::Graphics& g)
         const auto acc = accentFor (p);
         const bool on = p == part;
         g.setColour (on ? acc : colour (Tok::BgWindow));
-        g.fillRoundedRectangle (seg, 4.0f);
+        g.fillRoundedRectangle (seg, metrics::kRadiusControl);
         g.setColour (acc);
-        g.drawRoundedRectangle (seg.reduced (0.5f), 4.0f, on ? 1.0f : 1.5f);
+        g.drawRoundedRectangle (seg.reduced (0.5f), metrics::kRadiusControl, on ? 1.0f : 1.5f);
         g.setColour (on ? colour (Tok::TextOnAccent) : acc);
         g.setFont (headerFont);
         g.drawText (p == 0 ? lowerText : upperText, seg, juce::Justification::centred, false);

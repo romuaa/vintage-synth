@@ -25,8 +25,9 @@ namespace
 /** JUCE's own widgets (and what they contain): painted by the look-and-feel, not our code. */
 bool isJuceWidget (const juce::Component& c)
 {
-    return dynamic_cast<const juce::Button*> (&c) != nullptr || dynamic_cast<const juce::Label*> (&c) != nullptr
-           || dynamic_cast<const juce::TextEditor*> (&c) != nullptr || dynamic_cast<const juce::ScrollBar*> (&c) != nullptr;
+    // A class of JUCE's own (TextButton, Label, TextEditor, ...): its name has the juce namespace in it, ours never does.
+    // Our own components derived from a JUCE class (the preset name button) are measured.
+    return typeNameOf (c).contains ("juce");
 }
 
 /** Allocations of two paints of `c` after a warm-up, or -1 when they differ. `focus`: with the focus ring. */

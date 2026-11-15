@@ -203,7 +203,7 @@ void ProgramGrid::paint (juce::Graphics& g)
         const float alpha = c.lit ? 1.0f : 0.3f;
         const bool isSelected = slot == selectedSlot, isCurrent = slot == currentSlot;
         g.setColour ((isSelected ? colour (Tok::BgTrack) : colour (Tok::BgPanel)).withMultipliedAlpha (alpha));
-        g.fillRoundedRectangle (r, 4.0f);
+        g.fillRoundedRectangle (r, metrics::kRadiusControl);
         g.setColour (c.stripe.withMultipliedAlpha (alpha));
         g.fillRoundedRectangle (r.withWidth (5.0f), 2.0f);
         g.setColour (colour (Tok::TextPrimary).withMultipliedAlpha (alpha));
@@ -213,7 +213,7 @@ void ProgramGrid::paint (juce::Graphics& g)
         if (isCurrent)
         {
             g.setColour (colour (Tok::TextPrimary).withMultipliedAlpha (alpha));
-            g.drawRoundedRectangle (r.reduced (1.0f), 4.0f, 2.0f);
+            g.drawRoundedRectangle (r.reduced (1.0f), metrics::kRadiusControl, 2.0f);
             if (modifiedDot)
             {
                 g.setColour (colour (Tok::Warn));
@@ -551,9 +551,9 @@ public:
             const auto r = juce::Rectangle<float> (static_cast<float> (i) * w, 0.0f, w, static_cast<float> (getHeight())).reduced (1.0f);
             const bool on = i == index;
             g.setColour (on ? accentFor (i) : colour (Tok::BgWindow));
-            g.fillRoundedRectangle (r, 4.0f);
+            g.fillRoundedRectangle (r, metrics::kRadiusControl);
             g.setColour (colour (Tok::BgTrack));
-            g.drawRoundedRectangle (r, 4.0f, 1.0f);
+            g.drawRoundedRectangle (r, metrics::kRadiusControl, 1.0f);
             g.setColour (on ? colour (Tok::TextOnAccent) : colour (Tok::TextPrimary));
             g.setFont (on ? fonts.textBold : fonts.text);
             drawFittedText (g, names[i], r, juce::Justification::centred);
@@ -588,8 +588,7 @@ private:
 
 juce::Colour BrowserPage::categoryColour (int index)
 {
-    const int i = ((index % 12) + 12) % 12;
-    return juce::Colour::fromHSV (static_cast<float> (i) / 12.0f, 0.55f, 0.85f, 1.0f);
+    return vs::ui::categoryColour (index);
 }
 
 BrowserPage::BrowserPage (UiContext& c, presets::PresetManager& manager, std::function<int()> part)

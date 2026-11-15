@@ -96,7 +96,7 @@ void ChorusView::paint (juce::Graphics& g)
 {
     const auto r = getLocalBounds().toFloat();
     g.setColour (colour (Tok::BgWindow));
-    g.fillRoundedRectangle (r, 4.0f);
+    g.fillRoundedRectangle (r, metrics::kRadiusControl);
     g.setFont (fonts.small);
     g.setColour (colour (Tok::TextSecondary));
     drawFittedText (g, note, r.withHeight (22.0f).reduced (10.0f, 4.0f), juce::Justification::centredLeft);
@@ -193,7 +193,7 @@ double DelayView::timeAtHandleX (float px) const noexcept
 void DelayView::paint (juce::Graphics& g)
 {
     g.setColour (colour (Tok::BgWindow));
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), metrics::kRadiusControl);
     const auto accent = pictureColour (on);
 
     // Time ruler below the lanes; "input" stands under the input bar (the start of the axis).
@@ -201,7 +201,7 @@ void DelayView::paint (juce::Graphics& g)
     for (int i = 0; i < 5; ++i)
     {
         const float x = axis.positionOf (kDelayTicks[i]);
-        g.setColour (colour (Tok::BgTrack).withAlpha (0.5f));
+        g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kGridAlpha));
         g.drawVerticalLine (juce::roundToInt (x), lanesTop, plot.getBottom());
         g.setColour (colour (Tok::TextSecondary));
         g.drawText (tickLabels[i], juce::Rectangle<float> (x - 24.0f, plot.getBottom() + 2.0f, 48.0f, 14.0f), juce::Justification::centred, false);
@@ -305,7 +305,7 @@ juce::Point<float> ReverbView::decayHandleAt (float preDelaySec, float decaySec)
 void ReverbView::paint (juce::Graphics& g)
 {
     g.setColour (colour (Tok::BgWindow));
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), metrics::kRadiusControl);
     const auto accent = pictureColour (on);
 
     g.setFont (fonts.small);
@@ -313,7 +313,7 @@ void ReverbView::paint (juce::Graphics& g)
     for (int i = 0; i < 4; ++i)
     {
         const float x = axis.positionOf (ticks[i]);
-        g.setColour (colour (Tok::BgTrack).withAlpha (0.5f));
+        g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kGridAlpha));
         g.drawVerticalLine (juce::roundToInt (x), plot.getY(), plot.getBottom());
         g.setColour (colour (Tok::TextSecondary));
         g.drawText (tickLabels[i], juce::Rectangle<float> (x - 24.0f, plot.getBottom() + 2.0f, 48.0f, 14.0f), juce::Justification::centred, false);
@@ -331,7 +331,7 @@ void ReverbView::paint (juce::Graphics& g)
     g.drawText (floorLabel, juce::Rectangle<float> (plot.getRight() - 52.0f, floorY() - 15.0f, 52.0f, 14.0f), juce::Justification::centredRight, false);
     g.drawText (topLabel, juce::Rectangle<float> (plot.getRight() - 52.0f, plot.getY(), 52.0f, 14.0f), juce::Justification::centredRight, false);
 
-    g.setColour (accent.withAlpha (0.22f));
+    g.setColour (accent.withAlpha (metrics::kAreaAlpha));
     g.fillPath (wedge);
     g.setColour (accent);
     g.drawLine (xs, topY(), xe, floorY(), 2.0f);

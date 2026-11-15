@@ -383,7 +383,7 @@ void ResponseCurveView::rebuild()
 void ResponseCurveView::paint (juce::Graphics& g)
 {
     g.setColour (colour (Tok::BgWindow));
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), metrics::kRadiusControl);
 
     // Grid: decades and their 2 and 5, dB lines every 12 dB; labels below and at the left.
     g.setFont (theme.fonts().small);
@@ -391,7 +391,7 @@ void ResponseCurveView::paint (juce::Graphics& g)
     for (double hz : kGridHz)
     {
         const float x = xAxis.positionOf (hz);
-        g.setColour (colour (Tok::BgTrack).withAlpha (0.5f));
+        g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kGridAlpha));
         g.drawVerticalLine (juce::roundToInt (x), plot.getY(), plot.getBottom());
         g.setColour (colour (Tok::TextSecondary));
         g.drawText (freqLabels[label++], juce::Rectangle<float> (x - 20.0f, plot.getBottom() + 2.0f, 40.0f, 14.0f), juce::Justification::centred, false);
@@ -400,7 +400,7 @@ void ResponseCurveView::paint (juce::Graphics& g)
     for (int db = 24; db >= -48; db -= 12)
     {
         const float y = yAxis.positionOf (db);
-        g.setColour (colour (Tok::BgTrack).withAlpha (db == 0 ? 0.9f : 0.4f));
+        g.setColour (colour (Tok::BgTrack).withAlpha (db == 0 ? metrics::kAxisAlpha : metrics::kMinorGridAlpha));
         g.drawHorizontalLine (juce::roundToInt (y), plot.getX(), plot.getRight());
         if (db > -48)
         {
@@ -414,9 +414,9 @@ void ResponseCurveView::paint (juce::Graphics& g)
 
     g.setColour (colour (Tok::TextSecondary).withAlpha (0.8f));
     g.fillPath (otherDashed);
-    g.setColour (accentColour.withAlpha (0.7f));
+    g.setColour (accentColour.withAlpha (metrics::kCurveAlpha));
     g.fillPath (markerDashed);
-    g.setColour (accentColour.withAlpha (0.22f));
+    g.setColour (accentColour.withAlpha (metrics::kAreaAlpha));
     g.fillPath (fillPath);
     g.setColour (accentColour);
     g.strokePath (mainPath, juce::PathStrokeType (2.0f));
@@ -472,8 +472,8 @@ void ScopeView::paint (juce::Graphics& g)
 {
     const auto r = getLocalBounds().toFloat();
     g.setColour (colour (Tok::BgWindow));
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (colour (Tok::BgTrack).withAlpha (0.5f));
+    g.fillRoundedRectangle (r, metrics::kRadiusControl);
+    g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kGridAlpha));
     g.drawHorizontalLine (juce::roundToInt (r.getCentreY()), r.getX() + 4.0f, r.getRight() - 4.0f);
     g.setColour (accentColour);
     g.strokePath (path, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));

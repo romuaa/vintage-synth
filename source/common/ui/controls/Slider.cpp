@@ -147,7 +147,7 @@ void Slider::paint (juce::Graphics& g)
     using namespace metrics;
     const auto& theme = ctx.theme;
     const float v = drawnValue();
-    const auto acc = inactive ? accent().withAlpha (0.4f) : accent();
+    const auto acc = inactive ? accent().withAlpha (metrics::kInactiveAlpha) : accent();
 
     // Label and value text (laid out when the value, the size or the marker changed).
     if (! labelArea.isEmpty())
@@ -159,7 +159,7 @@ void Slider::paint (juce::Graphics& g)
     valuePrepared.draw (g);
 
     // Track and fill (bipolar: from the centre).
-    g.setColour (colour (Tok::BgTrack).withAlpha (inactive ? 0.4f : 1.0f));
+    g.setColour (colour (Tok::BgTrack).withAlpha (inactive ? metrics::kInactiveAlpha : 1.0f));
     g.fillRoundedRectangle (track, kTrack * 0.5f);
     g.setColour (acc);
     if (style == Style::Vertical)
@@ -179,9 +179,9 @@ void Slider::paint (juce::Graphics& g)
 
     const auto thumb = thumbBounds();
     g.setColour (inactive ? colour (Tok::TextDisabled) : colour (Tok::TextPrimary));
-    g.fillRoundedRectangle (thumb, 3.0f);
+    g.fillRoundedRectangle (thumb, metrics::kRadiusSmall);
     g.setColour (acc);
-    g.drawRoundedRectangle (thumb.reduced (0.5f), 3.0f, 1.0f);
+    g.drawRoundedRectangle (thumb.reduced (0.5f), metrics::kRadiusSmall, 1.0f);
 
     if (markerAlpha > 0.0f)
     {

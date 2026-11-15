@@ -115,7 +115,7 @@ ArpSeqPage::ArpSeqPage (UiContext& c, UiFeed& f, juce::AudioProcessorValueTreeSt
             else
             {
                 g.setColour (i == 0 ? lower : upper);
-                g.fillRoundedRectangle (seg, 3.0f);
+                g.fillRoundedRectangle (seg, metrics::kRadiusSmall);
             }
         }
         else
