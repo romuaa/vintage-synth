@@ -3,6 +3,7 @@
 // Slider (docs/architecture.md 9.2.2): horizontal or vertical, unipolar or bipolar from the
 // centre; label, value text (the parameter's own), track and thumb in the part accent.
 
+#include "common/ui/PreparedText.h"
 #include "common/ui/controls/BoundComponent.h"
 #include "common/ui/models/SliderModel.h"
 
@@ -31,7 +32,7 @@ public:
     juce::Rectangle<float> labelBounds() const noexcept;
     juce::Rectangle<float> valueBounds() const noexcept { return valueArea; }
     /** Width of the value-text slot of a horizontal slider (default 84 px; a short value can use less). */
-    void setValueSlotWidth (float px) { valueSlot = px; }
+    void setValueSlotWidth (float px) { valueSlot = px; resized(); }
     juce::Rectangle<float> badgeBounds() const noexcept;
     void cancelInteraction() override { model.cancel(); }
 
@@ -52,11 +53,16 @@ private:
     void idle (double nowMs) override { model.idle (nowMs); }
     bool isInGesture() const override { return model.isInGesture(); }
     float pxOf (juce::Point<float> p) const noexcept;
+    /** Lays the label and the value text out again when what they depend on changed (paint() only draws them). */
+    void prepareText();
 
     Style style;
     bool bipolar;
     model::SliderModel model;
     juce::Rectangle<float> track, labelArea, valueArea, badgeArea;
     float valueSlot = 84.0f;
+    PreparedText labelPrepared, valuePrepared;
+    juce::Rectangle<float> preparedLabelArea, preparedValueArea;
+    juce::String preparedValue;
 };
 } // namespace vs::ui

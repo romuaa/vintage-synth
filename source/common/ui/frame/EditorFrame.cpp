@@ -11,7 +11,8 @@ constexpr int kPopoverW = 300, kPopoverH = 196;
 // ---- OutputPopover ----
 
 OutputPopover::OutputPopover (UiContext& ctx)
-    : theme (ctx.theme),
+    : fonts (ctx.theme),
+      headerFont (ctx.theme.font (kTextHeader, true)),
       limiter (ctx, "master.limiter", "Limiter", -1),
       ceiling (ctx, "master.limiter.ceiling", "Ceiling", -1)
 {
@@ -49,13 +50,13 @@ void OutputPopover::paint (juce::Graphics& g)
     g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
     auto inner = r.reduced (static_cast<float> (kPad));
     g.setColour (colour (Tok::TextPrimary));
-    g.setFont (theme.font (kTextHeader, true));
-    g.drawText ("OUTPUT", inner.removeFromTop (20.0f), juce::Justification::centredLeft, false);
+    g.setFont (headerFont);
+    g.drawText (outputText, inner.removeFromTop (20.0f), juce::Justification::centredLeft, false);
     // Reduction meter 0 ... 12 dB at the bottom.
     auto meterArea = inner.removeFromBottom (30.0f);
-    g.setFont (theme.font (kTextSmall));
+    g.setFont (fonts.small);
     g.setColour (colour (Tok::TextSecondary));
-    g.drawText ("Limiter reduction", meterArea.removeFromTop (14.0f), juce::Justification::centredLeft, false);
+    g.drawText (reductionText, meterArea.removeFromTop (14.0f), juce::Justification::centredLeft, false);
     auto bar = meterArea.reduced (0.0f, 3.0f);
     g.setColour (colour (Tok::BgTrack));
     g.fillRoundedRectangle (bar, 2.0f);
@@ -112,8 +113,8 @@ public:
         g.setColour (on ? colour (Tok::AccentGlobal) : colour (Tok::TextDisabled));
         g.fillEllipse (dot);
         g.setColour (on ? colour (Tok::TextPrimary) : colour (Tok::TextDisabled));
-        g.setFont (frame.ctx.theme.font (kTextSmall, true));
-        g.drawText (on ? "LIMIT" : "LIMIT OFF", r, juce::Justification::centredLeft, false);
+        g.setFont (frame.fonts.smallBold);
+        g.drawText (on ? limitText : limitOffText, r, juce::Justification::centredLeft, false);
         if (hasKeyboardFocus (false))
             drawFocusRing (g, r, r.getHeight() * 0.5f);
     }
@@ -134,6 +135,7 @@ public:
 
 private:
     EditorFrame& frame;
+    const juce::String limitText { "LIMIT" }, limitOffText { "LIMIT OFF" };
     bool on = true;
 };
 
@@ -152,6 +154,8 @@ private:
 
 EditorFrame::EditorFrame (UiContext& c, std::vector<Page> p, juce::Component& preset)
     : ctx (c),
+      fonts (c.theme),
+      editingFont (c.theme.font (kTextEditing, true)),
       pages (std::move (p)),
       presetArea (preset),
       partSwitch (c.theme),
@@ -354,22 +358,22 @@ void EditorFrame::paint (juce::Graphics& g)
     if (partPage)
     {
         g.setColour (accentFor (part));
-        g.setFont (ctx.theme.font (kTextEditing, true));
-        g.drawText (part == 0 ? "Editing: LOWER" : "Editing: UPPER", text, juce::Justification::centredLeft, true);
+        g.setFont (editingFont);
+        g.drawText (part == 0 ? editingLower : editingUpper, text, juce::Justification::centredLeft, true);
     }
     else
     {
         g.setColour (colour (Tok::TextPrimary));
-        g.setFont (ctx.theme.font (kText, true));
-        g.drawText ("Showing: whole instrument", juce::Rectangle<float> (kGutter, 8.0f, 200.0f, 32.0f), juce::Justification::centredLeft, true);
+        g.setFont (fonts.textBold);
+        g.drawText (showingWhole, juce::Rectangle<float> (kGutter, 8.0f, 200.0f, 32.0f), juce::Justification::centredLeft, true);
         for (int p = 0; p < 2; ++p)
         {
             auto chip = juce::Rectangle<float> (224.0f + 74.0f * static_cast<float> (p), 14.0f, 68.0f, 20.0f);
             g.setColour (accentFor (p));
             g.fillRoundedRectangle (chip, 10.0f);
             g.setColour (colour (Tok::TextOnAccent));
-            g.setFont (ctx.theme.font (kTextSmall, true));
-            g.drawText (p == 0 ? "LOWER" : "UPPER", chip, juce::Justification::centred, false);
+            g.setFont (fonts.smallBold);
+            g.drawText (p == 0 ? lowerText : upperText, chip, juce::Justification::centred, false);
         }
     }
 }

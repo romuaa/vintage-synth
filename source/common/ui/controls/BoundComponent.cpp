@@ -176,7 +176,7 @@ void drawExternalMarker (juce::Graphics& g, juce::Rectangle<float> thumb, juce::
         g.setColour (colour (Tok::Marker).withAlpha (alpha));
         g.fillRoundedRectangle (badge, badge.getHeight() * 0.5f);
         g.setColour (colour (Tok::TextOnAccent).withAlpha (alpha));
-        g.setFont (theme.font (metrics::kTextSmall - 1.0f, true));
+        g.setFont (theme.fonts().badgeBold);
         g.drawText ("AUTO", badge, juce::Justification::centred, false);
     }
 }

@@ -51,6 +51,15 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | `[[gnu::noinline]]` is an unknown attribute on MSVC. | The counting allocator used a GNU attribute. | Use a macro (`__declspec(noinline)` on MSVC). A counting `operator new` must cover the over-aligned overloads too. |
 | `chip.reset()` also zeroes the chip's cycle; the engine's cycles are absolute. | Two clocks with one name. | A sink that resets keeps an offset and exposes the engine's time; a test that replays a trace splits it at the reset. |
 | Golden trace files with a leading `#` comment line still read as traces. | The reader accepts comments before the header. | Put the kind of each golden (hand-derived or model) in its first line. |
+## M7f: editor polish (2026-11-15)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A paint that "allocates nothing" still allocated one block per text call. | A string literal passed to `Graphics::drawText` becomes a `juce::String` (one allocation) on every call; `Theme::font()` builds a `Font` (one more); both hide behind a context that skips text. | Keep literals as `const juce::String` members and take fonts from `Theme::fonts()` / `PaintFonts`; the whole-editor test (`PaintAllocationTests`) finds any miss. |
+| A component test found no accessibility handler. | `Component::getAccessibilityHandler()` returns null for a component that is not on the desktop. | Ask `createAccessibilityHandler()` for the handler the component would attach (it is public), as the inventory test does. |
+| An allow-list entry matched the wrong class. | Matching `BrowserPage` against the compiler's name also matched `BrowserPage::ToneSourceSwitch` (nested class names contain the outer one). | Compare the class's own (innermost) name (`classNameOf` in `tests/ui/EditorWalk.h`). |
+| A paint check passed on a mutation that should have failed. | `clipRegionIntersects` false in the null context makes `drawText` return early, and a constant-false ternary is a `-Wunreachable-code` error. | Mutate with a runtime condition when showing that a test can fail; the text layout itself is measured with `NullGraphicsContext (bounds, true)`. |
+
 ## M7 Play page keys (2026-11-15)
 
 | Problem | Cause | Fix / rule |

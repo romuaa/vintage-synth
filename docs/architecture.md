@@ -2113,8 +2113,14 @@ The mod wheel's vibrato amount is on Play (`mod.wheel_vco`).
 
 `KeyboardStrip`: shows C1–C7 (MIDI 24–96, `noteName`, middle C = C4); shifts by octaves so the split
 key is always visible with one octave to spare. Whole: all keys Lower; Dual: two stacked bars over
-every key; Split: keys `< split_point` Lower, the rest Upper (the `KeyRouter` rule). Dots on keys
-from `UiFeed::part[p].held` (filled) and `.sounding` (ring).
+every key; Split: keys `< split_point` Lower, the rest Upper (the `KeyRouter` rule). **Held and sounding keys
+(owner, 2026-11-15; replaces the earlier dots and rings, which read as buttons):** a key in
+`UiFeed::part[p].held` is tinted with that part's accent colour (held by both parts: Lower in the
+upper half, Upper in the lower half); a note in `.sounding` shows a small bar in the part's colour
+with an outline in the window colour, on white keys in a row of its own just above the
+octave-name row, on black keys at the foot (Lower left of Upper when both sound). The mark never
+overlaps an octave name, at any scale. A pressed key is announced to assistive technology on the
+press and where a glide ends.
 
 **Playing the keys (owner, 2026-11-15).** Pressing a key on the strip plays that note; the split
 marker moves only by its pill (drag, arrows, wheel, double-click), no longer by a press on the keys.

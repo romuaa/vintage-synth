@@ -30,7 +30,7 @@ PlayPage::PlayPage (UiContext& c, const UiFeed& feed, UiNotes* notes)
       strip (c, feed, notes),
       balance (c, "mix.balance", juce::String::fromUTF8 ("Balance Lower \xe2\x86\x94 Upper"), -1, Slider::Style::Horizontal, true),
       vintage (c, "global.vintage", "Vintage (analog drift and part-to-part looseness)", -1),
-      stripCaption ("Press the keys to play. Drag the Split pill to choose the split key. Dots show the keys you hold; rings show the notes sounding."),
+      stripCaption ("Press the keys to play. Drag the Split pill to choose the split key. Keys you hold are tinted in the part's colour; a small bar at the foot of a key shows a note sounding."),
       vintageCaption ("0 is clean. More adds slow pitch drift and small differences between voices."),
       glideCaption ("Glide between notes (portamento)"),
       fonts (c.theme)

@@ -26,20 +26,19 @@ public:
     void resized() override { effects.setBounds (itemBounds (5).toNearestInt()); }
     void paint (juce::Graphics& g) override
     {
-        static constexpr const char* items[] { "Osc 1 + Osc 2", "Mix", "High-pass", "Filter", "Amp (this)" };
         for (int i = 0; i < 5; ++i)
         {
             const auto r = itemBounds (i);
             const bool self = i == 4;
             g.setColour (self ? accentFor (part) : colour (Tok::BgWindow));
-            g.fillRoundedRectangle (r, 4.0f);
+            g.fillRoundedRectangle (r, metrics::kRadiusControl);
             g.setColour (colour (Tok::BgTrack));
-            g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
+            g.drawRoundedRectangle (r.reduced (0.5f), metrics::kRadiusControl, 1.0f);
             g.setColour (self ? colour (Tok::TextOnAccent) : colour (Tok::TextPrimary));
-            g.setFont (theme.font (kText, self));
+            g.setFont (self ? theme.fonts().textBold : theme.fonts().text);
             g.drawText (items[i], r, juce::Justification::centred, false);
             g.setColour (colour (Tok::TextSecondary));
-            g.drawText ("v", r.withY (r.getBottom()).withHeight (kStep - r.getHeight()), juce::Justification::centred, false);
+            g.drawText (arrow, r.withY (r.getBottom()).withHeight (kStep - r.getHeight()), juce::Justification::centred, false);
         }
     }
 
@@ -52,6 +51,8 @@ private:
     const Theme& theme;
     int part;
     juce::TextButton effects;
+    // Text made once: a literal converted to a juce::String in paint() allocates (9.5).
+    const juce::String items[5] { "Osc 1 + Osc 2", "Mix", "High-pass", "Filter", "Amp (this)" }, arrow { "v" };
 };
 
 SoundPage::SoundPage (UiContext& c, int p)
@@ -385,32 +386,32 @@ void SoundPage::paintOverChildren (juce::Graphics& g)
 {
     // Captions that belong to the panels (grid positions; never measured).
     const auto& theme = ctx.theme;
-    g.setFont (theme.font (kTextSmall));
+    g.setFont (theme.fonts().small);
     g.setColour (colour (Tok::TextSecondary));
     const auto link = linkPanel.getBounds().toFloat();
-    g.drawText (juce::String::fromUTF8 ("2 \xe2\x86\x92 1"), juce::Rectangle<float> (link.getX(), link.getY() + 66.0f, link.getWidth(), 14.0f),
+    g.drawText (captions.link, juce::Rectangle<float> (link.getX(), link.getY() + 66.0f, link.getWidth(), 14.0f),
                 juce::Justification::centred, false);
     if (model::stepIndex (ctx.mirror.value (crossModIndex), 1001) == 0)
-        g.drawText ("off at 0", crossModCaptionArea().toFloat(), juce::Justification::centred, false);
+        g.drawText (captions.offAtZero, crossModCaptionArea().toFloat(), juce::Justification::centred, false);
 
     const auto mix = mixPanel.getBounds().toFloat();
-    g.drawText ("Osc 1", juce::Rectangle<float> (mix.getX() + 12.0f, mix.getY() + 84.0f, 60.0f, 14.0f), juce::Justification::centredLeft, false);
-    g.drawText ("Osc 2", juce::Rectangle<float> (mix.getRight() - 72.0f, mix.getY() + 84.0f, 60.0f, 14.0f), juce::Justification::centredRight, false);
-    g.drawText ("goes to the filter >", juce::Rectangle<float> (mix.getX() + 12.0f, mix.getY() + 120.0f, 148.0f, 14.0f), juce::Justification::centredLeft,
+    g.drawText (captions.osc1, juce::Rectangle<float> (mix.getX() + 12.0f, mix.getY() + 84.0f, 60.0f, 14.0f), juce::Justification::centredLeft, false);
+    g.drawText (captions.osc2, juce::Rectangle<float> (mix.getRight() - 72.0f, mix.getY() + 84.0f, 60.0f, 14.0f), juce::Justification::centredRight, false);
+    g.drawText (captions.toFilter, juce::Rectangle<float> (mix.getX() + 12.0f, mix.getY() + 120.0f, 148.0f, 14.0f), juce::Justification::centredLeft,
                 false);
 
     const auto filter = filterPanel.getBounds().toFloat();
-    g.setFont (theme.font (kText));
-    g.drawText ("Steepness", juce::Rectangle<float> (filter.getX() + 480.0f, filter.getY() + 2.0f, 100.0f, 24.0f), juce::Justification::centredRight,
+    g.setFont (theme.fonts().text);
+    g.drawText (captions.steepness, juce::Rectangle<float> (filter.getX() + 480.0f, filter.getY() + 2.0f, 100.0f, 24.0f), juce::Justification::centredRight,
                 false);
-    g.setFont (theme.font (kTextSmall));
-    g.drawText ("Drag the dots: cutoff left/right, resonance up/down; high-pass left/right. Dashed: the other steepness.",
+    g.setFont (theme.fonts().small);
+    g.drawText (captions.dragHint,
                 juce::Rectangle<float> (filter.getX() + 12.0f, filter.getY() + 392.0f, 788.0f, 14.0f), juce::Justification::centredLeft, true);
-    g.drawText ("How the filter moves over time: see the Envelopes and LFO pages.",
+    g.drawText (captions.overTime,
                 juce::Rectangle<float> (filter.getX() + 12.0f, filter.getY() + 406.0f, 788.0f, 14.0f), juce::Justification::centredLeft, true);
 
     const auto amp = ampPanel.getBounds().toFloat();
-    g.drawText ("Signal path of this part", juce::Rectangle<float> (amp.getX() + 120.0f, amp.getBottom() - 30.0f, 268.0f, 14.0f),
+    g.drawText (captions.signalPath, juce::Rectangle<float> (amp.getX() + 120.0f, amp.getBottom() - 30.0f, 268.0f, 14.0f),
                 juce::Justification::centredLeft, false);
 }
 } // namespace vs::ui

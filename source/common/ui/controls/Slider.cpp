@@ -46,7 +46,31 @@ float Slider::shownValue() const
 
 void Slider::valueChanged()
 {
+    prepareText();
     repaint();
+}
+
+void Slider::prepareText()
+{
+    const auto just = [&] (bool isLabel) {
+        return style == Style::Vertical ? juce::Justification::centred : (isLabel ? juce::Justification::centredLeft : juce::Justification::centredRight);
+    };
+    // The label gives up the badge slot while the marker shows, so its area is part of what it depends on.
+    const auto labelRect = labelBounds();
+    if (labelRect != preparedLabelArea || ! labelPrepared.isPrepared())
+    {
+        preparedLabelArea = labelRect;
+        if (! labelArea.isEmpty())
+            labelPrepared.setLine (label, ctx.theme.fonts().text, labelRect, just (true));
+        else
+            labelPrepared.clear();
+    }
+    if (valueArea != preparedValueArea || drawnString != preparedValue || ! valuePrepared.isPrepared())
+    {
+        preparedValueArea = valueArea;
+        preparedValue = drawnString;
+        valuePrepared.setLine (drawnString, ctx.theme.fonts().textBold, valueArea, just (false));
+    }
 }
 
 void Slider::resized()
@@ -81,6 +105,9 @@ void Slider::resized()
         track = juce::Rectangle<float> (r.getX(), r.getCentreY() - kTrack * 0.5f, r.getWidth(), static_cast<float> (kTrack));
         model.setTrack (track.getX(), track.getWidth());
     }
+    preparedLabelArea = {}; // the areas moved: lay the text out again
+    preparedValueArea = {};
+    prepareText();
 }
 
 float Slider::pxOf (juce::Point<float> p) const noexcept
@@ -120,21 +147,19 @@ void Slider::paint (juce::Graphics& g)
     using namespace metrics;
     const auto& theme = ctx.theme;
     const float v = drawnValue();
-    const auto acc = inactive ? accent().withAlpha (0.4f) : accent();
+    const auto acc = inactive ? accent().withAlpha (metrics::kInactiveAlpha) : accent();
 
-    // Label and value text.
-    g.setFont (theme.font (kText));
+    // Label and value text (laid out when the value, the size or the marker changed).
     if (! labelArea.isEmpty())
     {
         g.setColour (inactive ? colour (Tok::TextDisabled) : colour (Tok::TextSecondary));
-        drawFittedText (g, label, labelBounds(), style == Style::Vertical ? juce::Justification::centred : juce::Justification::centredLeft);
+        labelPrepared.draw (g);
     }
     g.setColour (textColour());
-    g.setFont (theme.font (kText, true));
-    drawFittedText (g, drawnText(), valueArea, style == Style::Vertical ? juce::Justification::centred : juce::Justification::centredRight);
+    valuePrepared.draw (g);
 
     // Track and fill (bipolar: from the centre).
-    g.setColour (colour (Tok::BgTrack).withAlpha (inactive ? 0.4f : 1.0f));
+    g.setColour (colour (Tok::BgTrack).withAlpha (inactive ? metrics::kInactiveAlpha : 1.0f));
     g.fillRoundedRectangle (track, kTrack * 0.5f);
     g.setColour (acc);
     if (style == Style::Vertical)
@@ -154,9 +179,9 @@ void Slider::paint (juce::Graphics& g)
 
     const auto thumb = thumbBounds();
     g.setColour (inactive ? colour (Tok::TextDisabled) : colour (Tok::TextPrimary));
-    g.fillRoundedRectangle (thumb, 3.0f);
+    g.fillRoundedRectangle (thumb, metrics::kRadiusSmall);
     g.setColour (acc);
-    g.drawRoundedRectangle (thumb.reduced (0.5f), 3.0f, 1.0f);
+    g.drawRoundedRectangle (thumb.reduced (0.5f), metrics::kRadiusSmall, 1.0f);
 
     if (markerAlpha > 0.0f)
     {

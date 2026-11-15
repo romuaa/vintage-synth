@@ -57,6 +57,26 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   models, any split); bit-identical audio across block sizes; state independent of the internal rate; no
   allocation; exact write timing and latency; noise spectra within 0.18 dB of the reference (allowed 1.5).
 - `chip_bench` (tests/bside/benchmarks): ns per internal sample per chip, typical and worst case.
+### M7f editor polish (2026-11-15)
+- Our own paint code allocates nothing, in any component (strings, fonts and paths are made when a value or size
+  changes; text layout inside the framework's renderer is not counted, 9.5). The one known exception is the dashed
+  outline of the external-change marker, built in `paint()` for the 2 s a marker shows. `Slider`,
+  `SegmentedSwitch` and `Toggle` lay their label, value and captions out on change (`PreparedText::setLine`
+  reproduces `Graphics::drawText` exactly); `Theme` owns the paint fonts; `Panel`, the page-rail icons, the
+  frame, the help bubble, the Browser and Sound pages and the preset name button make their strings, fonts and
+  paths once. New test `PaintAllocationTests` walks every component of every page (both parts, four states, and
+  with the output popover, help bubble and hover help shown) and checks that no marker is showing.
+- Accessibility: the Browser grid (list; press loads), category chips and tone source switch (groups with
+  a settable value), the arp mode and pattern switches (named), a spoken name for a pressed key ("C4,
+  Upper"). New `AccessibilityInventoryTests`: every clickable component has a role, a name, keyboard
+  focus and a place in the Tab order, or an allow-list reason.
+- Keyboard strip (owner decision): a held key is tinted in the holding part's colour (Dual: both, Lower in
+  the upper half), a sounding note is a small bar with a 2 px dark outline (white keys: a row of its own above the
+  octave names, so it never meets one; black keys: at the foot); no dots or rings. Pixel, contrast and geometry
+  tests of the rendered strip. A key pressed is announced to screen readers on the press and where a glide ends.
+- Theme tokens for repeated radii, picture alphas, the white-key colour and key mixes, the category hue
+  parameters and the preset button's font sizes (values unchanged; all pictures compared byte for byte).
+- One shared no-op graphics context for the UI tests.
 
 ### B-Side S2b-1 second review: stronger tests (2026-11-15)
 - Exemption budget is a golden: equality, unknown and duplicate keys fail, a bless run fails after writing.

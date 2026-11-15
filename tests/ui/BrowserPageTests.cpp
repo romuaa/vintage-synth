@@ -8,6 +8,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "EditorRig.h"
+#include "EditorWalk.h"
+#include "NullGraphicsContext.h"
 #include "../preset_unit/PresetTestHelpers.h"
 #include "vintage/presets/VintagePresets.h"
 #include "vintage/ui/BrowserPage.h"
@@ -688,55 +690,6 @@ struct RepaintRecorder final : juce::CachedComponentImage
     int all = 0;
 };
 
-#if VS_SEQ_COUNT_ALLOCATIONS
-/** A graphics context that draws nothing and allocates nothing itself: what remains in an allocation count
-    is what our own paint code allocates (strings, paths, glyph arrays, ...). */
-class NullContext final : public juce::LowLevelGraphicsContext
-{
-public:
-    bool isVectorDevice() const override { return false; }
-    void setOrigin (juce::Point<int>) override {}
-    void addTransform (const juce::AffineTransform&) override {}
-    float getPhysicalPixelScaleFactor() const override { return 1.0f; }
-    bool clipToRectangle (const juce::Rectangle<int>&) override { return true; }
-    bool clipToRectangleList (const juce::RectangleList<int>&) override { return true; }
-    void excludeClipRectangle (const juce::Rectangle<int>&) override {}
-    void clipToPath (const juce::Path&, const juce::AffineTransform&) override {}
-    void clipToImageAlpha (const juce::Image&, const juce::AffineTransform&) override {}
-    bool clipRegionIntersects (const juce::Rectangle<int>&) override { return true; }
-    juce::Rectangle<int> getClipBounds() const override { return bounds; }
-    bool isClipEmpty() const override { return false; }
-    void saveState() override {}
-    void restoreState() override {}
-    void beginTransparencyLayer (float) override {}
-    void endTransparencyLayer() override {}
-    void setFill (const juce::FillType&) override {}
-    void setOpacity (float) override {}
-    void setImageBlendMode (juce::BlendMode) override {}
-    void setInterpolationQuality (juce::Graphics::ResamplingQuality) override {}
-    void fillRect (const juce::Rectangle<int>&, bool) override {}
-    void fillRect (const juce::Rectangle<float>&) override {}
-    void fillRectList (const juce::RectangleList<float>&) override {}
-    void fillPath (const juce::Path&, const juce::AffineTransform&) override {}
-    void strokePath (const juce::Path&, const juce::PathStrokeType&, const juce::AffineTransform&) override {}
-    void drawImage (const juce::Image&, const juce::AffineTransform&) override {}
-    void drawLine (const juce::Line<float>&) override {}
-    void setFont (const juce::Font&) override {}
-    const juce::Font& getFont() override { return font; }
-    void drawGlyphs (juce::Span<const std::uint16_t>, juce::Span<const juce::Point<float>>, const juce::AffineTransform&) override { ++glyphRuns; }
-    std::unique_ptr<juce::ImageType> getPreferredImageTypeForTemporaryImages() const override { return {}; }
-    void drawRoundedRectangle (const juce::Rectangle<float>&, float, float) override {}
-    void fillRoundedRectangle (const juce::Rectangle<float>&, float) override {}
-    void drawEllipse (const juce::Rectangle<float>&, float) override {}
-    void fillEllipse (const juce::Rectangle<float>&) override {}
-    std::uint64_t getFrameId() const override { return 0; }
-
-    juce::Rectangle<int> bounds { 0, 0, 2000, 1000 };
-    juce::Font font { juce::FontOptions {} };
-    int glyphRuns = 0;
-};
-#endif
-
 juce::Rectangle<int> inEditor (BrowserRig& rig, juce::Component& c, juce::Rectangle<int> r) { return rig.editor->getLocalArea (&c, r); }
 } // namespace
 
@@ -879,7 +832,7 @@ TEST_CASE ("Grid paint allocates nothing; nothing repaints at rest; a selection 
     }
     const auto allocations = [] (juce::Component& c, bool focused) {
         (void) focused;
-        NullContext context;
+        NullGraphicsContext context ({ 0, 0, 2000, 1000 }, true);
         juce::Graphics g (context);
         c.paint (g); // warm
         vs::seq::test::AllocationCounter counter;
@@ -1169,4 +1122,68 @@ TEST_CASE ("UI shots (hidden): the Browser with the factory bank and a stress ba
     rig.editor->getBrowserPage().getChips().choose (2);
     rig.tick();
     shoot ("browser_stress");
+}
+
+TEST_CASE ("Browser accessibility: the grid names its selection and loads it on press; the chips and the tone switch take their value as text", "[ui][browser][a11y]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    BrowserRig rig;
+    auto& page = rig.page();
+    auto& pm = rig.pm();
+
+    SECTION ("program grid")
+    {
+        auto& grid = page.getGrid();
+        const auto handler = grid.createAccessibilityHandler();
+        REQUIRE (handler != nullptr);
+        CHECK (handler->getRole() == juce::AccessibilityRole::list);
+        page.selectSlot (5);
+        rig.tick();
+        CHECK (grid.getTitle() == "Programs, selected " + pm.positionName (5) + " " + pm.slotMeta (5).name);
+        CHECK (pm.currentIndex() != 5); // selecting loads nothing
+        REQUIRE (handler->getActions().invoke (juce::AccessibilityActionType::press));
+        CHECK (pm.currentIndex() == 5); // press loads the selected slot
+        rig.tick();                     // (the page follows the program change first)
+        page.selectSlot (23);
+        rig.tick();
+        CHECK (grid.getTitle() == "Programs, selected " + pm.positionName (23) + " " + pm.slotMeta (23).name);
+        REQUIRE (handler->getActions().invoke (juce::AccessibilityActionType::press));
+        CHECK (pm.currentIndex() == 23);
+    }
+    SECTION ("category chips")
+    {
+        auto& chips = page.getChips();
+        const auto handler = chips.createAccessibilityHandler();
+        REQUIRE (handler != nullptr);
+        auto* value = handler->getValueInterface();
+        REQUIRE (value != nullptr);
+        CHECK (value->getCurrentValueAsString() == "All");
+        REQUIRE (page.categoryGroupsShown().size() > 1);
+        const auto category = juce::String (page.categoryGroupsShown()[1].label);
+        value->setValueAsString (category.toUpperCase()); // case does not matter
+        CHECK (chips.active() == 2);
+        CHECK (value->getCurrentValueAsString() == category);
+        CHECK (page.activeCategory() == category.toStdString());
+        value->setValueAsString ("No such category");
+        CHECK (chips.active() == 2); // an unknown value changes nothing
+        value->setValueAsString ("all");
+        CHECK (chips.active() == 0);
+        CHECK (page.activeCategory().empty());
+    }
+    SECTION ("tone source switch")
+    {
+        juce::Component* sw = nullptr;
+        forEachVisible (page, [&] (juce::Component& c) { sw = classNameOf (c) == "ToneSourceSwitch" ? &c : sw; });
+        REQUIRE (sw != nullptr);
+        const auto handler = sw->createAccessibilityHandler();
+        auto* value = handler->getValueInterface();
+        REQUIRE (value != nullptr);
+        CHECK (page.toneSource() == 0);
+        CHECK (value->getCurrentValueAsString() == "Lower tone");
+        value->setValueAsString ("Upper tone");
+        CHECK (page.toneSource() == 1);
+        CHECK (value->getCurrentValueAsString() == "Upper tone");
+        value->setValueAsString ("Lower tone");
+        CHECK (page.toneSource() == 0);
+    }
 }

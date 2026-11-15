@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "EditorRig.h"
+#include "NullGraphicsContext.h"
 #include "../preset_unit/PresetTestHelpers.h"
 
 #include "vintage/ui/EnvelopePicture.h"
@@ -75,56 +76,6 @@ juce::String textOf (juce::RangedAudioParameter& p)
     const auto label = p.getLabel();
     return p.getCurrentValueAsText() + (label.isEmpty() ? juce::String() : " " + label);
 }
-
-/** A graphics context that draws nothing and says its clip is empty, so Graphics skips text and path
-    work: what is left to allocate is our own code (strings, paths, fonts made in paint()). Every method
-    is a no-op, including those whose base-class defaults build a path. */
-class NullContext final : public juce::LowLevelGraphicsContext
-{
-public:
-    bool isVectorDevice() const override { return false; }
-    void setOrigin (juce::Point<int>) override {}
-    void addTransform (const juce::AffineTransform&) override {}
-    float getPhysicalPixelScaleFactor() const override { return 1.0f; }
-    bool clipToRectangle (const juce::Rectangle<int>&) override { return false; }
-    bool clipToRectangleList (const juce::RectangleList<int>&) override { return false; }
-    void excludeClipRectangle (const juce::Rectangle<int>&) override {}
-    void clipToPath (const juce::Path&, const juce::AffineTransform&) override {}
-    void clipToImageAlpha (const juce::Image&, const juce::AffineTransform&) override {}
-    bool clipRegionIntersects (const juce::Rectangle<int>&) override { return false; }
-    juce::Rectangle<int> getClipBounds() const override { return {}; }
-    bool isClipEmpty() const override { return true; }
-    void saveState() override {}
-    void restoreState() override {}
-    void beginTransparencyLayer (float) override {}
-    void endTransparencyLayer() override {}
-    void setFill (const juce::FillType&) override {}
-    void setOpacity (float) override {}
-    void setImageBlendMode (juce::BlendMode) override {}
-    void setInterpolationQuality (juce::Graphics::ResamplingQuality) override {}
-    void fillAll() override {}
-    void fillRect (const juce::Rectangle<int>&, bool) override {}
-    void fillRect (const juce::Rectangle<float>&) override {}
-    void fillRectList (const juce::RectangleList<float>&) override {}
-    void fillPath (const juce::Path&, const juce::AffineTransform&) override {}
-    void drawRect (const juce::Rectangle<float>&, float) override {}
-    void strokePath (const juce::Path&, const juce::PathStrokeType&, const juce::AffineTransform&) override {}
-    void drawImage (const juce::Image&, const juce::AffineTransform&) override {}
-    void drawLine (const juce::Line<float>&) override {}
-    void drawLineWithThickness (const juce::Line<float>&, float) override {}
-    void setFont (const juce::Font& f) override { font = f; }
-    const juce::Font& getFont() override { return font; }
-    void drawGlyphs (juce::Span<const uint16_t>, juce::Span<const juce::Point<float>>, const juce::AffineTransform&) override {}
-    std::unique_ptr<juce::ImageType> getPreferredImageTypeForTemporaryImages() const override { return nullptr; }
-    void drawRoundedRectangle (const juce::Rectangle<float>&, float, float) override {}
-    void fillRoundedRectangle (const juce::Rectangle<float>&, float) override {}
-    void drawEllipse (const juce::Rectangle<float>&, float) override {}
-    void fillEllipse (const juce::Rectangle<float>&) override {}
-    uint64_t getFrameId() const override { return 0; }
-
-private:
-    juce::Font font { juce::FontOptions() };
-};
 } // namespace
 
 // =================================================================================================
@@ -491,7 +442,7 @@ TEST_CASE ("Paint allocations: the pictures and pages build no string, path or f
     rig.set ("lower.lfo.waveform", 4.0f);
     rig.set ("lower.lfo.delay", 0.4f);
     rig.tick();
-    NullContext context;
+    NullGraphicsContext context;
     juce::Graphics g (context);
     const auto allocations = [&] (const std::function<void()>& paint) {
         paint(); // warm-up: lazily made things are not paint()'s own

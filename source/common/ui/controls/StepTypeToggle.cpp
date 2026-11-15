@@ -24,11 +24,11 @@ public:
         const bool on = lit();
         const float alpha = owner.dimmed ? 0.45f : 1.0f;
         g.setColour (on ? colour (Tok::AccentGlobal).withAlpha (alpha) : colour (Tok::BgWindow));
-        g.fillRoundedRectangle (r, 3.0f);
+        g.fillRoundedRectangle (r, metrics::kRadiusSmall);
         g.setColour (colour (Tok::BgTrack));
-        g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+        g.drawRoundedRectangle (r.reduced (0.5f), metrics::kRadiusSmall, 1.0f);
         g.setColour (on ? colour (Tok::TextOnAccent) : (owner.dimmed ? colour (Tok::TextDisabled) : colour (Tok::TextPrimary)));
-        g.setFont (owner.ctx.theme.font (metrics::kTextSmall, on));
+        g.setFont (on ? owner.ctx.theme.fonts().smallBold : owner.ctx.theme.fonts().small);
         g.drawText (caption, r, juce::Justification::centred, false);
         if (hasKeyboardFocus (false))
             drawFocusRing (g, r, 3.0f);

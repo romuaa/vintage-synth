@@ -264,18 +264,18 @@ void EnvelopeView::paint (juce::Graphics& g)
     using namespace metrics;
     const auto r = getLocalBounds().toFloat();
     g.setColour (colour (Tok::BgWindow));
-    g.fillRoundedRectangle (r, 4.0f);
+    g.fillRoundedRectangle (r, metrics::kRadiusControl);
     if (layout.width <= 0.0f)
         return;
 
     // Level lines: the axis (level 0), the peak line and the half way line.
-    g.setColour (colour (Tok::BgTrack).withAlpha (0.5f));
+    g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kGridAlpha));
     for (const float level : { 0.5f, 1.0f })
         g.drawHorizontalLine (juce::roundToInt (layout.levelY (level)), layout.x0, layout.x0 + layout.width);
     if (inverted)
         for (const float level : { 0.5f, 1.0f })
             g.drawHorizontalLine (juce::roundToInt (2.0f * layout.yBase - layout.levelY (level)), layout.x0, layout.x0 + layout.width);
-    g.setColour (colour (Tok::BgTrack).withAlpha (0.9f));
+    g.setColour (colour (Tok::BgTrack).withAlpha (metrics::kAxisAlpha));
     g.drawHorizontalLine (juce::roundToInt (layout.yBase), layout.x0, layout.x0 + layout.width);
 
     if (inverted)
@@ -285,9 +285,9 @@ void EnvelopeView::paint (juce::Graphics& g)
         g.setColour (colour (Tok::TextSecondary).withAlpha (0.9f));
         g.fillPath (ghostDashed);
     }
-    g.setColour (accentColour.withAlpha (0.7f));
+    g.setColour (accentColour.withAlpha (metrics::kCurveAlpha));
     g.fillPath (releaseDashed);
-    g.setColour (accentColour.withAlpha (0.22f));
+    g.setColour (accentColour.withAlpha (metrics::kAreaAlpha));
     g.fillPath (fillPath);
     g.setColour (accentColour);
     g.fillPath (lineStroke);

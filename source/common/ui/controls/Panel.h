@@ -10,7 +10,8 @@ namespace vs::ui
 class Panel final : public juce::Component
 {
 public:
-    Panel (const Theme& t, const juce::String& titleText, int partIndex) : theme (t), part (partIndex)
+    Panel (const Theme& t, const juce::String& titleText, int partIndex)
+        : headerFont (t.font (metrics::kTextHeader, true).withExtraKerningFactor (0.04f)), part (partIndex)
     {
         setTitle (titleText);
         setText (titleText);
@@ -31,24 +32,31 @@ public:
     /** Body area below the header, in this panel's coordinates. */
     juce::Rectangle<int> body() const { return getLocalBounds().withTrimmedTop (metrics::kHeader).reduced (metrics::kPad, 8); }
 
+    /** The header strip's outline is made when the size changes, not while painting (9.5). */
+    void resized() override
+    {
+        const auto r = getLocalBounds().toFloat();
+        head.clear();
+        head.addRoundedRectangle (r.getX(), r.getY(), r.getWidth(), static_cast<float> (metrics::kHeader), static_cast<float> (metrics::kRadius),
+                                  static_cast<float> (metrics::kRadius), true, true, false, false);
+    }
+
     void paint (juce::Graphics& g) override
     {
         const auto r = getLocalBounds().toFloat();
         g.setColour (colour (Tok::BgPanel));
         g.fillRoundedRectangle (r, static_cast<float> (metrics::kRadius));
-        juce::Path head;
-        head.addRoundedRectangle (r.getX(), r.getY(), r.getWidth(), static_cast<float> (metrics::kHeader), static_cast<float> (metrics::kRadius),
-                                  static_cast<float> (metrics::kRadius), true, true, false, false);
         g.setColour (tintFor (part));
         g.fillPath (head);
         g.setColour (part >= 0 ? accentFor (part) : colour (Tok::TextPrimary));
-        g.setFont (theme.font (metrics::kTextHeader, true).withExtraKerningFactor (0.04f));
+        g.setFont (headerFont);
         g.drawText (header, r.withHeight (static_cast<float> (metrics::kHeader)).reduced (static_cast<float> (metrics::kPad), 0.0f),
                     juce::Justification::centredLeft, true);
     }
 
 private:
-    const Theme& theme;
+    juce::Font headerFont;
+    juce::Path head;
     int part;
     juce::String header;
 };

@@ -113,13 +113,13 @@ public:
         if (isPitch())
         {
             g.setColour (colour (Tok::TextSecondary).withAlpha (alpha * soft));
-            g.setFont (ctx.theme.font (kTextSmall, true));
+            g.setFont (ctx.theme.fonts().smallBold);
             drawFittedText (g, pitchLabel, cell.removeFromTop (static_cast<float> (kValueRow)), juce::Justification::centred);
         }
         g.setColour (colour (Tok::BgWindow));
-        g.fillRoundedRectangle (cell, 4.0f);
+        g.fillRoundedRectangle (cell, metrics::kRadiusControl);
         g.setColour (colour (Tok::BgTrack).withAlpha (alpha));
-        g.drawRoundedRectangle (cell.reduced (0.5f), 4.0f, 1.0f);
+        g.drawRoundedRectangle (cell.reduced (0.5f), metrics::kRadiusControl, 1.0f);
 
         if (isPitch())
         {
@@ -140,7 +140,7 @@ public:
             if (type != 0)
             {
                 g.setColour (colour (Tok::TextSecondary).withAlpha (alpha));
-                g.setFont (ctx.theme.font (kTextSmall));
+                g.setFont (ctx.theme.fonts().small);
                 g.drawText (type == 1 ? restText : tieText, cell.withHeight (16.0f).translated (0.0f, 4.0f), juce::Justification::centred, false);
             }
             if (show)
@@ -150,7 +150,7 @@ public:
                 if (block.getHeight() < 6.0f)
                     block = block.withSizeKeepingCentre (block.getWidth(), 6.0f).withCentre ({ block.getCentreX(), y });
                 g.setColour (colour (Tok::AccentLower).withAlpha (alpha * (type == 0 ? 1.0f : 0.35f)));
-                g.fillRoundedRectangle (block, 3.0f);
+                g.fillRoundedRectangle (block, metrics::kRadiusSmall);
             }
         }
         else
@@ -158,7 +158,7 @@ public:
             const float y = valueY() - static_cast<float> (getY());
             auto fill = juce::Rectangle<float>::leftTopRightBottom (cell.getX() + 6.0f, y, cell.getRight() - 6.0f, cell.getBottom() - 3.0f);
             g.setColour (colour (Tok::AccentUpper).withAlpha (alpha * (type == 0 ? 1.0f : 0.45f)));
-            g.fillRoundedRectangle (fill, 3.0f);
+            g.fillRoundedRectangle (fill, metrics::kRadiusSmall);
         }
         if (markerAlpha > 0.0f)
             drawExternalMarker (g, cell.reduced (1.0f), {}, markerAlpha, ctx.theme, false);
@@ -271,7 +271,7 @@ public:
         g.setColour (colour (Tok::AccentGlobal));
         g.fillRoundedRectangle (r, 6.0f);
         g.setColour (colour (Tok::TextOnAccent));
-        g.setFont (ctx.theme.font (metrics::kText, true));
+        g.setFont (ctx.theme.fonts().textBold);
         drawFittedText (g, caption, r, juce::Justification::centred);
         if (markerAlpha > 0.0f)
             drawExternalMarker (g, r, {}, markerAlpha, ctx.theme, false);
@@ -657,16 +657,16 @@ void StepGrid::paint (juce::Graphics& g)
 {
     using namespace metrics;
     g.setColour (colour (Tok::TextSecondary));
-    g.setFont (ctx.theme.font (kText));
+    g.setFont (ctx.theme.fonts().text);
     const juce::Rectangle<float> col (0.0f, 0.0f, static_cast<float> (kLabelW - 6), 18.0f);
     drawFittedText (g, rowLabels[0], col.translated (0.0f, static_cast<float> (kValueRow + 4)), juce::Justification::centredLeft);
-    g.setFont (ctx.theme.font (kTextSmall));
+    g.setFont (ctx.theme.fonts().small);
     drawFittedText (g, rowLabels[1], col.translated (0.0f, static_cast<float> (kValueRow + 22)), juce::Justification::centredLeft);
-    g.setFont (ctx.theme.font (kText));
+    g.setFont (ctx.theme.fonts().text);
     drawFittedText (g, rowLabels[2], col.translated (0.0f, static_cast<float> (kValueRow + kPitchH + kGap + 4)), juce::Justification::centredLeft);
     drawFittedText (g, rowLabels[3], col.translated (0.0f, static_cast<float> (typeBounds (0).getY() + 4)), juce::Justification::centredLeft);
 
-    g.setFont (ctx.theme.font (kTextSmall));
+    g.setFont (ctx.theme.fonts().small);
     const int numberY = typeBounds (0).getBottom() + 2;
     for (int i = 0; i < 16; ++i)
     {

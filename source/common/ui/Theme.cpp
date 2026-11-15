@@ -20,6 +20,7 @@ juce::Colour colour (Tok t) noexcept
         case Tok::TextOnAccent: return juce::Colour (0xff16181cu);
         case Tok::Focus: return juce::Colour (0xffffffffu);
         case Tok::Warn: return juce::Colour (0xffff6b57u);
+        case Tok::KeyWhite: return juce::Colour (0xffffffffu);
         case Tok::Marker: return juce::Colour (0xffd59cf5u); // violet: 7.0:1 on bg.panel, distinct from both accents
     }
     return juce::Colour (0xffff00ffu);
@@ -35,11 +36,24 @@ juce::Colour tintFor (int part) noexcept
     return part == 0 ? colour (Tok::TintLower) : (part == 1 ? colour (Tok::TintUpper) : colour (Tok::BgPanel));
 }
 
+juce::Colour categoryColour (int index) noexcept
+{
+    const int i = ((index % 12) + 12) % 12;
+    return juce::Colour::fromHSV (static_cast<float> (i) / 12.0f, metrics::kCategorySaturation, metrics::kCategoryValue, 1.0f);
+}
+
 Theme::Theme (juce::Typeface::Ptr regular, juce::Typeface::Ptr semibold)
-    : regularFace (std::move (regular)), semiboldFace (std::move (semibold))
+    : regularFace (std::move (regular)),
+      semiboldFace (std::move (semibold)),
+      themeFonts { juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}),
+                   juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}),
+                   juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}) }
 {
     if (semiboldFace == nullptr)
         semiboldFace = regularFace;
+    using namespace metrics;
+    themeFonts = { font (kTextSmall), font (kTextSmall, true), font (kText), font (kText, true), font (kTextSmall - 1.0f, true),
+                   font (kTextHeader, true), font (kTextEditing, true), font (kTextLarge, true) };
     setColourScheme ({ colour (Tok::BgWindow), colour (Tok::BgPanel), colour (Tok::BgPanel), colour (Tok::BgTrack),
                        colour (Tok::TextPrimary), colour (Tok::AccentGlobal), colour (Tok::TextOnAccent), colour (Tok::BgTrack),
                        colour (Tok::TextPrimary) });
@@ -77,9 +91,9 @@ void Theme::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce
 {
     auto r = b.getLocalBounds().toFloat().reduced (0.5f);
     g.setColour (down ? colour (Tok::BgTrack) : (highlighted ? colour (Tok::BgTrack).withAlpha (0.6f) : colour (Tok::BgWindow)));
-    g.fillRoundedRectangle (r, 4.0f);
+    g.fillRoundedRectangle (r, metrics::kRadiusControl);
     g.setColour (colour (Tok::BgTrack));
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+    g.drawRoundedRectangle (r, metrics::kRadiusControl, 1.0f);
 }
 
 void drawFittedText (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area, juce::Justification j)

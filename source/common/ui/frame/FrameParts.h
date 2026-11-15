@@ -5,6 +5,8 @@
 // (EditorState), the meter reads the UI feed.
 
 #include "common/ui/HelpTexts.h"
+#include "common/ui/PaintFonts.h"
+#include "common/ui/PreparedText.h"
 #include "common/ui/Theme.h"
 
 #include <functional>
@@ -31,7 +33,8 @@ public:
 
 private:
     void choose (int p);
-    const Theme& theme;
+    juce::Font headerFont; // made once: paint() allocates nothing (9.5)
+    const juce::String lowerText { "LOWER" }, upperText { "UPPER" };
     int part = 0;
 };
 
@@ -87,7 +90,8 @@ public:
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
 private:
-    const Theme& theme;
+    PaintFonts fonts;
+    const juce::String helpWord { "HELP" };
     juce::String text, banner;
 };
 
@@ -104,7 +108,7 @@ public:
 private:
     const Theme& theme;
     juce::String text;
-    juce::TextLayout layout;
+    PreparedText body; // laid out in showFor(): paint() allocates nothing (9.5)
 };
 
 /** Two peak bars, -48 ... 0 dBFS, peak hold 1 s, fall 20 dB/s, red above -0.1 dBFS. */
@@ -129,7 +133,8 @@ public:
     static constexpr float kFloorDb = -48.0f, kFallDbPerSecond = 20.0f, kHoldMs = 1000.0f, kClipDb = -0.1f;
 
 private:
-    const Theme& theme;
+    PaintFonts fonts;
+    const juce::String outText { "OUT" };
     float levelNow[2] { kFloorDb, kFloorDb }, hold[2] { kFloorDb, kFloorDb };
     double holdAt[2] { 0.0, 0.0 };
     float shownDb[2] { kFloorDb, kFloorDb }, shownHold[2] { kFloorDb, kFloorDb };
@@ -139,5 +144,7 @@ private:
     double lastAnnounceMs = -1.0e12;
 };
 
-void drawPageIcon (juce::Graphics& g, PageIcon icon, juce::Rectangle<float> area, juce::Colour c);
+/** The outline of the stroked icons (Sound, Envelopes, LFO; empty for the others), made when the size changes. */
+juce::Path pageIconPath (PageIcon icon, juce::Rectangle<float> area);
+void drawPageIcon (juce::Graphics& g, PageIcon icon, juce::Rectangle<float> area, juce::Colour c, const juce::Path& stroke);
 } // namespace vs::ui
