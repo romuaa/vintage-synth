@@ -48,6 +48,10 @@ public:
     /** One mirror pass and everything that follows from it (tests call this directly). */
     void tick (double nowMs);
     void tick() { tick (juce::Time::getMillisecondCounterHiRes()); }
+    /** Called by the 30 Hz timer, which keeps running when the host hides the window without
+        closing it (the ticks stop then): a key held on the Play page is released once the editor
+        is no longer showing, so its note cannot sound on until a mouse-up that may never come. */
+    void releaseKeysIfHidden();
 
     // ---- Introspection for tests ----
     const presets::PresetBar& getBar() const noexcept { return bar; }

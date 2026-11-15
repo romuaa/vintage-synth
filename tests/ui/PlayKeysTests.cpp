@@ -15,6 +15,7 @@
 #include "vintage/ui/PlayPage.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <random>
 
@@ -245,28 +246,25 @@ TEST_CASE ("Play keys: a burst of 1000 presses while the audio thread stalls lea
         }
         CHECK (queue.droppedNoteOns() > 900); // the queue was full nearly all the time
     }
-    SECTION ("the last release finds the queue full and the editor closes: nobody retries")
+    SECTION ("a key is held while the queue fills up, then the editor closes: its off is the last writer call")
     {
-        // 31 presses (62 slots), one more note from the same (message) thread, then a held key: full.
-        for (int n = 0; n < static_cast<int> (UiNotes::kCapacity) / 2 - 1; ++n)
-        {
-            strip.mouseDown (mouseAt (strip, onKey (strip, 40 + n % 12)));
-            strip.mouseUp (mouseAt (strip, onKey (strip, 40 + n % 12)));
-        }
-        REQUIRE (queue.noteOn (30, 100));
         strip.mouseDown (mouseAt (strip, onKey (strip, 60)));
-        REQUIRE (strip.playingNote() == 60);
         REQUIRE (queue.isOn (60));
-        rig.editor.reset(); // its off pends: the ring is full
-        CHECK (queue.pendingHas (60));
-        queue.noteOff (30);
-        CHECK (queue.pendingHas (30));
+        // A second writer on the same (message) thread fills the queue around the held key.
+        for (int i = 0; i < 40; ++i)
+        {
+            queue.noteOn (40 + i % 12, 100);
+            queue.noteOff (40 + i % 12);
+        }
+        CHECK (queue.droppedNoteOns() > 0);
+        REQUIRE (strip.playingNote() == 60);
+        rig.editor.reset(); // the off still fits: its slot was reserved by the note on
+        CHECK_FALSE (queue.anyOn());
     }
     // The audio thread comes back: one block drains everything, then the release tails end.
     rig.run (0.02);
     CHECK (rig.allReleased (0));
-    for (int n = 0; n < 128; ++n)
-        CHECK_FALSE (queue.pendingHas (n));
+    CHECK (queue.drain ([] (int, int) noexcept {}) == 0);
     const auto tail = rig.run (3.0);
     CHECK_FALSE (rig.proc.getLowerPart().isSounding());
     CHECK (std::fpclassify (peak (tail, tail.l.size() - static_cast<size_t> (rig.samples (0.1)))) == FP_ZERO);
@@ -292,18 +290,29 @@ TEST_CASE ("Play keys: the processor adds the editor's notes once per block, bef
         rig.render (128, { noteOff (128, 64) }, 128);
         CHECK (rig.allReleased (0));
     }
-    SECTION ("a host block longer than the prepared size: added in its first chunk only")
+    SECTION ("a host block longer than the prepared size: added at the start of its first chunk, once")
     {
+        // The same block with the host's note at offset 0 instead: bit-identical output. Added in a
+        // later chunk the note would start 128 samples late; added twice it would retrigger.
         REQUIRE (queue.noteOn (60, 100));
-        juce::AudioBuffer<float> buffer (2, 4 * 128);
+        juce::AudioBuffer<float> editorBlock (2, 4 * 128);
         juce::MidiBuffer none;
-        rig.proc.processBlock (buffer, none);
+        rig.proc.processBlock (editorBlock, none);
         for (const auto& e : rig.proc.getLastPartEvents (0))
             CHECK (e.type != EventType::NoteOn); // the last chunk got nothing
-        std::uint64_t mask[2] {};
-        rig.proc.getLowerPart().soundingNotes (mask);
-        CHECK (mask[0] == (std::uint64_t { 1 } << 60));
-        CHECK (rig.proc.getLowerPart().numSoundingVoices() == 1);
+
+        Rig host (48000.0, 128);
+        host.prepare();
+        juce::AudioBuffer<float> hostBlock (2, 4 * 128);
+        juce::MidiBuffer hostMidi;
+        hostMidi.addEvent (juce::MidiMessage::noteOn (1, 60, static_cast<juce::uint8> (100)), 0);
+        host.proc.processBlock (hostBlock, hostMidi);
+        CHECK (editorBlock.getMagnitude (0, 0, 128) > 0.0f);
+        int differing = 0;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < 4 * 128; ++i)
+                differing += std::memcmp (editorBlock.getReadPointer (ch) + i, hostBlock.getReadPointer (ch) + i, sizeof (float)) != 0 ? 1 : 0;
+        CHECK (differing == 0);
     }
     SECTION ("a zero-length block applies them")
     {
@@ -336,5 +345,122 @@ TEST_CASE ("Play keys: the processor adds the editor's notes once per block, bef
         rig.prepare();
         rig.render (256, {}, 128);
         CHECK (rig.countType (0, EventType::NoteOn) == 0);
+    }
+}
+
+TEST_CASE ("Play keys: a page switch and back during one press ends that press; the next drag plays nothing", "[ui][m7c][play][keys]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    PlayRig rig;
+    auto& strip = rig.strip();
+    SECTION ("page switch (cancel)")
+    {
+        strip.mouseDown (mouseAt (strip, onKey (strip, 60)));
+        rig.editor->selectPage (static_cast<int> (ui::VintagePage::Effects), 0);
+        rig.editor->selectPage (static_cast<int> (ui::VintagePage::Play), 0);
+    }
+    SECTION ("the strip hidden and shown again")
+    {
+        strip.mouseDown (mouseAt (strip, onKey (strip, 60)));
+        strip.setVisible (false);
+        strip.setVisible (true);
+    }
+    SECTION ("an ancestor hidden, found by the tick, shown again")
+    {
+        strip.mouseDown (mouseAt (strip, onKey (strip, 60)));
+        rig.editor->getPlayPage().setVisible (false);
+        rig.tick();
+        rig.editor->getPlayPage().setVisible (true);
+    }
+    CHECK (strip.playingNote() == -1);
+    // The button is still down: dragging over the keys plays nothing until the next press.
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 64)));
+    CHECK (strip.playingNote() == -1);
+    strip.mouseUp (mouseAt (strip, onKey (strip, 64)));
+    rig.run (0.05);
+    const auto got = notesOf (rig, 0);
+    REQUIRE (got.size() == 2);
+    CHECK ((got[0].on && got[0].note == 60 && ! got[1].on && got[1].note == 60));
+    strip.mouseDown (mouseAt (strip, onKey (strip, 64)));
+    CHECK (strip.playingNote() == 64); // a new press plays again
+    strip.mouseUp (mouseAt (strip, onKey (strip, 64)));
+}
+
+TEST_CASE ("Play keys: the editor's timer releases a held key once the editor is no longer showing (host hid the window)",
+           "[ui][m7c][play][keys]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    PlayRig rig;
+    auto& strip = rig.strip();
+    strip.mouseDown (mouseAt (strip, onKey (strip, 60)));
+    rig.run (0.05);
+    REQUIRE (rig.proc.getLowerPart().isSounding());
+    // The test editor is not on the desktop, so it is never showing: what a hidden host window looks like.
+    REQUIRE_FALSE (rig.editor->isShowing());
+    rig.editor->releaseKeysIfHidden();
+    CHECK (strip.playingNote() == -1);
+    rig.run (0.05);
+    CHECK (rig.allReleased (0));
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 62)));
+    CHECK (strip.playingNote() == -1);
+}
+
+TEST_CASE ("Play keys: the editor and the host play the same pitch: one voice, retriggered; the first off releases it; nothing hangs",
+           "[ui][m7c][play][keys]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    PlayRig rig;
+    auto& strip = rig.strip();
+    strip.mouseDown (mouseAt (strip, onKey (strip, 60)));
+    rig.run (0.05);
+    // The host plays 60 too: a voice already playing that note is retriggered (Poly, VoiceAllocator).
+    rig.render (rig.samples (0.05), { noteOn (static_cast<int> (rig.now), 60, 90) }, 256);
+    CHECK (rig.proc.getLowerPart().numSoundingVoices() == 1);
+    // The editor lets go: that off releases the shared voice, although the host still holds 60.
+    strip.mouseUp (mouseAt (strip, onKey (strip, 60)));
+    rig.run (3.0);
+    CHECK_FALSE (rig.proc.getLowerPart().isSounding());
+    // The host's own off comes later and finds nothing to release.
+    const auto tail = rig.render (rig.samples (0.2), { noteOff (static_cast<int> (rig.now), 60) }, 256);
+    CHECK_FALSE (rig.proc.getLowerPart().isSounding());
+    CHECK (std::fpclassify (peak (tail)) == FP_ZERO);
+    // What the part received: both ons, and one off (the router forwards one off per held key; the
+    // host's later off finds the key already released and is not passed on).
+    CHECK (rig.countType (0, EventType::NoteOn) == 2);
+    CHECK (rig.countType (0, EventType::NoteOff) == 1);
+}
+
+TEST_CASE ("Play keys: the editor's notes feed the arpeggiator and obey the hold pedal", "[ui][m7c][play][keys]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    PlayRig rig;
+    auto& strip = rig.strip();
+    SECTION ("arpeggiator")
+    {
+        rig.set ("arp.mode", 1.0f); // Arpeggiator, on the Lower part
+        rig.tick();
+        strip.mouseDown (mouseAt (strip, onKey (strip, 60)));
+        rig.run (1.0);
+        const int steps = rig.countType (0, EventType::NoteOn);
+        CHECK (steps >= 3); // the held key repeats at the arpeggiator's rate
+        strip.mouseUp (mouseAt (strip, onKey (strip, 60)));
+        rig.run (0.5);
+        const long long released = rig.now;
+        rig.run (1.0);
+        CHECK (rig.countType (0, EventType::NoteOn, released) == 0); // stopped with the key
+        rig.run (3.0);
+        CHECK_FALSE (rig.proc.getLowerPart().isSounding());
+    }
+    SECTION ("hold pedal")
+    {
+        rig.render (256, { pedal (static_cast<int> (rig.now), true) }, 256);
+        strip.mouseDown (mouseAt (strip, onKey (strip, 60)));
+        rig.run (0.05);
+        strip.mouseUp (mouseAt (strip, onKey (strip, 60)));
+        rig.run (3.0);
+        CHECK (rig.proc.getLowerPart().isSounding()); // held by the pedal
+        rig.render (256, { pedal (static_cast<int> (rig.now), false) }, 256);
+        rig.run (3.0);
+        CHECK_FALSE (rig.proc.getLowerPart().isSounding());
     }
 }

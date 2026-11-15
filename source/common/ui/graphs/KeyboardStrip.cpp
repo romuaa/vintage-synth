@@ -49,20 +49,28 @@ KeyboardStrip::KeyboardStrip (UiContext& c, const UiFeed& f, UiNotes* n, const j
 
 KeyboardStrip::~KeyboardStrip()
 {
-    releaseNote();
+    endPlaying();
     model.cancel();
 }
 
 void KeyboardStrip::cancelInteraction()
 {
-    releaseNote();
+    endPlaying();
     model.cancel();
+}
+
+void KeyboardStrip::endPlaying()
+{
+    // The press is over, not only its note: with the button still down, a later drag (after the
+    // page came back) must not start a new note.
+    playGesture = false;
+    releaseNote();
 }
 
 void KeyboardStrip::visibilityChanged()
 {
     if (! isVisible())
-        releaseNote();
+        endPlaying();
 }
 
 bool KeyboardStrip::shownInTree() const noexcept
@@ -196,14 +204,9 @@ void KeyboardStrip::idle (double nowMs)
 {
     model.idle (nowMs);
     // A page switch hides an ancestor (and cancels the page); this also catches any other way the
-    // strip stops being shown while a key is down. Offs that found the queue full go out now.
+    // strip stops being shown while a key is down.
     if (playing >= 0 && ! shownInTree())
-    {
-        playGesture = false;
-        releaseNote();
-    }
-    if (notes != nullptr)
-        notes->retryPendingOffs();
+        endPlaying();
     // The feed: held and sounding keys of both parts. Repaint only when a mask changed.
     Masks m {};
     for (int p = 0; p < 2; ++p)

@@ -218,8 +218,15 @@ void VintageEditor::onVBlank()
         tick (now);
 }
 
+void VintageEditor::releaseKeysIfHidden()
+{
+    if (! isShowing())
+        playPage->getStrip().endPlaying();
+}
+
 void VintageEditor::timerCallback()
 {
+    releaseKeysIfHidden();
     // Hosts and window systems may throttle vblank: then a 30 Hz timer drives the tick.
     const double now = juce::Time::getMillisecondCounterHiRes();
     if (isShowing() && now - lastVBlankMs > kVBlankTimeoutMs && now - lastTickMs >= kMinTickMs)

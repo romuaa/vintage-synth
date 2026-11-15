@@ -7,17 +7,19 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ### M7 Play page: the keyboard strip's keys play notes (architecture 9.3.4, 2026-11-15)
 - `source/common/engine/UiNotes.h` (JUCE-free): a wait-free single-writer/single-reader queue of
-  64 `{note, velocity}` from the editor to the audio thread; a full queue drops the newest note on,
-  a note off that finds it full waits in a pending-off mask that the writer retries and the audio
-  thread collects after the ring in every block (so it arrives even if the editor closes), and a
-  note on waits while its note's off is pending. One relaxed load when nothing was written.
+  64 `{note, velocity}` from the editor to the audio thread, ons and offs in one FIFO. A note off is
+  never lost: every note on reserves the slot of its off, and a note on that does not fit with the
+  offs owed is dropped (the newest on). So an off is queued at once even if the editor closes right
+  after. One acquire load when nothing was written. (Review fix: the first version kept full-queue
+  offs in a side mask that could overtake their own note on.)
 - Shell: the processor owns it (`getUiNotes()`); `processBlock` adds the notes as channel-1 note
   messages at offset 0 of the block's first chunk, before the host's events (zero-length blocks and
   blocks longer than the prepared size included); bypassed blocks, `prepareToPlay` and `reset`
   drain and drop them. Nothing changes with an empty queue (render regression unchanged).
 - `KeyboardStrip`: a press on a key plays it, a drag glides (old off, new on), velocity 40 at the
   top of the key to 127 at the bottom; released on mouse-up, when the strip or its page is hidden,
-  when the editor closes and by `cancelInteraction()`. The split marker now moves only by its pill
+  when the editor closes or stops showing (its 30 Hz timer), and by `cancelInteraction()`; a press
+  that was ended that way plays nothing more until the next mouse-down. The split marker now moves only by its pill
   (drag by the grab point, double-click resets), arrows and wheel. Help text, page caption and hint
   updated. Tests: `tests/ui/UiNotesTests.cpp` (incl. a two-thread run), `tests/ui/PlayKeysTests.cpp`;
   the split-key tests now drag the pill and check that a press on the keys leaves the split alone.

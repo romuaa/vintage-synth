@@ -6,7 +6,8 @@
 // double-click the pill) and dots for the keys held (filled) and sounding (ring) from the UI feed.
 // A press on the keys plays them (9.3.4, "Playing the keys"): one note per mouse through UiNotes,
 // dragging glides from key to key, velocity by the height in the key; the note is released on
-// mouse-up, when the strip is hidden or destroyed, and by cancelInteraction(). Everything it draws
+// mouse-up, when the strip or its page is hidden, when the editor stops showing (its timer) or is
+// destroyed, and by cancelInteraction(). Everything it draws
 // is prepared when the value, the key mode or the feed's masks change; paint() only draws.
 
 #include "common/engine/UiFeed.h"
@@ -49,6 +50,9 @@ public:
     float shownValue() const override;
     bool showsMirroredValue (juce::String& why) const override;
     void cancelInteraction() override;
+    /** Ends a press on the keys: its note is released and the press plays nothing more until the
+        next mouse-down (cancel, hide, the editor no longer showing). */
+    void endPlaying();
 
     void paint (juce::Graphics&) override;
     void resized() override;
