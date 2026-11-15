@@ -247,6 +247,7 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | JUCE 9 warns (→ error) on `JUCE_DISPLAY_SPLASH_SCREEN`. | Don't define it. |
 | `AudioFormat::createWriterFor(OutputStream*, …)` is deprecated (→ error). | Use the `AudioFormatWriterOptions` overload. |
 | `-Wimplicit-int-float-conversion` in a test. | Warnings are errors in tests too; cast explicitly. |
+| A thread test that asserts "the rare path ran at least once" within a fixed time failed once in the Linux sanitizer step (0 collisions in 1.5 s on a loaded machine), after passing many times. | A test that needs a collision runs until it has seen one, with a generous upper limit; a fixed short window only proves something on an idle machine. |
 | GCC (Linux step only) fails with `-Wshadow` on a constructor parameter that has the name of a member of a JUCE base class; Clang accepts it. | Name constructor parameters so they cannot collide with base-class members (found in M7a's `CheckableHandler`); run the Linux step before handing over. |
 | Hosting a VST3 in a console test app. | `juce_add_console_app` + `JUCE_PLUGINHOST_VST3=1` + `juce_audio_processors_headless`; register formats with `addHeadlessDefaultFormatsToManager`. |
 
