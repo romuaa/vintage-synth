@@ -2057,8 +2057,12 @@ marker moves only by its pill (drag, arrows, wheel, double-click), no longer by 
   editor closed), or `cancelInteraction()` runs. No note may hang.
 - Path (`common/engine/UiNotes.h`, JUCE-free, owned by the processor like `UiFeed`): a fixed-size
   wait-free single-writer/single-reader queue of `{note, velocity}` (velocity 0 = off; capacity 64;
-  a full queue drops the newest note on but never a note off: the writer keeps a pending-off mask
-  it retries on the next frame). The message thread writes; the audio thread drains it at the start
+  a full queue drops the newest note on but never a note off: an off that finds the queue full is
+  recorded in a shared pending-off mask, which the writer retries on its next call and frame and
+  which the audio thread also collects after draining the queue, so the off arrives even if the
+  editor has closed; a note on is refused while its own off is pending). Dragging off the keys
+  releases the note until the pointer is on a key again. In bypassed blocks the editor's notes are
+  drained and dropped, like the host's MIDI. The message thread writes; the audio thread drains it at the start
   of every block (bypassed blocks too) and adds the notes as channel-1 note messages at offset 0 to
   the same event list as the host's MIDI, before that block's host events. From there they are
   ordinary notes: key mode, split, arp/seq, hold pedal and the `held`/`sounding` dots apply.
