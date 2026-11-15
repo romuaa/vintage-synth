@@ -255,6 +255,17 @@ public:
     /** Power-on state at cycle 0 (8.15.1; the configuration is kept). */
     void reset() noexcept;
 
+    /** Power-on state (8.15.1) of every oscillator, envelope, register and the stored filter input, like
+        reset(), but cycle() and the sample clock keep running (a stolen voice restarts its chip while the
+        program engine keeps absolute cycles). Configuration and shape tables are kept. */
+    void powerOnKeepingTime() noexcept;
+    /** Clean restart (8.6.4): envelope n's (0..2) rate counter position := 0 and its divider counter (the
+        exponential counter) := 0, now, without a register write. Exactly these two fields of EnvState
+        (`position`, `divider`) change; the pending rate reset, the divider period and any pending period
+        change, the pipelines, phase, counter, freeze and every oscillator field stay as they are. Another n
+        is ignored. */
+    void clearEnvelopeCounters (int n) noexcept;
+
     /** A register write at the current cycle (trace replay). The address is taken modulo 32;
         0x19..0x1F are ignored (read-only or not modelled). */
     void write (std::uint8_t reg, std::uint8_t value) noexcept;

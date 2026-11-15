@@ -25,6 +25,23 @@ void Chip::reset() noexcept
     clock.reset();
 }
 
+void Chip::powerOnKeepingTime() noexcept
+{
+    osc = {};
+    env = {};
+    regs = {};
+    cutoff = 0.0f;
+}
+
+void Chip::clearEnvelopeCounters (int n) noexcept
+{
+    if (n < 0 || n > 2)
+        return;
+    Env& e = env[idx (n)];
+    e.position = 0;
+    e.divider = 0;
+}
+
 void Chip::writeAttackDecay (int n) noexcept
 {
     Env& e = env[idx (n)];
