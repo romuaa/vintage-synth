@@ -1475,9 +1475,12 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
      indexed by the accumulator: shape := Tpn(noise output bits 11..4), a per-model table of the
      8 noise output bits (our own fit, the same network form with the noise output driving the
      bit lines in place of a waveform). Step 3's AND with the noise output still applies.
-     **Bits 3..0 of every table** cannot be observed through the read-back; our tables constrain
-     them: a bit is set only on a line where the selected triangle or saw input is high, and only
-     as the continuation of a run of set bits from bit 4 down (so no entry has low bits alone).
+     **Structural rules of our tables.** For all 12 bits: a bit is set only on a line where the
+     selected triangle or saw input is high (it holds in every measured sample and is part of
+     the fitted model, not only a cosmetic rule). Bits 3..0 cannot be observed through the
+     read-back; they are set only as the continuation of a run of set bits from bit 4 down (so
+     no entry has low bits alone). A reader of a shape must go through the chip's shape function:
+     the table row for pulse + noise is unused.
   3. out := shape AND (pulse selected ? the pulse comparison of the previous step, high under
      test : 0xfff) AND (noise selected ? noise output : 0xfff).
   4. Model A, saw bit set: if out bit 11 is 0, clear acc bit 23 and the rise flag.
@@ -1487,14 +1490,21 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
      step's shape. The latch is updated only in such steps. Model B otherwise: out. (To confirm
      with the fitted tables in S2b: latching the index and applying the current table instead
      differs only when the waveform bits change.)
-     **Measured in S2b (`s_latch_b`, 40 switches per case):** in the steady state, across a
-     pulse-only step (which reads 0xff itself and leaves the latch) and in 30 of 40 switches from
-     triangle+saw to saw+pulse the read value is the latched shape, as written here; 1 fits the
-     latched index, 9 fit neither. A switch from triangle+saw to saw alone reads
+     **Measured in S2b (`s_latch_b`, 40 switches per case; `s_latch_pn_b`):** the steady state
+     follows this rule. A pulse-only step reads 0xff itself and leaves the latch (40 of 40);
+     pulse + noise steps leave it too (60 of 60). In the first step after the waveform bits
+     change, the reference reads the latched shape in 30 of 40 switches from triangle+saw to
+     saw+pulse (1 fits the latched index, 9 fit neither) and in 30 of 40 returns after a
+     pulse-only step; a switch from triangle+saw to saw alone reads
      saw(index) AND (saw(index) << 1) in all 40 cases, which neither reading gives. The rule
-     above stays (the chip latches the shape); **the first step after a change of the waveform
-     bits on Model B is not proven** and needs measurements of switches between further
-     combinations. A test pins the measured counts.
+     above stays for now (the chip latches the shape); **the first step after a change of the
+     waveform bits on Model B is not proven.** Tests pin how many of these reads the chip
+     reproduces (29, 40, 31 and 5 of 40). Candidate for the next chip step (S2b review, measured
+     at 29 indices per transition, exact for all eight switches to a single waveform): the latch
+     holds the previous step's selected triangle/saw lines before the combining network
+     (triangle+saw: x AND (x << 1); saw: x; triangle: tri(x)), and each read passes them through
+     the combining stage of the current waveform bits, then the masks. Only the Model B read
+     value is affected, not the output.
   6. Noise and another waveform bit together (write-back): if the noise pipeline is not 1 and the
      test bit is clear, the register's bits 20, 18, 14, 11, 9, 5, 2, 0 are ANDed with out bits
      11..4, and noise output := noise output AND out. Otherwise (in this case only), noise
@@ -1641,9 +1651,11 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
   `c_9_*` or `c_a_*` trace with an exemption (they use no table).
 - **Exemption budget (S2b):** with our own tables the replay also pins, per trace and field, the
   number of exempt checkpoints that differ from the reference (`tests/bside/trace/
-  exemption-budget.txt`, regenerated with each refit like a golden) and fails on any increase.
-  As fitted: 81 of 6850, all in `rd1B` of 12 `c_*` traces; every `acc*` and `noise*` field and
-  every noise-combination trace is at 0, so those are effectively exact.
+  exemption-budget.txt`, regenerated with each refit like a golden) and fails on any change: an
+  increase is a regression, a decrease asks for the budget to be regenerated; unknown or
+  duplicate entries fail. As fitted: 81 of 6850, all in `rd1B` of 12 `c_*` traces (one of them
+  in a noise-combination trace, `c_b_b`); every `acc*` and `noise*` field is at 0, so those are
+  effectively exact.
 - **What the exemption leaves unproven (S2a review):** within the `c_*` traces an exempt field can
   also hide an oscillator-path error that is not a shape error (`rd1B` is the only oscillator
   field those traces observe). Until our own tables exist, the `c_*` family proves envelopes and
