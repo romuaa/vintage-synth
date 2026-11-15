@@ -105,8 +105,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   `master.limiter.ceiling` as session settings, 172 parameters; default level approved by the
   owner); the VCF slope crossfade on sounding voices. Verified by the local gate only.
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
-- **M7b–M7e (all editor pages) are ready on `m7/pages`, awaiting the owner's hands-on check and
-  merge approval:** Envelopes and LFO (pictures from the real envelope and LFO code), Play
+- **M7b–M7e (all editor pages) are merged to `main`** (owner tried them and approved,
+  2026-11-15; the Play page keys play notes at the owner's request): Envelopes and LFO (pictures from the real envelope and LFO code), Play
   (keyboard strip whose keys play notes) and Effects (pictures, on/off switches), Arp + Seq (step grid, pattern cards,
   preview computed by the real arpeggiator; small audio-thread additions for the playing step and
   held-key order, audio byte-identical), Browser (grid, categories, search, tone loading) and the
