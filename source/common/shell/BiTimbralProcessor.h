@@ -19,7 +19,7 @@
 //   5. Release request of a preset apply -> releaseForPresetChange, acknowledge.
 //   6. Key-mode change -> release both parts, resync both arp/seq, latch sounding parts; split point.
 //   7. Upper resume rule; mixer targets.
-//   8. Per chunk: parse, pedal tracking, route, arp/seq, render Lower (and Upper if active, else a
+//   8. Per chunk: parse (the first chunk starts with the editor's notes, UiNotes), pedal tracking, route, arp/seq, render Lower (and Upper if active, else a
 //      zero-length render), mixer with latch cuts, input guard, chorus, delay, reverb, gain x trim
 //      with guard, limiter, clamp, copy or mono fold, guard reset, unlatch, Upper idle count.
 //   9. Publish the UI feed (reads only; also at every exit of processBlockBypassed).
@@ -51,6 +51,7 @@
 #include "common/engine/Oversampler.h"
 #include "common/engine/PartMixer.h"
 #include "common/engine/UiFeed.h"
+#include "common/engine/UiNotes.h"
 #include "common/fx/Chorus.h"
 #include "common/fx/Delay.h"
 #include "common/fx/Reverb.h"
@@ -183,6 +184,7 @@ public:
         setLatencySamples (lowerPart().getLatencySamples());
 
         uiFeed.internalRate.store (static_cast<float> (sampleRate * voiceOversamplingFactor (sampleRate, false)), std::memory_order_relaxed);
+        uiNotes.discard(); // the parts start silent: nothing the editor queued before plays (9.3.4)
     }
 
     void releaseResources() override {}
@@ -192,6 +194,7 @@ public:
     {
         if (preparedBlockSize > 0)
             resetEngine();
+        uiNotes.discard(); // everything was released: the editor's queued notes go with it (9.3.4)
     }
 
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override
@@ -211,7 +214,7 @@ public:
             if (preparedBlockSize > 0)
                 resetEngine();
         }
-        processInternal (buffer, midi);
+        processInternal (buffer, midi, true);
         publishUiFeed (buffer, false); // step 9
     }
     using juce::AudioProcessor::processBlock;
@@ -227,6 +230,9 @@ public:
     {
         juce::ScopedNoDenormals noDenormals;
         const int numSamples = buffer.getNumSamples();
+        // The editor's notes are drained in every block; while bypassed they are ignored like the
+        // host's MIDI (the engine is released and reset, so nothing they started can hang).
+        uiNotes.discard();
         if (preparedBlockSize == 0)
         {
             buffer.clear();
@@ -259,7 +265,7 @@ public:
         }
         // Fading out: render on without the host's MIDI, ramp the output to 0 over the fade (per
         // sample, so it does not depend on the block size), then release everything as a panic.
-        processInternal (buffer, noMidi);
+        processInternal (buffer, noMidi, false);
         const int fadeSamples = juce::jmin (numSamples, bypassFadeLeft);
         const float step = 1.0f / static_cast<float> (bypassFadeLength);
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -381,6 +387,8 @@ public:
     EditorState& getEditorState() noexcept { return editorState; }
     /** Audio -> editor feed, written once per block (step 9); the editor only reads it. */
     UiFeed& getUiFeed() noexcept { return uiFeed; }
+    /** Editor -> audio notes (the Play page's keys, 9.3.4): the message thread writes, every block reads. */
+    UiNotes& getUiNotes() noexcept { return uiNotes; }
 
     // ---- Read-only views for tests and diagnostics (not thread-safe: read between blocks) ----
     const Part& getLowerPart() const noexcept { return self().part (0); }
@@ -615,13 +623,16 @@ private:
         arp.setSettings (wanted);
     }
 
-    void processInternal (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) noexcept
+    /** `playUiNotes`: the editor's notes (UiNotes) start the block's first chunk; false (bypass
+        fade): they were drained and dropped by the caller. */
+    void processInternal (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, bool playUiNotes) noexcept
     {
         const int numSamples = buffer.getNumSamples();
         const int numChannels = buffer.getNumChannels();
 
         if (preparedBlockSize == 0)
         {
+            uiNotes.discard();
             buffer.clear();
             return;
         }
@@ -717,6 +728,15 @@ private:
         auto parseChunk = [&] (int start, int len, bool lastChunk) {
             // Raw bytes only: building a juce::MidiMessage could allocate (SysEx).
             events.clear();
+            // The editor's keys (docs/architecture.md 9.3.4): once per block, in its first chunk, at
+            // offset 0 before the host's events, as channel-1 note messages (raw bytes). From here
+            // they are ordinary notes. With nothing queued this is one relaxed load.
+            if (start == 0 && playUiNotes)
+                uiNotes.drain ([this] (int note, int velocity) noexcept {
+                    const std::uint8_t msg[3] { static_cast<std::uint8_t> (velocity > 0 ? 0x90 : 0x80), static_cast<std::uint8_t> (note & 0x7F),
+                                                static_cast<std::uint8_t> (velocity & 0x7F) };
+                    events.add (msg, 3, 0);
+                });
             for (; next != midi.cend(); ++next)
             {
                 const auto meta = *next;
@@ -1013,6 +1033,7 @@ private:
     // Editor data (docs/architecture.md 9.1.3, 9.1.4). The audio thread only writes uiFeed (step 9).
     EditorState editorState;
     UiFeed uiFeed;
+    UiNotes uiNotes; // the editor's keys; drained at the start of every block (9.3.4)
     std::array<UiFeed::Order, 2> publishedOrder { noKeysInOrder(), noKeysInOrder() }; // audio thread only
     std::span<const char* const> uiPageNames; // empty: no UiState child in the session
 

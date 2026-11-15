@@ -5,6 +5,23 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M7 Play page: the keyboard strip's keys play notes (architecture 9.3.4, 2026-11-15)
+- `source/common/engine/UiNotes.h` (JUCE-free): a wait-free single-writer/single-reader queue of
+  64 `{note, velocity}` from the editor to the audio thread; a full queue drops the newest note on,
+  a note off that finds it full waits in a pending-off mask that the writer retries and the audio
+  thread collects after the ring in every block (so it arrives even if the editor closes), and a
+  note on waits while its note's off is pending. One relaxed load when nothing was written.
+- Shell: the processor owns it (`getUiNotes()`); `processBlock` adds the notes as channel-1 note
+  messages at offset 0 of the block's first chunk, before the host's events (zero-length blocks and
+  blocks longer than the prepared size included); bypassed blocks, `prepareToPlay` and `reset`
+  drain and drop them. Nothing changes with an empty queue (render regression unchanged).
+- `KeyboardStrip`: a press on a key plays it, a drag glides (old off, new on), velocity 40 at the
+  top of the key to 127 at the bottom; released on mouse-up, when the strip or its page is hidden,
+  when the editor closes and by `cancelInteraction()`. The split marker now moves only by its pill
+  (drag by the grab point, double-click resets), arrows and wheel. Help text, page caption and hint
+  updated. Tests: `tests/ui/UiNotesTests.cpp` (incl. a two-thread run), `tests/ui/PlayKeysTests.cpp`;
+  the split-key tests now drag the pill and check that a press on the keys leaves the split alone.
+
 ### B-Side S2a fidelity pass — the digital core follows the per-cycle specification 8.15 (2026-11-14)
 - `source/bside/chip/` rewritten to `docs/architecture.md` 8.15 (which wins over 8.4.3): power-on state
   (accumulators 0x555555, noise 0x7ffffe, envelopes 0xaa in release with a reset pending, Model B read

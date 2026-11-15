@@ -80,7 +80,7 @@ Format (one entry per line, nothing else on the line):
 ## Whole instrument
 
 - `key.mode`: Whole: the Lower sound on all keys. Dual: both sounds on every key; Split: Lower below the split key, Upper from it upwards.
-- `key.split_point`: The lowest key of the Upper part in Split mode. Keys below it play Lower.
+- `key.split_point`: The lowest key of the Upper part in Split mode; keys below it play Lower. Drag the Split pill to move it, and press the keys to play them.
 - `mix.balance`: The volume balance between the Lower and Upper parts. No effect in Whole mode.
 - `global.vintage`: Adds analog looseness: slow pitch drift and small differences in pitch, filter and envelopes between voices.
 - `master.volume`: The overall output volume. It is saved with your session, not with a program.

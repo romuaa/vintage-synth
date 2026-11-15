@@ -3,6 +3,13 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## M7 Play page keys (2026-11-15)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A control on a page that is switched away never learns it was hidden. | JUCE calls `visibilityChanged()` only on the component whose `setVisible` changed, not on its children; `isShowing()` is false for every editor that is not on the desktop (all editor tests). | Anything that must stop when its page goes away (a held note, an open gesture) is ended by the page's `cancelInteraction()` and, as a safety net, by an ancestor-visibility walk up to (not including) the editor in the per-frame idle. |
+| A single-writer pending-off mask can strand an off. | The writer retries only while an editor is open; if it closes with a full queue nobody calls it again. | The audio thread also collects the mask after draining the ring each block (`UiNotes`); the writer refuses a note on while its note's off is pending. |
+
 ## B-Side S2a fidelity pass (2026-11-14)
 
 | Problem | Cause | Fix / rule |

@@ -104,6 +104,14 @@ juce::Point<float> keyCentre (const ui::KeyboardStrip& s, int note)
     return { s.keysArea().getX() + k.x + k.w * 0.5f, s.keysArea().getY() + y };
 }
 
+/** Where the pointer is when the split pill, grabbed at its centre while the split key was `from`,
+    has been dragged so that the marker stands at `to` (the strip's coordinates). */
+juce::Point<float> pillDraggedTo (const ui::KeyboardStrip& s, juce::Point<float> grabbedAt, int from, int to)
+{
+    const float grab = grabbedAt.x - (s.keysArea().getX() + s.getGeometry().markerX (from));
+    return { s.keysArea().getX() + s.getGeometry().markerX (to) + grab, grabbedAt.y };
+}
+
 /** The handle stands where the page's mapping puts it for the mirror's values. */
 bool handleFollows (ui::GraphHandle& h) { return h.getCentre().getDistanceFrom (h.expectedCentre()) < 0.5f; }
 
@@ -580,10 +588,10 @@ TEST_CASE ("Keyboard strip: the window follows the split key by octaves; its own
     rig.tick();
     CHECK (strip.windowLow() == 24);
 
-    // Drag the marker to the last key of the window and let go: the window stays.
-    const auto down = mouseAt (strip, keyCentre (strip, 60));
-    strip.mouseDown (down);
-    const auto edge = mouseAt (strip, keyCentre (strip, 96));
+    // Drag the marker (by its pill) to the last key of the window and let go: the window stays.
+    const auto grabbed = strip.pillBounds().getCentre();
+    strip.mouseDown (mouseAt (strip, grabbed));
+    const auto edge = mouseAt (strip, pillDraggedTo (strip, grabbed, 60, 96));
     strip.mouseDrag (edge);
     strip.mouseUp (edge);
     rig.tick();
@@ -595,7 +603,8 @@ TEST_CASE ("Keyboard strip: the window follows the split key by octaves; its own
     CHECK (strip.windowLow() == 48);
 }
 
-TEST_CASE ("Keyboard strip: press and drag on the keys set the split key in one host gesture; keys and double-click work", "[ui][m7c][play][gestures]")
+TEST_CASE ("Keyboard strip: dragging the pill sets the split key in one host gesture; a press on the keys does not; keys and double-click work",
+           "[ui][m7c][play][gestures]")
 {
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
     EditorRig rig;
@@ -604,14 +613,31 @@ TEST_CASE ("Keyboard strip: press and drag on the keys set the split key in one 
     rig.set ("key.mode", 2.0f);
     rig.tick();
     const int beginsBefore = host.begins, outsideBefore = host.valuesOutsideGesture;
+
+    // A press and a drag on the keys play them (9.3.4): the split key stays, no host gesture.
     strip.mouseDown (mouseAt (strip, keyCentre (strip, 62)));
+    strip.mouseDrag (mouseAt (strip, keyCentre (strip, 66)));
+    strip.mouseUp (mouseAt (strip, keyCentre (strip, 66)));
+    CHECK (plain (rig.param ("key.split_point")) == Approx (60.0f));
+    CHECK (host.begins == beginsBefore);
+    // Nor does a double-click on the keys.
+    strip.mouseDoubleClick (mouseAt (strip, keyCentre (strip, 70)));
+    CHECK (plain (rig.param ("key.split_point")) == Approx (60.0f));
+
+    // The pill: grabbed anywhere on it (no jump), dragged by that point.
+    const auto grabbed = strip.pillBounds().getCentre().translated (9.0f, 3.0f);
+    strip.mouseDown (mouseAt (strip, grabbed));
+    CHECK (plain (rig.param ("key.split_point")) == Approx (60.0f));
+    CHECK (host.openCount() == 1);
+    strip.mouseDrag (mouseAt (strip, pillDraggedTo (strip, grabbed, 60, 62)));
     CHECK (plain (rig.param ("key.split_point")) == Approx (62.0f));
     CHECK (strip.drawnSplitNote() == 62); // shown at once, not at the next tick
-    strip.mouseDrag (mouseAt (strip, keyCentre (strip, 66)));
-    strip.mouseDrag (mouseAt (strip, keyCentre (strip, 66))); // a black key (F#)
+    strip.mouseDrag (mouseAt (strip, pillDraggedTo (strip, grabbed, 60, 66)));
+    strip.mouseDrag (mouseAt (strip, pillDraggedTo (strip, grabbed, 60, 66))); // a black key (F#)
     CHECK (plain (rig.param ("key.split_point")) == Approx (66.0f));
+    CHECK (strip.playingNote() == -1); // the pill plays nothing
     CHECK (host.openCount() == 1);
-    strip.mouseUp (mouseAt (strip, keyCentre (strip, 66)));
+    strip.mouseUp (mouseAt (strip, pillDraggedTo (strip, grabbed, 60, 66)));
     CHECK (host.openCount() == 0);
     CHECK (host.begins == beginsBefore + 1);
     CHECK (host.valuesOutsideGesture == outsideBefore);
@@ -633,13 +659,15 @@ TEST_CASE ("Keyboard strip: press and drag on the keys set the split key in one 
     CHECK (host.openCount() == 1); // one timed gesture for the arrow, the Page key and Home
     strip.getModel().idle (juce::Time::getMillisecondCounterHiRes() + 400.0);
     CHECK (host.openCount() == 0);
-    strip.mouseDoubleClick (mouseAt (strip, keyCentre (strip, 60)));
+    rig.tick();
+    strip.mouseDoubleClick (mouseAt (strip, strip.pillBounds().getCentre())); // the pill: back to the default
     CHECK (plain (rig.param ("key.split_point")) == Approx (60.0f));
     CHECK (host.nestedBegins == 0);
     CHECK (host.valuesOutsideGesture == outsideBefore);
 
     // The editor closing mid-drag ends the gesture.
-    strip.mouseDown (mouseAt (strip, keyCentre (strip, 70)));
+    rig.tick();
+    strip.mouseDown (mouseAt (strip, strip.pillBounds().getCentre()));
     CHECK (host.openCount() == 1);
     rig.editor.reset();
     CHECK (host.openCount() == 0);

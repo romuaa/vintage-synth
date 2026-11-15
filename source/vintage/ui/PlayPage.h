@@ -18,7 +18,8 @@ namespace vs::ui
 class PlayPage final : public juce::Component, public InteractiveContent, private ParamMirror::Listener
 {
 public:
-    PlayPage (UiContext& ctx, const UiFeed& feed);
+    /** `notes`: where the keyboard strip's keys play (the processor's UiNotes; nullptr: silent). */
+    PlayPage (UiContext& ctx, const UiFeed& feed, UiNotes* notes);
     ~PlayPage() override;
 
     /** One part's controls (tests). */

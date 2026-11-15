@@ -137,6 +137,32 @@ public:
         return n >= 0 ? n : lo;
     }
 
+    /** The note whose split-marker position (markerX) is nearest to x: what dragging the marker's
+        pill by its grab point picks. Beyond the ends: the first or last key of the window. */
+    int markerNoteNearest (float x) const noexcept
+    {
+        int best = lo;
+        float bestDistance = std::fabs (markerX (lo) - x);
+        for (int n = lo + 1; n <= lo + kSpan; ++n)
+            if (const float d = std::fabs (markerX (n) - x); d < bestDistance)
+            {
+                best = n;
+                bestDistance = d;
+            }
+        return best;
+    }
+
+    static constexpr int kVelocityTop = 40, kVelocityBottom = 127;
+
+    /** A press at height y (keys' coordinates) on `note`'s key: 40 at the key's top, 127 at its
+        bottom, linear (a black key: over its own, shorter height). Fixed for that note. */
+    int velocityAt (int note, float y) const noexcept
+    {
+        const auto k = keyRect (note);
+        const float t = k.h > 0.0f ? std::fmin (std::fmax ((y - k.y) / k.h, 0.0f), 1.0f) : 1.0f;
+        return static_cast<int> (std::lround (static_cast<float> (kVelocityTop) + t * static_cast<float> (kVelocityBottom - kVelocityTop)));
+    }
+
     /** Left edge of the key at which the split marker stands (clamped into the window). */
     float markerX (int note) const noexcept
     {
@@ -160,8 +186,9 @@ private:
 };
 
 /**
-    The split key's interaction: a press on a key sets the split point there (one gesture from
-    mouse-down to mouse-up, dragging moves it), the arrow keys and the wheel move it by one key,
+    The split key's interaction: a press on the marker's pill starts one gesture (mouse-down to
+    mouse-up) and dragging moves the split point (a press on the keys plays them instead, 9.3.4),
+    the arrow keys and the wheel move it by one key,
     Page Up/Down by an octave, Home/End to 0 / 127, double-click resets. The parameter is stepped
     (0..127, normalised note / 127).
 */

@@ -31,8 +31,8 @@ private:
 };
 } // namespace
 
-KeyboardStrip::KeyboardStrip (UiContext& c, const UiFeed& f, const juce::String& splitId, const juce::String& modeId)
-    : BoundComponent (c, splitId, "Split key", -1, "KeyboardStrip"), feed (f), model (handle), fonts (c.theme)
+KeyboardStrip::KeyboardStrip (UiContext& c, const UiFeed& f, UiNotes* n, const juce::String& splitId, const juce::String& modeId)
+    : BoundComponent (c, splitId, "Split key", -1, "KeyboardStrip"), feed (f), notes (n), model (handle), fonts (c.theme)
 {
     dragHint = juce::String::fromUTF8 ("\xe2\x97\x82 drag \xe2\x96\xb8");
     setAccent (colour (Tok::AccentGlobal));
@@ -49,7 +49,54 @@ KeyboardStrip::KeyboardStrip (UiContext& c, const UiFeed& f, const juce::String&
 
 KeyboardStrip::~KeyboardStrip()
 {
+    releaseNote();
     model.cancel();
+}
+
+void KeyboardStrip::cancelInteraction()
+{
+    releaseNote();
+    model.cancel();
+}
+
+void KeyboardStrip::visibilityChanged()
+{
+    if (! isVisible())
+        releaseNote();
+}
+
+bool KeyboardStrip::shownInTree() const noexcept
+{
+    // Visible up to (not including) the editor itself: a page that is switched away hides an
+    // ancestor. The editor's own window is the host's (closing it destroys the strip).
+    for (const juce::Component* c = this; c != nullptr && c->getParentComponent() != nullptr; c = c->getParentComponent())
+        if (! c->isVisible())
+            return false;
+    return true;
+}
+
+void KeyboardStrip::playAt (juce::Point<float> p)
+{
+    const int note = geometry.noteAt (p.x, p.y);
+    if (note == playing)
+        return;
+    releaseNote();
+    if (note < 0)
+        return;
+    playing = note;
+    playingVel = geometry.velocityAt (note, p.y);
+    if (notes != nullptr)
+        notes->noteOn (note, playingVel);
+}
+
+void KeyboardStrip::releaseNote()
+{
+    if (playing < 0)
+        return;
+    if (notes != nullptr)
+        notes->noteOff (playing);
+    playing = -1;
+    playingVel = 0;
 }
 
 float KeyboardStrip::shownValue() const
@@ -148,6 +195,15 @@ juce::Rectangle<float> KeyboardStrip::keyBounds (int note) const noexcept
 void KeyboardStrip::idle (double nowMs)
 {
     model.idle (nowMs);
+    // A page switch hides an ancestor (and cancels the page); this also catches any other way the
+    // strip stops being shown while a key is down. Offs that found the queue full go out now.
+    if (playing >= 0 && ! shownInTree())
+    {
+        playGesture = false;
+        releaseNote();
+    }
+    if (notes != nullptr)
+        notes->retryPendingOffs();
     // The feed: held and sounding keys of both parts. Repaint only when a mask changed.
     Masks m {};
     for (int p = 0; p < 2; ++p)
@@ -176,26 +232,45 @@ void KeyboardStrip::mouseDown (const juce::MouseEvent& e)
         showContextMenu();
         return;
     }
-    const auto p = local (e);
-    const int note = geometry.noteNearest (p.x, p.y);
-    ownNote = note;
-    ownNoteValid = true;
-    model.press (note);
-    refresh();
+    // The pill moves the split key (one gesture, dragged by its grab point); the keys play.
+    if (pill.contains (e.position))
+    {
+        releaseNote();
+        playGesture = false;
+        grabOffset = e.position.x - (keys.getX() + geometry.markerX (splitNote));
+        ownNote = splitNote;
+        ownNoteValid = true;
+        model.press (splitNote);
+        refresh();
+        return;
+    }
+    playGesture = keys.contains (e.position);
+    if (playGesture)
+        playAt (local (e));
 }
 
 void KeyboardStrip::mouseDrag (const juce::MouseEvent& e)
 {
+    if (playGesture)
+    {
+        playAt (local (e)); // onto another key: the old note off, the new one on; off the keys: silent
+        return;
+    }
     if (! model.isDragging())
         return;
-    const auto p = local (e);
-    ownNote = geometry.noteNearest (p.x, p.y);
+    ownNote = geometry.markerNoteNearest (local (e).x - grabOffset);
     model.drag (ownNote);
     refresh();
 }
 
 void KeyboardStrip::mouseUp (const juce::MouseEvent&)
 {
+    if (playGesture)
+    {
+        playGesture = false;
+        releaseNote();
+        return;
+    }
     if (! model.isDragging())
         return;
     model.release();
@@ -204,7 +279,8 @@ void KeyboardStrip::mouseUp (const juce::MouseEvent&)
 
 void KeyboardStrip::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (e.mods.isPopupMenu())
+    // Only the pill resets the split key: a double-click on the keys plays the key twice.
+    if (e.mods.isPopupMenu() || ! pill.contains (e.position))
         return;
     model.cancel();
     ownNoteValid = false;

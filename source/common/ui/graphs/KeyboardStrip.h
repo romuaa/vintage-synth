@@ -2,11 +2,15 @@
 
 // KeyboardStrip (docs/architecture.md 9.2.2, 9.3.4): the Play page's keyboard. Six octaves, keys
 // coloured by the part that plays them (the key mode's rule), bars above the keys that name each
-// part's range, the split marker (a slider on `key.split_point`: press or drag on the keys, arrows,
-// wheel) and dots for the keys held (filled) and sounding (ring) from the UI feed. Everything it
-// draws is prepared when the value, the key mode or the feed's masks change; paint() only draws.
+// part's range, the split marker (a slider on `key.split_point`: drag its pill, arrows, wheel,
+// double-click the pill) and dots for the keys held (filled) and sounding (ring) from the UI feed.
+// A press on the keys plays them (9.3.4, "Playing the keys"): one note per mouse through UiNotes,
+// dragging glides from key to key, velocity by the height in the key; the note is released on
+// mouse-up, when the strip is hidden or destroyed, and by cancelInteraction(). Everything it draws
+// is prepared when the value, the key mode or the feed's masks change; paint() only draws.
 
 #include "common/engine/UiFeed.h"
+#include "common/engine/UiNotes.h"
 #include "common/ui/PaintFonts.h"
 #include "common/ui/controls/BoundComponent.h"
 #include "common/ui/models/KeyboardModel.h"
@@ -20,7 +24,9 @@ class KeyboardStrip final : public BoundComponent
 public:
     static constexpr int kPillRow = 26, kBarRow = 30;
 
-    KeyboardStrip (UiContext& ctx, const UiFeed& feed, const juce::String& splitId = "key.split_point", const juce::String& modeId = "key.mode");
+    /** `notes`: where the keys play (the processor's UiNotes); nullptr: the keys play nothing. */
+    KeyboardStrip (UiContext& ctx, const UiFeed& feed, UiNotes* notes, const juce::String& splitId = "key.split_point",
+                   const juce::String& modeId = "key.mode");
     ~KeyboardStrip() override;
 
     /** What is drawn now (tests). */
@@ -36,10 +42,13 @@ public:
     juce::Rectangle<float> pillBounds() const noexcept { return pill; }
     const juce::String& barText (int partIndex) const noexcept { return bars[static_cast<size_t> (partIndex & 1)].text; }
     int repaintCount() const noexcept { return repaints; }
+    /** The note this strip's mouse plays now (-1: none) and its velocity (tests). */
+    int playingNote() const noexcept { return playing; }
+    int playingVelocity() const noexcept { return playingVel; }
 
     float shownValue() const override;
     bool showsMirroredValue (juce::String& why) const override;
-    void cancelInteraction() override { model.cancel(); }
+    void cancelInteraction() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -51,6 +60,7 @@ public:
     bool keyPressed (const juce::KeyPress&) override;
     void focusGained (FocusChangeType) override { repaint(); }
     void focusLost (FocusChangeType) override { repaint(); }
+    void visibilityChanged() override;
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
     void mirrorChanged (int index, bool valueChanged) override;
@@ -72,8 +82,16 @@ private:
     juce::Rectangle<float> keyBounds (int note) const noexcept;
     void paintKey (juce::Graphics&, int note) const;
     void paintDots (juce::Graphics&, int note) const;
+    /** The keys' note at `p` (keys' coordinates) or -1; plays it instead of the current note. */
+    void playAt (juce::Point<float> p);
+    void releaseNote();
+    bool shownInTree() const noexcept;
 
     const UiFeed& feed;
+    UiNotes* notes = nullptr;
+    int playing = -1, playingVel = 0; // the note the mouse plays now
+    bool playGesture = false;         // mouse-down on the keys until mouse-up
+    float grabOffset = 0.0f;          // pill drag: pointer x minus the marker's x at the press
     int modeIndex = -1;
     model::SplitKeyModel model;
     model::KeyboardGeometry geometry;

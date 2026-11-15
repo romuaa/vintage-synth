@@ -21,16 +21,16 @@ juce::String PlayPage::sentenceFor (int keyMode)
     }
 }
 
-PlayPage::PlayPage (UiContext& c, const UiFeed& feed)
+PlayPage::PlayPage (UiContext& c, const UiFeed& feed, UiNotes* notes)
     : ctx (c),
       layoutPanel (c.theme, "Keyboard layout", -1),
       characterPanel (c.theme, "Character", -1),
       partPanel { Panel (c.theme, "Lower part", 0), Panel (c.theme, "Upper part", 1) },
       mode (c, "key.mode", {}, -1, { "Whole", "Dual", "Split" }),
-      strip (c, feed),
+      strip (c, feed, notes),
       balance (c, "mix.balance", juce::String::fromUTF8 ("Balance Lower \xe2\x86\x94 Upper"), -1, Slider::Style::Horizontal, true),
       vintage (c, "global.vintage", "Vintage (analog drift and part-to-part looseness)", -1),
-      stripCaption ("Drag the split marker, or press a key, to choose the split key. Dots show the keys you hold; rings show the notes sounding."),
+      stripCaption ("Press the keys to play. Drag the Split pill to choose the split key. Dots show the keys you hold; rings show the notes sounding."),
       vintageCaption ("0 is clean. More adds slow pitch drift and small differences between voices."),
       glideCaption ("Glide between notes (portamento)"),
       fonts (c.theme)

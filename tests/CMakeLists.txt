@@ -104,11 +104,13 @@ target_sources(VintageSynthTests PRIVATE
     ui/ModelTests.cpp
     ui/HelpTextTests.cpp
     ui/UiFeedTests.cpp
+    ui/UiNotesTests.cpp
     ui/UiStateTests.cpp
     ui/PictureTests.cpp
     ui/EditorTests.cpp
     ui/EditorBehaviourTests.cpp
     ui/PlayEffectsTests.cpp
+    ui/PlayKeysTests.cpp
     ui/ParamTextTests.cpp
     ui/ArpSeqPageTests.cpp
     ui/EnvLfoModelTests.cpp

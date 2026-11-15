@@ -29,7 +29,7 @@ std::vector<EditorFrame::Page> vintagePages()
         { kVintagePageNames[0], "Sound", PageIcon::Sound, true, "Sound: the oscillators, the filter and the level of the edited part. Drag the dots on the curve." },
         { kVintagePageNames[1], "Envelopes", PageIcon::Envelopes, true, "Envelopes: how the filter, pitch and loudness move on each note. Drag the dots on the shapes." },
         { kVintagePageNames[2], "LFO", PageIcon::Lfo, true, "LFO: the slow wobble and what it moves. Drag the dots to set the delay and the speed." },
-        { kVintagePageNames[3], "Play", PageIcon::Play, false, "Play: how the two parts share the keyboard, and how each part is played. Drag the split marker on the keyboard." },
+        { kVintagePageNames[3], "Play", PageIcon::Play, false, "Play: how the two parts share the keyboard, and how each part is played. Press the keys to play; drag the split marker to move it." },
         { kVintagePageNames[4], "Arp + Seq", PageIcon::ArpSeq, false, "Arp + Seq: pick a pattern or paint steps; the picture shows what the arpeggiator and the sequencer will play." },
         { kVintagePageNames[5], "Effects", PageIcon::Effects, false, "Effects: chorus, delay and reverb on both parts, in signal order. Drag the dots on the pictures." },
         { kVintagePageNames[6], "Browser", PageIcon::Browser, false, "Browser: pick a program from the grid, load it or just one of its sounds, and save your own." },
@@ -137,7 +137,7 @@ void VintageEditor::buildPages()
 
     // Global pages: one component each (-1).
     registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::Play)], -1);
-    playPage = std::make_unique<PlayPage> (ctx, feed);
+    playPage = std::make_unique<PlayPage> (ctx, feed, &static_cast<VintageSynthProcessor&> (processor).getUiNotes());
     frame.addPageComponent (static_cast<int> (VintagePage::Play), -1, *playPage);
 
     registry.setContext (kVintagePageNames[static_cast<size_t> (VintagePage::ArpSeq)], -1);
