@@ -99,6 +99,15 @@ public:
     void setSettings (const Settings& s) noexcept { settings_ = s.sanitised(); }
     const Settings& settings() const noexcept { return settings_; }
 
+    /** The Sequencer step (0..15) that fired last, -1 when the mode is not Sequencer, no pattern is
+        playing, or nothing fired since a restart. Read between blocks or from the audio thread
+        itself (the editor's feed, docs/architecture.md 9.1.4); no behaviour change. */
+    int lastSeqStep() const noexcept { return cfg_.mode == Mode::Seq && active_ ? seq_.lastStep() : -1; }
+
+    /** The keys the module holds in its pattern, in press order (the editor's preview reads them
+        through the feed); a read-only view, no behaviour change. */
+    const KeyState& keys() const noexcept { return keys_; }
+
     /** Number of events dropped for lack of output capacity since the last `resetDropCount`. */
     int droppedCount() const noexcept { return droppedCount_; }
     void resetDropCount() noexcept { droppedCount_ = 0; }

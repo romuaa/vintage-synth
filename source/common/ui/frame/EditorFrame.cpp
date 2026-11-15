@@ -245,7 +245,7 @@ void EditorFrame::resized()
     rail.setBounds (0, kTopBar, kRail, kDesignHeight - kTopBar - kHelpLine);
     helpLine.setBounds (0, kDesignHeight - kHelpLine, kDesignWidth, kHelpLine);
     partSwitch.setBounds (kGutter, 8, 200, 32);
-    presetArea.setBounds (436, 8, 470, 32);
+    presetArea.setBounds (396, 8, 510, 32);
     meter.setBounds (918, 6, 96, 36);
     master.setBounds (1024, 6, 150, 36);
     limitChip->setBounds (1184, 10, 70, 28);
@@ -350,7 +350,7 @@ void EditorFrame::paint (juce::Graphics& g)
     g.setColour (partPage ? tintFor (tintPart) : colour (Tok::BgPanel));
     g.fillRect (0, 0, kDesignWidth, kTopBar);
 
-    auto text = juce::Rectangle<float> (224.0f, 8.0f, 204.0f, 32.0f);
+    auto text = juce::Rectangle<float> (224.0f, 8.0f, 164.0f, 32.0f);
     if (partPage)
     {
         g.setColour (accentFor (part));
@@ -396,9 +396,12 @@ juce::Component* EditorFrame::helpSourceAt (juce::Component* c) const
 void EditorFrame::hoverHelp (juce::Component* c)
 {
     auto* source = helpSourceAt (c);
-    if (source == hovered.getComponent())
+    // A control may change its label while it stays the hovered one (the category chips name the chip under the pointer).
+    const auto label = source != nullptr ? source->getProperties()[helpLabelProperty()].toString() : juce::String();
+    if (source == hovered.getComponent() && label == hoveredLabel)
         return;
     hovered = source;
+    hoveredLabel = label;
     bubble.setVisible (false);
     stopTimer();
     if (source == nullptr)
@@ -407,7 +410,6 @@ void EditorFrame::hoverHelp (juce::Component* c)
         return;
     }
     const auto id = source->getProperties()[helpIdProperty()].toString();
-    const auto label = source->getProperties()[helpLabelProperty()].toString();
     const auto* text = ctx.help.find (id.toStdString());
     helpLine.show (label, text != nullptr ? juce::String::fromUTF8 (text->c_str()) : juce::String());
     startTimer (kBubbleDelayMs);

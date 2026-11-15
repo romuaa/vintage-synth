@@ -7,7 +7,6 @@
 #include "../seq_unit/AllocationCounter.h" // VS_SEQ_TEST_ASAN
 
 #include "vintage/PluginEditor.h"
-#include "vintage/ui/PlaceholderPage.h"
 #include "vintage/ui/SoundPage.h"
 
 #include <map>

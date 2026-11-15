@@ -5,6 +5,25 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M7 Play page: the keyboard strip's keys play notes (architecture 9.3.4, 2026-11-15)
+- `source/common/engine/UiNotes.h` (JUCE-free): a wait-free single-writer/single-reader queue of
+  64 `{note, velocity}` from the editor to the audio thread, ons and offs in one FIFO. A note off is
+  never lost: every note on reserves the slot of its off, and a note on that does not fit with the
+  offs owed is dropped (the newest on). So an off is queued at once even if the editor closes right
+  after. One acquire load when nothing was written. (Review fix: the first version kept full-queue
+  offs in a side mask that could overtake their own note on.)
+- Shell: the processor owns it (`getUiNotes()`); `processBlock` adds the notes as channel-1 note
+  messages at offset 0 of the block's first chunk, before the host's events (zero-length blocks and
+  blocks longer than the prepared size included); bypassed blocks, `prepareToPlay` and `reset`
+  drain and drop them. Nothing changes with an empty queue (render regression unchanged).
+- `KeyboardStrip`: a press on a key plays it, a drag glides (old off, new on), velocity 40 at the
+  top of the key to 127 at the bottom; released on mouse-up, when the strip or its page is hidden,
+  when the editor closes or stops showing (its 30 Hz timer), and by `cancelInteraction()`; a press
+  that was ended that way plays nothing more until the next mouse-down. The split marker now moves only by its pill
+  (drag by the grab point, double-click resets), arrows and wheel. Help text, page caption and hint
+  updated. Tests: `tests/ui/UiNotesTests.cpp` (incl. a two-thread run), `tests/ui/PlayKeysTests.cpp`;
+  the split-key tests now drag the pill and check that a press on the keys leaves the split alone.
+
 ### B-Side S2a fidelity pass — the digital core follows the per-cycle specification 8.15 (2026-11-14)
 - `source/bside/chip/` rewritten to `docs/architecture.md` 8.15 (which wins over 8.4.3): power-on state
   (accumulators 0x555555, noise 0x7ffffe, envelopes 0xaa in release with a reset pending, Model B read
@@ -129,6 +148,57 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 - Contract questions from the data (combined waveforms in the digital state, rate-counter wrap,
   divider rule, pipelines, test-bit noise fill, power-on state, board high-pass, clock-scaled
   reference filter) are in `docs/decisions.md` (review) for the owner and the S2/S3 contract.
+### M7c — Play and Effects pages (2026-11-14)
+- **Play** (global page, both parts side by side): key mode with a sentence that explains the
+  chosen mode, a keyboard strip (six octaves coloured by the part that plays each key, bars naming
+  each part's range, the split marker to drag, dots for held keys and rings for sounding notes from
+  the audio feed), balance, Vintage, and a panel per part (voices, unison, glide, bend range, mod
+  wheel, pan) with the inactive rules of 9.3.9.
+- **Effects** (global): chorus, delay and reverb in signal order, each with its picture computed
+  from the effect blocks' own constants (delay echoes, reverb tail, chorus tap delays); handles on
+  the delay and reverb pictures write time, repeats, pre-delay and decay time; delay and reverb
+  have a power switch (level 0 and back, no new parameter).
+- New: `KeyboardStrip`, `DelayView`, `ReverbView`, `ChorusView`, `PowerSwitch`, JUCE-free models
+  `KeyboardModel.h` and `FxPictureModels.h`; tests `tests/ui/PlayEffectsTests.cpp`.
+### M7b — Envelopes and LFO pages (2026-11-14)
+- **Envelopes page** for both parts: two ADSR pictures drawn from the engine's own envelope code
+  (the real RC curves), each with four draggable handles (peak = attack, sustain start = decay and
+  sustain, sustain end = sustain, release end = release; time labels under them), the four sliders,
+  key follow, Envelope 1's direction (an inverted Envelope 1 shows a mirrored ghost under the axis),
+  and "what the envelope does" (filter amount and source, pitch bend, velocity amounts). The panel
+  titles name what each envelope drives and follow the filter source.
+- **LFO page** for both parts: the LFO's waveform from the engine's own LFO on a time axis with a
+  delay handle (end of the fade-in) and a cycle handle (sets the rate), waveform, rate and delay
+  controls, and the four "the LFO moves ..." panels (pitch, pulse width, filter, volume); the pulse
+  width controls dim while neither oscillator is set to Pulse.
+- New shared pieces: `EnvelopeView`, `LfoView`, JUCE-free `EnvelopeModel.h` and `LfoModel.h`;
+  `Panel::setText` repaints only its header.
+- Tests (`tests/ui/EnvLfoModelTests.cpp`, `EnvLfoPageTests.cpp`): handle maths and label spreading,
+  window choice, the envelope shape against a 48 kHz `Envelope`, the LFO preview against a direct
+  `Lfo` run, automation follow of every control, handle and picture (host writes from another thread,
+  programs, Init, tones, session restore), handle gestures, titles, ghost, dimming, repaint scope,
+  paint-allocation stability, layout snapshots (100 % and 150 %, both parts).
+
+### M7b review round 1 (2026-11-14)
+- LFO picture: delay wording and fade-in wedge with the delay handle on its envelope line, "starts"
+  marker, Random/Noise pre-rolled with an "Example" caption, windows up to 50 s with a keep-while-it-suits
+  rule, contested drags show the user's value, "key released" below the axis.
+- Tests: contested drags, window rule, captions, time labels, panel header and title, nothing repaints at
+  rest, paint allocations through a context that draws nothing; M7a's repaint-scope test now records.
+### M7e — Browser page, `PresetActions`, program menu (2026-11-14)
+- **Browser page:** bank chooser, search, category chips (colour per category, "More..." when many),
+  an 8 × 8 grid of the bank's programs (name, slot, category stripe; the current program outlined with a
+  dot when changed; click selects, double-click or Enter loads, arrow keys move), and the selected
+  program's panel: Load program, **Load tone** (take its Lower or Upper tone into Lower or Upper only),
+  Save, Save as, Init, tone files for the edited part, Import and Export of banks. Follows program
+  changes and bank changes live.
+- **Program menu:** clicking the program name in the top bar (or Enter/Space on it) lists the bank's
+  programs grouped by category, current one ticked, with "Open Browser" below.
+- **`PresetActions`** (`source/common/presets/`): the file dialogs, menus and save/load flows moved out of
+  `PresetBar`, shared by the bar and the Browser (a test dialog replaces the real one in tests).
+- **`PresetManager`:** `slotMeta`, `bankGeneration`, `applyToneFromSlot` (and `slotValue`, see
+  `docs/decisions.md`); no change to how programs reach the audio thread.
+- JUCE-free logic in `common/ui/models/ProgramModels.h` (category groups, menu model, search, grid movement).
 
 ### M7a — custom editor: foundation, frame, Sound page (2026-11-14)
 - The plugin opens its own editor (`source/vintage/ui/`): a 1360 × 784 canvas scaled as a whole,

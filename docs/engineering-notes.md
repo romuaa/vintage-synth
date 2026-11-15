@@ -3,6 +3,14 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## M7 Play page keys (2026-11-15)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A control on a page that is switched away never learns it was hidden. | JUCE calls `visibilityChanged()` only on the component whose `setVisible` changed, not on its children; `isShowing()` is false for every editor that is not on the desktop (all editor tests). | Anything that must stop when its page goes away (a held note, an open gesture) is ended by the page's `cancelInteraction()` and, as a safety net, by an ancestor-visibility walk up to (not including) the editor in the per-frame idle. |
+| A single-writer pending-off mask can strand an off. | The writer retries only while an editor is open; if it closes with a full queue nobody calls it again. | Superseded by the next row: no side path for offs at all. |
+| An off kept beside a lock-free queue (a pending-off mask the reader collects) overtook its own note on, and the note hung (review of 5a81815); taking the mask before reading the queue's end only moves the window (an off taken early, then a new on of that note published before the end is read, puts the off after the new on). | Two channels with no common order: the reader cannot tell where in the ring an off from the side channel belongs. | One FIFO for ons and offs. Never lose an off by reservation: a note on is accepted only if the queue has room for it and for the offs of every note then on (`used + notesOn + 2 <= capacity`), so an off always fits. Test writer/reader interleavings deterministically by making writer calls from inside the reader's emit callback. |
+
 ## B-Side S2a fidelity pass (2026-11-14)
 
 | Problem | Cause | Fix / rule |

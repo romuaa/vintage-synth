@@ -57,7 +57,7 @@ Format (one entry per line, nothing else on the line):
 
 - `<part>.lfo.waveform`: The shape of the wobble. Random jumps to a new value every cycle; Noise wanders quickly.
 - `<part>.lfo.rate`: How fast the LFO (a slow wobble) repeats, from slow sweeps to fast trills.
-- `<part>.lfo.delay`: How long the LFO takes to come in after you start playing: silent for the first half, then it fades in.
+- `<part>.lfo.delay`: How long after you start playing the LFO wobble is at full strength. It is silent for the first half, then fades in.
 - `<part>.vcomod.lfo_mod`: How much the LFO bends the pitch up and down (vibrato).
 - `<part>.vcomod.env_mod`: How far Envelope 1 bends the pitch on each note. The oscillators it affects are set by Pitch goes to.
 - `<part>.vcomod.target`: Which oscillators the LFO and Envelope 1 pitch amounts move: oscillator 1, both, or oscillator 2.
@@ -80,7 +80,7 @@ Format (one entry per line, nothing else on the line):
 ## Whole instrument
 
 - `key.mode`: Whole: the Lower sound on all keys. Dual: both sounds on every key; Split: Lower below the split key, Upper from it upwards.
-- `key.split_point`: The lowest key of the Upper part in Split mode. Keys below it play Lower.
+- `key.split_point`: The lowest key of the Upper part in Split mode; keys below it play Lower. Drag the Split pill to move it, and press the keys to play them.
 - `mix.balance`: The volume balance between the Lower and Upper parts. No effect in Whole mode.
 - `global.vintage`: Adds analog looseness: slow pitch drift and small differences in pitch, filter and envelopes between voices.
 - `master.volume`: The overall output volume. It is saved with your session, not with a program.
@@ -116,12 +116,14 @@ Format (one entry per line, nothing else on the line):
 - `seq.stepNN.note`: The pitch of this step in semitones, counted from the lowest key you hold.
 - `seq.stepNN.type`: Note plays the step, Rest stays silent, Tie holds the previous note on without a new attack.
 - `seq.stepNN.velocity`: How hard this step is played. What that changes depends on the part's velocity settings.
+- `ui.arp_preview`: What the arpeggiator will play for the keys you hold, or an example chord. Each block is one note: its length follows Gate, and Swing shifts every second one.
+- `ui.seq_grid`: Drag a top bar for pitch, a lower bar for velocity; R rests a step, T ties it. Drag across steps to paint them, and drag the flag to set the length.
 
 ## Interface items that are not parameters
 
 - `ui.part`: Chooses which part the Sound, Envelopes and LFO pages edit. The page is tinted in that part's colour.
 - `ui.page`: Opens a page. Each page does one job; your sound is not changed by switching pages.
-- `ui.preset`: The current program. A dot means it was changed since it was loaded.
+- `ui.preset`: Click the program name to pick another, listed by category. A dot means it was changed since it was loaded.
 - `ui.output`: The output level and limiter. Click to open the output settings.
 - `ui.fx_power`: Switches this effect on or off by setting its level. Switching it on again brings back the last level.
 - `ui.load_program`: Loads the selected program: both sounds and all settings. Volume and limiter stay as they are.
@@ -129,4 +131,14 @@ Format (one entry per line, nothing else on the line):
 - `ui.load_tone_lower`: Puts the chosen sound into your Lower part. Nothing else changes.
 - `ui.load_tone_upper`: Puts the chosen sound into your Upper part. Nothing else changes.
 - `ui.search`: Type part of a name or category. Programs that do not match are dimmed.
+- `ui.bank`: The bank shown in the grid. Choose the factory bank or load a bank file of your own.
+- `ui.category`: Shows one category of the bank. Other programs are dimmed; All shows everything.
+- `ui.program_cell`: One program. Click selects it; double-click or Enter loads it, and the arrow keys move.
+- `ui.save`: Stores the sound in its slot of your bank. In the factory bank it asks where to save instead.
+- `ui.save_as`: Saves the sound as a program file, as a copy of the bank, or into a slot of your own bank.
+- `ui.init`: Sets every parameter to its default. The slot keeps its place and counts as changed.
+- `ui.import_bank`: Loads a bank file and shows it in the grid. The first program is loaded.
+- `ui.export_bank`: Saves the bank shown as a file you can keep or share.
+- `ui.save_tone`: Saves the sound of the part you are editing as a tone file.
+- `ui.load_tone_file`: Loads a tone file into the part you are editing. Nothing else changes.
 - `ui.size`: Sets the window size. Saved with your session.

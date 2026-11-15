@@ -1,0 +1,54 @@
+editor 0 0 2040 1176 scale 1.5000
+Editor 0 0 1360 784
+  Pages 0 48 112 712
+    page.sound 12 12 88 82
+    page.envelopes 12 102 88 82
+    page.lfo 12 192 88 82
+    page.play 12 282 88 82
+    page.arpseq 12 372 88 82
+    page.effects 12 462 88 82
+    page.browser 12 552 88 82
+  ui.part 12 8 200 32
+  - 396 8 510 32
+    < 4 3 28 26
+    > 34 3 28 26
+    Load... 396 3 52 26
+    Save... 454 3 52 26
+    - 96 3 56 26
+    - 68 3 28 26
+    - 154 3 236 26
+  ui.output 918 6 96 36
+  master.volume 1024 6 150 36
+  ui.limit 1184 10 70 28
+  Output settings 1258 10 26 28
+  Window size 1290 10 58 28
+  Help 0 760 1360 24
+  envelopes.upper 112 48 1248 712
+    Envelope 1 (filter, pitch) 12 12 606 688
+      Upper Envelope 1 shape 12 36 582 244
+        Envelope 1 attack 21 0 28 28
+        Envelope 1 decay and sustain 109 129 28 28
+        Envelope 1 sustain level 220 129 28 28
+        Envelope 1 release 295 184 28 28
+      upper.env1.attack 12 290 138 40
+      upper.env1.decay 160 290 138 40
+      upper.env1.sustain 308 290 138 40
+      upper.env1.release 456 290 138 40
+      upper.vcf.env_mod 12 436 582 40
+      upper.vcomod.env_mod 12 552 582 40
+      upper.vel.vcf 12 624 582 40
+      upper.env1.key_follow 12 356 120 28
+      upper.env1.polarity 170 340 260 46
+      upper.vcf.env_source 12 490 300 46
+    Envelope 2 (loudness) 630 12 606 688
+      Upper Envelope 2 shape 12 36 582 244
+        Envelope 2 attack 21 0 28 28
+        Envelope 2 decay and sustain 103 37 28 28
+        Envelope 2 sustain level 213 37 28 28
+        Envelope 2 release 288 184 28 28
+      upper.env2.attack 12 290 138 40
+      upper.env2.decay 160 290 138 40
+      upper.env2.sustain 308 290 138 40
+      upper.env2.release 456 290 138 40
+      upper.vel.vca 12 480 582 40
+      upper.env2.key_follow 12 356 120 28

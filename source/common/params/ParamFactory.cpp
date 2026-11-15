@@ -19,7 +19,12 @@ juce::String formatHz (float hz)
 
 juce::String formatSeconds (float s)
 {
-    return s >= 1.0f ? juce::String (s, 2) + " s" : juce::String (s * 1000.0f, s < 0.01f ? 1 : 0) + " ms";
+    // juce::String (float, 0) means "default formatting" (44.7214), not "no decimals": whole
+    // milliseconds are made explicitly; below 10 ms one decimal (the boundary is 9.95 ms so that the text never reads 10.0).
+    if (s >= 1.0f)
+        return juce::String (s, 2) + " s";
+    const float ms = s * 1000.0f;
+    return (ms < 9.95f ? juce::String (ms, 1) : juce::String (juce::roundToInt (ms))) + " ms"; // 9.95 ms and up would print "10.0"
 }
 
 /** -1..1 -> "<neg> 50" / centre / "<pos> 50" (percent of the way to the side). */
