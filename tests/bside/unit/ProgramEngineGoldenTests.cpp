@@ -310,17 +310,16 @@ std::vector<DigitalState> runLive (const Scenario& s, const std::vector<std::uin
     return states;
 }
 
-/** A chip fed the recorded writes at their cycles; a recorded chip reset restarts the chip (and its cycle count). */
+/** A chip fed the recorded writes at their cycles; the markers of a chip reset and of Clean's direct clear are applied too. */
 std::vector<DigitalState> replayRecorded (const pe::RegisterRecorder& rec, const std::vector<std::uint64_t>& checkpoints, std::uint64_t end)
 {
     std::vector<DigitalState> states;
     vs::bside::chip::Chip c;
     c.prepare (chipConfig());
-    std::uint64_t offset = 0; // engine time = offset + chip cycle
     std::size_t i = 0;
     const auto advance = [&] (std::uint64_t to) {
-        if (to > offset + c.cycle())
-            c.advanceCycles (to - offset - c.cycle());
+        if (to > c.cycle())
+            c.advanceCycles (to - c.cycle());
     };
     const auto apply = [&] (std::uint64_t before) { // every entry with a cycle < before
         for (; i < rec.log().size() && rec.log()[i].cycle < before; ++i)
@@ -330,10 +329,10 @@ std::vector<DigitalState> replayRecorded (const pe::RegisterRecorder& rec, const
             if (e.kind == pe::RegisterRecorder::Kind::write)
                 c.write (e.reg, e.value);
             else if (e.kind == pe::RegisterRecorder::Kind::resetChip)
-            {
-                offset += c.cycle();
-                c.reset();
-            }
+                c.powerOnKeepingTime();
+            else
+                for (int n = 0; n < 3; ++n)
+                    c.clearEnvelopeCounters (n); // Clean's direct clear, at its marker
         }
     };
     for (const auto cp : checkpoints)
@@ -353,7 +352,7 @@ TEST_CASE ("golden traces: the live chip and the replayed trace agree at every c
 {
     // The same traces are replay inputs (8.9.6): the engine writing to the chip as it runs and a chip fed the trace's
     // writes at their cycles must agree. Checkpoints every 10 007 cycles (before the writes of that cycle) and at
-    // the end. A recorded reset restarts the replayed chip; the live sink keeps the engine's absolute time.
+    // the end. The replay applies the recording's reset and direct-clear markers like the live sink does.
     for (const auto& g : goldens())
     {
         INFO (g.name << " mult " << g.mult);

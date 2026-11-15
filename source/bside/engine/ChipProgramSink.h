@@ -5,12 +5,10 @@
 // Authentic resolution: the register writes of the contract's order. Smooth: the engine's continuous values
 // through Chip::setOscillator / setFilter. JUCE-free, allocation-free.
 //
-// Time: `chip.reset()` (a stolen voice) also zeroes the chip's own cycle count, while the engine keeps absolute
-// cycles for the voice's lifetime. The sink keeps the difference: `cycle()` is the engine's time (chip cycle +
-// offset); a caller renders `engine.nextTickCycle() - sink.cycle()` cycles to reach the next tick.
-//
-// Not yet possible: `clearEnvelopeTimers` (the Clean policy's direct operation) has no chip entry point yet;
-// it is a no-op here until the chip offers one (reported at S2c).
+// Time: a stolen voice's chip is restarted with `Chip::powerOnKeepingTime()`, so the chip's own cycle count keeps
+// running and `cycle()` is the engine's time. Clean's direct clear (8.6.4) calls `Chip::clearEnvelopeCounters` for
+// all three oscillators of the voice's chip (the contract says "the rate counter and divider"; it names no
+// oscillator, and a restart concerns the whole voice). JUCE-free, allocation-free.
 
 #include "bside/chip/Chip.h"
 #include "bside/engine/ProgramSink.h"
@@ -24,8 +22,8 @@ class ChipProgramSink final : public ProgramSink
 public:
     ChipProgramSink (chip::Chip& c, bool authenticResolution) noexcept : chip (c), authentic (authenticResolution) {}
 
-    /** The engine's time: the chip's cycle plus the cycles it had run before its last reset. */
-    std::uint64_t cycle() const noexcept { return offset + chip.cycle(); }
+    /** The engine's time: the chip's cycle (it keeps running through a reset). */
+    std::uint64_t cycle() const noexcept { return chip.cycle(); }
 
     void frequency (std::uint64_t, int osc, double v) noexcept override
     {
@@ -116,11 +114,14 @@ public:
             chip.setFilter (fin);
         }
     }
-    void clearEnvelopeTimers (std::uint64_t) noexcept override {}
+    void clearEnvelopeTimers (std::uint64_t) noexcept override
+    {
+        for (int n = 0; n < 3; ++n)
+            chip.clearEnvelopeCounters (n);
+    }
     void resetChip (std::uint64_t) noexcept override
     {
-        offset += chip.cycle();
-        chip.reset();
+        chip.powerOnKeepingTime();
         in[0] = in[1] = in[2] = chip::OscInput {};
         fin = chip::FilterInput {};
     }
@@ -128,7 +129,6 @@ public:
 private:
     chip::Chip& chip;
     bool authentic;
-    std::uint64_t offset = 0;
     chip::OscInput in[3] {};
     chip::FilterInput fin {};
 };

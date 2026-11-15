@@ -55,9 +55,10 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   `firstwave`'s override ends with the table's first control write or the note-off; an inactive oscillator that is
   the sync or ring source of an active one gets its frequency; `ChipProgramSink` keeps the engine's absolute time
   across a chip reset; bounds checks for corrupt programs; `RegisterRecorder` moved to the tests.
-- Open: the chip has no entry point to clear the envelope rate counters and dividers (Clean policy's direct
-  clear); `ChipProgramSink::clearEnvelopeTimers` is a no-op and a skipped test (`chip sink: Clean's direct clear ...`)
-  stands for it until the chip offers one.
+- `ChipProgramSink` uses the chip's restart entry points: a steal is `powerOnKeepingTime()` (the cycle offset of the
+  first version is gone) and Clean's direct clear is `clearEnvelopeCounters` on all three oscillators; a real test on
+  the chip shows the attack then starts from a cleared rate counter, and the live-versus-replay test applies both
+  markers. Engine and golden files unchanged.
 ### M7 Play page: the keyboard strip's keys play notes (architecture 9.3.4, 2026-11-15)
 - `source/common/engine/UiNotes.h` (JUCE-free): a wait-free single-writer/single-reader queue of
   64 `{note, velocity}` from the editor to the audio thread, ons and offs in one FIFO. A note off is

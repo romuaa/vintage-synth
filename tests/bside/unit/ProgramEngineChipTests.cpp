@@ -67,7 +67,7 @@ lead 2
 )";
 } // namespace
 
-TEST_CASE ("chip sink: a steal on the real chip resets the chip but not the engine's time; ticks go on", "[bside][engine][chip]")
+TEST_CASE ("chip sink: a steal on the real chip restarts the chip but not the time; ticks go on", "[bside][engine][chip]")
 {
     Drive d (true);
     d.engine.setHost (defaultHost());
@@ -76,13 +76,13 @@ TEST_CASE ("chip sink: a steal on the real chip resets the chip but not the engi
     d.runTo (3 * kFrame + 100);
     const auto before = d.chip.cycle();
     CHECK (before == 3 * kFrame + 100);
-    // steal: the engine is told at its absolute cycle; the chip restarts from 0
+    // steal: the chip returns to power-on state, its cycle count keeps running
     d.engine.noteOn (3 * kFrame + 100, program, RestartPolicy::clean, true, d.sink);
-    CHECK (d.chip.cycle() == 0);
+    CHECK (d.chip.cycle() == 3 * kFrame + 100);
     CHECK (d.sink.cycle() == 3 * kFrame + 100);
     d.runTo (8 * kFrame);
     CHECK (d.sink.cycle() == 8 * kFrame);
-    CHECK (d.chip.cycle() == 8 * kFrame - (3 * kFrame + 100));
+    CHECK (d.chip.cycle() == 8 * kFrame);
     // the new note's registers are in the chip: pulse gate on at tick 0, G4 (6675 = 0x1a13) from tick 1
     CHECK (d.chip.control (0) == 0x41);
     CHECK (d.chip.registerValue (0x00) == 0x13);
@@ -132,23 +132,100 @@ TEST_CASE ("chip sink: Smooth hands the engine's real values to the chip", "[bsi
     CHECK (std::fabs (static_cast<double> (a.chip.pulseWidthSmooth (0)) - 100.0) < 1e-6);
 }
 
-TEST_CASE ("chip sink: after a reset the sink's time is the engine's", "[bside][engine][chip]")
+TEST_CASE ("chip sink: a reset keeps the chip's time and clears its state", "[bside][engine][chip]")
 {
     chip::Chip c;
     c.prepare (config (true));
     pe::ChipProgramSink sink (c, true);
+    sink.control (0, 0, 0x41);
     c.advanceCycles (5000);
     CHECK (sink.cycle() == 5000);
     sink.resetChip (5000);
-    CHECK (c.cycle() == 0);
+    CHECK (c.cycle() == 5000);
     CHECK (sink.cycle() == 5000);
+    CHECK (c.control (0) == 0);
     c.advanceCycles (700);
-    CHECK (sink.cycle() == 5700);
-    sink.resetChip (5700);
     CHECK (sink.cycle() == 5700);
 }
 
-TEST_CASE ("chip sink: Clean's direct clear of the envelope rate counters", "[bside][engine][chip]")
+namespace
 {
-    SKIP ("chip entry point for clearing the envelope rate counters is not built (ChipProgramSink::clearEnvelopeTimers is a no-op); open item of S2");
+/** The same sink without Clean's direct clear (to show what the clear changes). */
+class NoClearSink final : public pe::ProgramSink
+{
+public:
+    explicit NoClearSink (pe::ChipProgramSink& s) : inner (s) {}
+    void frequency (std::uint64_t c, int o, double v) noexcept override { inner.frequency (c, o, v); }
+    void pulseWidth (std::uint64_t c, int o, double v) noexcept override { inner.pulseWidth (c, o, v); }
+    void control (std::uint64_t c, int o, std::uint8_t v) noexcept override { inner.control (c, o, v); }
+    void envelope (std::uint64_t c, int o, std::uint8_t a, std::uint8_t r) noexcept override { inner.envelope (c, o, a, r); }
+    void cutoff (std::uint64_t c, double v) noexcept override { inner.cutoff (c, v); }
+    void resonanceRouting (std::uint64_t c, std::uint8_t v) noexcept override { inner.resonanceRouting (c, v); }
+    void modeVolume (std::uint64_t c, std::uint8_t v) noexcept override { inner.modeVolume (c, v); }
+    void clearEnvelopeTimers (std::uint64_t) noexcept override {}
+    void resetChip (std::uint64_t c) noexcept override { inner.resetChip (c); }
+
+private:
+    pe::ChipProgramSink& inner;
+};
+
+struct ClearResult
+{
+    std::uint32_t position = 0, divider = 0;
+    int firstStep = -1; // cycles from the note until the first oscillator's counter first changes
+};
+
+/** Idle-time restart at 0 (ad/sr 99: both rates 977 cycles), a note on the same voice `noteAt` cycles later. */
+ClearResult attack (bool withClear, std::uint64_t noteAt)
+{
+    const auto program = compileText ("bside-table 1\n[restart]\nmode classic\nlead 2\nad 99\nsr 99\n");
+    auto h = defaultHost();
+    h.osc[0].attackDecay = 0x90; // attack period 977 cycles
+    h.osc[0].sustainRelease = 0xf0;
+    chip::Chip c;
+    c.prepare (config (true));
+    pe::ChipProgramSink real (c, true);
+    NoClearSink noClear (real);
+    pe::ProgramSink& sink = withClear ? static_cast<pe::ProgramSink&> (real) : static_cast<pe::ProgramSink&> (noClear);
+    pe::ProgramEngine e;
+    e.prepare ({ kClock50, true });
+    e.setHost (h);
+    e.enterIdle (0, program.restart, RestartPolicy::clean, sink);
+    c.advanceCycles (noteAt);
+    e.noteOn (noteAt, program, RestartPolicy::clean, false, sink); // not the full lead: Clean clears the counters
+    ClearResult r;
+    const auto s = c.state();
+    r.position = s.env[0].position;
+    r.divider = s.env[0].divider;
+    const auto counter = c.envelope (0);
+    for (int i = 1; i <= 3000 && r.firstStep < 0; ++i)
+    {
+        c.advanceCycles (1);
+        if (c.envelope (0) != counter)
+            r.firstStep = i;
+    }
+    return r;
+}
+} // namespace
+
+TEST_CASE ("chip sink: Clean's direct clear starts the attack from a cleared rate counter", "[bside][engine][chip]")
+{
+    // The restart state has been in place for a short lead (under 2 ticks); the rate counter has run on meanwhile.
+    bool differed = false;
+    for (const std::uint64_t noteAt : { 3000ull, 3111ull, 4321ull, 7777ull })
+    {
+        const auto cleared = attack (true, noteAt);
+        const auto left = attack (false, noteAt);
+        INFO ("note at " << noteAt);
+        CHECK (cleared.position == 0);
+        CHECK (cleared.divider == 0);
+        CHECK (cleared.firstStep > 0);
+        if (left.position != 0)
+        {
+            // without the clear the counter is wherever the idle voice left it, so the first step comes sooner
+            differed = true;
+            CHECK (left.firstStep < cleared.firstStep);
+        }
+    }
+    CHECK (differed);
 }
