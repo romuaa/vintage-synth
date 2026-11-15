@@ -35,7 +35,7 @@
 
 namespace vs::bside::shapes
 {
-enum class Kind : std::uint8_t { sweep, spot, noise };
+enum class Kind : std::uint8_t { sweep, spot, noise, latch };
 
 struct PlanSpec
 {
@@ -45,8 +45,10 @@ struct PlanSpec
     Kind kind = Kind::sweep;
     std::uint16_t pulseWidth = 0;
     std::vector<std::uint16_t> indices; // spot: the indices to sample
-    int samples = 0;       // noise: samples to plan
+    int samples = 0;       // noise: samples to plan (random frequency and delay)
     std::uint64_t seed = 0;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> steps; // noise: explicit (frequency / 0x1000, delay) instead
+    int fills = 3;         // noise: fill steps of the refill under the test bit before each sample
 };
 
 struct PlannedSample
@@ -57,6 +59,8 @@ struct PlannedSample
     int steps = 1;                             // index = ((acc + steps x F) >> 12) & 0xfff
     std::uint32_t expectedAcc = 0;             // spot/noise: the accumulator the plan expects at accWrite
     bool checkAcc = false;
+    int event = 0;                             // latch: 1 = 3 -> 6, 2 = 3 -> 4 -> 6, 3 = 3 -> 2
+    std::size_t readWrite2 = 0;                // latch event 2: the read after the second switch
 };
 
 struct Plan
@@ -122,6 +126,19 @@ inline bool bit19Rises (std::uint64_t s, std::uint32_t f) noexcept
 
 constexpr std::uint64_t kRelease = 40; // test-bit release of a sweep
 
+/** Indices of the latch experiment: where the measured Model B shapes of triangle + saw and saw + pulse
+    differ in bits 11..4 (events 1 and 2; for event 2 also from saw + pulse one index later), and where
+    triangle + saw differs from the saw (event 3). Chosen once from s_sweep_3_b and s_sweep_6_b. */
+constexpr std::uint16_t kLatchIndices1[] { 0x3fe, 0x77e, 0x7b3, 0x7be, 0x7cf, 0x7de, 0x7e4, 0x7f2, 0x7f8, 0xafe, 0xbac, 0xbba, 0xbc5, 0xbd2,
+                                           0xbdc, 0xbea, 0xbf0, 0xbf7, 0xcf6, 0xd3a, 0xd4f, 0xd62, 0xd85, 0xdba, 0xdcd, 0xdda, 0xde0, 0xdee,
+                                           0xdf4, 0xe0d, 0xe17, 0xe6f, 0xe7f, 0xea2, 0xeda, 0xee4, 0xeef, 0xef6, 0xf2f, 0xf3f };
+constexpr std::uint16_t kLatchIndices2[] { 0x3ff, 0x79e, 0x7b4, 0x7c4, 0x7d2, 0x7df, 0x7ea, 0x7f3, 0x7ff, 0xaff, 0xbaf, 0xbbb, 0xbc7, 0xbd3,
+                                           0xbde, 0xbeb, 0xbf2, 0xbf8, 0xcf7, 0xd3b, 0xd55, 0xd63, 0xd87, 0xdbb, 0xdcf, 0xddb, 0xde4, 0xdef,
+                                           0xdf6, 0xe0f, 0xe18, 0xe74, 0xe96, 0xea3, 0xedb, 0xeea, 0xef0, 0xef7, 0xf34, 0xf46 };
+constexpr std::uint16_t kLatchIndices3[] { 0x10,  0x75,  0xda,  0x13f, 0x1a4, 0x209, 0x26e, 0x2d3, 0x338, 0x39d, 0x402, 0x467, 0x4cc, 0x531,
+                                           0x596, 0x5fb, 0x660, 0x6c5, 0x72a, 0x78f, 0x7f4, 0x859, 0x8be, 0x923, 0x988, 0x9ed, 0xa52, 0xab7,
+                                           0xb1c, 0xb81, 0xbe6, 0xc4b, 0xcb0, 0xd15, 0xd7a, 0xddf, 0xe44, 0xea9, 0xf0e, 0xf73 };
+
 inline bool sawPullsDown (chip::Model m, std::uint8_t wave) noexcept { return m == chip::Model::A && (wave & chip::wave::kSaw) != 0; }
 
 inline Plan buildPlan (const PlanSpec& s)
@@ -132,7 +149,7 @@ inline Plan buildPlan (const PlanSpec& s)
     const unsigned ctl = static_cast<unsigned> (s.wave) << 4;
     std::string head = "bside-trace 1\n";
     head += "# Combined-waveform shape measurement (tests/bside/shapes/ShapePlan.h, kind ";
-    head += s.kind == Kind::sweep ? "sweep" : s.kind == Kind::spot ? "spot" : "noise";
+    head += s.kind == Kind::sweep ? "sweep" : s.kind == Kind::spot ? "spot" : s.kind == Kind::noise ? "noise" : "latch";
     head += "): waveform bits " + hex2 (s.wave) + ", pulse width " + std::to_string (s.pulseWidth) + ".\n";
     head += "# Oscillator 3 is read back through the read register; generated, never edited by hand.\n";
     head += "clock 985248\nmodel ";
@@ -193,19 +210,70 @@ inline Plan buildPlan (const PlanSpec& s)
         }
         end = firstReset + 4096 * period;
     }
+    else if (s.kind == Kind::latch)
+    {
+        // Model B read latch (8.15.2 (c) step 5): triangle + saw at frequency 0x1000 from a test-bit reset;
+        // at each planned index X (the state after the step at cycle c has index X) switch for one step to
+        // saw + pulse (event 1), to pulse alone and then saw + pulse (event 2) or to saw alone (event 3), then
+        // back. The read of the following step shows the latch: the shape (triangle + saw at X) or, if the
+        // index were latched, the new combination's shape at X. One wrap of the accumulator per event type.
+        w.write (8, 0x12, 0x08);
+        w.write (16, 0x0e, 0x00);
+        w.write (16, 0x0f, 0x10);
+        w.write (kRelease, 0x12, 0x30);
+        for (int ev = 1; ev <= 3; ++ev)
+            for (const auto x : ev == 1 ? kLatchIndices1 : ev == 2 ? kLatchIndices2 : kLatchIndices3)
+            {
+                const std::uint64_t c = kRelease + 4096ull * static_cast<std::uint64_t> (ev - 1) + x;
+                PlannedSample o;
+                o.event = ev;
+                o.expectedAcc = static_cast<std::uint32_t> (x) << 12;
+                o.checkAcc = true;
+                if (ev == 1)
+                {
+                    o.accWrite = w.write (c, 0x12, 0x60);
+                    o.readWrite = w.write (c + 1, 0x12, 0x30);
+                }
+                else if (ev == 2)
+                {
+                    o.accWrite = w.write (c, 0x12, 0x40);
+                    o.readWrite = w.write (c + 1, 0x12, 0x60);
+                    o.readWrite2 = w.write (c + 2, 0x12, 0x30);
+                }
+                else
+                {
+                    o.accWrite = w.write (c, 0x12, 0x20);
+                    o.readWrite = w.write (c + 1, 0x12, 0x30);
+                }
+                p.samples.push_back (o);
+            }
+        end = kRelease + 3 * 4096 + 8;
+    }
     else
     {
         const auto timing = chip::timingFor (s.model);
-        const std::uint64_t hold = timing.testHold + 3ull * timing.fillInterval + 1;
+        const std::uint64_t hold = timing.testHold + static_cast<std::uint64_t> (s.fills) * timing.fillInterval + 1;
         const bool latch = s.model == chip::Model::B && (s.wave & (chip::wave::kTri | chip::wave::kSaw)) != 0;
         w.write (8, 0x12, 0x88);
         std::uint64_t c = 16 + hold;
         std::uint64_t rng = s.seed;
+        std::size_t next = 0;
         int planned = 0;
-        while (planned < s.samples)
+        while (s.steps.empty() ? planned < s.samples : next < s.steps.size())
         {
-            const auto m = static_cast<std::uint32_t> (1 + detail::splitmix (rng) % 15);
-            const auto k = 2 + detail::splitmix (rng) % 1200;
+            std::uint32_t m = 0;
+            std::uint64_t k = 0;
+            if (s.steps.empty())
+            {
+                m = static_cast<std::uint32_t> (1 + detail::splitmix (rng) % 15);
+                k = 2 + detail::splitmix (rng) % 1200;
+            }
+            else
+            {
+                m = s.steps[next].first;
+                k = s.steps[next].second;
+                ++next;
+            }
             const std::uint32_t f = m << 12;
             if (detail::bit19Rises (k - 2, f) || detail::bit19Rises (k - 1, f) || (latch && detail::bit19Rises (k, f)))
                 continue; // a noise shift inside the observed step(s)
@@ -277,7 +345,7 @@ inline std::vector<PlanSpec> allPlans()
                     v.push_back (u);
                 }
         }
-        for (const std::uint8_t w : chip::combined::kNoiseCombinations)
+        for (const std::uint8_t w : { std::uint8_t { 0xb }, std::uint8_t { 0xc }, std::uint8_t { 0xd }, std::uint8_t { 0xe }, std::uint8_t { 0xf } })
         {
             PlanSpec s;
             s.model = m;
@@ -286,6 +354,36 @@ inline std::vector<PlanSpec> allPlans()
             s.samples = m == chip::Model::A ? 96 : 48;
             s.seed = 0x5eed0000u + w * 2u + (m == chip::Model::A ? 0u : 1u);
             s.name = "s_noise_" + detail::hex2 (w).substr (1) + "_" + mn;
+            v.push_back (s);
+        }
+        // Pulse with noise (contract decision A): a full refill makes the noise state after the release a
+        // function of the number of shifts alone. One noise output (two shifts) across the indices of one
+        // shift window, and two indices across many noise outputs (one more wrap per sample).
+        {
+            PlanSpec s;
+            s.model = m;
+            s.wave = chip::combined::kPulseNoise;
+            s.kind = Kind::noise;
+            s.fills = 23;
+            for (std::uint64_t k = 389; k <= 637; k += 4)
+                s.steps.push_back ({ 1u, k });
+            s.name = "s_pn_noise_" + mn;
+            v.push_back (s);
+            PlanSpec u = s;
+            u.steps.clear();
+            for (const std::uint64_t x : { 0x2b5u, 0x9c3u })
+                for (std::uint64_t j = 0; j < 32; ++j)
+                    u.steps.push_back ({ 1u, x + 4096 * j });
+            u.name = "s_pn_index_" + mn;
+            v.push_back (u);
+        }
+        if (m == chip::Model::B)
+        {
+            PlanSpec s;
+            s.model = m;
+            s.wave = 3;
+            s.kind = Kind::latch;
+            s.name = "s_latch_b";
             v.push_back (s);
         }
     }
@@ -320,6 +418,8 @@ inline bool extract (const PlanSpec& spec, const Plan& plan, const trace::Trace&
         }
     }
     constexpr std::size_t kAcc3 = 2, kNoise3 = 5, kRead = 18;
+    if (spec.kind == Kind::latch)
+        return true; // extractLatch()
     for (const auto& o : plan.samples)
     {
         std::size_t a = 0, rd = 0;
@@ -364,6 +464,44 @@ inline bool extract (const PlanSpec& spec, const Plan& plan, const trace::Trace&
             smp.noiseMask = static_cast<std::uint8_t> (chip::wave::noise (r.points[a].state.v[kNoise3]) >> 4);
         smp.value = static_cast<std::uint8_t> (r.points[rd].state.v[kRead]);
         out.push_back (smp);
+    }
+    return true;
+}
+/** One event of the latch experiment: the index X at the switch and the reads that follow it. */
+struct LatchEvent
+{
+    int event = 0;
+    std::uint16_t index = 0;
+    std::uint8_t read1 = 0, read2 = 0; // read2: event 2 only
+};
+
+inline bool extractLatch (const Plan& plan, const trace::Trace& t, const trace::Reference& r, std::vector<LatchEvent>& out, std::string& why)
+{
+    std::vector<trace::Checkpoint> schedule;
+    if (! trace::checkpointSchedule (t, schedule) || schedule.size() != r.points.size())
+    {
+        why = "the reference does not follow the trace's checkpoint schedule";
+        return false;
+    }
+    std::vector<std::size_t> byWrite (t.writes.size(), 0);
+    for (std::size_t i = 0; i < schedule.size(); ++i)
+        if (schedule[i].kind == trace::Checkpoint::Kind::afterWrite)
+            byWrite[schedule[i].write] = i;
+    for (const auto& o : plan.samples)
+    {
+        const auto acc = r.points[byWrite[o.accWrite]].state.v[2];
+        if (acc != o.expectedAcc)
+        {
+            why = "accumulator " + std::to_string (acc) + " where the plan expects " + std::to_string (o.expectedAcc);
+            return false;
+        }
+        LatchEvent e;
+        e.event = o.event;
+        e.index = static_cast<std::uint16_t> (acc >> 12);
+        e.read1 = static_cast<std::uint8_t> (r.points[byWrite[o.readWrite]].state.v[18]);
+        if (o.event == 2)
+            e.read2 = static_cast<std::uint8_t> (r.points[byWrite[o.readWrite2]].state.v[18]);
+        out.push_back (e);
     }
     return true;
 }

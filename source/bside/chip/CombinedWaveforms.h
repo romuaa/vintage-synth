@@ -19,21 +19,35 @@
 //   couplingSlope                    the coupling of lines i, i+1 is exp (couplingSlope x (i - 5))
 //   pulseSlope                       the pulse link of line i is scaled by exp (pulseSlope x (i - 5.5))
 //   threshold, thresholdSlope        bit i is 1 when V_i >= threshold + thresholdSlope x (i - 5.5)
-// Unused entries (a waveform that is not selected) are ignored. The model predicts all 12 bits; the
-// read register shows only bits 11..4, so bits 3..0 are the model's extrapolation (they reach the
-// digital state nowhere: 8.15.2 uses out bits 11..4 only, and bit 11 for the Model A pull-down).
+// Unused entries (a waveform that is not selected) are ignored.
 //
-// NOISE WITH OTHER WAVEFORMS. Noise with two or more of triangle, saw and pulse, and pulse with noise,
-// use constant shapes (one 12-bit value per waveform combination and model, fitted per bit by majority).
-// The data show the first group silent and the second one depending on the noise output itself, which
-// the table form of 8.15.2 (c) cannot express (reported to the contract owner; docs/decisions.md).
+// TWO CONSTRAINTS on the network's decisions (constrain()):
+//   1. A line is high only if one of its own triangle or saw drivers is high (the pulse alone never
+//      raises a line): out AND= (triangle OR saw input). Every one of the 8 x 4096 measured entries
+//      obeys it in bits 11..4; it removes, for example, bit 0 with the triangle, whose bit 0 is always 0.
+//   2. Bits 3..0, which the read register never shows (only the analog output will), continue a run of
+//      set bits from above: bit i (i < 4) is 1 only if bit i + 1 is 1. In the measured bits 11..4 a set
+//      bit has its upper neighbour set in 85 to 99 % of the cases (the low lines have the weakest
+//      drivers), so the unobservable bits follow the dominant pattern and an entry can never consist of
+//      low bits alone.
+// The model predicts all 12 bits; the digital state uses bits 11..4 only (8.15.2: read value and noise
+// write-back), and bit 11 for the Model A pull-down.
 //
-// FLOATING POINT. The tables are built in double precision. Every decision of the fitted parameters has
-// a margin far above any rounding difference between compilers and libraries (tested: kMinMargin), and a
-// hash of the built tables is pinned by a test on every platform, so the tables are the same everywhere.
+// NOISE WITH OTHER WAVEFORMS. Noise with two or more of triangle, saw and pulse: one constant shape per
+// combination and model (fitted per bit by majority; the data show 0). Pulse with noise (waveform bits
+// 0xc): the shape is not indexed by the accumulator but by the noise output (contract decision on 8.15.2
+// (c), 2026-11-15): Tpn (noise output bits 11..4), the same network with the noise output driving the
+// bit lines in place of a waveform (the "saw" slot of `pulseNoise`) and the pulse node; step 3's AND with
+// the noise output still applies.
 //
-// JUCE-free. buildTables allocates nothing; fittedTables() builds both models' tables on first use
-// (function-local statics, thread-safe) and is called from Chip::prepare, never from the audio thread.
+// FLOATING POINT. The tables are built in double precision. Every decision the constraints leave to the
+// network keeps a margin of at least kMinMargin from its threshold (tested), and a hash of the built
+// tables is pinned by a test on every platform, so the tables are the same everywhere.
+//
+// The parameters are constant-initialised (constinit), so the tables can be built during static
+// initialisation of another translation unit. JUCE-free. buildTables allocates nothing; fittedTables()
+// builds both models' tables on first use (function-local statics, thread-safe) and is called from
+// Chip::prepare and the Chip constructor, never from the audio thread.
 
 #include "bside/chip/ChipTypes.h"
 
@@ -51,48 +65,69 @@ struct NetworkParams
 };
 
 /** All parameters of one chip model. `network` is indexed by the triangle/saw/pulse bits (3, 5, 6, 7 are
-    used); `noiseShape` by the waveform bits (0xb .. 0xf are used). */
+    used); `pulseNoise` is Tpn (its saw slot is the noise output); `noiseShape` by the waveform bits
+    (0xb, 0xd, 0xe, 0xf are used). */
 struct ModelParams
 {
     std::array<NetworkParams, 8> network {};
+    NetworkParams pulseNoise {};
     std::array<std::uint16_t, 16> noiseShape {};
 };
 
-/** The fitted parameters (ShapeFit.cpp prints them; docs/decisions.md lists the fit errors). */
+/** The fitted parameters (ShapeFit.cpp writes them; docs/decisions.md lists the fit errors). */
 extern const ModelParams kFittedA;
 extern const ModelParams kFittedB;
 const ModelParams& fittedParams (Model m) noexcept;
 
-/** The value of one network-model entry and the smallest distance of a line voltage from its threshold. */
+/** The value of one network entry (after the constraints) and the smallest distance of a line voltage
+    from its threshold over the lines whose bit the constraints leave to the network. */
 struct Evaluation
 {
     std::uint16_t value = 0;
     double margin = 0;
 };
-/** `tspBits`: the triangle (1), saw (2) and pulse (4) bits, at least two of them. */
+/** The network with explicit inputs: `tri` / `saw` are the 12-bit patterns of the triangle and saw slots
+    (used when `useTri` / `useSaw`), `pulse` adds the pulse node. */
+Evaluation evaluateInputs (const NetworkParams& p, bool useTri, std::uint16_t tri, bool useSaw, std::uint16_t saw, bool pulse) noexcept;
+/** A combination of triangle (1), saw (2) and pulse (4) bits, at least two of them, at an index. */
 Evaluation evaluate (const NetworkParams& p, std::uint8_t tspBits, std::uint16_t index) noexcept;
+/** Tpn: pulse with noise, for a noise output (bits 11..4; bits 3..0 are 0). */
+Evaluation evaluatePulseNoise (const NetworkParams& p, std::uint16_t noiseOutput) noexcept;
+
+/** The constraints applied to a network value whose triangle/saw input lines are `inputs` (see above). */
+constexpr std::uint16_t constrain (std::uint16_t value, std::uint16_t inputs) noexcept
+{
+    auto v = static_cast<unsigned> (value & inputs & 0xfffu);
+    for (int i = 3; i >= 0; --i)
+        if (((v >> (i + 1)) & 1u) == 0)
+            v &= ~(1u << i);
+    return static_cast<std::uint16_t> (v);
+}
 
 /** The waveform-combination numbers the network model covers, and the ones with a constant shape. */
 constexpr std::array<std::uint8_t, 4> kNetworkCombinations { 3, 5, 6, 7 };
-constexpr std::array<std::uint8_t, 5> kNoiseCombinations { 0xb, 0xc, 0xd, 0xe, 0xf };
+constexpr std::array<std::uint8_t, 4> kConstantNoiseCombinations { 0xb, 0xd, 0xe, 0xf };
+constexpr std::uint8_t kPulseNoise = 0xc;
 
-/** The smallest margin the fitted parameters keep at every entry (the floating-point safety rule). */
-constexpr double kMinMargin = 1.0e-9;
+/** The smallest margin the fitted parameters keep at every decision (the floating-point safety rule). */
+constexpr double kMinMargin = 1.0e-6;
 
 /** The complete step-2 shape (8.15.2 (c)) for every waveform-bit value 0..15 and index: triangle, saw,
     0xfff for pulse or noise alone, the triangle or saw for those with noise, the combined shapes
-    otherwise. Entry 0 (no waveform) is unused and 0. */
+    otherwise. Entry 0 (no waveform) is unused and 0; entry 0xc is unused (pulse with noise takes
+    `pulseNoise`, indexed by the noise output's bits 11..4). */
 struct ShapeTables
 {
     std::array<std::array<std::uint16_t, 4096>, 16> wave {};
+    std::array<std::uint16_t, 256> pulseNoise {};
 };
 
 /** Fills `t` from the parameters (no allocation). */
 void buildTables (const ModelParams& p, ShapeTables& t) noexcept;
 
-/** The S2a placeholder (the AND of the selected triangle and saw shapes, 0xfff without either), kept only
-    for the independent model's comparison (tests/bside/CMakeLists.txt, bside_independent), which was
-    written before our tables existed and has no table interface. */
+/** The S2a placeholder (the AND of the selected triangle and saw shapes, 0xfff without either; pulse with
+    noise 0xfff), kept only for the independent model's comparison (tests/bside/CMakeLists.txt,
+    bside_independent), which was written before our tables existed and has no table interface. */
 void buildPlaceholderTables (ShapeTables& t) noexcept;
 
 /** Built once per process on first use (thread-safe); call from prepare, not from the audio thread. */

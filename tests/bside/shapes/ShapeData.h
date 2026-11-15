@@ -31,6 +31,7 @@ struct LoadedPlan
 {
     PlanSpec spec;
     std::vector<Sample> samples;
+    std::vector<LatchEvent> latch; // the latch experiment only
     std::string error; // empty when loaded
 };
 
@@ -60,6 +61,8 @@ inline std::vector<LoadedPlan> loadAll (const std::filesystem::path& dir)
             lp.error = "reference does not belong to the trace: " + why;
         else if (! extract (spec, plan, tr.trace, rr.reference, lp.samples, why))
             lp.error = "extraction: " + why;
+        else if (spec.kind == Kind::latch && ! extractLatch (plan, tr.trace, rr.reference, lp.latch, why))
+            lp.error = "latch extraction: " + why;
         v.push_back (std::move (lp));
     }
     return v;
@@ -96,7 +99,7 @@ inline std::uint8_t predict (const chip::combined::ShapeTables& t, const Sample&
 {
     if (! s.pulseHigh)
         return 0;
-    const auto v = static_cast<unsigned> (chip::wave::shape (t, s.wave, s.index) >> 4);
+    const auto v = static_cast<unsigned> (chip::wave::shape (t, s.wave, s.index, static_cast<std::uint16_t> (s.noiseMask << 4)) >> 4);
     return static_cast<std::uint8_t> (v & s.noiseMask);
 }
 

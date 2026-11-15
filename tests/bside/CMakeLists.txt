@@ -51,6 +51,11 @@ set_target_properties(bside_unit PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 include(${PROJECT_SOURCE_DIR}/external/Catch2/extras/Catch.cmake)
 catch_discover_tests(bside_unit PROPERTIES LABELS bside)
 
+# Two static libraries below define the same symbols (the JUCE-free sources) with different defaults of
+# chip::Config::shapes (BS_CHIP_DEFAULT_SHAPES): NEVER link bs_juce_free and bs_juce_free_placeholder into
+# one executable. A static linker would silently take each object from whichever library it meets first,
+# and the default shape set would then differ between translation units (an ODR violation).
+#
 # bside_independent: the independent per-cycle model (unit/IndependentModel.h, written from 8.15 alone and
 # never edited by whoever edits source/bside/chip/) against the chip. The model has no interface for our
 # fitted combined-waveform tables and still uses the S2a placeholder shapes, so this executable compiles
@@ -78,7 +83,8 @@ catch_discover_tests(bside_independent PROPERTIES LABELS bside)
 add_executable(bside_trace trace/ReferenceDataTests.cpp trace/ShapeDataTests.cpp)
 target_link_libraries(bside_trace PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_trace PRIVATE BS_REFERENCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/reference"
-    BS_SHAPES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shapes")
+    BS_SHAPES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shapes"
+    BS_EXEMPTION_BUDGET="${CMAKE_CURRENT_SOURCE_DIR}/trace/exemption-budget.txt")
 set_target_properties(bside_trace PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 catch_discover_tests(bside_trace PROPERTIES LABELS trace)
 

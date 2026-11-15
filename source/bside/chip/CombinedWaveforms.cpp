@@ -8,16 +8,13 @@ namespace vs::bside::chip::combined
 {
 const ModelParams& fittedParams (Model m) noexcept { return m == Model::A ? kFittedA : kFittedB; }
 
-Evaluation evaluate (const NetworkParams& p, std::uint8_t tspBits, std::uint16_t index) noexcept
+Evaluation evaluateInputs (const NetworkParams& p, bool useTri, std::uint16_t triBits, bool useSaw, std::uint16_t sawBits, bool pulse) noexcept
 {
     // Node equations G V = I of the network (nodes 0..11 the bit lines, node 12 the pulse node).
     constexpr int kLines = 12;
     double g[13][13] {};
     double rhs[13] {};
-    const bool pulse = (tspBits & wave::kPulse) != 0;
     const int n = pulse ? 13 : 12;
-    const auto triBits = wave::triangle (index);
-    const auto sawBits = wave::saw (index);
     const double triUp = std::exp (p.triUp), triDown = std::exp (p.triDown);
     const double sawUp = std::exp (p.sawUp), sawDown = std::exp (p.sawDown);
     const double pulseLine = std::exp (p.pulseLine), pulseSource = std::exp (p.pulseSource);
@@ -31,9 +28,9 @@ Evaluation evaluate (const NetworkParams& p, std::uint8_t tspBits, std::uint16_t
             if (one)
                 rhs[i] += c;
         };
-        if ((tspBits & wave::kTri) != 0)
+        if (useTri)
             driver (((triBits >> i) & 1u) != 0, triUp, triDown);
-        if ((tspBits & wave::kSaw) != 0)
+        if (useSaw)
             driver (((sawBits >> i) & 1u) != 0, sawUp, sawDown);
         if (i + 1 < kLines)
         {
@@ -76,16 +73,31 @@ Evaluation evaluate (const NetworkParams& p, std::uint8_t tspBits, std::uint16_t
             s -= g[k][c] * v[c];
         v[k] = s / g[k][k];
     }
+    const auto inputs = static_cast<std::uint16_t> ((useTri ? triBits : 0u) | (useSaw ? sawBits : 0u));
+    unsigned raw = 0;
     Evaluation e;
     e.margin = 1.0e300;
     for (int i = 0; i < kLines; ++i)
     {
         const double d = v[i] - (p.threshold + p.thresholdSlope * (i - 5.5));
         if (d >= 0.0)
-            e.value = static_cast<std::uint16_t> (e.value | (1u << i));
-        e.margin = std::fmin (e.margin, std::fabs (d));
+            raw |= 1u << i;
+        if (((inputs >> i) & 1u) != 0) // a line the first constraint forces low needs no margin
+            e.margin = std::fmin (e.margin, std::fabs (d));
     }
+    e.value = constrain (static_cast<std::uint16_t> (raw), inputs);
     return e;
+}
+
+Evaluation evaluate (const NetworkParams& p, std::uint8_t tspBits, std::uint16_t index) noexcept
+{
+    return evaluateInputs (p, (tspBits & wave::kTri) != 0, wave::triangle (index), (tspBits & wave::kSaw) != 0, wave::saw (index),
+                           (tspBits & wave::kPulse) != 0);
+}
+
+Evaluation evaluatePulseNoise (const NetworkParams& p, std::uint16_t noiseOutput) noexcept
+{
+    return evaluateInputs (p, false, 0, true, static_cast<std::uint16_t> (noiseOutput & 0xff0u), true);
 }
 
 namespace
@@ -118,12 +130,16 @@ void buildTables (const ModelParams& p, ShapeTables& t) noexcept
                 row[ix] = 0;
             else if (! wave::usesTable (bits))
                 row[ix] = singleShape (bits, i);
+            else if (bits == kPulseNoise)
+                row[ix] = 0; // unused: pulse with noise takes t.pulseNoise
             else if ((bits & wave::kNoise) != 0)
                 row[ix] = static_cast<std::uint16_t> (p.noiseShape[w] & 0xfffu);
             else
                 row[ix] = evaluate (p.network[w], bits, i).value;
         }
     }
+    for (unsigned k = 0; k < 256; ++k)
+        t.pulseNoise[k] = evaluatePulseNoise (p.pulseNoise, static_cast<std::uint16_t> (k << 4)).value;
 }
 
 void buildPlaceholderTables (ShapeTables& t) noexcept
@@ -150,6 +166,7 @@ void buildPlaceholderTables (ShapeTables& t) noexcept
             t.wave[w][ix] = v;
         }
     }
+    t.pulseNoise.fill (0xfff);
 }
 
 namespace

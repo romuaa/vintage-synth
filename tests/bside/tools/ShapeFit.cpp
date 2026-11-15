@@ -2,14 +2,21 @@
 // 8.4.5, 8.15.8). JUCE-free, deterministic (own random generator, fixed seeds; one thread per table, each
 // with its own generator, so the result does not depend on scheduling).
 //
-//   bside_shapefit gen <dir>                write the measurement traces (ShapePlan.h) into <dir>
-//   bside_shapefit fit <dir> <params.cpp>   fit the parameters to <dir>'s traces and references and write
-//                                           them as source (source/bside/chip/CombinedWaveformParams.cpp)
-//   bside_shapefit report <dir>             fit errors of the committed parameters, per model, waveform
-//                                           combination and pulse width
+//   bside_shapefit gen <dir>                        write the measurement traces (ShapePlan.h) into <dir>
+//   bside_shapefit fit <dir> <params.cpp>           fit rounds from the committed parameters until a round
+//                                                   changes nothing (a fixed point), then write them as
+//                                                   source (source/bside/chip/CombinedWaveformParams.cpp)
+//   bside_shapefit verify <dir>                     one fit round from the committed parameters; exit 1 if
+//                                                   it changes any parameter (they must be a fixed point)
+//   bside_shapefit dump <dir> <plan>                the samples of one plan (for inspection)
+//   bside_shapefit report <dir>                     fit errors of the committed parameters, per model,
+//                                                   waveform combination and pulse width, and the latch
+//                                                   experiment
 //
-// The references are made by running the reference emulator's adapter on each trace (see
-// tests/bside/shapes/MANIFEST for the command); this tool never runs it.
+// A round: from the current parameters and 6 000 random starts, pattern search from the best 16, then
+// random joint moves; only strict improvements of the number of wrong observed bits are accepted, so a
+// round from a fixed point returns it unchanged. The references are made by running the reference
+// emulator's adapter on each trace (tests/bside/shapes/MANIFEST); this tool never runs it.
 
 #include "../shapes/ShapeData.h"
 
@@ -17,8 +24,10 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -56,8 +65,24 @@ Vec fromParams (const NetworkParams& p)
     return { p.triUp, p.triDown, p.sawUp, p.sawDown, p.pulseSource, p.pulseLine, p.driveSlope, p.couplingSlope, p.pulseSlope, p.threshold, p.thresholdSlope };
 }
 
-bool active (int k, std::uint8_t w)
+/** One fitted table: a network combination at an index (wave 3, 5, 6, 7) or pulse with noise (wave 0xc,
+    input = the noise output). */
+struct Target
 {
+    chip::Model model = chip::Model::A;
+    std::uint8_t wave = 0;
+    struct Obs
+    {
+        std::uint16_t input;
+        std::uint8_t value, observed;
+    };
+    std::vector<Obs> obs;
+    bool pulseNoise() const noexcept { return wave == chip::combined::kPulseNoise; }
+};
+
+bool active (int k, const Target& t)
+{
+    const std::uint8_t w = t.pulseNoise() ? std::uint8_t { 6 } : t.wave; // Tpn: the saw slot and the pulse node
     if (k < 2)
         return (w & chip::wave::kTri) != 0;
     if (k < 4)
@@ -67,37 +92,40 @@ bool active (int k, std::uint8_t w)
     return true;
 }
 
-/** Search scale of each parameter. */
 double scaleOf (int k) { return k < 6 ? 1.0 : k == 9 ? 0.1 : k == 10 ? 0.01 : 0.2; }
 
-/** The full-table target of one model and combination: observed bits 11..4 per index. */
-struct Target
+chip::combined::Evaluation evalOne (const NetworkParams& p, const Target& t, std::uint16_t input)
 {
-    chip::Model model = chip::Model::A;
-    std::uint8_t wave = 0;
-    std::array<std::uint8_t, 4096> value {}, observed {};
-};
+    if (t.pulseNoise())
+    {
+        auto e = chip::combined::evaluatePulseNoise (p, input);
+        e.value = static_cast<std::uint16_t> (e.value & input); // step 3: AND the noise output
+        return e;
+    }
+    return chip::combined::evaluate (p, t.wave, input);
+}
 
 long cost (const Vec& x, const Target& t, long limit)
 {
     const NetworkParams p = toParams (x);
     long c = 0;
-    for (unsigned ix = 0; ix < 4096 && c < limit; ++ix)
+    for (const auto& o : t.obs)
     {
-        if (t.observed[ix] == 0)
-            continue;
-        const auto v = static_cast<unsigned> (chip::combined::evaluate (p, t.wave, static_cast<std::uint16_t> (ix)).value >> 4);
-        c += std::popcount ((v ^ t.value[ix]) & t.observed[ix]);
+        if (c >= limit)
+            break;
+        const auto v = static_cast<unsigned> (evalOne (p, t, o.input).value >> 4);
+        c += std::popcount ((v ^ o.value) & o.observed);
     }
     return c;
 }
 
-double minMargin (const Vec& x, std::uint8_t w)
+double minMargin (const Vec& x, const Target& t)
 {
     const NetworkParams p = toParams (x);
     double m = 1e300;
-    for (unsigned ix = 0; ix < 4096; ++ix)
-        m = std::min (m, chip::combined::evaluate (p, w, static_cast<std::uint16_t> (ix)).margin);
+    const unsigned n = t.pulseNoise() ? 256 : 4096;
+    for (unsigned i = 0; i < n; ++i)
+        m = std::min (m, evalOne (p, t, static_cast<std::uint16_t> (t.pulseNoise() ? i << 4 : i)).margin);
     return m;
 }
 
@@ -110,8 +138,7 @@ std::uint64_t splitmix (std::uint64_t& s)
 }
 double uniform (std::uint64_t& s) { return static_cast<double> (splitmix (s) >> 11) * (1.0 / 9007199254740992.0); }
 
-/** Pattern search from x: every active parameter up and down by its scale x step, step halved when
-    nothing improves; then random joint moves at the final scale. */
+/** Pattern search, then random joint moves; strict improvements only. */
 long polish (Vec& x, const Target& t, long c, std::uint64_t& rng)
 {
     for (int round = 0; round < 3; ++round)
@@ -122,7 +149,7 @@ long polish (Vec& x, const Target& t, long c, std::uint64_t& rng)
             bool improved = false;
             for (int k = 0; k < kParams; ++k)
             {
-                if (! active (k, t.wave))
+                if (! active (k, t))
                     continue;
                 for (const double sign : { -1.0, 1.0 })
                 {
@@ -144,10 +171,10 @@ long polish (Vec& x, const Target& t, long c, std::uint64_t& rng)
         {
             Vec y = x;
             for (int k = 0; k < kParams; ++k)
-                if (active (k, t.wave))
+                if (active (k, t))
                     y[static_cast<std::size_t> (k)] += (uniform (rng) - 0.5) * 0.2 * scaleOf (k);
-            const long cy = cost (y, t, c + 1);
-            if (cy <= c)
+            const long cy = cost (y, t, c);
+            if (cy < c)
             {
                 c = cy;
                 x = y;
@@ -157,16 +184,20 @@ long polish (Vec& x, const Target& t, long c, std::uint64_t& rng)
     return c;
 }
 
-Vec fitOne (const Target& t, const Vec& start, std::uint64_t seed, long& best)
+/** One round from `start`. Returns `start` itself unless something strictly better was found (or its
+    margin is too small, which a nudge of the threshold at equal cost repairs). */
+Vec fitRound (const Target& t, const Vec& start, std::uint64_t seed, long& best)
 {
     std::uint64_t rng = seed;
+    best = cost (start, t, 1L << 40);
+    Vec bx = start;
     struct Cand
     {
         long c;
         Vec x;
     };
     std::vector<Cand> pool;
-    pool.push_back ({ cost (start, t, 1L << 40), start });
+    pool.push_back ({ best, start });
     for (int i = 0; i < 6000; ++i)
     {
         Vec x {};
@@ -178,13 +209,11 @@ Vec fitOne (const Target& t, const Vec& start, std::uint64_t seed, long& best)
         x[9] = 0.3 + 0.69 * uniform (rng);
         x[10] = (uniform (rng) - 0.5) * 0.05;
         for (int k = 0; k < kParams; ++k)
-            if (! active (k, t.wave))
+            if (! active (k, t))
                 x[static_cast<std::size_t> (k)] = 0.0;
         pool.push_back ({ cost (x, t, 1L << 40), x });
     }
     std::stable_sort (pool.begin(), pool.end(), [] (const Cand& a, const Cand& b) { return a.c < b.c; });
-    best = 1L << 40;
-    Vec bx = start;
     for (std::size_t i = 0; i < 16 && i < pool.size(); ++i)
     {
         Vec x = pool[i].x;
@@ -195,24 +224,31 @@ Vec fitOne (const Target& t, const Vec& start, std::uint64_t seed, long& best)
             bx = x;
         }
     }
-    // Floating-point safety: keep every decision away from its threshold (kMinMargin).
-    if (minMargin (bx, t.wave) < 1.0e3 * chip::combined::kMinMargin)
-        for (int j = 1; j < 200; ++j)
+    // Floating-point safety: keep every decision at least 2 x kMinMargin from its threshold.
+    const double want = 2.0 * chip::combined::kMinMargin;
+    if (minMargin (bx, t) < want)
+        for (int j = 1; j < 400; ++j)
+        {
+            bool done = false;
             for (const double sign : { 1.0, -1.0 })
             {
                 Vec y = bx;
                 y[9] += sign * j * 1.0e-6;
-                if (cost (y, t, best + 1) == best && minMargin (y, t.wave) >= 1.0e3 * chip::combined::kMinMargin)
+                if (cost (y, t, best + 1) == best && minMargin (y, t) >= want)
                 {
                     bx = y;
-                    j = 200;
+                    done = true;
                     break;
                 }
             }
+            if (done)
+                break;
+        }
     return bx;
 }
 
-/** Noise combinations: one constant shape, each observed bit by majority (bits 3..0: 0). */
+/** Noise with two or more of triangle, saw and pulse: one constant shape, each observed bit by majority
+    (bits 3..0: 0). */
 std::uint16_t fitConstant (const std::vector<shapes::Sample>& samples)
 {
     unsigned v = 0;
@@ -239,21 +275,44 @@ std::vector<Target> targets (const std::vector<shapes::LoadedPlan>& plans)
 {
     std::vector<Target> v;
     for (const auto m : { chip::Model::A, chip::Model::B })
+    {
         for (const std::uint8_t w : chip::combined::kNetworkCombinations)
         {
             Target t;
             t.model = m;
             t.wave = w;
+            std::array<int, 4096> slot {};
+            slot.fill (-1);
             for (const auto& lp : plans)
                 for (const auto& s : lp.samples)
                     if (s.model == m && s.wave == w && s.pulseWidth == 0 && s.pulseHigh)
                     {
-                        t.value[s.index] = s.value;
-                        t.observed[s.index] = s.observed();
+                        auto& k = slot[s.index];
+                        if (k < 0)
+                        {
+                            k = static_cast<int> (t.obs.size());
+                            t.obs.push_back ({ s.index, s.value, s.observed() });
+                        }
                     }
+            std::stable_sort (t.obs.begin(), t.obs.end(), [] (const Target::Obs& a, const Target::Obs& b) { return a.input < b.input; });
             v.push_back (t);
         }
+        Target t;
+        t.model = m;
+        t.wave = chip::combined::kPulseNoise;
+        for (const auto& lp : plans)
+            for (const auto& s : lp.samples)
+                if (s.model == m && s.wave == chip::combined::kPulseNoise && s.pulseHigh)
+                    t.obs.push_back ({ static_cast<std::uint16_t> (s.noiseMask << 4), s.value, 0xff });
+        v.push_back (t);
+    }
     return v;
+}
+
+const NetworkParams& committed (const Target& t)
+{
+    const auto& p = chip::combined::fittedParams (t.model);
+    return t.pulseNoise() ? p.pulseNoise : p.network[t.wave];
 }
 
 bool loadOk (const std::vector<shapes::LoadedPlan>& plans)
@@ -268,12 +327,26 @@ bool loadOk (const std::vector<shapes::LoadedPlan>& plans)
     return ok;
 }
 
+/** One round for every target in parallel. */
+void roundAll (const std::vector<Target>& ts, std::vector<Vec>& x, std::vector<long>& costs)
+{
+    std::vector<std::thread> threads;
+    std::vector<Vec> out (ts.size());
+    for (std::size_t i = 0; i < ts.size(); ++i)
+        threads.emplace_back ([&, i] { out[i] = fitRound (ts[i], x[i], 0x5ba9e000u + i, costs[i]); });
+    for (auto& th : threads)
+        th.join();
+    x = out;
+}
+
 int report (const fs::path& dir)
 {
     const auto plans = shapes::loadAll (dir);
     if (! loadOk (plans))
         return 1;
-    const auto errs = shapes::errorsByPlan (plans, chip::combined::fittedTables (chip::Model::A), chip::combined::fittedTables (chip::Model::B));
+    const auto& ta = chip::combined::fittedTables (chip::Model::A);
+    const auto& tb = chip::combined::fittedTables (chip::Model::B);
+    const auto errs = shapes::errorsByPlan (plans, ta, tb);
     std::printf ("%-20s %8s %8s %9s %9s %9s %6s\n", "plan", "samples", "exact", "exact%", "bits%", "max", "rms");
     for (const auto& lp : plans)
     {
@@ -281,59 +354,44 @@ int report (const fs::path& dir)
         std::printf ("%-20s %8zu %8zu %8.2f%% %8.3f%% %9d %6.2f\n", lp.spec.name.c_str(), e.samples, e.exact, 100.0 * e.exactRate(),
                      e.bitsObserved == 0 ? 0.0 : 100.0 * static_cast<double> (e.bitsWrong) / static_cast<double> (e.bitsObserved), e.maxError, e.rms());
     }
-    // Per model and combination over the full tables (pulse width 0), and the margins.
     for (const auto& t : targets (plans))
     {
         shapes::FitError e;
-        const auto& tab = chip::combined::fittedTables (t.model);
-        for (unsigned ix = 0; ix < 4096; ++ix)
-            e.add (static_cast<std::uint8_t> (tab.wave[t.wave][ix] >> 4), t.value[ix], t.observed[ix]);
-        const auto& p = chip::combined::fittedParams (t.model).network[t.wave];
+        const auto p = fromParams (committed (t));
+        for (const auto& o : t.obs)
+            e.add (static_cast<std::uint8_t> (evalOne (toParams (p), t, o.input).value >> 4), o.value, o.observed);
         std::printf ("table model %s waveform %x: %zu entries, %zu exact (%.2f%%), bits wrong %zu of %zu (%.3f%%), max %d, rms %.3f, margin %.3g\n",
                      t.model == chip::Model::A ? "A" : "B", t.wave, e.samples, e.exact, 100.0 * e.exactRate(), e.bitsWrong, e.bitsObserved,
                      100.0 * static_cast<double> (e.bitsWrong) / static_cast<double> (std::max<std::size_t> (1, e.bitsObserved)), e.maxError, e.rms(),
-                     minMargin (fromParams (p), t.wave));
+                     minMargin (p, t));
     }
     return 0;
 }
 
-int fit (const fs::path& dir, const fs::path& outFile)
+std::string source (const std::vector<Target>& ts, const std::vector<Vec>& x, const std::vector<long>& costs,
+                    const std::vector<shapes::LoadedPlan>& plans)
 {
-    const auto plans = shapes::loadAll (dir);
-    if (! loadOk (plans))
-        return 1;
-    auto ts = targets (plans);
-    std::vector<Vec> result (ts.size());
-    std::vector<long> costs (ts.size());
-    std::vector<std::thread> threads;
-    for (std::size_t i = 0; i < ts.size(); ++i)
-        threads.emplace_back ([&, i] {
-            const auto& start = chip::combined::fittedParams (ts[i].model).network[ts[i].wave];
-            result[i] = fitOne (ts[i], fromParams (start), 0x5ba9e000u + i, costs[i]);
-        });
-    for (auto& th : threads)
-        th.join();
     std::string src;
     src += "// Generated by bside_shapefit fit (tests/bside/tools/ShapeFit.cpp) from tests/bside/shapes/: our own fit\n";
     src += "// (docs/architecture.md 8.15.8). Do not edit by hand; refit and review like a golden re-bless.\n";
     src += "// Fields: triUp, triDown, sawUp, sawDown, pulseSource, pulseLine, driveSlope, couplingSlope, pulseSlope,\n";
-    src += "// threshold, thresholdSlope (CombinedWaveforms.h). Hexadecimal literals keep every value exact.\n\n";
+    src += "// threshold, thresholdSlope (CombinedWaveforms.h). Hexadecimal literals keep every value exact; the\n";
+    src += "// parameters are constant-initialised, so no static-initialisation order can see them unset.\n\n";
     src += "#include \"bside/chip/CombinedWaveforms.h\"\n\nnamespace vs::bside::chip::combined\n{\nnamespace\n{\n";
     for (const auto m : { chip::Model::A, chip::Model::B })
     {
         const char* mn = m == chip::Model::A ? "A" : "B";
-        src += std::string ("ModelParams make") + mn + "()\n{\n    ModelParams p;\n";
+        src += std::string ("constexpr ModelParams make") + mn + "()\n{\n    ModelParams p;\n";
         for (std::size_t i = 0; i < ts.size(); ++i)
         {
             if (ts[i].model != m)
                 continue;
-            src += "    p.network[" + std::to_string (ts[i].wave) + "] = {";
+            src += ts[i].pulseNoise() ? std::string ("    p.pulseNoise = {") : "    p.network[" + std::to_string (ts[i].wave) + "] = {";
             for (int k = 0; k < kParams; ++k)
-                src += (k == 0 ? " " : ", ") + hexfloat (result[i][static_cast<std::size_t> (k)]);
+                src += (k == 0 ? " " : ", ") + hexfloat (x[i][static_cast<std::size_t> (k)]);
             src += " }; // " + std::to_string (costs[i]) + " observed bits differ\n";
-            std::fprintf (stderr, "model %s waveform %x: %ld observed bits differ\n", mn, ts[i].wave, costs[i]);
         }
-        for (const std::uint8_t w : chip::combined::kNoiseCombinations)
+        for (const std::uint8_t w : chip::combined::kConstantNoiseCombinations)
         {
             std::vector<shapes::Sample> samples;
             for (const auto& lp : plans)
@@ -346,10 +404,69 @@ int fit (const fs::path& dir, const fs::path& outFile)
         }
         src += "    return p;\n}\n";
     }
-    src += "} // namespace\n\nconst ModelParams kFittedA = makeA();\nconst ModelParams kFittedB = makeB();\n} // namespace vs::bside::chip::combined\n";
+    src += "} // namespace\n\nconstinit const ModelParams kFittedA = makeA();\nconstinit const ModelParams kFittedB = makeB();\n} // namespace vs::bside::chip::combined\n";
+    return src;
+}
+
+int fit (const fs::path& dir, const fs::path& outFile, bool verifyOnly)
+{
+    const auto plans = shapes::loadAll (dir);
+    if (! loadOk (plans))
+        return 1;
+    const auto ts = targets (plans);
+    std::vector<Vec> x (ts.size());
+    std::vector<long> costs (ts.size());
+    for (std::size_t i = 0; i < ts.size(); ++i)
+        x[i] = fromParams (committed (ts[i]));
+    for (int round = 1;; ++round)
+    {
+        const auto before = x;
+        roundAll (ts, x, costs);
+        bool changed = false;
+        for (std::size_t i = 0; i < ts.size(); ++i)
+        {
+            const bool c = std::memcmp (before[i].data(), x[i].data(), sizeof (Vec)) != 0;
+            changed = changed || c;
+            std::fprintf (stderr, "round %d model %s waveform %x: %ld observed bits differ%s\n", round, ts[i].model == chip::Model::A ? "A" : "B",
+                          ts[i].wave, costs[i], c ? " (changed)" : "");
+        }
+        if (verifyOnly)
+        {
+            std::fprintf (stderr, changed ? "verify: the committed parameters are NOT a fixed point\n" : "verify: the committed parameters are a fixed point\n");
+            return changed ? 1 : 0;
+        }
+        if (! changed)
+            break;
+        if (round >= 50)
+        {
+            std::fprintf (stderr, "no fixed point after 50 rounds\n");
+            return 1;
+        }
+    }
     std::ofstream f (outFile, std::ios::binary);
-    f << src;
+    f << source (ts, x, costs, plans);
     return f ? 0 : 1;
+}
+
+/** The samples (or latch events) of one plan, one per line: model, waveform, index, pulse, noise output, value. */
+int dump (const fs::path& dir, const std::string& name)
+{
+    for (const auto& lp : shapes::loadAll (dir))
+    {
+        if (lp.spec.name != name)
+            continue;
+        if (! lp.error.empty())
+        {
+            std::fprintf (stderr, "%s\n", lp.error.c_str());
+            return 1;
+        }
+        for (const auto& s : lp.samples)
+            std::printf ("%s %x %03x %d %02x %02x\n", s.model == chip::Model::A ? "A" : "B", s.wave, s.index, s.pulseHigh ? 1 : 0, s.noiseMask, s.value);
+        for (const auto& e : lp.latch)
+            std::printf ("event %d %03x %02x %02x\n", e.event, e.index, e.read1, e.read2);
+        return 0;
+    }
+    return 1;
 }
 
 int gen (const fs::path& dir)
@@ -378,9 +495,13 @@ int main (int argc, char** argv)
     if (cmd == "gen" && argc == 3)
         return gen (argv[2]);
     if (cmd == "fit" && argc == 4)
-        return fit (argv[2], argv[3]);
+        return fit (argv[2], argv[3], false);
+    if (cmd == "verify" && argc == 3)
+        return fit (argv[2], "", true);
+    if (cmd == "dump" && argc == 4)
+        return dump (argv[2], argv[3]);
     if (cmd == "report" && argc == 3)
         return report (argv[2]);
-    std::fprintf (stderr, "usage: bside_shapefit gen <dir> | fit <dir> <params.cpp> | report <dir>\n");
+    std::fprintf (stderr, "usage: bside_shapefit gen <dir> | fit <dir> <params.cpp> | verify <dir> | report <dir>\n");
     return 2;
 }

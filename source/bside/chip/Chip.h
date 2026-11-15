@@ -458,9 +458,10 @@ private:
         const std::uint8_t c = ctl (n);
         const std::uint16_t ix = wave::index (ownAcc, c, sourceAcc);
         OutParts p;
-        p.shape = wave::shape (*shapes, wave::bits (c), ix);
+        const std::uint16_t noiseOut = osc[idx (n)].noiseOut;
+        p.shape = wave::shape (*shapes, wave::bits (c), ix, noiseOut);
         p.pulseMask = (c & ctrl::pulse) == 0 || (c & ctrl::test) != 0 || pulsePrev ? std::uint16_t { 0xfff } : std::uint16_t { 0 };
-        p.noiseMask = (c & ctrl::noise) != 0 ? osc[idx (n)].noiseOut : std::uint16_t { 0xfff };
+        p.noiseMask = (c & ctrl::noise) != 0 ? noiseOut : std::uint16_t { 0xfff };
         return p;
     }
 

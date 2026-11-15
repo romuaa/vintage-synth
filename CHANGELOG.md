@@ -5,6 +5,18 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2b-1 review fixes and contract decisions (2026-11-15)
+- Pulse with noise is now a table of the noise output (Tpn, contract decision A), fitted with the same
+  network; new measurement plans `s_pn_noise_*` / `s_pn_index_*` (one noise output across 63 indices; two
+  indices across many noise outputs). `c_c_*` now agree at every exempt checkpoint.
+- The fit is a fixed point of the documented procedure (`bside_shapefit fit` iterates; `verify` checks);
+  parameters `constexpr`/`constinit`; bits 3..0 constrained (inputs and runs from above) with a
+  plausibility test; tolerances tightened; margin test at 1e-6; `tests/bside/shapes/** -text`.
+- Exemption budget per `c_*` trace and field (`tests/bside/trace/exemption-budget.txt`, decision B):
+  81 of 6 850 exempt field checkpoints differ (placeholder 1 752).
+- Model B latch experiment `s_latch_b` (question C): results pinned by a test; reported, chip unchanged.
+- Chip: `powerOnKeepingTime()` and `clearEnvelopeCounters (n)` for the program engine, with tests.
+
 ### B-Side S2b-1 — our own combined-waveform tables (2026-11-15)
 - `source/bside/chip/CombinedWaveforms.*`: a parametric bit-line network model per chip model and
   waveform combination (pull-up/pull-down conductance per selected waveform, neighbour coupling, a

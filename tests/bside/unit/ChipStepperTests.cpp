@@ -193,6 +193,11 @@ struct NaiveChip
         if (w == 10) return index;
         return vs::bside::chip::combined::fittedTables (model).wave[static_cast<std::size_t> (w)][index];
     }
+    /** Pulse with noise: the table is indexed by the noise output (contract decision on 8.15.2 (c) step 2). */
+    std::uint16_t pulseNoiseShape (std::uint16_t noiseOutput) const
+    {
+        return vs::bside::chip::combined::fittedTables (model).pulseNoise[(noiseOutput >> 4) & 0xffu];
+    }
     static std::uint16_t triangleOf (std::uint16_t index)
     {
         const unsigned t = index < 0x800 ? index : (index ^ 0xfffu);
@@ -218,6 +223,7 @@ struct NaiveChip
             if (w == 1) shape = triangleOf (index);
             else if (w == 2) shape = index;
             else if (w == 4 || w == 8) shape = 0xfff;
+            else if (w == 12) shape = pulseNoiseShape (x.nout);
             else shape = combinedShape (w, index);
             const std::uint16_t pmask = (c & 0x40) ? ((test (i) || x.pc) ? 0xfff : 0) : 0xfff;
             const std::uint16_t nmask = (c & 0x80) ? x.nout : 0xfff;

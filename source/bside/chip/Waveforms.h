@@ -75,9 +75,12 @@ constexpr std::uint32_t noiseKeepMask (std::uint16_t out) noexcept { return (kNo
 /** The shape of step 2 for waveform bits 1..15 (8.15.2 (c)): triangle (also with noise), saw (also with
     noise), 0xfff for pulse or noise alone, our combined-waveform shape otherwise (usesTable). The values
     come from the tables of CombinedWaveforms.h (one per chip model, computed from our fitted parameters);
-    the read register 0x1B, the noise write-back and the Model A pull-down all follow them. */
-inline std::uint16_t shape (const combined::ShapeTables& t, std::uint8_t waveBits, std::uint16_t ix) noexcept
+    pulse with noise is indexed by the noise output (`noiseOutput`, used for that combination only). The
+    read register 0x1B, the noise write-back and the Model A pull-down all follow them. */
+inline std::uint16_t shape (const combined::ShapeTables& t, std::uint8_t waveBits, std::uint16_t ix, std::uint16_t noiseOutput) noexcept
 {
+    if ((waveBits & 15u) == combined::kPulseNoise)
+        return t.pulseNoise[(noiseOutput >> 4) & 0xffu];
     return t.wave[waveBits & 15u][ix & 0xfffu];
 }
 

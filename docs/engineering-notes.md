@@ -12,6 +12,8 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | Model B tables came out shifted by one index. | Model B reads the latch of the previous triangle/saw step. | Map each Model B read to the accumulator one checkpoint earlier; confirm with spot samples (identical). |
 | The adapter's `.bsspec` of a long noise trace would be megabytes. | Spectral frames for about 100 s of chip time. | Commit only `.bstrace` and `.bsref` for read-back measurements. |
 | Tables computed with `exp` and a linear solve could differ between platforms. | Libraries and FMA contraction round differently in the last bits. | Keep every decision a margin away from its threshold (tested) and pin a hash of the built tables in a test that runs on every platform. |
+| A refit from the committed parameters changed them (review). | The search accepted equal-cost random moves, so a round could wander along a plateau. | Accept strict improvements only and iterate rounds to a fixed point; `bside_shapefit verify` proves the committed file is one. |
+| A mutation test of "no allocation" passed although the code allocated. | Clang may remove a `delete new T` pair entirely. | Make a probe allocation escape (a volatile pointer, or `malloc` into a global) before trusting an allocation-count test. |
 | The random-start fit landed in different local minima from run to run of an exploration script. | Discrete objective (wrong bits), plateaus. | Deterministic generator per table, start from the committed parameters, pattern search plus joint random moves; never accept a worse refit. |
 
 ## B-Side S2a fidelity pass (2026-11-14)

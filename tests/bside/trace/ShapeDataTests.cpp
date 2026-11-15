@@ -32,24 +32,53 @@ const std::vector<shapes::LoadedPlan>& loaded()
 }
 
 /** Fit tolerances per plan: the least share of samples whose observed bits all agree, and the most
-    observed bits that may differ (fractions). Set just below the fit as committed (docs/decisions.md),
-    so a refit that gets worse fails; the pulse-with-noise plans document the limit of the table form. */
+    observed bits that may differ (fractions), at the committed fit (docs/decisions.md): plans that agree
+    fully are pinned at 1.0, plans of at most 128 samples at the achieved count, the sweeps and spot
+    plans 0.2 % below their exact rate; the bit fraction just above the achieved one. A refit that gets
+    worse anywhere fails. */
 struct Tolerance
 {
     double minExact, maxBits;
 };
 const std::map<std::string, Tolerance> kTolerance {
-    { "s_sweep_3_a", { 0.995, 0.001 } }, { "s_spot_3_a", { 0.995, 0.001 } },  { "s_sweep_5_a", { 0.965, 0.006 } },
-    { "s_pw_5_a_40", { 0.95, 0.01 } },   { "s_pw_5_a_a0", { 0.85, 0.02 } },   { "s_sweep_6_a", { 0.975, 0.004 } },
-    { "s_spot_6_a", { 0.895, 0.016 } },  { "s_pw_6_a_40", { 0.95, 0.01 } },   { "s_pw_6_a_a0", { 0.95, 0.01 } },
-    { "s_sweep_7_a", { 0.99, 0.002 } },  { "s_spot_7_a", { 0.97, 0.004 } },   { "s_pw_7_a_40", { 0.95, 0.01 } },
-    { "s_pw_7_a_a0", { 0.95, 0.01 } },   { "s_noise_b_a", { 1.0, 0.0 } },     { "s_noise_c_a", { 0.20, 0.31 } },
-    { "s_noise_d_a", { 1.0, 0.0 } },     { "s_noise_e_a", { 1.0, 0.0 } },     { "s_noise_f_a", { 1.0, 0.0 } },
-    { "s_sweep_3_b", { 0.985, 0.003 } }, { "s_sweep_5_b", { 0.91, 0.013 } },  { "s_pw_5_b_40", { 0.95, 0.01 } },
-    { "s_pw_5_b_a0", { 0.80, 0.025 } },  { "s_sweep_6_b", { 0.915, 0.012 } }, { "s_pw_6_b_40", { 0.95, 0.01 } },
-    { "s_pw_6_b_a0", { 0.95, 0.01 } },   { "s_sweep_7_b", { 0.975, 0.003 } }, { "s_pw_7_b_40", { 0.95, 0.01 } },
-    { "s_pw_7_b_a0", { 0.95, 0.01 } },   { "s_noise_b_b", { 1.0, 0.0 } },     { "s_noise_c_b", { 0.45, 0.21 } },
-    { "s_noise_d_b", { 0.95, 0.03 } },   { "s_noise_e_b", { 1.0, 0.0 } },     { "s_noise_f_b", { 1.0, 0.0 } },
+    { "s_sweep_3_a", { 0.995, 0.0004 } },
+    { "s_spot_3_a", { 0.996, 0.0004 } },
+    { "s_sweep_5_a", { 0.970, 0.0039 } },
+    { "s_pw_5_a_40", { 63.0 / 64.0, 0.0021 } },
+    { "s_pw_5_a_a0", { 62.0 / 64.0, 0.0042 } },
+    { "s_sweep_6_a", { 0.975, 0.0057 } },
+    { "s_spot_6_a", { 0.936, 0.0093 } },
+    { "s_pw_6_a_40", { 1.0, 0.0 } },
+    { "s_pw_6_a_a0", { 1.0, 0.0 } },
+    { "s_sweep_7_a", { 0.995, 0.0009 } },
+    { "s_spot_7_a", { 0.974, 0.0036 } },
+    { "s_pw_7_a_40", { 1.0, 0.0 } },
+    { "s_pw_7_a_a0", { 1.0, 0.0 } },
+    { "s_noise_b_a", { 1.0, 0.0 } },
+    { "s_noise_c_a", { 91.0 / 96.0, 0.0129 } },
+    { "s_noise_d_a", { 1.0, 0.0 } },
+    { "s_noise_e_a", { 1.0, 0.0 } },
+    { "s_noise_f_a", { 1.0, 0.0 } },
+    { "s_pn_noise_a", { 1.0, 0.0 } },
+    { "s_pn_index_a", { 61.0 / 64.0, 0.0123 } },
+    { "s_sweep_3_b", { 0.985, 0.0022 } },
+    { "s_sweep_5_b", { 0.917, 0.0127 } },
+    { "s_pw_5_b_40", { 62.0 / 64.0, 0.0042 } },
+    { "s_pw_5_b_a0", { 53.0 / 64.0, 0.0247 } },
+    { "s_sweep_6_b", { 0.922, 0.0108 } },
+    { "s_pw_6_b_40", { 62.0 / 64.0, 0.0042 } },
+    { "s_pw_6_b_a0", { 63.0 / 64.0, 0.0021 } },
+    { "s_sweep_7_b", { 0.978, 0.0029 } },
+    { "s_pw_7_b_40", { 1.0, 0.0 } },
+    { "s_pw_7_b_a0", { 1.0, 0.0 } },
+    { "s_noise_b_b", { 1.0, 0.0 } },
+    { "s_noise_c_b", { 44.0 / 48.0, 0.0209 } },
+    { "s_noise_d_b", { 46.0 / 48.0, 0.0295 } },
+    { "s_noise_e_b", { 1.0, 0.0 } },
+    { "s_noise_f_b", { 1.0, 0.0 } },
+    { "s_pn_noise_b", { 1.0, 0.0 } },
+    { "s_pn_index_b", { 59.0 / 64.0, 0.0244 } },
+    { "s_latch_b", { 1.0, 0.0 } },
 };
 } // namespace
 
@@ -86,7 +115,7 @@ TEST_CASE ("shape data: the MANIFEST lists every file with its SHA-256; every tr
     {
         INFO (lp.spec.name << ": " << lp.error);
         CHECK (lp.error.empty());
-        CHECK_FALSE (lp.samples.empty());
+        CHECK_FALSE ((lp.samples.empty() && lp.latch.empty()));
     }
     CHECK (present.size() == 2 * loaded().size());
 }
@@ -150,4 +179,56 @@ TEST_CASE ("shape data: the fitted tables against the measurements, within the s
         CHECK (bits <= t.maxBits);
     }
     CHECK (kTolerance.size() == loaded().size());
+}
+
+TEST_CASE ("shape data: the Model B read latch across waveform changes (8.15.2 (c) step 5)", "[trace][shapes]")
+{
+    // s_latch_b: triangle + saw (3) at frequency 0x1000; at index X a switch for one step to saw + pulse
+    // (event 1), to pulse alone and then saw + pulse (event 2) or to saw alone (event 3). The measured
+    // shapes T3 and T6 come from the sweeps. Findings, pinned so a regeneration that changes them fails:
+    //   event 1: 30 of 40 reads show T3(X) (the latched shape), 1 shows T6(X) (a latched index), 9 neither;
+    //   event 2: pulse alone reads 0xff (its own output) and leaves the latch: 30 of 40 then show T3(X);
+    //   event 3: all 40 reads show saw(X) AND (saw(X) << 1), neither T3(X) (5 equal it only where the two
+    //            values coincide) nor the saw at X.
+    // Neither wording of step 5 covers events 1 to 3 fully; reported to the contract owner.
+    std::map<int, int> t3, t6;
+    const shapes::LoadedPlan* latch = nullptr;
+    for (const auto& lp : loaded())
+    {
+        if (lp.spec.name == "s_latch_b")
+            latch = &lp;
+        if (lp.spec.model == chip::Model::B && lp.spec.kind == shapes::Kind::sweep && (lp.spec.wave == 3 || lp.spec.wave == 6))
+            for (const auto& s : lp.samples)
+                (lp.spec.wave == 3 ? t3 : t6)[s.index] = s.value;
+    }
+    REQUIRE (latch != nullptr);
+    REQUIRE (latch->latch.size() == 120);
+    int shape1 = 0, index1 = 0, pulseOwn = 0, shape2 = 0, andShift3 = 0, shape3 = 0;
+    for (const auto& e : latch->latch)
+    {
+        const int x = e.index;
+        if (e.event == 1)
+        {
+            shape1 += e.read1 == t3.at (x) ? 1 : 0;
+            index1 += e.read1 != t3.at (x) && e.read1 == t6.at (x) ? 1 : 0;
+        }
+        else if (e.event == 2)
+        {
+            pulseOwn += e.read1 == 0xff ? 1 : 0;
+            shape2 += e.read2 == t3.at (x) ? 1 : 0;
+        }
+        else
+        {
+            andShift3 += e.read1 == (((x & (x << 1)) >> 4) & 0xff) ? 1 : 0;
+            shape3 += e.read1 == t3.at (x) ? 1 : 0;
+        }
+    }
+    std::printf ("[latch] event 1: shape %d, index %d of 40; event 2: pulse reads 0xff %d, shape %d of 40; event 3: saw AND saw<<1 %d, shape %d of 40\n",
+                 shape1, index1, pulseOwn, shape2, andShift3, shape3);
+    CHECK (shape1 == 30);
+    CHECK (index1 == 1);
+    CHECK (pulseOwn == 40);
+    CHECK (shape2 == 30);
+    CHECK (andShift3 == 40);
+    CHECK (shape3 == 5);
 }
