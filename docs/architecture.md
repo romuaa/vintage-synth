@@ -2054,13 +2054,14 @@ marker moves only by its pill (drag, arrows, wheel, double-click), no longer by 
   the new one (one note at a time per mouse). Velocity follows the vertical position in the key:
   top = 40, bottom = 127, linear, fixed for that note. A press outside the keys plays nothing.
 - The note is released when the mouse is released, the strip is hidden or destroyed (page change,
-  editor closed), or `cancelInteraction()` runs. No note may hang.
+  editor closed), the editor stops showing (checked by its timer), or `cancelInteraction()` runs; a
+  press ended that way plays nothing more until the next press. No note may hang.
 - Path (`common/engine/UiNotes.h`, JUCE-free, owned by the processor like `UiFeed`): a fixed-size
   wait-free single-writer/single-reader queue of `{note, velocity}` (velocity 0 = off; capacity 64;
-  a full queue drops the newest note on but never a note off: an off that finds the queue full is
-  recorded in a shared pending-off mask, which the writer retries on its next call and frame and
-  which the audio thread also collects after draining the queue, so the off arrives even if the
-  editor has closed; a note on is refused while its own off is pending). Dragging off the keys
+  ons and offs travel in the one queue, in order; a note on is accepted only while the queue has
+  room for it and for the off of every note then on, so an off always fits behind its own on and
+  can neither be lost nor overtake a later on; a note on that does not fit is dropped and its off
+  is then never sent; at most 32 notes can be on at once). Dragging off the keys
   releases the note until the pointer is on a key again. In bypassed blocks the editor's notes are
   drained and dropped, like the host's MIDI. The message thread writes; the audio thread drains it at the start
   of every block (bypassed blocks too) and adds the notes as channel-1 note messages at offset 0 to
@@ -2068,7 +2069,7 @@ marker moves only by its pill (drag, arrows, wheel, double-click), no longer by 
   ordinary notes: key mode, split, arp/seq, hold pedal and the `held`/`sounding` dots apply.
 - `prepareToPlay` and `reset` empty the queue and release every editor-held note. With an empty
   queue the block is bit-identical to before (render regression unchanged); the drain costs one
-  relaxed load. No allocation, lock or system call on either side.
+  acquire load. No allocation, lock or system call on either side.
 - Tests (9.6): press, drag across three keys and release produce exactly the expected on/off
   sequence in the processor's output (a sounding block, then silence after the release tail); the
   velocity rule; hiding the page mid-press sends the off; a 1000-press burst with a stalled audio

@@ -107,7 +107,7 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   The owner checks the factory sounds by ear later, in the studio; adjust then if needed.
 - **M7b–M7e (all editor pages) are ready on `m7/pages`, awaiting the owner's hands-on check and
   merge approval:** Envelopes and LFO (pictures from the real envelope and LFO code), Play
-  (keyboard strip) and Effects (pictures, on/off switches), Arp + Seq (step grid, pattern cards,
+  (keyboard strip whose keys play notes) and Effects (pictures, on/off switches), Arp + Seq (step grid, pattern cards,
   preview computed by the real arpeggiator; small audio-thread additions for the playing step and
   held-key order, audio byte-identical), Browser (grid, categories, search, tone loading) and the
   program menu on the program name. Each page reviewed independently and fixed; the placeholder
@@ -198,7 +198,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   10. Reference data: `bside_trace`, `SpecAnalysis`, `AnalogMeasure`, byte-exact reference files
       (`.gitattributes`, no line-ending conversion on Windows) (2026-11-14).
   11. M7b–M7e: the editor pages, `PresetActions`, new `PresetManager` accessors, the feed's
-      held-key order; the zero-allocation paint tests run on macOS only (2026-11-15).
+      held-key order, the editor → audio note queue (`UiNotes`); the zero-allocation paint tests
+      run on macOS only (2026-11-15).
   12. S2a: the chip digital core and its tests (JUCE-free; 64-bit arithmetic and bit fields
       that MSVC has never compiled) (2026-11-15).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
@@ -230,7 +231,7 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 ```
 source/common/    shared by all instruments; must not include anything from source/vintage/ or source/bside/
   dsp/            FastMath, DspUtil, BlepTable (JUCE-free)
-  engine/         NoteEvent, EventParser, VoiceAllocator, KeyRouter, PartMixer, UiFeed (audio → editor)
+  engine/         NoteEvent, EventParser, VoiceAllocator, KeyRouter, PartMixer, UiFeed (audio → editor), UiNotes (editor → audio notes)
                   (JUCE-free), Oversampler
   fx/             Chorus, Delay, Reverb, SoftLimiter (JUCE-free)
   seq/            arpeggiator and step sequencer (JUCE-free)

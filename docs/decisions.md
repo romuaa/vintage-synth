@@ -106,6 +106,18 @@ where a row here is worded differently.
 - Consequence the owner should know: on Model A, hard sync from an oscillator that plays a
   combined waveform may fire at different moments than in the reference, as far as our fitted
   shape differs from it. If that turns out audible on real tunes, the remedy is "follow fully".
+## Play page keys play notes (owner request, 2026-11-15; details review)
+- **Owner:** clicking the keys on the Play page must play. Contract 9.3.4 "Playing the keys".
+- **(review) The split marker moves only by its pill** (drag, arrows, wheel, double-click); a press
+  on the keys plays and no longer sets the split. This replaces "a press or drag anywhere on the
+  strip sets the split key" below.
+- **(review) Velocity from the vertical position** in the key (top 40, bottom 127); dragging glides
+  one note at a time; dragging off the keys releases the note.
+- **(review) Bypass ignores the editor's keys** like the host's MIDI. An editor note and a host note
+  of the same pitch share one key: the first release ends it (as with merged MIDI).
+- **One queue for ons and offs with reserved room for every off** (`UiNotes`), after the review
+  showed that a separate path for offs cannot keep its order with the ons. At most 32 notes on.
+
 ## M7c results: Play and Effects pages (2026-11-14, all review)
 - **Keyboard strip.** Six octaves C to C (73 keys), default C1 to C7; the window shifts by whole
   octaves so the split key keeps an octave of room (`KeyboardGeometry::windowFor`), but never while
