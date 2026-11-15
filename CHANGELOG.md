@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2b-1 second review: stronger tests (2026-11-15)
+- Exemption budget is a golden: equality, unknown and duplicate keys fail, a bless run fails after writing.
+- New measurement `s_latch_pn_b`: pulse with noise leaves the Model B latch alone (60 of 60); a test runs
+  the chip against it. The `s_latch_b` test runs the chip too and pins how many reads it reproduces.
+- Allocation test counts the chip's construction; docs: wave::shape is the only valid shape read (assert
+  for pulse with noise), renderers split the sample at the restart calls; decisions corrected, the
+  reviewer's latch hypothesis recorded.
+
 ### B-Side S2b-1 review fixes and contract decisions (2026-11-15)
 - Pulse with noise is now a table of the noise output (Tpn, contract decision A), fitted with the same
   network; new measurement plans `s_pn_noise_*` / `s_pn_index_*` (one noise output across 63 indices; two
