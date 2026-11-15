@@ -13,9 +13,11 @@
 //   juce::Graphics g (context);
 //   { AllocationCounter counter; component.paint (g); ... counter.count() }
 //
-// `clipRegionIntersects` answers false, so Graphics::drawText returns before JUCE's own glyph
-// arrangement (that is JUCE's cache, not our code); the clip is otherwise non-empty so that
-// fillPath and strokePath reach the context.
+// `clipRegionIntersects` answers false by default, so Graphics::drawText returns before JUCE's own
+// glyph arrangement (that is JUCE's cache, not our code); the clip is otherwise non-empty so that
+// fillPath and strokePath reach the context. With `layoutText` it answers true: text is then laid
+// out and reaches drawGlyphs (counted in `glyphRuns`), so a test can also see the allocations of
+// the text layout (JUCE's per drawText call) and check that prepared text reaches the context.
 
 #include <juce_graphics/juce_graphics.h>
 
@@ -24,7 +26,10 @@ namespace vs::itest
 class NullGraphicsContext final : public juce::LowLevelGraphicsContext
 {
 public:
-    explicit NullGraphicsContext (juce::Rectangle<int> bounds = { 0, 0, 4000, 2000 }) : clip (bounds) {}
+    explicit NullGraphicsContext (juce::Rectangle<int> bounds = { 0, 0, 4000, 2000 }, bool layoutText = false)
+        : clip (bounds), textIsLaidOut (layoutText)
+    {
+    }
 
     bool isVectorDevice() const override { return false; }
     void setOrigin (juce::Point<int>) override {}
@@ -35,7 +40,7 @@ public:
     void excludeClipRectangle (const juce::Rectangle<int>&) override {}
     void clipToPath (const juce::Path&, const juce::AffineTransform&) override {}
     void clipToImageAlpha (const juce::Image&, const juce::AffineTransform&) override {}
-    bool clipRegionIntersects (const juce::Rectangle<int>&) override { return false; }
+    bool clipRegionIntersects (const juce::Rectangle<int>&) override { return textIsLaidOut; }
     juce::Rectangle<int> getClipBounds() const override { return clip; }
     bool isClipEmpty() const override { return false; }
     void saveState() override {}
@@ -58,7 +63,7 @@ public:
     void drawLineWithThickness (const juce::Line<float>&, float) override { ++calls; }
     void setFont (const juce::Font& f) override { font = f; }
     const juce::Font& getFont() override { return font; }
-    void drawGlyphs (juce::Span<const uint16_t>, juce::Span<const juce::Point<float>>, const juce::AffineTransform&) override { ++calls; }
+    void drawGlyphs (juce::Span<const uint16_t>, juce::Span<const juce::Point<float>>, const juce::AffineTransform&) override { ++calls; ++glyphRuns; }
     std::unique_ptr<juce::ImageType> getPreferredImageTypeForTemporaryImages() const override { return std::make_unique<juce::SoftwareImageType>(); }
     void drawRoundedRectangle (const juce::Rectangle<float>&, float, float) override { ++calls; }
     void fillRoundedRectangle (const juce::Rectangle<float>&, float) override { ++calls; }
@@ -68,9 +73,12 @@ public:
 
     /** Number of drawing calls received (a test checks that painting reached the context at all). */
     int calls = 0;
+    /** Number of glyph runs (drawn text) received. */
+    int glyphRuns = 0;
 
 private:
     juce::Rectangle<int> clip;
+    bool textIsLaidOut;
     juce::Font font { juce::FontOptions() };
 };
 } // namespace vs::itest

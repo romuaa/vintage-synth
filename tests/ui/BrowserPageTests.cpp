@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "EditorRig.h"
+#include "NullGraphicsContext.h"
 #include "../preset_unit/PresetTestHelpers.h"
 #include "vintage/presets/VintagePresets.h"
 #include "vintage/ui/BrowserPage.h"
@@ -688,55 +689,6 @@ struct RepaintRecorder final : juce::CachedComponentImage
     int all = 0;
 };
 
-#if VS_SEQ_COUNT_ALLOCATIONS
-/** A graphics context that draws nothing and allocates nothing itself: what remains in an allocation count
-    is what our own paint code allocates (strings, paths, glyph arrays, ...). */
-class NullContext final : public juce::LowLevelGraphicsContext
-{
-public:
-    bool isVectorDevice() const override { return false; }
-    void setOrigin (juce::Point<int>) override {}
-    void addTransform (const juce::AffineTransform&) override {}
-    float getPhysicalPixelScaleFactor() const override { return 1.0f; }
-    bool clipToRectangle (const juce::Rectangle<int>&) override { return true; }
-    bool clipToRectangleList (const juce::RectangleList<int>&) override { return true; }
-    void excludeClipRectangle (const juce::Rectangle<int>&) override {}
-    void clipToPath (const juce::Path&, const juce::AffineTransform&) override {}
-    void clipToImageAlpha (const juce::Image&, const juce::AffineTransform&) override {}
-    bool clipRegionIntersects (const juce::Rectangle<int>&) override { return true; }
-    juce::Rectangle<int> getClipBounds() const override { return bounds; }
-    bool isClipEmpty() const override { return false; }
-    void saveState() override {}
-    void restoreState() override {}
-    void beginTransparencyLayer (float) override {}
-    void endTransparencyLayer() override {}
-    void setFill (const juce::FillType&) override {}
-    void setOpacity (float) override {}
-    void setImageBlendMode (juce::BlendMode) override {}
-    void setInterpolationQuality (juce::Graphics::ResamplingQuality) override {}
-    void fillRect (const juce::Rectangle<int>&, bool) override {}
-    void fillRect (const juce::Rectangle<float>&) override {}
-    void fillRectList (const juce::RectangleList<float>&) override {}
-    void fillPath (const juce::Path&, const juce::AffineTransform&) override {}
-    void strokePath (const juce::Path&, const juce::PathStrokeType&, const juce::AffineTransform&) override {}
-    void drawImage (const juce::Image&, const juce::AffineTransform&) override {}
-    void drawLine (const juce::Line<float>&) override {}
-    void setFont (const juce::Font&) override {}
-    const juce::Font& getFont() override { return font; }
-    void drawGlyphs (juce::Span<const std::uint16_t>, juce::Span<const juce::Point<float>>, const juce::AffineTransform&) override { ++glyphRuns; }
-    std::unique_ptr<juce::ImageType> getPreferredImageTypeForTemporaryImages() const override { return {}; }
-    void drawRoundedRectangle (const juce::Rectangle<float>&, float, float) override {}
-    void fillRoundedRectangle (const juce::Rectangle<float>&, float) override {}
-    void drawEllipse (const juce::Rectangle<float>&, float) override {}
-    void fillEllipse (const juce::Rectangle<float>&) override {}
-    std::uint64_t getFrameId() const override { return 0; }
-
-    juce::Rectangle<int> bounds { 0, 0, 2000, 1000 };
-    juce::Font font { juce::FontOptions {} };
-    int glyphRuns = 0;
-};
-#endif
-
 juce::Rectangle<int> inEditor (BrowserRig& rig, juce::Component& c, juce::Rectangle<int> r) { return rig.editor->getLocalArea (&c, r); }
 } // namespace
 
@@ -879,7 +831,7 @@ TEST_CASE ("Grid paint allocates nothing; nothing repaints at rest; a selection 
     }
     const auto allocations = [] (juce::Component& c, bool focused) {
         (void) focused;
-        NullContext context;
+        NullGraphicsContext context ({ 0, 0, 2000, 1000 }, true);
         juce::Graphics g (context);
         c.paint (g); // warm
         vs::seq::test::AllocationCounter counter;

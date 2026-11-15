@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "EditorRig.h"
+#include "NullGraphicsContext.h"
 #include "common/ui/models/ArpFeedModels.h"
 #include "common/ui/models/ArpPreviewModel.h"
 #include "common/ui/models/StepGridModel.h"
@@ -1358,61 +1359,10 @@ TEST_CASE ("Layout snapshot: the Arp + Seq page in both views, 100 % and 150 %, 
 #if VS_SEQ_COUNT_ALLOCATIONS
 namespace
 {
-/** A graphics context whose every operation does nothing (not even JUCE's default path building for
-    rounded rectangles and strokes). Painting through it leaves only what our own paint code and the
-    layout of the text it draws allocate: no renderer is involved. */
-class NullContext final : public juce::LowLevelGraphicsContext
-{
-public:
-    explicit NullContext (juce::Rectangle<int> clip) : bounds (clip) {}
-    bool isVectorDevice() const override { return false; }
-    void setOrigin (juce::Point<int>) override {}
-    void addTransform (const juce::AffineTransform&) override {}
-    float getPhysicalPixelScaleFactor() const override { return 1.0f; }
-    bool clipToRectangle (const juce::Rectangle<int>&) override { return true; }
-    bool clipToRectangleList (const juce::RectangleList<int>&) override { return true; }
-    void excludeClipRectangle (const juce::Rectangle<int>&) override {}
-    void clipToPath (const juce::Path&, const juce::AffineTransform&) override {}
-    void clipToImageAlpha (const juce::Image&, const juce::AffineTransform&) override {}
-    bool clipRegionIntersects (const juce::Rectangle<int>&) override { return true; }
-    juce::Rectangle<int> getClipBounds() const override { return bounds; }
-    bool isClipEmpty() const override { return false; }
-    void saveState() override {}
-    void restoreState() override {}
-    void beginTransparencyLayer (float) override {}
-    void endTransparencyLayer() override {}
-    void setFill (const juce::FillType&) override {}
-    void setOpacity (float) override {}
-    void setImageBlendMode (juce::BlendMode) override {}
-    void setInterpolationQuality (juce::Graphics::ResamplingQuality) override {}
-    void fillRect (const juce::Rectangle<int>&, bool) override {}
-    void fillRect (const juce::Rectangle<float>&) override {}
-    void fillRectList (const juce::RectangleList<float>&) override {}
-    void fillPath (const juce::Path&, const juce::AffineTransform&) override {}
-    void drawRect (const juce::Rectangle<float>&, float) override {}
-    void strokePath (const juce::Path&, const juce::PathStrokeType&, const juce::AffineTransform&) override {}
-    void drawImage (const juce::Image&, const juce::AffineTransform&) override {}
-    void drawLine (const juce::Line<float>&) override {}
-    void drawLineWithThickness (const juce::Line<float>&, float) override {}
-    void setFont (const juce::Font& f) override { font = f; }
-    const juce::Font& getFont() override { return font; }
-    void drawGlyphs (juce::Span<const uint16_t>, juce::Span<const juce::Point<float>>, const juce::AffineTransform&) override {}
-    std::unique_ptr<juce::ImageType> getPreferredImageTypeForTemporaryImages() const override { return nullptr; }
-    void drawRoundedRectangle (const juce::Rectangle<float>&, float, float) override {}
-    void fillRoundedRectangle (const juce::Rectangle<float>&, float) override {}
-    void drawEllipse (const juce::Rectangle<float>&, float) override {}
-    void fillEllipse (const juce::Rectangle<float>&) override {}
-    uint64_t getFrameId() const override { return 0; }
-
-private:
-    juce::Rectangle<int> bounds;
-    juce::Font font { juce::FontOptions() };
-};
-
 /** Allocations of painting `c` (and its visible children) through the null context, per paint, over 4 paints. */
 std::array<int, 4> allocationsPerPaint (juce::Component& c)
 {
-    NullContext context (c.getLocalBounds());
+    NullGraphicsContext context (c.getLocalBounds(), true); // text is laid out: JUCE's per-drawText allocations are counted
     juce::Graphics g (context);
     c.paintEntireComponent (g, false); // warm-up: font and typeface caches
     std::array<int, 4> counts {};
