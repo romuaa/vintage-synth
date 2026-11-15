@@ -1,8 +1,8 @@
 #pragma once
 
 // Process-wide data of the band-limited waveform renderer (docs/architecture.md 8.4.5; Chip::render,
-// ChipRender.cpp): the converter (DAC) model of each chip model and the mip-mapped band-limited tables of
-// the combined waveforms. Built once per (model, shape set) on first use, from prepare() or the Chip
+// ChipRender.cpp): the converter (DAC) model of each chip model and the step tables of the combined
+// waveforms. Built once per (model, shape set) on first use, from prepare() or the Chip
 // constructor, never on the audio thread. JUCE-free.
 //
 // THE CONVERTER MODEL. A resistor ladder: every bit drives its node through a leg of `ratio` x R, the nodes
@@ -38,17 +38,15 @@ constexpr double kModelARatio = 2.2;
 
 constexpr int kTableCombinations = 4; // waveform bits 3, 5, 6, 7
 
-/** The long BLEP kernel (docs/decisions.md S2b-2): the steps of Model A's combined waveforms use it, because
-    the short kernel (8 zero crossings, Kaiser beta 8) attenuates what folds into the band by only about
-    85 dB, too little for their spiky shapes. Every other step keeps the short kernel; were the long kernel
-    longer, those steps would be delayed so both share its latency. The smallest kernel that meets every
-    budget row with >= 3 dB to spare at every internal rate: 8 zero crossings (the same length, so the same
-    latency and cost per tap) with Kaiser beta 11 (about 111 dB; 12 dB to spare), its table read with a
-    second-order correction of the linear interpolation (ChipRender.cpp). Searched: 8/10 (3.7 dB to spare),
-    8/11 (12.0), 9/10 (6.7), 9/11 (11.1), 10/9 (1.4, too little), 10/10 (8.3), 12/10, 12/11, 14/11, 14/12,
-    16/12 (12 to 14). */
+/** The stronger BLEP kernel (docs/decisions.md S2b-2): every step of a pulse or a combined waveform (both
+    models) uses it, because the shared kernel (8 zero crossings, Kaiser beta 8) attenuates what folds into
+    the band by only about 85 dB, too little for narrow pulses and spiky combined shapes. Every other step
+    keeps the shared kernel (both have 8 zero crossings: one latency, and those steps are unchanged). Chosen
+    as the smallest that keeps every row of both alias measurements >= 3 dB inside its budget: 8 zero
+    crossings, Kaiser beta 12 (5.3 dB to spare at the narrowest pulses, 88.2 kHz, 3.85 kHz), in double
+    precision, read with a second-order correction of the table interpolation (ChipRender.cpp). */
 constexpr int kLongZeroCrossings = 8;
-constexpr int kLongBetaTenths = 110;
+constexpr int kLongBetaTenths = 120;
 
 /** The table slot of a combination of triangle / saw / pulse bits (3, 5, 6, 7), -1 for any other. */
 constexpr int tableSlot (std::uint8_t tspBits) noexcept
@@ -87,6 +85,9 @@ struct StepTable
 {
     std::array<float, 4096> value {};
     std::array<std::uint16_t, 4096> shape {}; // the 12-bit shape itself (bit 11: the Model A pull-down)
+    /** For a cell c of the upper half: the first cell >= c whose shape has bit 11 clear (4096: none); for a
+        cell of the lower half, the value of 0x800. Where a Model A saw combination is pulled down. */
+    std::array<std::uint16_t, 4096> firstClear {};
     std::array<std::uint16_t, 4096> nextChange {};
 };
 

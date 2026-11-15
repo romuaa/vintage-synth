@@ -5,6 +5,8 @@
 //            waveform of every oscillator switched every tick (triangle, saw, pulse, combined shapes)
 //   combined Model A: three combined waveforms around A3..A4 (their steps use the long kernel)
 //   noise    noise with a second waveform (write-back: the core steps every cycle) on all three
+//   silent, typicalA, sawsA, comb12kA/B: the S2b-2 review's cases (a silent chip; the typical patch on Model A;
+//            three Model A saws; three combined waveforms at 12 kHz, which Smooth allows)
 // Each case renders 4 s of chip time in blocks of 64 samples with its writes at their exact cycles
 // (renderUntil); the best of 5 runs is reported.
 
@@ -135,5 +137,34 @@ int main()
     for (int i = 0; i < 3; ++i)
         r[i] = nsPerSample (Model::B, rates[i], noiseSetup, noTick);
     std::printf ("%-8s %10.1f %10.1f %10.1f\n", "noise", r[0], r[1], r[2]);
+
+    // the review's cases (S2b-2): what typical and worst understate
+    auto silentSetup = [] (Chip&) {};
+    for (int i = 0; i < 3; ++i)
+        r[i] = nsPerSample (Model::B, rates[i], silentSetup, noTick);
+    std::printf ("%-8s %10.1f %10.1f %10.1f   (silent chip: power-on state, nothing selected)\n", "silent", r[0], r[1], r[2]);
+    for (int i = 0; i < 3; ++i)
+        r[i] = nsPerSample (Model::A, rates[i], typicalSetup, typicalTick);
+    std::printf ("%-8s %10.1f %10.1f %10.1f   (the typical patch on Model A)\n", "typicalA", r[0], r[1], r[2]);
+    auto sawsSetup = [] (Chip& c) {
+        setOsc (c, 0, 7480.0, 2048.0f, ctrl::saw | ctrl::gate);
+        setOsc (c, 1, 3740.0, 2048.0f, ctrl::saw | ctrl::gate);
+        setOsc (c, 2, 11220.0, 2048.0f, ctrl::saw | ctrl::gate);
+    };
+    for (int i = 0; i < 3; ++i)
+        r[i] = nsPerSample (Model::A, rates[i], sawsSetup, noTick);
+    std::printf ("%-8s %10.1f %10.1f %10.1f   (Model A, three saws)\n", "sawsA", r[0], r[1], r[2]);
+    auto combined12k = [] (Chip& c) {
+        const double f = 12000.0 * 16777216.0 / 985248.0; // Smooth allows 12 kHz (8.4.6)
+        setOsc (c, 0, f, 1024.0f, ctrl::triangle | ctrl::saw | ctrl::gate);
+        setOsc (c, 1, f * 0.98, 1024.0f, ctrl::saw | ctrl::pulse | ctrl::gate);
+        setOsc (c, 2, f * 0.96, 2048.0f, ctrl::triangle | ctrl::pulse | ctrl::gate);
+    };
+    for (int i = 0; i < 3; ++i)
+        r[i] = nsPerSample (Model::A, rates[i], combined12k, noTick);
+    std::printf ("%-8s %10.1f %10.1f %10.1f   (three combined waveforms at 12 kHz, Model A)\n", "comb12kA", r[0], r[1], r[2]);
+    for (int i = 0; i < 3; ++i)
+        r[i] = nsPerSample (Model::B, rates[i], combined12k, noTick);
+    std::printf ("%-8s %10.1f %10.1f %10.1f   (three combined waveforms at 12 kHz, Model B)\n", "comb12kB", r[0], r[1], r[2]);
     return 0;
 }

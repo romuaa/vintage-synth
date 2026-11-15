@@ -256,9 +256,10 @@ public:
     }
 
     /** Model, clock, internal rate and shape set; resets the chip. Allocates nothing (no member owns
-        memory): the combined-waveform tables, the renderer's tables (RenderTables.h, about 150 KiB per
-        model and shape set, a few milliseconds to build) and the BLEP table are process-wide and built on
-        their first use, which this call (or the constructor) makes, never a step or a render. */
+        memory): the combined-waveform tables, the renderer's tables (RenderTables.h, about 180 KiB per
+        model and shape set, a few milliseconds to build) and both BLEP tables are process-wide and built on
+        their first use, which this call (and the constructor) always makes, never a step or a render.
+        Construct and prepare a Chip off the audio thread: the first one in a process builds the tables. */
     void prepare (const Config& c) noexcept;
     /** Power-on state at cycle 0 (8.15.1; the configuration is kept). */
     void reset() noexcept;
@@ -328,7 +329,7 @@ public:
         signal at the start of internal sample m - kLatencySamples (the BLEP window, 8.4.2; the long kernel's,
         which every step shares: 8). */
     using ShortBlep = vs::dsp::BlepTable;
-    using LongBlep = vs::dsp::BasicBlepTable<render::kLongZeroCrossings, render::kLongBetaTenths>;
+    using LongBlep = vs::dsp::BasicBlepTable<render::kLongZeroCrossings, render::kLongBetaTenths, double>;
     static constexpr int kLatencySamples = LongBlep::kZeroCrossings;
 
     /** Renders whole internal samples and ADDS them to out[0 .. n): per oscillator the band-limited
@@ -347,6 +348,9 @@ public:
     /** Times the renderer had to move a rendered line back onto the digital phase (a band-limited
         correction; a diagnostic for tests: 0 in every configuration the gates measure). */
     std::uint64_t renderCorrections() const noexcept { return rs.corrections; }
+    /** Times the set of Model A converter bits rendered as square waves changed with the frequency (each a
+        small band-limited step; hysteresis keeps a vibrato around a limit from repeating it). */
+    std::uint64_t renderConverterSwitches() const noexcept { return rs.converterSwitches; }
 
     DigitalState state() const noexcept;
     std::uint64_t cycle() const noexcept { return cycleCount; }
@@ -789,6 +793,7 @@ private:
         std::array<RenderOsc, 3> osc {};
         std::array<double, 3> leftValue {}, leftSlope {}; // captured before a write
         std::uint64_t corrections = 0; // re-anchorings that moved a line (diagnostic)
+        std::uint64_t converterSwitches = 0; // changes of the set of Model A converter bits rendered (diagnostic)
     };
     struct PieceEvents; // ChipRender.cpp
 
@@ -802,6 +807,7 @@ private:
     void renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept;
     void renderLines (PieceEvents& ev, double tEnd) noexcept;
     bool renderPullDown (int n, double t) noexcept;
+    int renderPullCell (int n, int cell) const noexcept;
     void renderEmit (int n, double t, double dv, double ds) noexcept;
     void renderEmitWith (int n, double t, double dv, double ds, bool longKernel) noexcept;
     double renderSlopeU (int n) const noexcept; // periods per cycle
@@ -1002,7 +1008,7 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // (advanceCycles, or stepCycle in per-cycle mode) and reports its events; then each line is swept from the
 // previous position to the piece's end, stopping at every event in time order. At an event the waveform's
 // value and slope just before and after it give a step (BLEP) and a slope change (BLAMP) from the shared
-// BlepTable (Model A's combined waveforms: the long kernel, RenderTables.h), placed at the event's exact time (a sub-sample position; events up to one sample back are
+// BlepTable (pulses and combined waveforms: the stronger kernel, RenderTables.h), placed at the event's exact time (a sub-sample position; events up to one sample back are
 // allowed and corrected in the samples already written). The naive value is taken at the sample's end,
 // the output is the per-oscillator ring buffer kLatencySamples (8) samples later, times the envelope.
 // Steps on the short kernel come out exactly as with the short kernel alone, delayed by the difference
@@ -1030,6 +1036,8 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // sync-chain exception of 8.15.2 (d)) is undone by re-anchoring: at every sample end each line is
 // re-anchored on the digital phase, and a disagreement is corrected band-limited and counted
 // (renderCorrections(); 0 in every configuration the tests measure).
+// The simulation applies the Model A pull-down as the sweep does: a saw combination pulled down in its
+// first upper-half cell never rises, so it neither syncs nor shows its top bit (8.15.2 (c) step 4, (d)).
 // RING flips the triangle (or the table) where the source's top bit changes, from the same simulation.
 // WRITES (write, setOscillator, powerOnKeepingTime) take effect at their exact cycle: renderUntil stops
 // inside a sample at the requested cycle, the write captures every line's value before and after, and the

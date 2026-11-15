@@ -268,3 +268,99 @@ TEST_CASE ("rendered converters against the reference (diagnostic)", "[.render-d
         WARN (o.str());
     }
 }
+
+namespace
+{
+struct LevelFit
+{
+    double gain = 0.0, rms = 0.0, worst = 0.0;
+    int worstFrame = -1, frames = 0;
+};
+
+/** Frame levels of our render against the reference after one gain, over frames from `first` on where
+    both lie above -40 dBFS (the start, power-on and the first gate, carries S3's voice DC and board
+    high-pass; it is left out). */
+LevelFit fitLevels (const tr::Spec& ref, const tr::Spec& ours, int first)
+{
+    LevelFit f;
+    double sum = 0.0;
+    for (int i = first; i < ref.frames; ++i)
+    {
+        const int a = ref.levelTenthDb[static_cast<std::size_t> (i)], b = ours.levelTenthDb[static_cast<std::size_t> (i)];
+        if (a > -400 && b > -400)
+        {
+            sum += (a - b) / 10.0;
+            ++f.frames;
+        }
+    }
+    f.gain = f.frames > 0 ? sum / f.frames : 0.0;
+    for (int i = first; i < ref.frames; ++i)
+    {
+        const int a = ref.levelTenthDb[static_cast<std::size_t> (i)], b = ours.levelTenthDb[static_cast<std::size_t> (i)];
+        if (a > -400 && b > -400)
+        {
+            const double d = std::abs (a / 10.0 - b / 10.0 - f.gain);
+            f.rms += d * d;
+            if (d > f.worst)
+            {
+                f.worst = d;
+                f.worstFrame = i;
+            }
+        }
+    }
+    f.rms = f.frames > 0 ? std::sqrt (f.rms / f.frames) : 0.0;
+    return f;
+}
+} // namespace
+
+TEST_CASE ("rendered converters against the reference features (envelope converter levels, waveform harmonics)", "[trace][reference][render][dac]")
+{
+    // Tolerances (no number in 8.9.4 for the converters; ours, from the measurement, with margin):
+    // envelope converter (a_env_dac_*, 256 counter values, about 300 frames after the start): rms 0.3 dB,
+    // worst frame 1.0 dB; waveform converter (a_dac_*, s16 saw 110 Hz, s17 saw 1 kHz, s19 pulse 110 Hz):
+    // harmonics 2..8 above -60 dB relative to the fundamental within 0.6 dB. The triangle segment (s18) is
+    // not compared: the reference's triangle has even harmonics (-34 dB A / -40 dB B at the second) that a
+    // converter linear in its bits cannot make; a nonlinearity after the converters, for S3.
+    for (const char* name : { "a_env_dac_a", "a_env_dac_b", "a_dac_a", "a_dac_b" })
+    {
+        const auto t = tr::readTrace (slurp (kDir / (std::string (name) + ".bstrace")));
+        const auto s = tr::readSpec (slurp (kDir / (std::string (name) + ".bsspec")));
+        if (! t.ok || ! s.ok)
+            SKIP ("no reference data committed for " << name);
+        const auto y = renderTrace (t.trace);
+        tr::Spec ours;
+        std::string why;
+        REQUIRE (tr::analyseRender (t.trace, s.spec.traceSha256, y, ours, &why));
+        const bool envTrace = std::string (name).find ("env") != std::string::npos;
+        if (envTrace)
+        {
+            const auto f = fitLevels (s.spec, ours, 24);
+            WARN (name << ": envelope converter, " << f.frames << " frames after one gain of " << f.gain << " dB: rms " << f.rms << " dB, worst "
+                       << f.worst << " dB (frame " << f.worstFrame << ")");
+            CHECK (f.frames > 200);
+            CHECK (f.rms <= 0.3);
+            CHECK (f.worst <= 1.0);
+            continue;
+        }
+        REQUIRE (s.spec.segments.size() >= 20);
+        const double f0s[] { 110.0, 1000.0, 0.0, 110.0 };
+        for (int k = 0; k < 4; ++k)
+        {
+            if (k == 2)
+                continue; // the triangle (see above)
+            const auto& rs = s.spec.segments[static_cast<std::size_t> (16 + k)];
+            const auto& os = ours.segments[static_cast<std::size_t> (16 + k)];
+            const double f0 = static_cast<double> (t.trace.clockHz) * std::round (f0s[k] * 16777216.0 / 985248.0) / 16777216.0;
+            double worst = 0.0;
+            for (int h = 2; h <= 8; ++h)
+            {
+                const double dr = tr::toneLevelDb (rs, h * f0) - tr::toneLevelDb (rs, f0);
+                const double dm = tr::toneLevelDb (os, h * f0) - tr::toneLevelDb (os, f0);
+                if (dr > -60.0)
+                    worst = std::max (worst, std::abs (dr - dm));
+            }
+            WARN (name << " " << rs.name << ": harmonics 2..8 against the reference, worst " << worst << " dB");
+            CHECK (worst <= 0.6);
+        }
+    }
+}

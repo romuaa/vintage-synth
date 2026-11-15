@@ -13,6 +13,8 @@ void Chip::prepare (const Config& c) noexcept
     clock.prepare (cfg.clockHz, cfg.internalRate);
     shapes = &combined::tablesFor (cfg.model, cfg.shapes);
     rtab = &render::tablesFor (cfg.model, cfg.shapes);
+    blep = &ShortBlep::get(); // the first use builds the tables: here, never in a render
+    blepLong = &LongBlep::get();
     reset();
 }
 

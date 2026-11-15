@@ -35,6 +35,20 @@ int iminFor (double periodsPerSample) noexcept
             return i;
     return 11;
 }
+
+/** iminFor with hysteresis (S2b-2 review): a bit is dropped as soon as it would toggle once per sample,
+    but taken back only once it toggles at most 0.8 times per sample, so a vibrato around the limit does
+    not switch it back and forth (each switch is a small band-limited step). */
+int iminWithHysteresis (double periodsPerSample, int current) noexcept
+{
+    const int must = iminFor (periodsPerSample);      // bits below this one alias
+    const int may = iminFor (periodsPerSample / 0.8); // bits from this one on are clearly below the limit
+    if (must > current)
+        return must;
+    if (may < current)
+        return may;
+    return current;
+}
 } // namespace
 
 // ---- events of one piece (at most kPieceCycles digital cycles inside one sample) ----
@@ -355,6 +369,24 @@ double Chip::renderNextLineEvent (int n, double t, double slope, double& ue, int
 
 // ---- Model A pull-down, predicted from the line ----
 
+int Chip::renderPullCell (int n, int cell) const noexcept
+{
+    // Where the line of a Model A saw combination, entering `cell` (or the upper half) from below, is pulled
+    // down: the first cell from there whose output has bit 11 clear, the pulse gate (one cycle late)
+    // included. 4096: never (a combination whose upper half keeps bit 11 everywhere).
+    const int slot = render::tableSlot (static_cast<std::uint8_t> (wave::bits (ctl (n)) & 7u));
+    if (slot < 0)
+        return 4096;
+    const int c = std::max (cell, 2048);
+    if ((ctl (n) & ctrl::pulse) != 0)
+    {
+        const double lag = 4096.0 * renderSlopeU (n); // the comparison reads the line one cycle back
+        if (static_cast<double> (c) - lag < static_cast<double> (osc[idx (n)].pwSmooth))
+            return c;
+    }
+    return rtab->steps[static_cast<std::size_t> (slot)].firstClear[static_cast<std::size_t> (c)];
+}
+
 bool Chip::renderPullDown (int n, double t) noexcept
 {
     // 8.15.2 (c) step 4: Model A, a combination with the saw: in a cell of the upper half whose output has
@@ -410,7 +442,8 @@ void addStep (const Table& tab, std::array<double, N>& buf, std::uint64_t sample
         else
         {
             const int j = static_cast<int> (std::ceil (tt)) - 1;
-            const auto d = static_cast<float> (tt - static_cast<double> (j));
+            using S = typename Table::SampleType;
+            const auto d = static_cast<S> (tt - static_cast<double> (j));
             double stepCum = static_cast<double> (tab.step (j, d)) + (j >= 0 ? 1.0 : 0.0);
             const double pos = tt > 0.0 ? tt : 0.0;
             double rampCum = static_cast<double> (tab.ramp (j, d)) + pos;
@@ -424,8 +457,8 @@ void addStep (const Table& tab, std::array<double, N>& buf, std::uint64_t sample
                 const double p = static_cast<double> (d) * res;
                 const double cellFrac = p - std::fmin (std::floor (p), res - 1.0);
                 const double w = 0.5 * cellFrac * (1.0 - cellFrac) / (res * res);
-                const auto tf = static_cast<float> (tt);
-                constexpr float e = 1.0f / 2048.0f;
+                const auto tf = static_cast<S> (tt);
+                constexpr S e = S (1) / S (2048);
                 const double k1 = (static_cast<double> (tab.kernelAt (tf + e)) - static_cast<double> (tab.kernelAt (tf - e))) / (2.0 * static_cast<double> (e));
                 stepCum -= w * k1;
                 rampCum -= w * static_cast<double> (tab.kernelAt (tf));
@@ -469,10 +502,13 @@ void Chip::renderSyncOsc (int n) noexcept
     if (! v.pending) // a predicted, unconfirmed sync reset: the digital phase has not been reset yet
         v.u = frac01 (renderDigitalU (n, rs.sweepT) + v.offU);
     const double rate = slope * rs.cps;
-    v.imin = v.mode == rmTable ? 0 : (! rtab->dac.ideal && (v.mode == rmTri || v.mode == rmSaw)) ? iminFor (rate) : 11;
+    const int imin = v.mode == rmTable ? 0 : (! rtab->dac.ideal && (v.mode == rmTri || v.mode == rmSaw)) ? iminWithHysteresis (rate, v.imin) : 11;
+    if (imin != v.imin && (v.mode == rmTri || v.mode == rmSaw) && ! rtab->dac.ideal)
+        ++rs.converterSwitches;
+    v.imin = imin;
     v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));
     v.ring = (c & ctrl::ring) != 0 && (c & ctrl::saw) == 0 && (v.mode == rmTri || v.mode == rmTable);
-    v.longKernel = v.mode == rmTable && cfg.model == Model::A; // docs/decisions.md S2b-2
+    v.longKernel = v.mode == rmTable || v.mode == rmPulse; // combined waveforms and pulse edges (docs/decisions.md S2b-2)
     v.gate = gateAt (v.u, slope, osc[idx (n)].pwSmooth, (c & ctrl::test) != 0);
     v.gateCheckU = -1.0;
     v.held = v.mode == rmNoise ? osc[idx (n)].noiseOut : osc[idx (n)].out;
@@ -490,6 +526,16 @@ void Chip::renderActivate() noexcept
     {
         RenderOsc& v = rs.osc[idx (n)];
         v.ringFlip = v.ring && frac01 (rs.osc[idx (detail::syncSource (n))].u) < 0.5;
+        // The samples before the first one (the output's first kLatencySamples + 1 samples come from them)
+        // hold the state at activation, so the output starts on its value instead of stepping to it from 0.
+        const double value = renderValue (n, v.u);
+        const float level = rtab->envelope[env[idx (n)].counter];
+        for (int k = 1; k <= kLatency + 1; ++k)
+        {
+            const auto slot = static_cast<std::size_t> ((static_cast<std::uint64_t> (kRing) - static_cast<std::uint64_t> (k)) % static_cast<std::uint64_t> (kRing));
+            v.buf[slot] = value;
+            v.env[slot] = level;
+        }
     }
 }
 
@@ -647,9 +693,8 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
             v.u = frac01 (v.u);
             v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));
             // the pulse comparison is one cycle late (8.15.2 (c)): for one more cycle it still reads the old
-            // line, so the gate keeps its state and is re-read from the new line one cycle after the jump
-            if (d.kind != PieceEvents::kJumpConfirm)
-                v.gateCheckU = v.u + slope;
+            // line, so the gate keeps its state; after a reset to 0 its next edge, computed from the new line,
+            // already lies one cycle on (a falling edge at the next wrap of the delayed line, u = slope)
         }
         else if (th <= tr)
             v.held = ev->held[ni][static_cast<std::size_t> (ih++)].value;
@@ -689,8 +734,8 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
 void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
 {
     constexpr double kMatch = 1.0e-3; // cycles between a predicted and a digital reset of the same crossing
-    std::array<double, 3> u {}, slope {};
-    std::array<bool, 3> top {}, wanted {}, synced {};
+    std::array<double, 3> u {}, slope {}, pullU {};
+    std::array<bool, 3> top {}, wanted {}, synced {}, pulls {};
     for (int n = 0; n < 3; ++n)
     {
         const auto ni = idx (n);
@@ -698,6 +743,17 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
         slope[ni] = renderSlopeU (n);
         top[ni] = frac01 (u[ni]) >= 0.5;
         synced[ni] = (ctl (n) & ctrl::sync) != 0 && (ctl (n) & ctrl::test) == 0;
+        // a Model A saw combination is pulled down in the upper half (8.15.2 (c) step 4): its top bit falls
+        // where renderSweep's renderPullDown will pull it, and a rise it cannot keep syncs nothing
+        pulls[ni] = cfg.model == Model::A && rs.osc[ni].mode == rmTable && (ctl (n) & ctrl::saw) != 0 && slope[ni] > 0.0;
+        pullU[ni] = -1.0;
+        if (pulls[ni] && top[ni])
+        {
+            const double base = std::floor (u[ni]);
+            const int c = renderPullCell (n, static_cast<int> ((u[ni] - base) * 4096.0));
+            if (c < 4096)
+                pullU[ni] = base + static_cast<double> (c) / 4096.0;
+        }
     }
     for (int n = 0; n < 3; ++n)
     {
@@ -722,6 +778,7 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
     {
         double tc = kInf, uc = 0.0;
         int cs = -1;
+        bool pull = false;
         for (int n = 0; n < 3; ++n)
         {
             const auto ni = idx (n);
@@ -734,6 +791,18 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
                 tc = th;
                 uc = uh;
                 cs = n;
+                pull = false;
+            }
+            if (pullU[ni] >= 0.0)
+            {
+                const double tp = t + (pullU[ni] - u[ni]) / slope[ni];
+                if (tp <= tc)
+                {
+                    tc = std::fmax (tp, t);
+                    uc = pullU[ni];
+                    cs = n;
+                    pull = true;
+                }
             }
         }
         double tr = kInf;
@@ -757,9 +826,30 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
         for (std::size_t i = 0; i < 3; ++i)
             u[i] += slope[i] * (te - t);
         t = te;
+        if (crossing && pull)
+        {
+            const auto ci = idx (cs);
+            u[ci] = uc - 0.5 + slope[ci] * (t - tc);
+            pullU[ci] = -1.0;
+            settle (cs, tc);
+            continue;
+        }
         if (crossing)
         {
-            u[idx (cs)] = uc + slope[idx (cs)] * (t - tc);
+            const auto ci = idx (cs);
+            u[ci] = uc + slope[ci] * (t - tc);
+            if (pulls[ci] && frac01 (uc) >= 0.25 && frac01 (uc) < 0.75)
+            {
+                // the top bit rises: pulled down at once (no rise, no sync), later, or never
+                const double base = std::floor (uc);
+                const int c = renderPullCell (cs, 2048);
+                if (c == 2048)
+                {
+                    u[ci] -= 0.5;
+                    continue;
+                }
+                pullU[ci] = c < 4096 ? base + static_cast<double> (c) / 4096.0 : -1.0;
+            }
             settle (cs, tc);
             const int tg = detail::syncTarget (cs);
             const auto gi = idx (tg);
@@ -784,6 +874,7 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
                 else
                     ev.addJump (tg, tc, 0.0, PieceEvents::kJumpSyncPending);
                 u[gi] = slope[gi] * (t - tc);
+                pullU[gi] = -1.0;
                 settle (tg, tc);
             }
             continue;
@@ -799,6 +890,7 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
         {
             ev.addJump (rn, r.t, r.off, PieceEvents::kJumpSync);
             u[ri] = slope[ri] * (t - r.t);
+            pullU[ri] = -1.0;
             settle (rn, r.t);
         }
     }
@@ -925,9 +1017,10 @@ float Chip::renderFinishSample() noexcept
         const double slope = renderSlopeU (n);
         const double rate = slope * rs.cps;
         // the converter terms follow the frequency, at sample boundaries
-        const int imin = v.mode == rmTable ? 0 : (! rtab->dac.ideal && (v.mode == rmTri || v.mode == rmSaw)) ? iminFor (rate) : 11;
+        const int imin = v.mode == rmTable ? 0 : (! rtab->dac.ideal && (v.mode == rmTri || v.mode == rmSaw)) ? iminWithHysteresis (rate, v.imin) : 11;
         if (imin != v.imin)
         {
+            ++rs.converterSwitches;
             const double wl = renderValue (n, v.u);
             v.imin = imin;
             v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));

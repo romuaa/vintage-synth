@@ -53,7 +53,9 @@ add_executable(bside_unit
     unit/ProgramEngineGoldenTests.cpp
     unit/ProgramEngineChipTests.cpp
     unit/ProgramEnginePropertyTests.cpp
-    unit/ChipRenderTests.cpp)
+    unit/ChipRenderTests.cpp
+    unit/ChipRenderKaiserTests.cpp
+    unit/ChipRenderStreamTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_unit PRIVATE BS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
     BS_RENDER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/render")

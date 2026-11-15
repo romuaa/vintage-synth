@@ -28,6 +28,7 @@ struct Row
     std::uint8_t control;  // oscillator 2's control (gate set by the caller)
     float pulseWidth;
     double ratio;          // oscillator 2's frequency / oscillator 1's (sync, ring); 0: oscillator 2 alone
+    bool chain = false;    // a three-oscillator sync chain: 1 -> 2 (silent, 1.37 x) -> 3 (plays, ratio x)
 };
 
 /** Oscillator 2 (index 1) plays the row; oscillator 1 (index 0) is its sync / ring source, silent. `hz` is
@@ -38,7 +39,7 @@ struct Row
 AliasResult measureRow (const Row& r, double hz, const RateConfig& rc)
 {
     Chip c = makeChip (r.model, rc.internalRate);
-    const bool sync = (r.control & ctrl::sync) != 0;
+    const bool sync = (r.control & ctrl::sync) != 0 || r.chain;
     const bool ring = (r.control & ctrl::ring) != 0;
     int fund = oddBin (hz, rc.internalRate, kN);
     int base = fund;
@@ -55,15 +56,24 @@ AliasResult measureRow (const Row& r, double hz, const RateConfig& rc)
     }
     else if (ring)
     {
-        // both on multiples of a common odd base bin: everything legitimate lies on its multiples
-        base = std::max (1, oddBin (hz / 4.0, rc.internalRate, kN));
-        fund = base * 4 + base; // 5 x base
+        // both on multiples of a common odd base bin: everything legitimate lies on its multiples; the
+        // target (5 x base) runs at about hz
+        base = std::max (1, oddBin (hz / 5.0, rc.internalRate, kN));
+        fund = base * 5;
         f2 = binFrequency (c, fund, kN);
         f1 = binFrequency (c, base * 3, kN);
     }
-    setOsc (c, 0, f1, 2048.0f, 0x00);                    // no waveform, gate off: silent
-    setOsc (c, 1, f2, r.pulseWidth, static_cast<std::uint8_t> (r.control | ctrl::gate));
-    renderSamples (c, kWarmup);
+    setOsc (c, 0, f1, 2048.0f, 0x00); // no waveform, gate off: silent
+    if (r.chain)
+    {
+        setOsc (c, 1, f1 * 1.37, 2048.0f, ctrl::sync); // synced by 1, silent, syncs 3
+        setOsc (c, 2, f2, r.pulseWidth, static_cast<std::uint8_t> (r.control | ctrl::sync | ctrl::gate));
+    }
+    else
+        setOsc (c, 1, f2, r.pulseWidth, static_cast<std::uint8_t> (r.control | ctrl::gate));
+    // settle for at least three periods of the slowest line (the first resets of a chain come late)
+    const double slowest = std::max (1.0, static_cast<double> (std::min (fund, base)));
+    renderSamples (c, std::max (kWarmup, static_cast<int> (3.0 * kN / slowest)));
     const auto y = renderSamples (c, kN);
     // combined waveforms: on Model A a saw combination pulls its top bit down and may play at 2 f0, so the
     // reference is the strongest legitimate component there too
@@ -83,51 +93,6 @@ std::string fmt (double v)
 }
 } // namespace
 
-TEST_CASE ("render: alias budget, triangle / saw / pulse incl. sync and ring, Model B converter (<= -100 dB to 3.85 kHz)", "[render][alias]")
-{
-    const Row rows[] {
-        { "triangle", Model::B, ctrl::triangle, 2048.0f, 0.0 },
-        { "saw", Model::B, ctrl::saw, 2048.0f, 0.0 },
-        { "pulse 50%", Model::B, ctrl::pulse, 2048.0f, 0.0 },
-        { "pulse 12.5%", Model::B, ctrl::pulse, 512.0f, 0.0 },
-        { "saw sync 1.37", Model::B, ctrl::saw | ctrl::sync, 2048.0f, 1.37 },
-        { "saw sync 2.71", Model::B, ctrl::saw | ctrl::sync, 2048.0f, 2.71 },
-        { "saw sync 0.71", Model::B, ctrl::saw | ctrl::sync, 2048.0f, 0.71 },
-        { "saw sync 1.0031", Model::B, ctrl::saw | ctrl::sync, 2048.0f, 1.0031 },
-        { "saw sync 1.9969", Model::B, ctrl::saw | ctrl::sync, 2048.0f, 1.9969 },
-        { "triangle sync 1.37", Model::B, ctrl::triangle | ctrl::sync, 2048.0f, 1.37 },
-        { "triangle sync 2.71", Model::B, ctrl::triangle | ctrl::sync, 2048.0f, 2.71 },
-        { "triangle sync 0.71", Model::B, ctrl::triangle | ctrl::sync, 2048.0f, 0.71 },
-        { "triangle sync 1.0031", Model::B, ctrl::triangle | ctrl::sync, 2048.0f, 1.0031 },
-        { "triangle sync 1.9969", Model::B, ctrl::triangle | ctrl::sync, 2048.0f, 1.9969 },
-        { "pulse sync 1.37", Model::B, ctrl::pulse | ctrl::sync, 1300.0f, 1.37 },
-        { "pulse sync 2.71", Model::B, ctrl::pulse | ctrl::sync, 1300.0f, 2.71 },
-        { "pulse sync 0.71", Model::B, ctrl::pulse | ctrl::sync, 1300.0f, 0.71 },
-        { "pulse sync 1.0031", Model::B, ctrl::pulse | ctrl::sync, 1300.0f, 1.0031 },
-        { "pulse sync 1.9969", Model::B, ctrl::pulse | ctrl::sync, 1300.0f, 1.9969 },
-        { "triangle ring", Model::B, ctrl::triangle | ctrl::ring, 2048.0f, 0.0 },
-    };
-    double rowWorst[std::size (rows)];
-    std::fill (std::begin (rowWorst), std::end (rowWorst), -300.0);
-    for (const auto& rc : rateConfigs())
-    {
-        double worst = -300.0;
-        for (const auto& r : rows)
-            for (const double hz : { 110.0, 1000.0, 2000.0, 3850.0 })
-            {
-                const auto a = measureRow (r, hz, rc);
-                INFO (rc.internalRate << " Hz internal, " << r.name << " @ " << hz << " Hz: worst " << a.worstDb << " dB at " << a.worstHz << " Hz");
-                CHECK (a.worstDb <= -100.0);
-                CHECK (a.corrections == 0);
-                worst = std::max (worst, a.worstDb);
-                rowWorst[&r - rows] = std::max (rowWorst[&r - rows], a.worstDb);
-            }
-        WARN ("Model B basic waveforms, internal " << rc.internalRate << " Hz (band " << rc.band << " Hz): worst alias " << fmt (worst) << " dB");
-    }
-    for (std::size_t i = 0; i < std::size (rows); ++i)
-        WARN ("Model B " << rows[i].name << ": worst alias over all rates " << fmt (rowWorst[i]) << " dB");
-}
-
 namespace
 {
 /** Runs rows against a budget that depends on the frequency (8.4.5); reports the worst per row. */
@@ -140,14 +105,15 @@ void runBudget (const char* title, const std::vector<Row>& rows, double budget2k
             {
                 const auto a = measureRow (rows[i], hz, rc);
                 const double budget = hz <= 2000.0 ? budget2k : budget385;
-                INFO (title << ", " << rc.internalRate << " Hz internal, " << rows[i].name << " @ " << hz << " Hz: worst " << a.worstDb
+                INFO (title << ", " << rc.internalRate << " Hz internal, " << rows[i].name << " (width " << rows[i].pulseWidth << ", ratio " << rows[i].ratio << ") @ " << hz << " Hz: worst " << a.worstDb
                             << " dB at " << a.worstHz << " Hz (budget " << budget << "; reference component " << a.fundamentalDb << " dB re full scale)");
                 CHECK (a.worstDb <= budget);
+                CHECK (a.worstDb <= budget - 3.0); // at least 3 dB inside (coordinator, S2b-2 review)
                 CHECK (a.corrections == 0);
                 rowWorst[i] = std::max (rowWorst[i], a.worstDb - budget);
             }
     for (std::size_t i = 0; i < rows.size(); ++i)
-        WARN (title << " " << rows[i].name << ": worst margin to the budget over all rates and frequencies " << fmt (rowWorst[i]) << " dB");
+        WARN (title << " " << rows[i].name << " (width " << rows[i].pulseWidth << ", ratio " << rows[i].ratio << "): worst margin to the budget over all rates and frequencies " << fmt (rowWorst[i]) << " dB");
 }
 
 std::vector<Row> basicRows (Model m)
@@ -155,10 +121,16 @@ std::vector<Row> basicRows (Model m)
     std::vector<Row> r {
         { "triangle", m, ctrl::triangle, 2048.0f, 0.0 },
         { "saw", m, ctrl::saw, 2048.0f, 0.0 },
-        { "pulse 50%", m, ctrl::pulse, 2048.0f, 0.0 },
-        { "pulse 12.5%", m, ctrl::pulse, 512.0f, 0.0 },
         { "triangle ring", m, ctrl::triangle | ctrl::ring, 2048.0f, 0.0 },
     };
+    for (const float w : { 1.0f, 64.0f, 200.0f, 512.0f, 2048.0f, 3072.0f, 4032.0f, 4095.0f })
+        r.push_back ({ "pulse", m, ctrl::pulse, w, 0.0 });
+    for (const double ratio : { 2.71, 1.9969 })
+    {
+        r.push_back ({ "saw chain", m, ctrl::saw, 2048.0f, ratio, true });
+        r.push_back ({ "triangle chain", m, ctrl::triangle, 2048.0f, ratio, true });
+        r.push_back ({ "pulse chain", m, ctrl::pulse, 1300.0f, ratio, true });
+    }
     for (const double ratio : { 1.37, 2.71, 0.71, 1.0031, 1.9969 })
     {
         r.push_back ({ "saw sync", m, ctrl::saw | ctrl::sync, 2048.0f, ratio });
@@ -170,16 +142,33 @@ std::vector<Row> basicRows (Model m)
 
 std::vector<Row> combinedRows (Model m)
 {
-    return {
-        { "triangle+saw", m, ctrl::triangle | ctrl::saw, 2048.0f, 0.0 },
-        { "triangle+pulse", m, ctrl::triangle | ctrl::pulse, 2048.0f, 0.0 },
-        { "saw+pulse", m, ctrl::saw | ctrl::pulse, 1024.0f, 0.0 },
-        { "triangle+saw+pulse", m, ctrl::triangle | ctrl::saw | ctrl::pulse, 1024.0f, 0.0 },
-        { "triangle+pulse ring", m, ctrl::triangle | ctrl::pulse | ctrl::ring, 2048.0f, 0.0 },
-    };
+    std::vector<Row> r { { "triangle+saw", m, ctrl::triangle | ctrl::saw, 2048.0f, 0.0 } };
+    for (const float w : { 64.0f, 1024.0f, 2048.0f, 3072.0f })
+    {
+        r.push_back ({ "triangle+pulse", m, ctrl::triangle | ctrl::pulse, w, 0.0 });
+        r.push_back ({ "saw+pulse", m, ctrl::saw | ctrl::pulse, w, 0.0 });
+        r.push_back ({ "triangle+saw+pulse", m, ctrl::triangle | ctrl::saw | ctrl::pulse, w, 0.0 });
+        r.push_back ({ "triangle+pulse ring", m, ctrl::triangle | ctrl::pulse | ctrl::ring, w, 0.0 });
+    }
+    r.push_back ({ "triangle+saw chain", m, ctrl::triangle | ctrl::saw, 2048.0f, 2.71, true });
+    r.push_back ({ "saw+pulse chain", m, ctrl::saw | ctrl::pulse, 1024.0f, 2.71, true });
+    // combined targets of sync
+    for (const double ratio : { 1.37, 2.71, 0.71 })
+    {
+        r.push_back ({ "triangle+saw sync", m, ctrl::triangle | ctrl::saw | ctrl::sync, 2048.0f, ratio });
+        r.push_back ({ "triangle+pulse sync", m, ctrl::triangle | ctrl::pulse | ctrl::sync, 2048.0f, ratio });
+        r.push_back ({ "saw+pulse sync", m, ctrl::saw | ctrl::pulse | ctrl::sync, 1024.0f, ratio });
+        r.push_back ({ "triangle+saw+pulse sync", m, ctrl::triangle | ctrl::saw | ctrl::pulse | ctrl::sync, 1024.0f, ratio });
+    }
+    return r;
 }
 
 } // namespace
+
+TEST_CASE ("render: alias budget, triangle / saw / pulse incl. sync, ring and chains, Model B converter (<= -100 dB to 3.85 kHz)", "[render][alias]")
+{
+    runBudget ("Model B", basicRows (Model::B), -100.0, -100.0);
+}
 
 TEST_CASE ("render: alias budget, Model A converter (<= -96 dB to 2 kHz, <= -80 dB to 3.85 kHz)", "[render][alias]")
 {
@@ -561,8 +550,8 @@ TEST_CASE ("render: a write's discontinuity lands at its exact cycle; latency is
             }
             c.render (buf.data(), 0);
             // the expected output: a sum of band-limited steps at cycle / cycles-per-sample + kLatencySamples
-            // the step's shape: the short kernel, the long one where Model A enters or leaves a combined
-            // waveform (docs/decisions.md S2b-2)
+            // the step's shape: the short kernel, the long one where the waveform is (or was) a pulse or a
+            // combined one (docs/decisions.md S2b-2)
             auto blepCum = [&] (double t, bool longKernel) {
                 const double z = longKernel ? Chip::LongBlep::kZeroCrossings : Chip::ShortBlep::kZeroCrossings;
                 if (t <= -z)
@@ -570,14 +559,17 @@ TEST_CASE ("render: a write's discontinuity lands at its exact cycle; latency is
                 if (t > z)
                     return 1.0;
                 const int j = static_cast<int> (std::ceil (t)) - 1;
-                const auto d = static_cast<float> (t - j);
-                const float res = longKernel ? Chip::LongBlep::get().step (j, d) : Chip::ShortBlep::get().step (j, d);
-                return static_cast<double> (res) + (j >= 0 ? 1.0 : 0.0);
+                const double res = longKernel ? Chip::LongBlep::get().step (j, t - j)
+                                              : static_cast<double> (Chip::ShortBlep::get().step (j, static_cast<float> (t - j)));
+                return res + (j >= 0 ? 1.0 : 0.0);
             };
             auto isLong = [&] (std::size_t i) {
-                auto table = [] (std::uint8_t control) { return vs::bside::chip::wave::usesTable (vs::bside::chip::wave::bits (control)); };
+                auto onLong = [] (std::uint8_t control) {
+                    const auto b = vs::bside::chip::wave::bits (control);
+                    return b == vs::bside::chip::wave::kPulse || vs::bside::chip::wave::usesTable (b);
+                };
                 const std::uint8_t before = i == 0 ? static_cast<std::uint8_t> (ctrl::saw) : writes[i - 1].second;
-                return m == Model::A && (table (before) || table (writes[i].second));
+                return onLong (before) || onLong (writes[i].second);
             };
             // The levels are read from the output itself, half way between two writes (the continuous
             // waveform at the frozen accumulator differs from the 12-bit step value by a fraction of a step).
@@ -652,25 +644,29 @@ TEST_CASE ("render: alias report per budget row and internal rate", "[.render-re
 
 namespace
 {
-/** The patches of the shift test: a random schedule on Model B (every waveform, combined ones included),
-    and one on Model A without combined waveforms (no table on Model A: every event on the short kernel). */
+/** The patches of the shift test: random schedules on both models whose waveforms never use the long
+    kernel (no pulse, no combined waveform: a pulse bit is dropped, a combination keeps its saw or its
+    triangle; noise combinations stay, they render per cycle on the short kernel). */
 std::vector<float> shiftPatch (Model m)
 {
     bst::Rng r (m == Model::A ? 4242 : 4243);
     auto sched = randomSchedule (r, 60000, 260);
-    if (m == Model::A)
-        for (auto& c : sched)
+    auto strip = [] (std::uint8_t v) {
+        if ((v & ctrl::noise) == 0)
         {
-            auto strip = [] (std::uint8_t v) {
-                return vs::bside::chip::wave::usesTable (vs::bside::chip::wave::bits (v)) && ! vs::bside::chip::wave::writesBack (v)
-                           ? static_cast<std::uint8_t> (v & ~(ctrl::triangle | ctrl::saw))
-                           : v;
-            };
-            if (c.kind == 0 && c.reg % 7 == 4)
-                c.value = strip (c.value);
-            if (c.kind == 1)
-                c.in.control = strip (c.in.control);
+            v = static_cast<std::uint8_t> (v & ~ctrl::pulse);
+            if ((v & ctrl::triangle) != 0 && (v & ctrl::saw) != 0)
+                v = static_cast<std::uint8_t> (v & ~ctrl::triangle);
         }
+        return v;
+    };
+    for (auto& c : sched)
+    {
+        if (c.kind == 0 && c.reg % 7 == 4)
+            c.value = strip (c.value);
+        if (c.kind == 1)
+            c.in.control = strip (c.in.control);
+    }
     Chip c = makeChip (m, 96000.0);
     return renderSchedule (c, sched, sched.back().cycle + 3000, 97);
 }
@@ -699,12 +695,13 @@ TEST_CASE ("render: dump the shift golden", "[.render-golden-dump]")
 
 TEST_CASE ("render: steps on the short kernel come out as before, only delayed to the long kernel's latency", "[render][shift]")
 {
-    // tests/bside/render/shift-golden.txt is the output of the renderer before the long kernel existed
-    // (commit 6d4ae69, short kernel only, latency 8), dumped by "[.render-golden-dump]" on macOS. Patches
-    // without a Model A combined waveform use the short kernel only, so today's output is that output
-    // delayed by kLatencySamples - 8 samples: bit for bit with the compiler that made the golden (Apple
-    // Clang); other compilers may contract floating-point expressions differently, so elsewhere it must
-    // agree within float rounding.
+    // tests/bside/render/shift-golden.txt is the output of this renderer with every step on the short
+    // kernel (the long one switched off while the golden was made; "[.render-golden-dump]"), on patches that
+    // never use the long kernel (shiftPatch: no pulse, no combined waveform). Today's output must be that
+    // output delayed by kLatencySamples - 8 samples (0: both kernels have 8 zero crossings): bit for bit with
+    // the compiler that made the golden (Apple Clang); other compilers may contract floating-point
+    // expressions differently, so elsewhere it must agree within float rounding. Pulse and combined
+    // waveforms use the long kernel and are not covered by this golden (their own alias and timing tests).
     std::FILE* f = std::fopen (BS_RENDER_DIR "/shift-golden.txt", "r");
     REQUIRE (f != nullptr);
     constexpr int shift = Chip::kLatencySamples - 8;

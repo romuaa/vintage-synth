@@ -49,6 +49,15 @@ void buildSteps (const RenderTables& t, const combined::ShapeTables& shapes, std
         st.shape[ix] = wave::shape (shapes, bits, static_cast<std::uint16_t> (ix), 0);
         st.value[ix] = t.wave[st.shape[ix]];
     }
+    std::uint16_t clear = 4096;
+    for (unsigned c = 4096; c-- > 2048;)
+    {
+        if ((st.shape[c] & 0x800u) == 0)
+            clear = static_cast<std::uint16_t> (c);
+        st.firstClear[c] = clear;
+    }
+    for (unsigned c = 0; c < 2048; ++c)
+        st.firstClear[c] = st.firstClear[2048];
     for (unsigned c = 0; c < 4096; ++c)
     {
         std::uint16_t d = 0;
@@ -66,9 +75,8 @@ void buildSteps (const RenderTables& t, const combined::ShapeTables& shapes, std
     }
 }
 
-RenderTables build (Model model, ShapeSet set)
+void build (Model model, ShapeSet set, RenderTables& t)
 {
-    RenderTables t;
     const bool ideal = model == Model::B;
     const LadderWeights w12 = ideal ? ladderWeights (12, 2.0, true) : ladderWeights (12, kModelARatio, false);
     const LadderWeights w8 = ideal ? ladderWeights (8, 2.0, true) : ladderWeights (8, kModelARatio, false);
@@ -82,6 +90,17 @@ RenderTables build (Model model, ShapeSet set)
     constexpr std::uint8_t combos[kTableCombinations] = { 3, 5, 6, 7 };
     for (std::size_t c = 0; c < kTableCombinations; ++c)
         buildSteps (t, shapes, combos[c], t.steps[c]);
+}
+
+/** Built in place (about 180 KiB: never a by-value copy), once per (model, shape set). */
+template <Model M, ShapeSet S>
+const RenderTables& built()
+{
+    static const RenderTables& t = [] () -> const RenderTables& {
+        static RenderTables storage;
+        build (M, S, storage);
+        return storage;
+    }();
     return t;
 }
 } // namespace
@@ -121,14 +140,8 @@ LadderWeights ladderWeights (int bits, double ratio, bool terminated) noexcept
 
 const RenderTables& tablesFor (Model m, ShapeSet s)
 {
-    static const RenderTables fittedA = build (Model::A, ShapeSet::fitted);
-    static const RenderTables fittedB = build (Model::B, ShapeSet::fitted);
     if (s == ShapeSet::placeholder)
-    {
-        static const RenderTables placeholderA = build (Model::A, ShapeSet::placeholder);
-        static const RenderTables placeholderB = build (Model::B, ShapeSet::placeholder);
-        return m == Model::A ? placeholderA : placeholderB;
-    }
-    return m == Model::A ? fittedA : fittedB;
+        return m == Model::A ? built<Model::A, ShapeSet::placeholder>() : built<Model::B, ShapeSet::placeholder>();
+    return m == Model::A ? built<Model::A, ShapeSet::fitted>() : built<Model::B, ShapeSet::fitted>();
 }
 } // namespace vs::bside::chip::render
