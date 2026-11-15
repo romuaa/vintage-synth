@@ -2048,6 +2048,29 @@ key is always visible with one octave to spare. Whole: all keys Lower; Dual: two
 every key; Split: keys `< split_point` Lower, the rest Upper (the `KeyRouter` rule). Dots on keys
 from `UiFeed::part[p].held` (filled) and `.sounding` (ring).
 
+**Playing the keys (owner, 2026-11-15).** Pressing a key on the strip plays that note; the split
+marker moves only by its pill (drag, arrows, wheel, double-click), no longer by a press on the keys.
+- Press = note on; release = note off; dragging onto another key releases the old note and plays
+  the new one (one note at a time per mouse). Velocity follows the vertical position in the key:
+  top = 40, bottom = 127, linear, fixed for that note. A press outside the keys plays nothing.
+- The note is released when the mouse is released, the strip is hidden or destroyed (page change,
+  editor closed), or `cancelInteraction()` runs. No note may hang.
+- Path (`common/engine/UiNotes.h`, JUCE-free, owned by the processor like `UiFeed`): a fixed-size
+  wait-free single-writer/single-reader queue of `{note, velocity}` (velocity 0 = off; capacity 64;
+  a full queue drops the newest note on but never a note off: the writer keeps a pending-off mask
+  it retries on the next frame). The message thread writes; the audio thread drains it at the start
+  of every block (bypassed blocks too) and adds the notes as channel-1 note messages at offset 0 to
+  the same event list as the host's MIDI, before that block's host events. From there they are
+  ordinary notes: key mode, split, arp/seq, hold pedal and the `held`/`sounding` dots apply.
+- `prepareToPlay` and `reset` empty the queue and release every editor-held note. With an empty
+  queue the block is bit-identical to before (render regression unchanged); the drain costs one
+  relaxed load. No allocation, lock or system call on either side.
+- Tests (9.6): press, drag across three keys and release produce exactly the expected on/off
+  sequence in the processor's output (a sounding block, then silence after the release tail); the
+  velocity rule; hiding the page mid-press sends the off; a 1000-press burst with a stalled audio
+  thread leaves no note sounding once it drains; the split pill still works and a press on the keys
+  no longer moves the split.
+
 #### 9.3.5 Arp + Seq (global page; 58)
 | Panel | Label | ID | Control | Captions / graph |
 |---|---|---|---|---|
