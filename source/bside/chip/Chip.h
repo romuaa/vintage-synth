@@ -250,7 +250,8 @@ public:
         clock.prepare (cfg.clockHz, cfg.internalRate);
         shapes = &combined::tablesFor (cfg.model, cfg.shapes);
         rtab = &render::tablesFor (cfg.model, cfg.shapes);
-        blep = &vs::dsp::BlepTable::get();
+        blep = &ShortBlep::get();
+        blepLong = &LongBlep::get();
         reset();
     }
 
@@ -324,8 +325,11 @@ public:
     // ---- band-limited rendering (8.4.5; ChipRender.cpp; design at "RENDERING" at the end of this file) ----
 
     /** Delay of the rendered audio against chip time, in internal samples: output sample m holds the
-        signal at the start of internal sample m - kLatencySamples (the BLEP window, 8.4.2). */
-    static constexpr int kLatencySamples = vs::dsp::BlepTable::kZeroCrossings;
+        signal at the start of internal sample m - kLatencySamples (the BLEP window, 8.4.2; the long kernel's,
+        which every step shares: 8). */
+    using ShortBlep = vs::dsp::BlepTable;
+    using LongBlep = vs::dsp::BasicBlepTable<render::kLongZeroCrossings, render::kLongBetaTenths>;
+    static constexpr int kLatencySamples = LongBlep::kZeroCrossings;
 
     /** Renders whole internal samples and ADDS them to out[0 .. n): per oscillator the band-limited
         waveform after the waveform converter (DAC), times the envelope converter, summed over the three
@@ -750,7 +754,8 @@ private:
     void skip (std::uint64_t j, Sink& sink) noexcept;
 
     // ---- rendering state and steps (ChipRender.cpp) ----
-    static constexpr int kRing = 32; // per-oscillator output ring: >= 2 x kLatencySamples + 2
+    // per-oscillator output ring: a power of two >= 2 x kLatencySamples + 2
+    static constexpr int kRing = 2 * kLatencySamples + 2 <= 32 ? 32 : 2 * kLatencySamples + 2 <= 64 ? 64 : 128;
     enum RenderMode : std::uint8_t { rmOff, rmTri, rmSaw, rmPulse, rmNoise, rmTable, rmCycle };
     struct RenderOsc
     {
@@ -763,6 +768,7 @@ private:
         double gateCheckU = -1.0; // after a phase jump: where the (one cycle late) comparison reads the new line
         bool ring = false;       // the ring fold applies to this oscillator's index
         bool ringFlip = false;   // ... and the source's top bit is low: index bit 11 inverted
+        bool longKernel = false; // this oscillator's steps use the long kernel (Model A combined waveform)
         bool pending = false;    // a predicted sync reset the digital core has not confirmed yet
         std::uint64_t pendingStart = 0; // ... predicted at pendingT cycles after this sample start
         double pendingT = 0.0;
@@ -797,6 +803,7 @@ private:
     void renderLines (PieceEvents& ev, double tEnd) noexcept;
     bool renderPullDown (int n, double t) noexcept;
     void renderEmit (int n, double t, double dv, double ds) noexcept;
+    void renderEmitWith (int n, double t, double dv, double ds, bool longKernel) noexcept;
     double renderSlopeU (int n) const noexcept; // periods per cycle
     double renderDigitalU (int n, double t) const noexcept;
     double renderValue (int n, double u) const noexcept;
@@ -809,7 +816,8 @@ private:
     Config cfg {};
     const combined::ShapeTables* shapes = nullptr; // never null after construction (CombinedWaveforms.h)
     const render::RenderTables* rtab = nullptr;    // never null after construction (RenderTables.h)
-    const vs::dsp::BlepTable* blep = nullptr;      // never null after construction
+    const ShortBlep* blep = nullptr;               // never null after construction
+    const LongBlep* blepLong = nullptr;            // never null after construction
     RenderState rs {};
     ChipClock clock {};
     std::array<Osc, 3> osc {};
@@ -994,9 +1002,11 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // (advanceCycles, or stepCycle in per-cycle mode) and reports its events; then each line is swept from the
 // previous position to the piece's end, stopping at every event in time order. At an event the waveform's
 // value and slope just before and after it give a step (BLEP) and a slope change (BLAMP) from the shared
-// BlepTable, placed at the event's exact time (a sub-sample position; events up to one sample back are
+// BlepTable (Model A's combined waveforms: the long kernel, RenderTables.h), placed at the event's exact time (a sub-sample position; events up to one sample back are
 // allowed and corrected in the samples already written). The naive value is taken at the sample's end,
 // the output is the per-oscillator ring buffer kLatencySamples (8) samples later, times the envelope.
+// Steps on the short kernel come out exactly as with the short kernel alone, delayed by the difference
+// of the two kernels' lengths (0 today; tested bit for bit against a golden of the short-only renderer).
 //
 // PER WAVEFORM (the mode follows the control register):
 //   triangle, saw   closed form: g x (the continuous 12-bit value) plus, for the Model A converter, every

@@ -15,8 +15,7 @@ namespace
 constexpr double kTwo32 = 4294967296.0;
 constexpr double kTwo56 = 72057594037927936.0;
 constexpr double kInf = std::numeric_limits<double>::infinity();
-constexpr int kZ = vs::dsp::BlepTable::kZeroCrossings;
-static_assert (2 * kZ + 2 <= 32, "the output ring must hold the BLEP window and one sample of look-back");
+constexpr int kLatency = Chip::kLatencySamples; // the long kernel's: every step is delayed to it
 constexpr std::uint64_t kPieceCycles = 32; // digital cycles advanced per piece (bounds the event lists)
 constexpr int kEventCap = 80;             // per oscillator and piece (<= 32 resets + 32 pull-downs, ...)
 constexpr int kSweepGuard = 4096;         // events per oscillator and sweep (a backstop)
@@ -385,22 +384,24 @@ bool Chip::renderPullDown (int n, double t) noexcept
 
 // ---- emitting a discontinuity ----
 
-void Chip::renderEmit (int n, double t, double dv, double ds) noexcept
+namespace
 {
-    if (! (std::abs (dv) > 1.0e-15) && ! (std::abs (ds) > 1.0e-18))
-        return;
-    RenderOsc& v = rs.osc[idx (n)];
-    // time from the event to the grid point of the current sample (its end), in samples; an event lies at
-    // most one sample before the current sample's start
-    const double base = std::fmin (std::fmax ((rs.tEnd - t) / rs.cps, 0.0), 2.0);
-    for (int m = -(kZ + 1); m <= kZ; ++m)
+/** Adds a band-limited step dv and slope change ds at `base` samples before the grid point of sample
+    `sample` into a ring, with the kernel `tab` (its window +-Z around the sample; the output is read
+    kLatency + 1 samples behind, so a short kernel's step comes out exactly as before, only later). */
+template <bool kSecondOrder, class Table, std::size_t N>
+void addStep (const Table& tab, std::array<double, N>& buf, std::uint64_t sample, double base, double dv, double ds) noexcept
+{
+    constexpr int z = Table::kZeroCrossings;
+    static_assert (2 * z + 2 <= static_cast<int> (N), "the output ring must hold the BLEP window and one sample of look-back");
+    for (int m = -(z + 1); m <= z; ++m)
     {
         const double tt = base + static_cast<double> (m);
-        if (tt <= -static_cast<double> (kZ))
+        if (tt <= -static_cast<double> (z))
             continue;
         const bool included = m >= 0; // samples from the current one on are evaluated after the event
         double add = 0.0;
-        if (tt > static_cast<double> (kZ))
+        if (tt > static_cast<double> (z))
         {
             if (included)
                 break;
@@ -410,15 +411,51 @@ void Chip::renderEmit (int n, double t, double dv, double ds) noexcept
         {
             const int j = static_cast<int> (std::ceil (tt)) - 1;
             const auto d = static_cast<float> (tt - static_cast<double> (j));
-            const double stepCum = static_cast<double> (blep->step (j, d)) + (j >= 0 ? 1.0 : 0.0);
+            double stepCum = static_cast<double> (tab.step (j, d)) + (j >= 0 ? 1.0 : 0.0);
             const double pos = tt > 0.0 ? tt : 0.0;
-            const double rampCum = static_cast<double> (blep->ramp (j, d)) + pos;
+            double rampCum = static_cast<double> (tab.ramp (j, d)) + pos;
+            if constexpr (kSecondOrder)
+            {
+                // The tables interpolate linearly between kResolution points per sample, an error of about
+                // 1e-6 of a step; under the long kernel's deeper stop band that is what remains of a nearly
+                // silent combined shape. Remove it with the second derivative, which the kernel gives in
+                // closed form (step'' = kernel', ramp'' = kernel).
+                constexpr double res = Table::kResolution;
+                const double p = static_cast<double> (d) * res;
+                const double cellFrac = p - std::fmin (std::floor (p), res - 1.0);
+                const double w = 0.5 * cellFrac * (1.0 - cellFrac) / (res * res);
+                const auto tf = static_cast<float> (tt);
+                constexpr float e = 1.0f / 2048.0f;
+                const double k1 = (static_cast<double> (tab.kernelAt (tf + e)) - static_cast<double> (tab.kernelAt (tf - e))) / (2.0 * static_cast<double> (e));
+                stepCum -= w * k1;
+                rampCum -= w * static_cast<double> (tab.kernelAt (tf));
+            }
             add = dv * (stepCum - (included ? 1.0 : 0.0)) + ds * (rampCum - (included ? pos : 0.0));
         }
-        const auto slot = static_cast<std::size_t> ((rs.sample + static_cast<std::uint64_t> (kRing) + static_cast<std::uint64_t> (static_cast<std::int64_t> (m)))
-                                                    % static_cast<std::uint64_t> (kRing));
-        v.buf[slot] += add;
+        const auto slot = static_cast<std::size_t> ((sample + static_cast<std::uint64_t> (N) + static_cast<std::uint64_t> (static_cast<std::int64_t> (m)))
+                                                    % static_cast<std::uint64_t> (N));
+        buf[slot] += add;
     }
+}
+} // namespace
+
+void Chip::renderEmit (int n, double t, double dv, double ds) noexcept
+{
+    renderEmitWith (n, t, dv, ds, rs.osc[idx (n)].longKernel);
+}
+
+void Chip::renderEmitWith (int n, double t, double dv, double ds, bool longKernel) noexcept
+{
+    if (! (std::abs (dv) > 1.0e-15) && ! (std::abs (ds) > 1.0e-18))
+        return;
+    RenderOsc& v = rs.osc[idx (n)];
+    // time from the event to the grid point of the current sample (its end), in samples; an event lies at
+    // most one sample before the current sample's start
+    const double base = std::fmin (std::fmax ((rs.tEnd - t) / rs.cps, 0.0), 2.0);
+    if (longKernel)
+        addStep<true> (*blepLong, v.buf, rs.sample, base, dv, ds);
+    else
+        addStep<false> (*blep, v.buf, rs.sample, base, dv, ds);
 }
 
 // ---- state from the digital core ----
@@ -435,6 +472,7 @@ void Chip::renderSyncOsc (int n) noexcept
     v.imin = v.mode == rmTable ? 0 : (! rtab->dac.ideal && (v.mode == rmTri || v.mode == rmSaw)) ? iminFor (rate) : 11;
     v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));
     v.ring = (c & ctrl::ring) != 0 && (c & ctrl::saw) == 0 && (v.mode == rmTri || v.mode == rmTable);
+    v.longKernel = v.mode == rmTable && cfg.model == Model::A; // docs/decisions.md S2b-2
     v.gate = gateAt (v.u, slope, osc[idx (n)].pwSmooth, (c & ctrl::test) != 0);
     v.gateCheckU = -1.0;
     v.held = v.mode == rmNoise ? osc[idx (n)].noiseOut : osc[idx (n)].out;
@@ -482,6 +520,9 @@ void Chip::renderBeforeChange() noexcept
 
 void Chip::renderAfterChange (int testSetMask) noexcept
 {
+    std::array<bool, 3> longBefore {};
+    for (int n = 0; n < 3; ++n)
+        longBefore[idx (n)] = rs.osc[idx (n)].longKernel;
     // The change happened at the current cycle: after the last advanced cycle of the sample in progress, or
     // (right after a completed sample) up to one cycle before the sweep position; values are taken at the
     // sweep position, the discontinuity is placed at the change's own cycle.
@@ -505,7 +546,7 @@ void Chip::renderAfterChange (int testSetMask) noexcept
         const double u = v.u - slope * (rs.sweepT - tw);
         const double wr = renderValueAt (n, u);
         const double sr = renderDerivativeAt (n, u) * slope * rs.cps;
-        renderEmit (n, tw, wr - rs.leftValue[idx (n)], sr - rs.leftSlope[idx (n)]);
+        renderEmitWith (n, tw, wr - rs.leftValue[idx (n)], sr - rs.leftSlope[idx (n)], v.longKernel || longBefore[idx (n)]);
     }
 }
 
@@ -921,7 +962,7 @@ float Chip::renderFinishSample() noexcept
             v.u = frac01 (v.u);
     }
 
-    const auto outSlot = static_cast<std::size_t> ((rs.sample + static_cast<std::uint64_t> (kRing - kZ - 1)) % static_cast<std::uint64_t> (kRing));
+    const auto outSlot = static_cast<std::size_t> ((rs.sample + static_cast<std::uint64_t> (kRing - kLatency - 1)) % static_cast<std::uint64_t> (kRing));
     double y = 0.0;
     for (auto& v : rs.osc)
     {

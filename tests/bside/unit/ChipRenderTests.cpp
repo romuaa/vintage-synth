@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 
 using namespace bs_render_test;
@@ -178,24 +179,6 @@ std::vector<Row> combinedRows (Model m)
     };
 }
 
-/** The Model A combined rows whose budget is NOT met with the shared BLEP kernel (docs/decisions.md S2b-2:
-    the kernel's stop band, about -81 dB, against these very spiky shapes; a 16-zero-crossing kernel with
-    Kaiser beta 12 meets every row with >= 13 dB to spare). */
-bool shortfall (const Row& r)
-{
-    return r.model == Model::A
-           && (r.control == (ctrl::triangle | ctrl::saw) || r.control == (ctrl::triangle | ctrl::saw | ctrl::pulse)
-               || r.control == (ctrl::triangle | ctrl::pulse | ctrl::ring));
-}
-
-std::vector<Row> select (const std::vector<Row>& rows, bool wantShortfall)
-{
-    std::vector<Row> out;
-    for (const auto& r : rows)
-        if (shortfall (r) == wantShortfall)
-            out.push_back (r);
-    return out;
-}
 } // namespace
 
 TEST_CASE ("render: alias budget, Model A converter (<= -96 dB to 2 kHz, <= -80 dB to 3.85 kHz)", "[render][alias]")
@@ -205,35 +188,30 @@ TEST_CASE ("render: alias budget, Model A converter (<= -96 dB to 2 kHz, <= -80 
 
 TEST_CASE ("render: alias budget, combined waveforms, both models (<= -96 dB to 2 kHz, <= -80 dB to 3.85 kHz)", "[render][alias]")
 {
+    // Model A's combined waveforms use the long kernel (docs/decisions.md S2b-2); with the short one they
+    // missed the budget by up to 10 dB (-85.9 dB)
     runBudget ("Model B combined", combinedRows (Model::B), -96.0, -80.0);
-    runBudget ("Model A combined", select (combinedRows (Model::A), false), -96.0, -80.0);
+    runBudget ("Model A combined", combinedRows (Model::A), -96.0, -80.0);
 }
 
-// KNOWN SHORTFALL (stopped on this point; docs/decisions.md S2b-2): Model A triangle+saw, triangle+saw+pulse
-// and triangle+pulse with ring miss the combined budget by up to 10 dB (worst -86 dB at 110 Hz to 2 kHz,
-// against -96). Marked "should fail": the suite stays green while the shortfall is real, and turns red the
-// day these rows meet the budget, so they are moved into the gate above.
-TEST_CASE ("render: alias budget, Model A combined shortfall rows (budget not met)", "[render][alias][!shouldfail]")
+// Diagnostic (hidden): the stop band of both kernels, computed from the kernels themselves (kernelAt): a
+// band-limited step leaks content from above half the internal rate with at least this attenuation, and a
+// shape whose spectrum is flat far above the band (single cells of a combined table) aliases at about that
+// level relative to its own harmonics.
+namespace
 {
-    runBudget ("Model A combined (shortfall)", select (combinedRows (Model::A), true), -96.0, -80.0);
-}
-
-// Diagnostic (hidden): the stage that limits the shortfall rows is the BLEP kernel's stop band. Its
-// attenuation is computed here from the kernel itself (BlepTable::kernelAt): a band-limited step leaks
-// content from above half the internal rate with at least this attenuation, and a shape whose spectrum
-// is flat far above the band (single cells of a combined table) aliases at about that level relative to
-// its own harmonics.
-TEST_CASE ("render: diagnostic, the BLEP kernel's stop band", "[.render-diag]")
+template <class Table>
+void reportStopBand (const char* name)
 {
-    const auto& b = vs::dsp::BlepTable::get();
-    constexpr int z = vs::dsp::BlepTable::kZeroCrossings;
+    const auto& b = Table::get();
+    constexpr int z = Table::kZeroCrossings;
     constexpr int per = 256;
     double dc = 0.0;
     for (int i = -z * per; i <= z * per; ++i)
         dc += static_cast<double> (b.kernelAt (static_cast<float> (i) / per)) / per;
     double worst = -300.0, worstF = 0.0;
     // content that folds into 0 .. 20 kHz at 96 kHz internal lies at >= 1 - 20/96 of the internal rate
-    for (double f = 1.0 - 20.0 / 96.0; f <= 2.0; f += 0.0025) // in units of the internal rate
+    for (double f = 1.0 - 20.0 / 96.0; f <= 2.0; f += 0.0025)
     {
         double re = 0.0;
         for (int i = -z * per; i <= z * per; ++i)
@@ -245,15 +223,14 @@ TEST_CASE ("render: diagnostic, the BLEP kernel's stop band", "[.render-diag]")
             worstF = f;
         }
     }
-    WARN ("BLEP kernel (" << z << " zero crossings, Kaiser beta " << vs::dsp::BlepTable::kKaiserBeta << "): from 0.79 fs (what folds into 0 .. 20 kHz at 96 kHz), worst "
-                          << worst << " dB at " << worstF << " fs");
-    for (const auto& r : select (combinedRows (Model::A), true))
-        for (const double hz : { 110.0, 1000.0, 2000.0 })
-        {
-            const auto a = measureRow (r, hz, { 96000.0, 20000.0 });
-            WARN ("Model A " << r.name << " @ " << hz << " Hz, 96 kHz internal: worst " << a.worstDb << " dB at " << a.worstHz << " Hz; reference component "
-                             << a.fundamentalDb << " dB re full scale");
-        }
+    WARN (name << " (" << z << " zero crossings, Kaiser beta " << Table::kKaiserBeta << "): from 0.79 fs, worst " << worst << " dB at " << worstF << " fs");
+}
+} // namespace
+
+TEST_CASE ("render: diagnostic, the BLEP kernels' stop band", "[.render-diag]")
+{
+    reportStopBand<Chip::ShortBlep> ("short kernel");
+    reportStopBand<Chip::LongBlep> ("long kernel");
 }
 
 namespace
@@ -584,14 +561,23 @@ TEST_CASE ("render: a write's discontinuity lands at its exact cycle; latency is
             }
             c.render (buf.data(), 0);
             // the expected output: a sum of band-limited steps at cycle / cycles-per-sample + kLatencySamples
-            const auto& blep = vs::dsp::BlepTable::get();
-            auto blepCum = [&] (double t) {
-                if (t <= -8.0)
+            // the step's shape: the short kernel, the long one where Model A enters or leaves a combined
+            // waveform (docs/decisions.md S2b-2)
+            auto blepCum = [&] (double t, bool longKernel) {
+                const double z = longKernel ? Chip::LongBlep::kZeroCrossings : Chip::ShortBlep::kZeroCrossings;
+                if (t <= -z)
                     return 0.0;
-                if (t > 8.0)
+                if (t > z)
                     return 1.0;
                 const int j = static_cast<int> (std::ceil (t)) - 1;
-                return static_cast<double> (blep.step (j, static_cast<float> (t - j))) + (j >= 0 ? 1.0 : 0.0);
+                const auto d = static_cast<float> (t - j);
+                const float res = longKernel ? Chip::LongBlep::get().step (j, d) : Chip::ShortBlep::get().step (j, d);
+                return static_cast<double> (res) + (j >= 0 ? 1.0 : 0.0);
+            };
+            auto isLong = [&] (std::size_t i) {
+                auto table = [] (std::uint8_t control) { return vs::bside::chip::wave::usesTable (vs::bside::chip::wave::bits (control)); };
+                const std::uint8_t before = i == 0 ? static_cast<std::uint8_t> (ctrl::saw) : writes[i - 1].second;
+                return m == Model::A && (table (before) || table (writes[i].second));
             };
             // The levels are read from the output itself, half way between two writes (the continuous
             // waveform at the frozen accumulator differs from the 12-bit step value by a fraction of a step).
@@ -611,7 +597,7 @@ TEST_CASE ("render: a write's discontinuity lands at its exact cycle; latency is
                     for (std::size_t i = 0; i < writes.size(); ++i)
                     {
                         const double pos = (static_cast<double> (writes[i].first) + shiftCycles) / cps + Chip::kLatencySamples;
-                        v += (levels[i + 1] - levels[i]) * blepCum (static_cast<double> (s) - pos);
+                        v += (levels[i + 1] - levels[i]) * blepCum (static_cast<double> (s) - pos, isLong (i));
                     }
                     worst = std::max (worst, std::abs (static_cast<double> (y[s]) - v));
                 }
@@ -637,8 +623,7 @@ TEST_CASE ("render: alias report per budget row and internal rate", "[.render-re
         { "B tri/saw/pulse/sync/ring", basicRows (Model::B) },
         { "A tri/saw/pulse/sync/ring", basicRows (Model::A) },
         { "B combined", combinedRows (Model::B) },
-        { "A combined (gated rows)", select (combinedRows (Model::A), false) },
-        { "A combined (shortfall rows)", select (combinedRows (Model::A), true) },
+        { "A combined", combinedRows (Model::A) },
     };
     std::printf ("%-30s %9s %12s %12s\n", "rows", "rate", "<=2k worst", "3.85k worst");
     for (const auto& g : groups)
@@ -663,4 +648,99 @@ TEST_CASE ("render: alias report per budget row and internal rate", "[.render-re
                 std::printf ("%-30s %9.0f %12.1f %12s\n", (std::string (m == Model::A ? "A " : "B ") + (mode == 0 ? "waveform switch/tick" : "test-bit reset/tick")).c_str(),
                              rc.internalRate, worst, "-");
             }
+}
+
+namespace
+{
+/** The patches of the shift test: a random schedule on Model B (every waveform, combined ones included),
+    and one on Model A without combined waveforms (no table on Model A: every event on the short kernel). */
+std::vector<float> shiftPatch (Model m)
+{
+    bst::Rng r (m == Model::A ? 4242 : 4243);
+    auto sched = randomSchedule (r, 60000, 260);
+    if (m == Model::A)
+        for (auto& c : sched)
+        {
+            auto strip = [] (std::uint8_t v) {
+                return vs::bside::chip::wave::usesTable (vs::bside::chip::wave::bits (v)) && ! vs::bside::chip::wave::writesBack (v)
+                           ? static_cast<std::uint8_t> (v & ~(ctrl::triangle | ctrl::saw))
+                           : v;
+            };
+            if (c.kind == 0 && c.reg % 7 == 4)
+                c.value = strip (c.value);
+            if (c.kind == 1)
+                c.in.control = strip (c.in.control);
+        }
+    Chip c = makeChip (m, 96000.0);
+    return renderSchedule (c, sched, sched.back().cycle + 3000, 97);
+}
+} // namespace
+
+// Generator (hidden): writes the shift test's golden (the renderer before the long kernel) to $BS_GOLDEN_OUT.
+TEST_CASE ("render: dump the shift golden", "[.render-golden-dump]")
+{
+    const char* path = std::getenv ("BS_GOLDEN_OUT");
+    REQUIRE (path != nullptr);
+    std::FILE* f = std::fopen (path, "w");
+    REQUIRE (f != nullptr);
+    for (const Model m : { Model::B, Model::A })
+    {
+        const auto y = shiftPatch (m);
+        std::fprintf (f, "%s %zu\n", m == Model::A ? "A" : "B", y.size());
+        for (const float v : y)
+        {
+            std::uint32_t bits = 0;
+            std::memcpy (&bits, &v, 4);
+            std::fprintf (f, "%08x\n", bits);
+        }
+    }
+    std::fclose (f);
+}
+
+TEST_CASE ("render: steps on the short kernel come out as before, only delayed to the long kernel's latency", "[render][shift]")
+{
+    // tests/bside/render/shift-golden.txt is the output of the renderer before the long kernel existed
+    // (commit 6d4ae69, short kernel only, latency 8), dumped by "[.render-golden-dump]" on macOS. Patches
+    // without a Model A combined waveform use the short kernel only, so today's output is that output
+    // delayed by kLatencySamples - 8 samples: bit for bit with the compiler that made the golden (Apple
+    // Clang); other compilers may contract floating-point expressions differently, so elsewhere it must
+    // agree within float rounding.
+    std::FILE* f = std::fopen (BS_RENDER_DIR "/shift-golden.txt", "r");
+    REQUIRE (f != nullptr);
+    constexpr int shift = Chip::kLatencySamples - 8;
+    for (const Model m : { Model::B, Model::A })
+    {
+        char name = 0;
+        std::size_t count = 0;
+        REQUIRE (std::fscanf (f, " %c %zu", &name, &count) == 2);
+        REQUIRE (name == (m == Model::A ? 'A' : 'B'));
+        std::vector<float> old (count);
+        for (auto& v : old)
+        {
+            unsigned bits = 0;
+            REQUIRE (std::fscanf (f, " %x", &bits) == 1);
+            const auto b32 = static_cast<std::uint32_t> (bits);
+            std::memcpy (&v, &b32, 4);
+        }
+        const auto now = shiftPatch (m);
+        REQUIRE (now.size() == old.size());
+        double worst = 0.0;
+        std::size_t differing = 0;
+        for (std::size_t i = 0; i + shift < now.size(); ++i)
+        {
+            const double d = std::abs (static_cast<double> (now[i + shift]) - static_cast<double> (old[i]));
+            worst = std::max (worst, d);
+            differing += d > 0.0 ? 1u : 0u;
+        }
+        for (std::size_t i = 0; i < static_cast<std::size_t> (shift); ++i)
+            CHECK (! (std::abs (now[i]) > 0.0f)); // the longer pre-roll is silent
+        WARN ((m == Model::A ? "Model A (no table)" : "Model B") << ": " << now.size() - shift << " samples compared after a shift of " << shift
+                                                                  << ": " << differing << " differ, worst " << worst);
+#if defined(__APPLE__) && defined(__clang__)
+        CHECK (differing == 0);
+#else
+        CHECK (worst < 1.0e-6);
+#endif
+    }
+    std::fclose (f);
 }

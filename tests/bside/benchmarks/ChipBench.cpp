@@ -3,6 +3,7 @@
 //   typical  Model B: pulse (width swept every tick), saw, triangle around A3..A4, sustaining envelopes
 //   worst    Model A: three oscillators at the register maximum (3.85 kHz), each synced to the next, the
 //            waveform of every oscillator switched every tick (triangle, saw, pulse, combined shapes)
+//   combined Model A: three combined waveforms around A3..A4 (their steps use the long kernel)
 //   noise    noise with a second waveform (write-back: the core steps every cycle) on all three
 // Each case renders 4 s of chip time in blocks of 64 samples with its writes at their exact cycles
 // (renderUntil); the best of 5 runs is reported.
@@ -108,6 +109,12 @@ int main()
             setOsc (c, n, 20000.0 + 3000.0 * n, 2048.0f, ctrl::noise | ctrl::pulse | ctrl::gate);
     };
     auto noTick = [] (Chip&, std::uint64_t) {};
+    auto combinedSetup = [] (Chip& c) {
+        // Model A combined waveforms (the steps on the long kernel), about 440, 220 and 660 Hz
+        setOsc (c, 0, 7480.0, 1024.0f, ctrl::triangle | ctrl::saw | ctrl::gate);
+        setOsc (c, 1, 3740.0, 1024.0f, ctrl::saw | ctrl::pulse | ctrl::gate);
+        setOsc (c, 2, 11220.0, 2048.0f, ctrl::triangle | ctrl::pulse | ctrl::gate);
+    };
 
     double r[3];
     for (int i = 0; i < 3; ++i)
@@ -122,6 +129,9 @@ int main()
     for (int i = 0; i < 3; ++i)
         r[i] = nsPerSample (Model::A, rates[i], worstSetup, worstTick, true);
     std::printf ("%-8s %10.1f %10.1f %10.1f   (digital core only, no audio)\n", "worst", r[0], r[1], r[2]);
+    for (int i = 0; i < 3; ++i)
+        r[i] = nsPerSample (Model::A, rates[i], combinedSetup, noTick);
+    std::printf ("%-8s %10.1f %10.1f %10.1f   (Model A combined waveforms: long kernel)\n", "combined", r[0], r[1], r[2]);
     for (int i = 0; i < 3; ++i)
         r[i] = nsPerSample (Model::B, rates[i], noiseSetup, noTick);
     std::printf ("%-8s %10.1f %10.1f %10.1f\n", "noise", r[0], r[1], r[2]);

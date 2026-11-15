@@ -17,19 +17,24 @@ namespace vs::dsp
     points covering t in (j, j + 1]. Cells use one-sided limits at t = 0, where the
     step residual jumps from +0.5 to -0.5.
 
-    Build once off the audio thread (BlepTable::get() in prepare()).
+    Build once off the audio thread (get() in prepare()).
+
+    One table per (zero crossings, Kaiser beta in tenths): `BlepTable` is the instance Vintage uses (8 zero
+    crossings, beta 8.0, unchanged); an instrument that needs more stop-band attenuation instantiates a
+    longer one (B-Side's combined waveforms, docs/decisions.md S2b-2) and reports its longer delay.
 */
-class BlepTable
+template <int ZeroCrossings, int KaiserBetaTenths>
+class BasicBlepTable
 {
 public:
-    static constexpr int kZeroCrossings = 8;  // taps on each side
+    static constexpr int kZeroCrossings = ZeroCrossings;  // taps on each side
     static constexpr int kResolution = 512;   // table points per sample
     static constexpr double kCutoff = 0.45;   // of the (oversampled) rate
-    static constexpr double kKaiserBeta = 8.0;
+    static constexpr double kKaiserBeta = KaiserBetaTenths / 10.0;
 
-    static const BlepTable& get()
+    static const BasicBlepTable& get()
     {
-        static const BlepTable table;
+        static const BasicBlepTable table;
         return table;
     }
 
@@ -61,7 +66,7 @@ private:
     static constexpr int kCells = 2 * kZeroCrossings;
     static constexpr int kCellSize = kResolution + 1;
 
-    BlepTable()
+    BasicBlepTable()
     {
         stepCells.resize (static_cast<size_t> (kCells * kCellSize));
         rampCells.resize (static_cast<size_t> (kCells * kCellSize));
@@ -146,4 +151,7 @@ private:
 
     std::vector<float> stepCells, rampCells, kernelCells;
 };
+
+/** Vintage's table (and B-Side's short kernel): 8 zero crossings, Kaiser beta 8.0. */
+using BlepTable = BasicBlepTable<8, 80>;
 } // namespace vs::dsp
