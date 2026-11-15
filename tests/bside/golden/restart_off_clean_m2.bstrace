@@ -1,0 +1,48 @@
+# golden restart_off_clean, tick.mult 2, Authentic, 50 Hz system, model-derived (tools/model.py, tools/gen.py)
+bside-trace 1
+clock 985248
+model B
+# 29484 direct: rate counters and dividers cleared
+29484 00 67
+29484 01 11
+29484 04 41
+29484 05 00
+29484 06 f6
+29484 02 00
+29484 03 08
+29484 15 00
+29484 16 80
+29484 17 07
+29484 18 1f
+39312 00 13
+39312 01 1a
+39812 04 40
+# 68796 direct: rate counters and dividers cleared
+68796 00 67
+68796 01 11
+68796 04 41
+78624 00 13
+78624 01 1a
+# 88452 direct: rate counters and dividers cleared
+88452 04 40
+88452 00 67
+88452 01 11
+88452 04 41
+98280 00 13
+98280 01 1a
+# 108108 direct: chip reset to power-on
+# 108108 direct: rate counters and dividers cleared
+108108 00 67
+108108 01 11
+108108 04 41
+108108 05 00
+108108 06 f6
+108108 02 00
+108108 03 08
+108108 15 00
+108108 16 80
+108108 17 07
+108108 18 1f
+117936 00 13
+117936 01 1a
+end 127763

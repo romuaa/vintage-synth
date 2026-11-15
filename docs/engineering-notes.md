@@ -15,6 +15,20 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | A refit from the committed parameters changed them (review). | The search accepted equal-cost random moves, so a round could wander along a plateau. | Accept strict improvements only and iterate rounds to a fixed point; `bside_shapefit verify` proves the committed file is one. |
 | A mutation test of "no allocation" passed although the code allocated. | Clang may remove a `delete new T` pair entirely. | Make a probe allocation escape (a volatile pointer, or `malloc` into a global) before trusting an allocation-count test. |
 | The random-start fit landed in different local minima from run to run of an exploration script. | Discrete objective (wrong bits), plateaus. | Deterministic generator per table, start from the committed parameters, pattern search plus joint random moves; never accept a worse refit. |
+## B-Side S2c: patch program engine (2026-11-15)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A block-split comparison failed only when the timeline changed a host parameter. | A host change takes effect at the next sync or tick, and a block boundary is a sync: the effect moves with the block size. That is the contract's block-rate parameters, not an engine fault. | Compare block splits on timelines without host changes; test host changes by the cycle at which `sync` is called. |
+| `-Wswitch-enum` (clang, an error) rejects a `switch` with `default` over `Op`. | The flag wants every enumerator listed. | List every enumerator in each case group, with a comment, instead of `default`. |
+| A class with a virtual destructor and a user-declared destructor failed `-Wdeprecated-copy-with-dtor` when a derived class was moved. | The implicit copy of the abstract sink is deprecated next to a declared destructor. | Default the copy and move operations in the abstract base (protected). |
+| `new int (5)` followed by `delete` did not move the allocation counter. | The optimiser removes the pair. | A test of a counter must use the allocation (sum a `std::vector`), and check the counter itself first. |
+| A hand-derived golden, an independent model of the contract and the engine agreed on every line at the first run. | Three artefacts written from one reading agree even where the reading is wrong. | They prove the code does what the reading says, not that the reading is right: the readings are listed in `docs/decisions.md` for a person to judge. |
+| A source-oscillator rule evaluated slot by slot gave a different result for different block splits. | Whether an off oscillator needs its frequency depends on the target's control, which a later wave lane may write in the same tick. | A decision that reads another lane's result must run after every lane that can change it (all wave lanes, then the host sync); the block-split test with host and period changes found it. |
+| A mutation that removes a bounds check survived the sanitizer run. | UBSan reports an out-of-range array index but does not stop unless `halt_on_error=1`. | Run mutation checks of bounds guards with the preflight's `UBSAN_OPTIONS`; an index into a fixed member array is intra-object, so AddressSanitizer alone never sees it. |
+| `[[gnu::noinline]]` is an unknown attribute on MSVC. | The counting allocator used a GNU attribute. | Use a macro (`__declspec(noinline)` on MSVC). A counting `operator new` must cover the over-aligned overloads too. |
+| `chip.reset()` also zeroes the chip's cycle; the engine's cycles are absolute. | Two clocks with one name. | A sink that resets keeps an offset and exposes the engine's time; a test that replays a trace splits it at the reset. |
+| Golden trace files with a leading `#` comment line still read as traces. | The reader accepts comments before the header. | Put the kind of each golden (hand-derived or model) in its first line. |
 
 ## B-Side S2a fidelity pass (2026-11-14)
 
