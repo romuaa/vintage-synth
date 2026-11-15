@@ -11,9 +11,18 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   Authentic resolution), `TickClock.h` (the tick period of Frame, Free and Tempo), `ProgramSink.h` (what the engine
   writes), `RegisterRecorder.h` (the sink of the golden traces), `ChipProgramSink.h` (the same writes into the
   real chip). JUCE-free, no allocation after `prepare`. Judgement calls: `docs/decisions.md`, "B-Side S2c".
-- Tests: unit tests per command and edge, golden write traces (`tests/bside/golden/`, 30 files, compared as exact
-  text; four tables hand-derived, the rest from the independent model `model.py`), block-split independence, the
-  live chip against the replayed trace, property tests on random tables (ranges, no allocation).
+- Tests: unit tests per command and edge, golden write traces (`tests/bside/golden/`, 72 files, compared as exact
+  text; four tables at tick.mult 1 hand-derived and never regenerated, the rest model-derived by
+  `tests/bside/golden/tools/model.py` through `gen.py`), block-split independence (including host and tick-period
+  changes between chunks), the engine on the real chip against the replayed trace at many checkpoints (steals
+  included), the Smooth path of the chip sink, property tests on random tables (ranges, no allocation).
+- After review: once the note is off the table cannot raise the gate; Authentic does not apply the restart section;
+  `firstwave`'s override ends with the table's first control write or the note-off; an inactive oscillator that is
+  the sync or ring source of an active one gets its frequency; `ChipProgramSink` keeps the engine's absolute time
+  across a chip reset; bounds checks for corrupt programs; `RegisterRecorder` moved to the tests.
+- Open: the chip has no entry point to clear the envelope rate counters and dividers (Clean policy's direct
+  clear); `ChipProgramSink::clearEnvelopeTimers` is a no-op and a skipped test (`chip sink: Clean's direct clear ...`)
+  stands for it until the chip offers one.
 
 ### B-Side S2a fidelity pass — the digital core follows the per-cycle specification 8.15 (2026-11-14)
 - `source/bside/chip/` rewritten to `docs/architecture.md` 8.15 (which wins over 8.4.3): power-on state

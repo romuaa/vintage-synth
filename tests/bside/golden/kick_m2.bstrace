@@ -1,4 +1,4 @@
-# golden kick, tick.mult 2, Authentic, 50 Hz system, independent model (tests/bside/golden/model.py), reviewed
+# golden kick, tick.mult 2, Authentic, 50 Hz system, model-derived (tools/model.py, tools/gen.py)
 bside-trace 1
 clock 985248
 model B

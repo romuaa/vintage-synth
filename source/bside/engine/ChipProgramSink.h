@@ -5,6 +5,10 @@
 // Authentic resolution: the register writes of the contract's order. Smooth: the engine's continuous values
 // through Chip::setOscillator / setFilter. JUCE-free, allocation-free.
 //
+// Time: `chip.reset()` (a stolen voice) also zeroes the chip's own cycle count, while the engine keeps absolute
+// cycles for the voice's lifetime. The sink keeps the difference: `cycle()` is the engine's time (chip cycle +
+// offset); a caller renders `engine.nextTickCycle() - sink.cycle()` cycles to reach the next tick.
+//
 // Not yet possible: `clearEnvelopeTimers` (the Clean policy's direct operation) has no chip entry point yet;
 // it is a no-op here until the chip offers one (reported at S2c).
 
@@ -19,6 +23,9 @@ class ChipProgramSink final : public ProgramSink
 {
 public:
     ChipProgramSink (chip::Chip& c, bool authenticResolution) noexcept : chip (c), authentic (authenticResolution) {}
+
+    /** The engine's time: the chip's cycle plus the cycles it had run before its last reset. */
+    std::uint64_t cycle() const noexcept { return offset + chip.cycle(); }
 
     void frequency (std::uint64_t, int osc, double v) noexcept override
     {
@@ -112,6 +119,7 @@ public:
     void clearEnvelopeTimers (std::uint64_t) noexcept override {}
     void resetChip (std::uint64_t) noexcept override
     {
+        offset += chip.cycle();
         chip.reset();
         in[0] = in[1] = in[2] = chip::OscInput {};
         fin = chip::FilterInput {};
@@ -120,6 +128,7 @@ public:
 private:
     chip::Chip& chip;
     bool authentic;
+    std::uint64_t offset = 0;
     chip::OscInput in[3] {};
     chip::FilterInput fin {};
 };

@@ -2,7 +2,7 @@
 
 // A ProgramSink that logs the register writes the program engine would send to the chip (docs/architecture.md
 // 8.9.6): the tool of the golden write traces. Allocates (it is a test and tool class, never used on the audio
-// thread). JUCE-free.
+// thread; it lives with the tests so that the plugin cannot include it). JUCE-free.
 //
 // A sink call becomes the writes of the contract's order: frequency low then high byte, pulse width low byte then
 // high nibble, envelope attack/decay then sustain/release, cutoff low bits then high byte. The Clean policy's

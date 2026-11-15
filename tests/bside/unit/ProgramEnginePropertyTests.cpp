@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <initializer_list>
 #include <limits>
 
 using namespace bst;
@@ -161,6 +163,38 @@ void runChecked (const Scenario& s, RangeSink& sink, std::size_t& allocations)
     e.runUntil (s.endCycle, sink);
     allocations = totalAllocations() - before;
 }
+
+/** Events only at multiples of 1000 cycles, host changes and period changes included (each host change followed by a
+    sync at its cycle): the block-rate inputs of a real run, changing between chunks. */
+Scenario blockAlignedScenario (Rng& r, const Program& program)
+{
+    Scenario s;
+    s.program = program;
+    s.host = randomHost (r);
+    s.config = { kClock50, r.chance (60) };
+    s.period = static_cast<std::uint32_t> (r.chance (50) ? kFrame : 256 + r.below (30000));
+    s.events.push_back (noteOn (0, randomPolicy (r)));
+    std::uint64_t t = 0;
+    const int extra = r.range (3, 14);
+    for (int i = 0; i < extra; ++i)
+    {
+        t += 1000 * (1 + r.below (60));
+        switch (r.below (6))
+        {
+            case 0: s.events.push_back (noteOff (t)); break;
+            case 1: s.events.push_back (noteOn (t, randomPolicy (r), r.chance (40))); break;
+            case 2: s.events.push_back (idleAt (t, randomPolicy (r))); break;
+            case 3:
+            case 4:
+                s.events.push_back (hostAt (t, randomHost (r)));
+                s.events.push_back (syncAt (t));
+                break;
+            default: s.events.push_back (periodAt (t, 256 + r.below (40000))); break;
+        }
+    }
+    s.endCycle = t + 20000;
+    return s;
+}
 } // namespace
 
 TEST_CASE ("engine properties: random tables, hosts and event timelines (short run)", "[bside][engine][property]")
@@ -209,6 +243,54 @@ TEST_CASE ("engine properties: random tables, hosts and event timelines (short r
     CHECK (totalCalls > 1000);
     INFO ("accepted " << accepted << ", rejected " << rejected);
     CHECK (totalWrites > 1000);
+}
+
+TEST_CASE ("engine properties: block-rate changes of host values and tick period between chunks do not depend on the chunking", "[bside][engine][property]")
+{
+    long long withHostChanges = 0, withPeriodChanges = 0;
+    for (int i = 0; i < 250; ++i)
+    {
+        Rng r (static_cast<std::uint64_t> (31000 + i));
+        const auto parsed = vs::bside::program::readTable (generateTable (r));
+        if (! parsed.ok)
+            continue;
+        const auto s = blockAlignedScenario (r, parsed.program);
+        for (const auto& e : s.events)
+        {
+            withHostChanges += e.kind == Event::Kind::setHost ? 1 : 0;
+            withPeriodChanges += e.kind == Event::Kind::setPeriod ? 1 : 0;
+        }
+        INFO ("case " << i);
+        const std::string reference = play (s).toText (kClock50, s.endCycle);
+        for (const std::uint64_t chunk : std::initializer_list<std::uint64_t> { 100, 250, 500, 1000, 3000 })
+            CHECK (play (s, chunk).toText (kClock50, s.endCycle) == reference);
+    }
+    CHECK (withHostChanges > 100);
+    CHECK (withPeriodChanges > 50);
+}
+
+namespace
+{
+struct alignas (64) OverAligned
+{
+    char bytes[64];
+};
+} // namespace
+
+TEST_CASE ("engine properties: over-aligned allocations are counted too", "[bside][engine][property]")
+{
+    if (! allocationsAreCounted())
+        SKIP ("operator new is not replaced under AddressSanitizer");
+    const auto before = totalAllocations();
+    static OverAligned* volatile escape; // keeps the optimiser from eliding the allocation
+    escape = new OverAligned;
+    OverAligned* p = escape;
+    p->bytes[0] = 1;
+    const auto after = totalAllocations();
+    CHECK (p->bytes[0] == 1);
+    CHECK (reinterpret_cast<std::uintptr_t> (p) % 64 == 0);
+    delete p;
+    CHECK (after > before);
 }
 
 TEST_CASE ("engine properties: the allocation counter sees allocations", "[bside][engine][property]")

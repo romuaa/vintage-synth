@@ -33,7 +33,9 @@ constexpr std::uint32_t frameCycles (std::uint32_t clockHz) noexcept
 }
 
 /** P = round (frame / mult), round (clock / (free_hz x mult)) or round (clock x 60 / (bpm x sync x mult)),
-    at least 256 cycles. Out-of-range or non-finite inputs are clamped to their parameter ranges. */
+    at least 256 cycles (and at most 2^30). The inputs are clamped to wide safe bounds (multiplier 1..8, free rate 1 Hz ..
+    100 kHz, tempo 1 .. 1000 bpm, sync 1 .. 96, clock 1 kHz .. 100 MHz), not to the narrower parameter ranges (10 .. 400 Hz
+    and so on): the parameters keep those, and this function stays defined for any value; non-finite values give the defaults. */
 inline std::uint32_t tickPeriodCycles (const TickParams& p) noexcept
 {
     const double mult = static_cast<double> (std::clamp (p.mult, 1, 8));

@@ -1,4 +1,4 @@
-# golden snare, tick.mult 1, Authentic, 50 Hz system, hand-derived (m1) / scaled model (m2, m4)
+# golden snare, tick.mult 1, Authentic, 50 Hz system, hand-derived
 bside-trace 1
 clock 985248
 model B
@@ -32,7 +32,7 @@ model B
 44312 04 40
 58968 00 23
 58968 01 4e
-58968 04 81
+58968 04 80
 137592 00 23
 137592 01 4e
 137592 04 80

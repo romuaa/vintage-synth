@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cassert>
 #include <cmath>
 #include <cstring>
 
@@ -51,7 +52,9 @@ void ProgramEngine::prepare (const EngineConfig& config) noexcept
     tick = 0;
     running = false;
     held = false;
-    firstWaveActive = false;
+    for (auto& f : firstWave)
+        f = false;
+    restartActive = false;
     inRestartState = false;
     restartCycle = 0;
     restartState = Restart {};
@@ -77,6 +80,16 @@ bool ProgramEngine::anyWaveLaneRunning() const noexcept
 bool ProgramEngine::oscActive (int n) const noexcept
 {
     return host.osc[n].enabled || prog.lanes[n].numRows > 0;
+}
+
+bool ProgramEngine::frequencyActive (int n) const noexcept
+{
+    if (oscActive (n))
+        return true;
+    // Oscillator n is the sync and ring source of oscillator n + 1 (1 <- 3, 2 <- 1, 3 <- 2): its frequency matters
+    // to an active target that uses sync or ring, so it must not keep the previous note's value.
+    const int target = (n + 1) % 3;
+    return oscActive (target) && (effControl (target) & 0x06) != 0;
 }
 
 double ProgramEngine::frequencyRegister (double semitones) const noexcept
@@ -115,8 +128,9 @@ std::uint8_t ProgramEngine::effControl (int n) const noexcept
 {
     const auto& w = wave[n];
     const auto& h = host.osc[n];
-    const bool gate = w.gateOwned ? w.gate : (held && h.enabled);
-    if (firstWaveActive && oscActive (n))
+    // Once the note is off the table can no longer raise the gate (waveform, sync, ring and test still apply).
+    const bool gate = held && (w.gateOwned ? w.gate : h.enabled);
+    if (firstWave[n])
         return static_cast<std::uint8_t> ((prog.restart.firstWave & ~kGate) | (held ? kGate : 0));
     std::uint8_t base = 0;
     if (w.ctrlOwned)
@@ -221,10 +235,10 @@ void ProgramEngine::emitModeVol (std::uint64_t cycle, ProgramSink& sink) noexcep
 
 void ProgramEngine::syncWave (int n, std::uint64_t cycle, ProgramSink& sink) noexcept
 {
+    if (frequencyActive (n) && ! sameValue (effFrequency (n), shadow.freq[n]))
+        emitFrequency (n, cycle, sink);
     if (oscActive (n))
     {
-        if (! sameValue (effFrequency (n), shadow.freq[n]))
-            emitFrequency (n, cycle, sink);
         std::uint8_t ad = 0, sr = 0;
         effEnvelope (n, ad, sr);
         if (ad != shadow.ad[n] || sr != shadow.sr[n])
@@ -294,6 +308,7 @@ void ProgramEngine::enterIdle (std::uint64_t cycle, const Restart& restart, Rest
 
 void ProgramEngine::noteOn (std::uint64_t cycle, const Program& program, RestartPolicy policy, bool stolen, ProgramSink& sink) noexcept
 {
+    assert (validate (program));
     prog = program;
     for (auto& l : lanes)
         l = LaneRun {};
@@ -306,9 +321,12 @@ void ProgramEngine::noteOn (std::uint64_t cycle, const Program& program, Restart
     running = true;
     tick = 0;
     nextTick = cycle;
-    firstWaveActive = false;
+    for (auto& f : firstWave)
+        f = false;
 
-    const bool restartOn = prog.restart.mode != static_cast<std::uint8_t> (RestartMode::off);
+    // Authentic: only what the table's rows do; the restart section is not applied at all.
+    restartActive = policy != RestartPolicy::authentic && prog.restart.mode != static_cast<std::uint8_t> (RestartMode::off);
+    const bool restartOn = restartActive;
     if (stolen && policy != RestartPolicy::authentic)
     {
         sink.resetChip (cycle);
@@ -361,31 +379,34 @@ void ProgramEngine::runTick (ProgramSink& sink) noexcept
 
 void ProgramEngine::tickBody (std::uint64_t cycle, ProgramSink& sink) noexcept
 {
-    const bool restartOn = prog.restart.mode != static_cast<std::uint8_t> (RestartMode::off);
+    const bool restartOn = restartActive;
     if (tick == 0)
     {
         if (restartOn && ! inRestartState)
             applyRestart (cycle, prog.restart, sink);
         inRestartState = false;
-        firstWaveActive = restartOn && prog.restart.hasFirstWave != 0;
+        const bool firstwave = restartOn && prog.restart.hasFirstWave != 0;
         for (int n = 0; n < 3; ++n)
         {
             LaneRun& l = lanes[n];
             l.active = prog.lanes[n].numRows > 0;
-            if (firstWaveActive)
+            firstWave[n] = firstwave && oscActive (n);
+            if (firstwave)
                 l.wait = 1; // row 0 runs at tick 1
         }
         for (int n = 3; n < kNumLanes; ++n)
             lanes[n].active = prog.lanes[n].numRows > 0;
     }
     else if (tick == 1)
-        firstWaveActive = false;
+        for (auto& f : firstWave)
+            f = false;
 
+    // The three wave lanes first, then the host-driven wave registers: whether an oscillator that the host leaves off
+    // needs its frequency (it is the sync or ring source of an active one) depends on the controls the lanes wrote.
     for (int n = 0; n < 3; ++n)
-    {
         tickLane (n, cycle, sink);
+    for (int n = 0; n < 3; ++n)
         syncWave (n, cycle, sink);
-    }
     for (int n = 0; n < 3; ++n)
     {
         tickLane (3 + n, cycle, sink);
@@ -400,6 +421,8 @@ void ProgramEngine::noteOff (std::uint64_t cycle, ProgramSink& sink) noexcept
     if (! running)
         return;
     held = false;
+    for (auto& f : firstWave)
+        f = false;
     for (int lane = 0; lane < kNumLanes; ++lane)
     {
         const LaneInfo& li = prog.lanes[lane];
@@ -418,11 +441,12 @@ void ProgramEngine::noteOff (std::uint64_t cycle, ProgramSink& sink) noexcept
             wave[lane].gate = false;
             emitControl (lane, cycle, sink);
         }
-        if (lane < 3)
-            syncWave (lane, cycle, sink);
-        else if (lane < 6)
+        if (lane == 2)
+            for (int n = 0; n < 3; ++n)
+                syncWave (n, cycle, sink); // after all wave lanes, as in a tick
+        else if (lane >= 3 && lane < 6)
             syncPulse (lane - 3, cycle, sink);
-        else
+        else if (lane == 6)
             syncFilter (cycle, sink);
     }
 }
@@ -442,7 +466,17 @@ void ProgramEngine::tickLane (int lane, std::uint64_t cycle, ProgramSink& sink) 
     if (l.mode == Mode::sweeping)
     {
         const LaneInfo& li = prog.lanes[lane];
+        if (li.firstRow + l.row >= kMaxRows)
+        {
+            l.active = false;
+            return;
+        }
         const Row& row = prog.rows[li.firstRow + l.row];
+        if (row.numCmds == 0 || row.firstCmd + row.numCmds > kMaxCommands)
+        {
+            l.active = false;
+            return;
+        }
         stepSweep (lane, lastCommand (prog, row), cycle, sink);
         if (--l.sweepLeft == 0)
         {
@@ -471,7 +505,18 @@ void ProgramEngine::execBurst (int lane, std::uint64_t cycle, ProgramSink& sink)
             return;
         }
         const std::uint16_t rowIndex = l.row;
+        // Bounds of a corrupt program (never reached with a validated one): stay inside rows[], cmds[] and repeats[].
+        if (rowIndex >= kMaxRowsPerLane || li.firstRow + rowIndex >= kMaxRows)
+        {
+            l.active = false;
+            return;
+        }
         const Row& row = prog.rows[li.firstRow + rowIndex];
+        if (row.numCmds == 0 || row.firstCmd + row.numCmds > kMaxCommands)
+        {
+            l.active = false;
+            return;
+        }
         std::uint16_t next = static_cast<std::uint16_t> (rowIndex + 1);
         bool stopTick = false;
         for (int c = 0; c < row.numCmds; ++c)
@@ -495,6 +540,8 @@ void ProgramEngine::execBurst (int lane, std::uint64_t cycle, ProgramSink& sink)
                     break;
                 case Op::pulseSweep:
                 case Op::cutoffSweep:
+                    if (laneKind (lane) != (static_cast<Op> (cmd.op) == Op::pulseSweep ? LaneKind::Pulse : LaneKind::Filter))
+                        break; // a command of another lane kind: ignored
                     l.mode = Mode::sweeping;
                     l.sweepLeft = cmd.u0;
                     stepSweep (lane, cmd, cycle, sink);
@@ -507,6 +554,8 @@ void ProgramEngine::execBurst (int lane, std::uint64_t cycle, ProgramSink& sink)
                         l.row = rowIndex; // stays on the sweep row
                     return;
                 case Op::pulsePingPong:
+                    if (laneKind (lane) != LaneKind::Pulse)
+                        break;
                     l.mode = Mode::pingpong;
                     l.pingLo = cmd.a;
                     l.pingHi = cmd.b;
@@ -545,13 +594,24 @@ void ProgramEngine::execBurst (int lane, std::uint64_t cycle, ProgramSink& sink)
 void ProgramEngine::execCommand (int lane, const Cmd& c, std::uint64_t cycle, ProgramSink& sink) noexcept
 {
     const int n = lane < 3 ? lane : lane - 3;
-    switch (static_cast<Op> (c.op))
+    const LaneKind lk = laneKind (lane);
+    const auto op = static_cast<Op> (c.op);
+    // A command of another lane kind (impossible after validate()) is ignored: it must not index another lane's values.
+    const bool wanted = (op == Op::wave || op == Op::pitch || op == Op::gateOn || op == Op::gateOff || op == Op::adsr)
+                            ? lk == LaneKind::Wave
+                            : op == Op::pulseSet ? lk == LaneKind::Pulse
+                                                 : (op == Op::cutoff || op == Op::res || op == Op::volume || op == Op::mode || op == Op::route)
+                                                       ? lk == LaneKind::Filter
+                                                       : true;
+    if (! wanted)
+        return;
+    switch (op)
     {
         case Op::wave:
         case Op::pitch:
         {
             auto& w = wave[n];
-            const bool isWave = static_cast<Op> (c.op) == Op::wave;
+            const bool isWave = op == Op::wave;
             const auto kind = static_cast<PitchKind> (c.a);
             if (kind != PitchKind::unchanged)
             {
@@ -562,6 +622,7 @@ void ProgramEngine::execCommand (int lane, const Cmd& c, std::uint64_t cycle, Pr
             }
             if (isWave)
             {
+                firstWave[n] = false; // the table has written control: firstwave's override ends
                 w.ctrlOwned = true;
                 w.ctrl = static_cast<std::uint8_t> (c.u0 & ~kGate);
                 w.gateOwned = true;
@@ -572,6 +633,7 @@ void ProgramEngine::execCommand (int lane, const Cmd& c, std::uint64_t cycle, Pr
         }
         case Op::gateOn:
         case Op::gateOff:
+            firstWave[n] = false;
             wave[n].gateOwned = true;
             wave[n].gate = static_cast<Op> (c.op) == Op::gateOn;
             emitControl (n, cycle, sink);
@@ -636,7 +698,7 @@ void ProgramEngine::stepSweep (int lane, const Cmd& c, std::uint64_t cycle, Prog
         filt.cutoff = std::clamp (filt.cutoff + static_cast<double> (c.a) * depth, 0.0, kMaxCutoff);
         emitCutoff (cycle, sink);
     }
-    else
+    else if (lane >= 3 && lane < 6)
     {
         const int n = lane - 3;
         if (! pulse[n].owned)
@@ -652,6 +714,8 @@ void ProgramEngine::stepSweep (int lane, const Cmd& c, std::uint64_t cycle, Prog
 void ProgramEngine::stepPingPong (int lane, std::uint64_t cycle, ProgramSink& sink) noexcept
 {
     LaneRun& l = lanes[lane];
+    if (lane < 3 || lane > 5)
+        return;
     const int n = lane - 3;
     const double depth = std::max (0.0, finiteOr (static_cast<double> (host.macro.sweepDepth), 1.0));
     if (! pulse[n].owned)
@@ -659,17 +723,13 @@ void ProgramEngine::stepPingPong (int lane, std::uint64_t cycle, ProgramSink& si
         pulse[n].owned = true;
         pulse[n].value = hostPulse (n);
     }
-    double v = std::clamp (pulse[n].value, l.pingLo, l.pingHi) + l.pingDir * l.pingStep * depth;
-    if (v >= l.pingHi)
-    {
-        v = l.pingHi;
+    // At a limit the direction turns before the step, so a value that starts on a limit does not repeat itself.
+    const double p = std::clamp (pulse[n].value, l.pingLo, l.pingHi);
+    if (p >= l.pingHi)
         l.pingDir = -1.0;
-    }
-    else if (v <= l.pingLo)
-    {
-        v = l.pingLo;
+    else if (p <= l.pingLo)
         l.pingDir = 1.0;
-    }
+    const double v = std::clamp (p + l.pingDir * l.pingStep * depth, l.pingLo, l.pingHi);
     pulse[n].value = v;
     emitPulse (n, cycle, sink);
 }

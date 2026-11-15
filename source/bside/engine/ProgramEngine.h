@@ -11,6 +11,11 @@
 //   - `noteOn`, `noteOff`, `sync` and `enterIdle` are called at their cycle after every tick with a cycle
 //     <= theirs has run (a tick on the cycle of a note-off runs first: 8.13).
 //
+// Precondition: every program passed to `noteOn` / `enterIdle` has passed `program::validate()` (the reader's output
+// always does). Debug builds assert it; release builds additionally bounds-check the indices the engine follows
+// (lane and row ranges, command ranges, lane kind of each command) so a corrupt program cannot read or write outside
+// the engine's own storage, but its musical behaviour is then unspecified.
+//
 // Reading of the contract (every choice is listed in docs/decisions.md, "S2c"):
 //   * Writes: a lane command always writes (literally, in row order). A register that no command has
 //     written for this note follows the host parameters: the engine writes it when its effective value
@@ -157,6 +162,7 @@ private:
     void syncFilter (std::uint64_t cycle, ProgramSink& sink) noexcept;
 
     bool oscActive (int n) const noexcept;
+    bool frequencyActive (int n) const noexcept; // active, or the sync/ring source of an active oscillator
     double frequencyRegister (double semitones) const noexcept;
     double effFrequency (int n) const noexcept;
     double effPulse (int n) const noexcept;
@@ -189,7 +195,8 @@ private:
     std::uint64_t tick = 0;
     bool running = false;
     bool held = false;
-    bool firstWaveActive = false; // tick 0 until the wave lanes' row 0 has run (8.6.4 firstwave)
+    bool firstWave[3] = {};       // per oscillator: control is firstwave + gate until a lane writes control, tick 1 or note-off (8.6.4)
+    bool restartActive = false;   // this note uses the restart section (mode on and policy not Authentic)
     // Restart state of an idle voice (Precondition, Clean)
     bool inRestartState = false;
     std::uint64_t restartCycle = 0;

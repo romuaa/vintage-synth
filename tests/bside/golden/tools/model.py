@@ -1,3 +1,8 @@
+# Purpose: an independent model of the patch program engine, used to derive the golden write traces in
+# tests/bside/golden/. It does not share code with source/bside/engine/: it parses the table TEXT itself and
+# simulates it tick by tick, literally, from docs/architecture.md 8.6 and the readings in docs/decisions.md
+# ("B-Side S2c"). Authentic resolution, 985248 Hz chip clock. Usage: see gen.py (python3 gen.py <output dir>).
+#
 # An independent model of the patch program engine written from docs/architecture.md 8.6 (and the readings in
 # docs/decisions.md "S2c"): it parses the table TEXT itself and simulates it literally, tick by tick. Used to derive
 # golden write traces. Authentic resolution, 985248 Hz clock.
@@ -104,6 +109,8 @@ class Voice:
         self.out = out          # list of (cycle, kind, a, b)
         self.sh = dict(freq=[0] * 3, pw=[0] * 3, ctrl=[0] * 3, ad=[0] * 3, sr=[0] * 3, cutoff=0, rr=0, mv=0)
         self.running = False
+        self.mode_on = False
+        self.fw = [False] * 3
         self.in_restart = False
         self.restart_state = None
         self.restart_cycle = 0
@@ -153,9 +160,9 @@ class Voice:
 
     def eff_ctrl(self, n):
         h = self.host_osc(n)
-        if self.firstwave_active and self.active(n):
+        if self.fw[n]:
             return (self.restart['firstwave'] & ~1) | (1 if self.held else 0)
-        gate = self.own['gate'][n] if self.own['gate'][n] is not None else (self.held and h['enabled'])
+        gate = self.held and (self.own['gate'][n] if self.own['gate'][n] is not None else h['enabled'])
         if self.own['ctrl'][n] is not None:
             base = self.own['ctrl'][n]
         elif h['enabled']:
@@ -188,10 +195,12 @@ class Voice:
 
     # -- sync of host-driven registers
     def sync_wave(self, c, n):
-        if self.active(n):
+        tgt = (n + 1) % 3
+        if self.active(n) or (self.active(tgt) and (self.eff_ctrl(tgt) & 6)):
             f = self.eff_freq(n)
             if f != self.sh['freq'][n]:
                 self.e_freq(c, n, f)
+        if self.active(n):
             ad, sr = self.eff_env(n)
             if (ad, sr) != (self.sh['ad'][n], self.sh['sr'][n]):
                 self.e_env(c, n, ad, sr)
@@ -246,8 +255,9 @@ class Voice:
         self.running = True
         self.tick = 0
         self.next_tick = c
-        self.firstwave_active = False
-        mode_on = self.restart['mode'] != 'off'
+        self.fw = [False] * 3
+        mode_on = policy != 'authentic' and self.restart['mode'] != 'off'
+        self.mode_on = mode_on
         if stolen and policy != 'authentic':
             self.out.append((c, 'reset', 0, 0))
             self.sh = dict(freq=[0] * 3, pw=[0] * 3, ctrl=[0] * 3, ad=[0] * 3, sr=[0] * 3, cutoff=0, rr=0, mv=0)
@@ -271,24 +281,25 @@ class Voice:
 
     def run_tick(self):
         c = self.next_tick
-        mode_on = self.restart['mode'] != 'off'
+        mode_on = self.mode_on
         if self.tick == 0:
             if mode_on and not self.in_restart:
                 self.do_restart(c, self.restart)
             self.in_restart = False
-            self.firstwave_active = mode_on and self.restart['firstwave'] is not None
-            if self.firstwave_active:
-                for n in range(3):
-                    if ('wave%d' % (n + 1)) in self.state:
-                        self.state['wave%d' % (n + 1)]['wait'] = 1
+            fw = mode_on and self.restart['firstwave'] is not None
+            for n in range(3):
+                self.fw[n] = fw and self.active(n)
+                if fw and ('wave%d' % (n + 1)) in self.state:
+                    self.state['wave%d' % (n + 1)]['wait'] = 1
         elif self.tick == 1:
-            self.firstwave_active = False
+            self.fw = [False] * 3
         names = ['wave1', 'wave2', 'wave3', 'pulse1', 'pulse2', 'pulse3', 'filter']
         for i, name in enumerate(names):
             self.tick_lane(c, name)
-            if i < 3: self.sync_wave(c, i)
-            elif i < 6: self.sync_pulse(c, i - 3)
-            else: self.sync_filter(c)
+            if i == 2:
+                for n in range(3): self.sync_wave(c, n)
+            elif 3 <= i < 6: self.sync_pulse(c, i - 3)
+            elif i == 6: self.sync_filter(c)
         self.tick += 1
         self.next_tick = c + self.period
 
@@ -296,6 +307,7 @@ class Voice:
         if not self.running:
             return
         self.held = False
+        self.fw = [False] * 3
         names = ['wave1', 'wave2', 'wave3', 'pulse1', 'pulse2', 'pulse3', 'filter']
         for i, name in enumerate(names):
             lane = self.lanes.get(name)
@@ -307,9 +319,10 @@ class Voice:
                 elif i < 3:
                     self.own['gate'][i] = False
                     self.e_ctrl(c, i, self.eff_ctrl(i))
-            if i < 3: self.sync_wave(c, i)
-            elif i < 6: self.sync_pulse(c, i - 3)
-            else: self.sync_filter(c)
+            if i == 2:
+                for n in range(3): self.sync_wave(c, n)
+            elif 3 <= i < 6: self.sync_pulse(c, i - 3)
+            elif i == 6: self.sync_filter(c)
 
     # -- lanes
     def tick_lane(self, c, name):
@@ -397,10 +410,12 @@ class Voice:
                 self.own['pitch'][n] = p
                 self.e_freq(c, n, self.eff_freq(n))
             if op == 'wave':
+                self.fw[n] = False
                 self.own['ctrl'][n] = b & ~1
                 self.own['gate'][n] = bool(b & 1)
                 self.e_ctrl(c, n, self.eff_ctrl(n))
         elif op == 'gate':
+            self.fw[n] = False
             self.own['gate'][n] = cmd[1] == 'on'
             self.e_ctrl(c, n, self.eff_ctrl(n))
         elif op == 'adsr':
@@ -451,11 +466,12 @@ class Voice:
         n = self.idx(name)
         if self.own['pw'][n] is None:
             self.own['pw'][n] = min(max(self.host_osc(n)['pw'], 0), 4095)
-        v = min(max(self.own['pw'][n], st['lo']), st['hi']) + st['dir'] * st['step'] * self.host['depth']
-        if v >= st['hi']:
-            v = st['hi']; st['dir'] = -1
-        elif v <= st['lo']:
-            v = st['lo']; st['dir'] = 1
+        p = min(max(self.own['pw'][n], st['lo']), st['hi'])
+        if p >= st['hi']:
+            st['dir'] = -1
+        elif p <= st['lo']:
+            st['dir'] = 1
+        v = min(max(p + st['dir'] * st['step'] * self.host['depth'], st['lo']), st['hi'])
         self.own['pw'][n] = v
         self.e_pw(c, n, self.eff_pw(n))
 

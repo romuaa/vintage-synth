@@ -1,4 +1,4 @@
-# golden arpeggio, tick.mult 1, Authentic, 50 Hz system, hand-derived (m1) / scaled model (m2, m4)
+# golden arpeggio, tick.mult 1, Authentic, 50 Hz system, hand-derived
 bside-trace 1
 clock 985248
 model B

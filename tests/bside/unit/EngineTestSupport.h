@@ -7,7 +7,7 @@
 
 #include "bside/chip/ChipClock.h"
 #include "bside/engine/ProgramEngine.h"
-#include "bside/engine/RegisterRecorder.h"
+#include "RegisterRecorder.h"
 #include "bside/engine/TickClock.h"
 #include "bside/trace/TraceFormat.h"
 

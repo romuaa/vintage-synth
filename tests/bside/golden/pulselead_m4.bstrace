@@ -1,4 +1,4 @@
-# golden pulselead, tick.mult 4, Authentic, 50 Hz system, hand-derived (m1) / scaled model (m2, m4)
+# golden pulselead, tick.mult 4, Authentic, 50 Hz system, model-derived (tools/model.py, tools/gen.py)
 bside-trace 1
 clock 985248
 model B

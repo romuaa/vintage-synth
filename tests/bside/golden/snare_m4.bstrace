@@ -1,4 +1,4 @@
-# golden snare, tick.mult 4, Authentic, 50 Hz system, hand-derived (m1) / scaled model (m2, m4)
+# golden snare, tick.mult 4, Authentic, 50 Hz system, model-derived (tools/model.py, tools/gen.py)
 bside-trace 1
 clock 985248
 model B
@@ -32,7 +32,7 @@ model B
 11078 04 40
 14742 00 23
 14742 01 4e
-14742 04 81
+14742 04 80
 34398 00 23
 34398 01 4e
 34398 04 80

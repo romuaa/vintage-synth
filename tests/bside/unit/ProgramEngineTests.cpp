@@ -178,6 +178,8 @@ TEST_CASE ("engine: adsr and the control bits of wave", "[bside][engine]")
 0 00 67
 0 01 11
 0 04 4f
+0 0e 67
+0 0f 11
 )");
 }
 
@@ -527,7 +529,7 @@ release:
 )");
 }
 
-TEST_CASE ("engine: a wave lane without release clears its gate at note-off and keeps running", "[bside][engine]")
+TEST_CASE ("engine: a wave lane without release clears its gate at note-off; the table cannot raise it again", "[bside][engine]")
 {
     auto s = scenario (R"(
 [wave1]
@@ -536,7 +538,8 @@ TEST_CASE ("engine: a wave lane without release clears its gate at note-off and 
     end
 )", T (3));
     s.events.push_back (noteOff (T (0) + 500));
-    // The note-off clears the gate; the next row sets it again (rows keep running: a drum hit plays out).
+    // The note-off clears the gate; the next row's gate bit no longer takes effect (the rows keep running: the
+    // waveform sequence of a drum plays out through the release, without a second attack).
     expectWrites (s, R"(
 0 00 67
 0 01 11
@@ -544,7 +547,7 @@ TEST_CASE ("engine: a wave lane without release clears its gate at note-off and 
 500 04 40
 19656 00 a2
 19656 01 0e
-19656 04 41
+19656 04 40
 )");
 }
 
@@ -662,6 +665,10 @@ TEST_CASE ("engine: tick clock: tick 0 at the note-on cycle, then every P cycles
     CHECK_FALSE (e.isRunning());
 }
 
+#ifdef NDEBUG
+// Debug builds assert that every program passed validate(); these tests feed programs that did not (release builds
+// bounds-check what they follow, so nothing is read or written outside the engine's storage: AddressSanitizer
+// would show it).
 TEST_CASE ("engine: a table that bypassed validation cannot hang the engine", "[bside][engine]")
 {
     using namespace vs::bside::program;
@@ -683,6 +690,67 @@ TEST_CASE ("engine: a table that bypassed validation cannot hang the engine", "[
     // only what the host drives at tick 0 (the frequency of the active oscillator); the lane itself wrote nothing
     CHECK (writesText (rec) == expectLines ("0 00 67\n0 01 11\n"));
 }
+
+TEST_CASE ("engine: corrupt programs stay inside the engine's storage (bounds checks)", "[bside][engine]")
+{
+    using namespace vs::bside::program;
+    const auto run = [] (const Program& p) {
+        pe::RegisterRecorder rec;
+        pe::ProgramEngine e;
+        e.prepare ({ kClock50, true });
+        e.setHost (quietHost());
+        e.noteOn (0, p, kAuth, false, rec);
+        e.runUntil (T (3), rec);
+        e.noteOff (T (3) + 5, rec);
+        e.runUntil (T (6), rec);
+        return e.tickIndex();
+    };
+    const auto oneRow = [] (int lane, Op op) {
+        Program p = emptyProgram();
+        p.lanes[lane].firstRow = 0;
+        p.lanes[lane].numRows = 1;
+        p.lanes[lane].release = 0;
+        p.numRows = 1;
+        p.numCmds = 1;
+        p.rows[0] = { 0, 1, 1 };
+        p.cmds[0].op = static_cast<std::uint8_t> (op);
+        p.cmds[0].u0 = 0x41;
+        p.cmds[0].a = 1;
+        p.cmds[0].b = 5;
+        p.cmds[0].c = 1;
+        return p;
+    };
+    CHECK (run (oneRow (6, Op::wave)) == 7);          // a wave command in the filter lane (would index wave[3])
+    CHECK (run (oneRow (6, Op::pulsePingPong)) == 7); // a ping-pong in the filter lane (would index pulse[3])
+    CHECK (run (oneRow (0, Op::pulsePingPong)) == 7);
+    CHECK (run (oneRow (0, Op::pulseSweep)) == 7);
+    CHECK (run (oneRow (3, Op::cutoffSweep)) == 7);
+    CHECK (run (oneRow (3, Op::adsr)) == 7);
+    CHECK (run (oneRow (0, Op::cutoff)) == 7);
+    {
+        Program p = oneRow (0, Op::pitch);
+        p.lanes[0].firstRow = 65535; // rows[] index far outside
+        p.lanes[0].numRows = 64;
+        CHECK (run (p) == 7);
+        p = oneRow (0, Op::pitch);
+        p.lanes[0].numRows = 255; // more rows than a lane has: repeats[] must not be indexed beyond 64
+        CHECK (run (p) == 7);
+        p = oneRow (0, Op::pitch);
+        p.rows[0].numCmds = 0; // a row without commands
+        CHECK (run (p) == 7);
+        p = oneRow (0, Op::pitch);
+        p.rows[0].firstCmd = 60000; // commands outside cmds[]
+        p.rows[0].numCmds = 200;
+        CHECK (run (p) == 7);
+        p = oneRow (0, Op::repeat);
+        p.cmds[0].a = 200; // jump target outside the lane
+        CHECK (run (p) == 7);
+        p = oneRow (0, Op::pitch);
+        p.lanes[0].release = 250; // release row outside the lane
+        CHECK (run (p) == 7);
+    }
+}
+#endif
 
 // ---- hard restart (8.6.4) --------------------------------------------------------------------------------
 
@@ -710,7 +778,7 @@ std::string at (std::uint64_t cycle, const std::string& regs)
 
 TEST_CASE ("engine: restart writes at tick 0 when the voice was not preconditioned", "[bside][engine][restart]")
 {
-    for (auto policy : { RestartPolicy::authentic, RestartPolicy::precondition, RestartPolicy::clean })
+    for (auto policy : { RestartPolicy::precondition, RestartPolicy::clean })
     {
         auto s = scenario (restartTable ("classic"), T (1) - 1, policy);
         const auto rec = play (s);
@@ -730,9 +798,22 @@ TEST_CASE ("engine: restart writes at tick 0 when the voice was not precondition
     }
 }
 
+TEST_CASE ("engine: Authentic does not apply the restart section at all (only what the rows do)", "[bside][engine][restart]")
+{
+    auto s = scenario (restartTable ("phase", "firstwave tri\n"), T (2) - 1, kAuth);
+    const auto rec = play (s);
+    // no restart writes, no firstwave override, row 0 at tick 0, no direct operation
+    CHECK (writesText (rec) == at (0, kWave1));
+    CHECK (directKinds (rec).empty());
+    s.events = { idleAt (0, kAuth), noteOn (T (1), kAuth, true) };
+    const auto stolen = play (s);
+    CHECK (writesText (stolen) == at (T (1), kWave1));
+    CHECK (directKinds (stolen).empty());
+}
+
 TEST_CASE ("engine: phase mode sets the test bit in the restart writes and clears it at tick 0", "[bside][engine][restart]")
 {
-    auto s = scenario (restartTable ("phase"), T (1) - 1, kAuth);
+    auto s = scenario (restartTable ("phase"), T (1) - 1, RestartPolicy::precondition);
     // tick 0 without preconditioning: restart (test set), then the lane's control write replaces it on oscillator
     // 1, and the sync of the idle oscillators 2 and 3 clears their test bit
     CHECK (writesText (play (s)) == at (0, std::string (kR9Phase) + kWave1 + "0b 00\n12 00\n"));
@@ -769,11 +850,11 @@ TEST_CASE ("engine: a preconditioned idle voice has the restart state in place; 
         CHECK (writesText (rec) == at (0, kR9) + at (T (1), kWave1));
         CHECK (directKinds (rec).empty());
     }
-    SECTION ("Authentic never preconditions")
+    SECTION ("Authentic never preconditions (and applies no restart writes at the note either)")
     {
         auto s = scenario (restartTable ("classic"), T (4), kAuth);
         s.events = { idleAt (0, kAuth), noteOn (T (3), kAuth) };
-        CHECK (writesText (play (s)) == at (T (3), std::string (kR9) + kWave1));
+        CHECK (writesText (play (s)) == at (T (3), kWave1));
     }
     SECTION ("a voice preconditioned for another restart section does not count")
     {
@@ -823,15 +904,16 @@ TEST_CASE ("engine: a stolen voice is reset and restarted (Clean, Precondition) 
         CHECK (kinds[10] == pe::RegisterRecorder::Kind::clearEnvelopeTimers);
         CHECK (kinds[11] == pe::RegisterRecorder::Kind::write);
     }
-    SECTION ("Authentic: no reset, no direct operation; the restart writes happen at tick 0 only")
+    SECTION ("Precondition, not preconditioned: restart writes at tick 0 after the reset")
     {
-        auto s = scenario (restartTable ("classic"), T (2), kAuth);
-        s.events = { noteOn (0, kAuth), noteOn (T (1), kAuth, true) };
+        auto s = scenario (restartTable ("classic"), T (2), RestartPolicy::precondition);
+        s.events = { noteOn (0, RestartPolicy::precondition), noteOn (T (1), RestartPolicy::precondition, true) };
         const auto rec = play (s);
-        CHECK (directKinds (rec).empty());
-        // the second restart keeps the waveform bits it finds in the control register (gate off: 0x41 -> 0x40)
-        CHECK (writesText (rec) == at (0, std::string (kR9) + kWave1)
-                                       + at (T (1), "05 00\n06 00\n04 40\n0c 00\n0d 00\n0b 00\n13 00\n14 00\n12 00\n" + std::string (kWave1)));
+        // the stolen voice's chip is reset, then restarted (its control register reads 0: 04 00), and the restart
+        // state counts as in place at tick 0, so the restart writes appear once, before the reset's own tick-0 rows
+        CHECK (writesText (rec) == at (0, std::string (kR9) + kWave1) + at (T (1), std::string (kR9) + kWave1));
+        REQUIRE (directKinds (rec).size() == 1);
+        CHECK (directKinds (rec)[0] == pe::RegisterRecorder::Kind::resetChip);
     }
 }
 
@@ -851,12 +933,193 @@ TEST_CASE ("engine: firstwave delays row 0 of the wave lanes to tick 1", "[bside
 {
     // tick 0: restart writes; oscillator 1 (it has a wave lane) gets control := firstwave (tri) plus gate and the
     // host's frequency; tick 1: row 0
-    auto s = scenario (restartTable ("classic", "firstwave tri\n"), T (2) - 1, kAuth);
+    auto s = scenario (restartTable ("classic", "firstwave tri\n"), T (2) - 1, RestartPolicy::precondition);
     CHECK (writesText (play (s)) == at (0, std::string (kR9) + "00 67\n01 11\n04 11\n") + at (T (1), kWave1));
+}
+
+TEST_CASE ("engine: firstwave's control override ends when the table writes control or the note ends", "[bside][engine][restart]")
+{
+    SECTION ("a note-off before tick 1: the release row's control (saw, no gate) is what the chip gets")
+    {
+        Scenario s;
+        s.program = compileText ("bside-table 1\n[restart]\nmode classic\nfirstwave tri\n[wave1]\n    wave pulse+gate =C4\n    end\nrelease:\n    wave saw =C4\n    end\n");
+        s.host = quietHost();
+        s.period = 1000;
+        s.events = { noteOn (0, RestartPolicy::precondition), noteOff (500) };
+        s.endCycle = 999;
+        const std::string text = writesText (play (s));
+        CHECK (text.find ("500 04 20\n") != std::string::npos);
+        CHECK (text.find ("500 04 10") == std::string::npos);
+    }
+    SECTION ("a note shorter than one tick does not attack again at tick 1")
+    {
+        Scenario s;
+        s.program = compileText ("bside-table 1\n[restart]\nmode classic\nfirstwave tri\n[wave1]\n    wave pulse+gate =C4\n    end\n");
+        s.host = quietHost();
+        s.period = 1000;
+        s.events = { noteOn (0, RestartPolicy::precondition), noteOff (500) };
+        s.endCycle = 1000;
+        const std::string text = writesText (play (s));
+        // tick 0: firstwave tri + gate (0x11); note-off: the override ends, control follows the host (quiet: 0, no gate);
+        // tick 1: the table's pulse waveform, without a gate
+        CHECK (text.find ("0 04 11\n") != std::string::npos);
+        CHECK (text.find ("500 04 00\n") != std::string::npos);
+        CHECK (text.find ("1000 04 40\n") != std::string::npos);
+        CHECK (text.find ("04 41") == std::string::npos);
+    }
 }
 
 TEST_CASE ("engine: restart with mode off does nothing at tick 0", "[bside][engine][restart]")
 {
     auto s = scenario (restartTable ("off"), T (1) - 1, kAuth);
     CHECK (writesText (play (s)) == at (0, kWave1));
+}
+
+TEST_CASE ("engine: ping-pong that starts on its upper limit does not write the limit twice", "[bside][engine]")
+{
+    // `set 130` already wrote 130 (the upper limit); the ping-pong's first step goes down. It stops exactly on a limit
+    // and reverses there (a step that would pass a limit is cut to it).
+    expectWrites (scenario (R"(
+[pulse1]
+    set 130
+    pingpong 100 130 10
+)", T (5) - 1),
+                  R"(
+0 02 82
+0 03 00
+19656 02 78
+19656 03 00
+39312 02 6e
+39312 03 00
+58968 02 64
+58968 03 00
+78624 02 6e
+78624 03 00
+)");
+    expectWrites (scenario (R"(
+[pulse1]
+    set 125
+    pingpong 100 130 10
+)", T (4) - 1),
+                  R"(
+0 02 7d
+0 03 00
+19656 02 82
+19656 03 00
+39312 02 78
+39312 03 00
+58968 02 6e
+58968 03 00
+)");
+}
+
+TEST_CASE ("engine: an inactive oscillator that is the sync or ring source of an active one still gets its frequency", "[bside][engine]")
+{
+    // Oscillator 1 (saw, sync on) is synced by oscillator 3, which the host leaves off. Its frequency decides the
+    // timbre, so it is written at every note, not inherited from the voice's previous note.
+    const auto host = [] (double osc3Semitones, bool sync, bool ring) {
+        auto h = quietHost();
+        h.osc[0].enabled = true;
+        h.osc[0].waveBits = 0x20;
+        h.osc[0].semitones = 60.0;
+        h.osc[0].sync = sync;
+        h.osc[0].ring = ring;
+        h.osc[2].semitones = osc3Semitones; // oscillator 3 stays disabled
+        return h;
+    };
+    const auto has = [] (const std::string& text, const std::string& line) { return text.find ("\n" + line + "\n") != std::string::npos || text.rfind (line + "\n", 0) == 0; };
+    for (const bool ring : { false, true })
+    {
+        Scenario s;
+        s.program = vs::bside::program::emptyProgram();
+        s.host = host (48.0, ! ring, ring);
+        s.events = { noteOn (0, kAuth), noteOff (T (1)), hostAt (T (2), host (55.0, ! ring, ring)), noteOn (T (2), kAuth) };
+        s.endCycle = T (3);
+        const std::string text = writesText (play (s));
+        // oscillator 3's registers are 0x0e/0x0f: note 48 = 0x08b4, note 55 = 0x0d0a (second note, same voice)
+        CHECK (has (text, "0 0e b4"));
+        CHECK (has (text, "0 0f 08"));
+        CHECK (has (text, std::to_string (T (2)) + " 0e 0a"));
+        CHECK (has (text, std::to_string (T (2)) + " 0f 0d"));
+    }
+    // Without sync or ring on oscillator 1 the source is irrelevant and is not written.
+    Scenario s;
+    s.program = vs::bside::program::emptyProgram();
+    s.host = host (48.0, false, false);
+    s.events = { noteOn (0, kAuth) };
+    s.endCycle = T (1);
+    const std::string text = writesText (play (s));
+    CHECK (text.find (" 0e ") == std::string::npos);
+    CHECK (text.find (" 0f ") == std::string::npos);
+}
+
+TEST_CASE ("engine: a note-on on the cycle of the previous note's pending tick: that tick first, then tick 0", "[bside][engine]")
+{
+    auto s = scenario (R"(
+[wave1]
+    wave pulse+gate =C4
+    pitch =A3
+    end
+)", 1000);
+    s.period = 1000;
+    s.events = { noteOn (0, kAuth), noteOn (1000, kAuth) };
+    expectWrites (s, R"(
+0 00 67
+0 01 11
+0 04 41
+1000 00 a2
+1000 01 0e
+1000 00 67
+1000 01 11
+1000 04 41
+)");
+}
+
+TEST_CASE ("engine: a period change during a long delay row moves the row's end", "[bside][engine]")
+{
+    // Row 0 waits 5 ticks. Tick 1 is at 1000, tick 2 (scheduled by tick 1 with the old period) at 2000; the period
+    // becomes 2000 at 1500, so ticks 3, 4, 5 are at 4000, 6000, 8000: row 1 runs at 8000 (5000 without the change).
+    auto s = scenario (R"(
+[wave1]
+    pitch =C4 ticks 5
+    pitch =A3
+    end
+)", 8000);
+    s.period = 1000;
+    s.events = { noteOn (0, kAuth), periodAt (1500, 2000) };
+    expectWrites (s, R"(
+0 00 67
+0 01 11
+8000 00 a2
+8000 01 0e
+)");
+}
+
+TEST_CASE ("engine: a tick and a note-off on one cycle, each with a long burst", "[bside][engine]")
+{
+    // 64 rows: 31 pitch rows (delay 0) + one with delay 1 + the jump back; `release:` then 30 rows (delay 0) and one
+    // with delay 1. The tick at P runs the jump and 32 rows; the note-off at P then runs its 31 rows.
+    std::string t = "bside-table 1\n[wave1]\ntop:\n";
+    for (int i = 0; i < 31; ++i)
+        t += "    pitch =C4 ticks 0\n";
+    t += "    pitch =A3\n    jump top\nrelease:\n";
+    for (int i = 0; i < 30; ++i)
+        t += "    pitch =F3 ticks 0\n";
+    t += "    pitch =D6\n";
+    Scenario s;
+    s.program = compileText (t);
+    s.host = quietHost();
+    s.period = 1000;
+    s.events = { noteOn (0, kAuth), noteOff (1000) };
+    s.endCycle = 1000;
+    const auto rec = play (s);
+    std::vector<int> lows;
+    for (const auto& w : rec.log())
+        if (w.kind == pe::RegisterRecorder::Kind::write && w.cycle == 1000 && w.reg == 0x00)
+            lows.push_back (w.value);
+    std::vector<int> expected (31, 0x67);
+    expected.push_back (0xa2);
+    expected.insert (expected.end(), 30, 0x9d);
+    expected.push_back (0x23);
+    CHECK (lows == expected);
 }
