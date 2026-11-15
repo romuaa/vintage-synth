@@ -224,7 +224,7 @@ inline Plan buildPlan (const PlanSpec& s)
         for (int ev = 1; ev <= 3; ++ev)
             for (const auto x : ev == 1 ? kLatchIndices1 : ev == 2 ? kLatchIndices2 : kLatchIndices3)
             {
-                const std::uint64_t c = kRelease + 4096ull * static_cast<std::uint64_t> (ev - 1) + x;
+                const std::uint64_t c = kRelease + std::uint64_t { 4096 } * static_cast<std::uint64_t> (static_cast<unsigned> (ev - 1)) + std::uint64_t { x };
                 PlannedSample o;
                 o.event = ev;
                 o.expectedAcc = static_cast<std::uint32_t> (x) << 12;
