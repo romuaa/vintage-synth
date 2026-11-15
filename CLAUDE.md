@@ -123,6 +123,16 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   approves before code); clicking the preset name must open a list of the programs, grouped by
   purpose (Horns, Keys, Leads, Noise, Radical, Strings, ...). **Next:** that redesign, then
   M7b–M7e; only the page list in `VintageEditor::buildPages` is a serial edit.
+- **B-Side S2b-1 and S2c are ready on `bside/s2bc`, awaiting the owner's merge approval:** our own
+  combined-waveform tables (`chip/CombinedWaveforms.*`: a small fitted resistor-network model per
+  chip model, tables computed from its parameters; measurements in `tests/bside/shapes/`, fit tool
+  `bside_shapefit gen | fit | verify | report`; exempt checkpoints that differ from the reference
+  fell from 1752 to 81 of 6850 and are pinned by a budget file) and the patch program engine
+  (`source/bside/engine/`: tick clock, lanes, commands, restart policies, 72 golden write traces).
+  Contract as built: architecture 8.15.2, 8.15.8, 8.16. Both reviewed independently and fixed.
+  Not wired into the plugin yet. **Open:** the first Model B step after a waveform change is not
+  proven (8.15.2 (c) step 5); pulse combinations fit worst (about 92 % of entries exact on
+  Model B). **Next:** S2b-2 (band-limited waveform rendering), the parameter step (8.7), then S3.
 - **B-Side S2a (chip digital core) is merged to `main`** (PR #24, owner approved 2026-11-15):
   `source/bside/chip/` follows the per-cycle specification (8.15); every committed
   trace replays without a mismatch (`bside_trace`; fields that depend on a combined-waveform
@@ -202,6 +212,9 @@ None right now. When a new one comes up, list it here; once decided, move it to 
       run on macOS only (2026-11-15).
   12. S2a: the chip digital core and its tests (JUCE-free; 64-bit arithmetic and bit fields
       that MSVC has never compiled) (2026-11-15).
+  13. S2b-1 and S2c: combined-waveform tables (`constinit`, `constexpr` array fills, hexadecimal
+      float literals, table hashes pinned across compilers but never computed by MSVC or on
+      x86_64), the program engine, the allocation counter's `BS_NOINLINE` (2026-11-15).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -255,11 +268,15 @@ source/vintage/   this instrument: PluginProcessor.* (VintageSynthProcessor : sh
 source/bside/     Exitium B-Side (second plugin): PluginProcessor.*, engine/TestTonePart (placeholder until
                   S2/S4), params/, presets/ (JUCE-bound; BSideTables = the table validator and sink);
                   program/ProgramHandover.h (table to the audio thread); text/ program/ trace/ are JUCE-free (strict
-                  readers, patch tables, trace formats); chip/ is the chip model (digital core; JUCE-free). Vintage and B-Side never
+                  readers, patch tables, trace formats); chip/ is the chip model (digital core, combined-waveform tables; JUCE-free);
+                  engine/ProgramEngine is the patch program engine (JUCE-free). Vintage and B-Side never
                   include each other
 tests/bside/reference/  generated reference data (traces, digital references, audio features);
                   regenerated only with the adapter outside the repository, reviewed like a golden
-tests/bside/      bside_unit (JUCE-free, ctest label "bside") always; with VS_BUILD_BSIDE also
+tests/bside/shapes/  combined-waveform measurements (own MANIFEST); tests/bside/golden/ program-engine
+                  write traces (tools/ derives them); tests/bside/tools/ShapeFit.cpp = bside_shapefit
+tests/bside/      bside_unit (JUCE-free, ctest label "bside") always; bside_independent (the independent
+                  model against the chip with placeholder shapes; never link it with bs_juce_free); with VS_BUILD_BSIDE also
                   bs_test_core + BSideTests. `bside_unit "[.fuzz-long]"` is the hidden 10^6-case fuzz run
 presets/bside/factory/  B-Side factory programs (JSON, embedded)
 scripts/sanitize-targets.sh  the one list of sanitizer test targets (preflight, Linux container, CI)
