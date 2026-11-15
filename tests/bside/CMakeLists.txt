@@ -16,6 +16,8 @@ set(BS_JUCEFREE_SOURCES
     ${PROJECT_SOURCE_DIR}/source/bside/trace/SpecAnalysis.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/trace/AnalogMeasure.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/Chip.cpp
+    ${PROJECT_SOURCE_DIR}/source/bside/chip/ChipRender.cpp
+    ${PROJECT_SOURCE_DIR}/source/bside/chip/RenderTables.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/CombinedWaveforms.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/CombinedWaveformParams.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/engine/ProgramEngine.cpp)
@@ -50,7 +52,8 @@ add_executable(bside_unit
     unit/ProgramEngineTests.cpp
     unit/ProgramEngineGoldenTests.cpp
     unit/ProgramEngineChipTests.cpp
-    unit/ProgramEnginePropertyTests.cpp)
+    unit/ProgramEnginePropertyTests.cpp
+    unit/ChipRenderTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_unit PRIVATE BS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 set_target_properties(bside_unit PROPERTIES COMPILE_WARNING_AS_ERROR ON)
@@ -92,13 +95,19 @@ catch_discover_tests(bside_independent PROPERTIES LABELS bside)
 # Reads the committed files only and never needs the adapter. Tests that need a chip which does not
 # exist yet report themselves skipped (Catch2 SKIP, ctest "Skipped"), never passed. One label only:
 # catch_discover_tests passes PROPERTIES on unquoted, so a label list would be split.
-add_executable(bside_trace trace/ReferenceDataTests.cpp trace/ShapeDataTests.cpp)
+add_executable(bside_trace trace/ReferenceDataTests.cpp trace/ShapeDataTests.cpp trace/RenderReferenceTests.cpp)
 target_link_libraries(bside_trace PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_trace PRIVATE BS_REFERENCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/reference"
     BS_SHAPES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shapes"
     BS_EXEMPTION_BUDGET="${CMAKE_CURRENT_SOURCE_DIR}/trace/exemption-budget.txt")
 set_target_properties(bside_trace PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 catch_discover_tests(bside_trace PROPERTIES LABELS trace)
+
+# chip_bench: CPU cost of Chip::render (docs/architecture.md 8.1.2; a benchmark, not a test, so no ctest
+# entry and no sanitizer run): `build/tests/bside/chip_bench`.
+add_executable(chip_bench benchmarks/ChipBench.cpp)
+target_link_libraries(chip_bench PRIVATE bs_juce_free)
+set_target_properties(chip_bench PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
 # bside_shapefit: our combined-waveform fit (a developer tool, not a test: tests/bside/tools/ShapeFit.cpp;
 # data and procedure in tests/bside/shapes/MANIFEST). Built with the tests so it never rots.

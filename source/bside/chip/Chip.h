@@ -75,7 +75,9 @@
 
 #include "bside/chip/ChipClock.h"
 #include "bside/chip/ChipTypes.h"
+#include "bside/chip/RenderTables.h"
 #include "bside/chip/Waveforms.h"
+#include "common/dsp/BlepTable.h"
 
 #include <algorithm>
 #include <array>
@@ -247,12 +249,15 @@ public:
     {
         clock.prepare (cfg.clockHz, cfg.internalRate);
         shapes = &combined::tablesFor (cfg.model, cfg.shapes);
+        rtab = &render::tablesFor (cfg.model, cfg.shapes);
+        blep = &vs::dsp::BlepTable::get();
         reset();
     }
 
     /** Model, clock, internal rate and shape set; resets the chip. Allocates nothing (no member owns
-        memory): the combined-waveform tables are process-wide and built on their first use, which this
-        call (or the constructor) makes, never a step. */
+        memory): the combined-waveform tables, the renderer's tables (RenderTables.h, about 150 KiB per
+        model and shape set, a few milliseconds to build) and the BLEP table are process-wide and built on
+        their first use, which this call (or the constructor) makes, never a step or a render. */
     void prepare (const Config& c) noexcept;
     /** Power-on state at cycle 0 (8.15.1; the configuration is kept). */
     void reset() noexcept;
@@ -315,6 +320,29 @@ public:
         }
         return total;
     }
+
+    // ---- band-limited rendering (8.4.5; ChipRender.cpp; design at "RENDERING" at the end of this file) ----
+
+    /** Delay of the rendered audio against chip time, in internal samples: output sample m holds the
+        signal at the start of internal sample m - kLatencySamples (the BLEP window, 8.4.2). */
+    static constexpr int kLatencySamples = vs::dsp::BlepTable::kZeroCrossings;
+
+    /** Renders whole internal samples and ADDS them to out[0 .. n): per oscillator the band-limited
+        waveform after the waveform converter (DAC), times the envelope converter, summed over the three
+        oscillators (8.4.4 up to the routing; see "RENDERING" for what waits for S3). Advances the digital
+        state over the samples' cycles exactly as advanceCycles would. A sample that renderUntil left
+        in progress is completed first. */
+    void render (float* out, int numInternalSamples) noexcept;
+
+    /** Renders until cycle() == untilCycle or maxSamples samples are complete, whichever comes first;
+        ADDS the completed samples to out and returns their count. When untilCycle falls inside a sample
+        (or at its last cycle), the sample stays in progress: a write made now lands at its exact cycle,
+        and the next render call completes the sample. untilCycle below cycle() renders nothing. */
+    int renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noexcept;
+
+    /** Times the renderer had to move a rendered line back onto the digital phase (a band-limited
+        correction; a diagnostic for tests: 0 in every configuration the gates measure). */
+    std::uint64_t renderCorrections() const noexcept { return rs.corrections; }
 
     DigitalState state() const noexcept;
     std::uint64_t cycle() const noexcept { return cycleCount; }
@@ -721,8 +749,68 @@ private:
     template <class Sink>
     void skip (std::uint64_t j, Sink& sink) noexcept;
 
+    // ---- rendering state and steps (ChipRender.cpp) ----
+    static constexpr int kRing = 32; // per-oscillator output ring: >= 2 x kLatencySamples + 2
+    enum RenderMode : std::uint8_t { rmOff, rmTri, rmSaw, rmPulse, rmNoise, rmTable, rmCycle };
+    struct RenderOsc
+    {
+        double u = 0.0;          // rendered phase in periods
+        double offU = 0.0;       // rendered minus digital phase, periods (set by a sync reset)
+        std::int64_t k = 0;      // boundaries passed: k x sigma <= u (triangle, saw; combined: the index cell)
+        int imin = 11;           // lowest index bit rendered as its own square (sigma = 2^imin / 4096); 0 for combined
+        std::uint8_t mode = rmOff;
+        bool gate = true;        // pulse comparison as rendered
+        double gateCheckU = -1.0; // after a phase jump: where the (one cycle late) comparison reads the new line
+        bool ring = false;       // the ring fold applies to this oscillator's index
+        bool ringFlip = false;   // ... and the source's top bit is low: index bit 11 inverted
+        bool pending = false;    // a predicted sync reset the digital core has not confirmed yet
+        std::uint64_t pendingStart = 0; // ... predicted at pendingT cycles after this sample start
+        double pendingT = 0.0;
+        std::uint16_t held = 0;  // the digital value shown in noise, per-cycle and off modes
+        std::array<double, kRing> buf {}; // double: a nearly silent shape on a large offset keeps its detail
+        std::array<float, kRing> env {};
+    };
+    struct RenderState
+    {
+        bool active = false;      // render has run since reset (writes then feed the renderer)
+        bool inProgress = false;  // a sample has taken its cycles and is not finished
+        std::uint64_t sample = 0; // index of the sample in progress (or the next one)
+        std::uint64_t start = 0;  // C_s: cycle() when the sample started
+        std::uint64_t cycles = 0; // n_s: whole cycles of the sample
+        double tStart = 0.0, tEnd = 0.0; // the sample's start and end, in cycles since C_s
+        double sweepT = 0.0;      // how far the oscillators' lines have been rendered, cycles since C_s
+        double cps = 1.0;         // cycles per internal sample
+        std::array<RenderOsc, 3> osc {};
+        std::array<double, 3> leftValue {}, leftSlope {}; // captured before a write
+        std::uint64_t corrections = 0; // re-anchorings that moved a line (diagnostic)
+    };
+    struct PieceEvents; // ChipRender.cpp
+
+    void renderActivate() noexcept;
+    void renderStartSample() noexcept;
+    void renderPiece (std::uint64_t cycles, bool toSampleEnd) noexcept;
+    float renderFinishSample() noexcept;
+    void renderBeforeChange() noexcept;
+    void renderAfterChange (int testSetMask) noexcept;
+    void renderSyncOsc (int n) noexcept;
+    void renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept;
+    void renderLines (PieceEvents& ev, double tEnd) noexcept;
+    bool renderPullDown (int n, double t) noexcept;
+    void renderEmit (int n, double t, double dv, double ds) noexcept;
+    double renderSlopeU (int n) const noexcept; // periods per cycle
+    double renderDigitalU (int n, double t) const noexcept;
+    double renderValue (int n, double u) const noexcept;
+    double renderDerivative (int n, double u) const noexcept; // per period
+    double renderValueAt (int n, double u) noexcept;          // with the boundary state of u itself
+    double renderDerivativeAt (int n, double u) noexcept;
+    double renderNextLineEvent (int n, double t, double slope, double& uEvent, int& kind) const noexcept;
+    std::uint8_t renderMode (int n) const noexcept;
+
     Config cfg {};
     const combined::ShapeTables* shapes = nullptr; // never null after construction (CombinedWaveforms.h)
+    const render::RenderTables* rtab = nullptr;    // never null after construction (RenderTables.h)
+    const vs::dsp::BlepTable* blep = nullptr;      // never null after construction
+    RenderState rs {};
     ChipClock clock {};
     std::array<Osc, 3> osc {};
     std::array<Env, 3> env {};
@@ -890,4 +978,55 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
         n -= k;
     }
 }
+
+// ==== RENDERING (Chip::render, ChipRender.cpp; docs/architecture.md 8.4.5) ====
+//
+// WHAT IS RENDERED. Per oscillator: the band-limited waveform after the waveform converter, minus the
+// converter's mid-scale (d (0) + d (4095)) / 2, times the envelope converter's output for the sample's
+// envelope counter; render() adds the sum of the three oscillators. Of 8.4.4 this is "oscillator output ->
+// waveform DAC -> x envelope (envelope DAC)" and a plain sum. NOT yet (S3): the routing bits and the
+// filter, oscillator 3 off, the mixer's voice DC (chip.volume_dc), the volume, the board filters, the
+// output scale; the analog fade of a deselected output is rendered as the digital core holds and fades it.
+//
+// THE LINES. Every oscillator is a straight line in phase between events: u (t), in periods, through the
+// digital accumulator (u = digital phase + offU, offU being non-zero only after a sync reset, see below).
+// Each internal sample is processed in pieces of at most 32 digital cycles: the digital core advances
+// (advanceCycles, or stepCycle in per-cycle mode) and reports its events; then each line is swept from the
+// previous position to the piece's end, stopping at every event in time order. At an event the waveform's
+// value and slope just before and after it give a step (BLEP) and a slope change (BLAMP) from the shared
+// BlepTable, placed at the event's exact time (a sub-sample position; events up to one sample back are
+// allowed and corrected in the samples already written). The naive value is taken at the sample's end,
+// the output is the per-oscillator ring buffer kLatencySamples (8) samples later, times the envelope.
+//
+// PER WAVEFORM (the mode follows the control register):
+//   triangle, saw   closed form: g x (the continuous 12-bit value) plus, for the Model A converter, every
+//                   index bit whose square wave stays below half the internal rate as its own square wave
+//                   (e_i x bit_i, edges placed exactly), the faster bits as their mean. Saw wraps and
+//                   triangle folds are BLEP/BLAMP events; the 12-bit staircase itself is not rendered.
+//   pulse           two converter levels; the comparison is one cycle late (8.15.2 (c)), so the edges lie
+//                   one cycle after the line crosses the width (or wraps); Smooth widths are continuous.
+//   combined        (two or more of triangle, saw, pulse; no noise) an exact band-limited staircase: every
+//                   change of d (shape (index)) between index cells is a BLEP; the pulse gate, the ring
+//                   fold (half a table further) and phase jumps are exact too. Model A combinations with
+//                   the saw pull their top bit down (8.15.2 (c) step 4): predicted from the line where it
+//                   enters an upper-half cell whose output has bit 11 clear.
+//   noise           sample-and-hold of d (noise output), a step at each noise clock's exact cycle.
+//   noise + another (write-back) per-cycle mode: the digital output itself, a step wherever it changes.
+//   none            the held, fading digital output.
+// SYNC. The digital core resets a target at the cycle after its source's top bit rose; the rendered reset
+// lies at the source's crossing, up to two cycles earlier. It is predicted from the source's line (a joint
+// simulation of the three lines per piece) and the digital reset confirms it and sets offU = the target's
+// advance between the two. A prediction the digital core does not confirm within three cycles (the
+// sync-chain exception of 8.15.2 (d)) is undone by re-anchoring: at every sample end each line is
+// re-anchored on the digital phase, and a disagreement is corrected band-limited and counted
+// (renderCorrections(); 0 in every configuration the tests measure).
+// RING flips the triangle (or the table) where the source's top bit changes, from the same simulation.
+// WRITES (write, setOscillator, powerOnKeepingTime) take effect at their exact cycle: renderUntil stops
+// inside a sample at the requested cycle, the write captures every line's value before and after, and the
+// difference is a BLEP/BLAMP at that cycle. A write right after render() (at a sample boundary) is placed at
+// its cycle too, with the values taken at the sample end (less than one cycle apart).
+// THE DIGITAL STATE is advanced only by advanceCycles / stepCycle, exactly as without rendering (tested
+// for random write sequences, both models, every block split and internal rate).
+// REAL TIME: no allocation, no locks, no exceptions; every loop is bounded (32 cycles per piece, 80
+// events per oscillator and piece, 4 096 events per sweep as a backstop).
 } // namespace vs::bside::chip

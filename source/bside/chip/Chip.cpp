@@ -12,6 +12,7 @@ void Chip::prepare (const Config& c) noexcept
     cfg = c;
     clock.prepare (cfg.clockHz, cfg.internalRate);
     shapes = &combined::tablesFor (cfg.model, cfg.shapes);
+    rtab = &render::tablesFor (cfg.model, cfg.shapes);
     reset();
 }
 
@@ -23,14 +24,19 @@ void Chip::reset() noexcept
     cutoff = 0.0f;
     cycleCount = 0;
     clock.reset();
+    rs = RenderState {};
 }
 
 void Chip::powerOnKeepingTime() noexcept
 {
+    if (rs.active)
+        renderBeforeChange();
     osc = {};
     env = {};
     regs = {};
     cutoff = 0.0f;
+    if (rs.active)
+        renderAfterChange (7); // every accumulator jumps to its power-on value: no sync offset survives
 }
 
 void Chip::clearEnvelopeCounters (int n) noexcept
@@ -104,10 +110,16 @@ void Chip::write (std::uint8_t address, std::uint8_t value) noexcept
     if (r >= reg::kWritable)
         return;
     const std::uint8_t before = regs[r];
-    regs[r] = value;
     if (r >= 3 * reg::oscStride)
+    {
+        regs[r] = value;
         return; // filter, routing, mode and volume: analog stages only
+    }
     const int n = r / reg::oscStride;
+    const bool renderHook = rs.active;
+    if (renderHook)
+        renderBeforeChange();
+    regs[r] = value;
     Osc& o = osc[idx (n)];
     const auto base = static_cast<std::size_t> (n * reg::oscStride);
     switch (r % reg::oscStride)
@@ -127,12 +139,19 @@ void Chip::write (std::uint8_t address, std::uint8_t value) noexcept
         case reg::sustainRelease: writeSustainRelease (n); break;
         default: break;
     }
+    if (renderHook)
+    {
+        const bool testSet = r % reg::oscStride == reg::control && (before & ctrl::test) == 0 && (value & ctrl::test) != 0;
+        renderAfterChange (testSet ? 1 << n : 0);
+    }
 }
 
 void Chip::setOscillator (int n, const OscInput& in) noexcept
 {
     if (n < 0 || n > 2)
         return;
+    if (rs.active)
+        renderBeforeChange();
     Osc& o = osc[idx (n)];
     const auto base = static_cast<std::size_t> (n * reg::oscStride);
     const double f = std::isfinite (in.frequency) ? in.frequency : 0.0;
@@ -168,6 +187,8 @@ void Chip::setOscillator (int n, const OscInput& in) noexcept
     const std::uint8_t before = regs[base + reg::control];
     regs[base + reg::control] = in.control;
     writeControl (n, before);
+    if (rs.active)
+        renderAfterChange ((before & ctrl::test) == 0 && (in.control & ctrl::test) != 0 ? 1 << n : 0);
 }
 
 void Chip::setFilter (const FilterInput& in) noexcept
