@@ -484,7 +484,11 @@ void ChipStrip::paint (juce::Graphics& g)
 class BrowserPage::SelectedInfo final : public juce::Component
 {
 public:
-    explicit SelectedInfo (const Theme& t) : theme (t) { setInterceptsMouseClicks (false, false); setAccessible (false); }
+    explicit SelectedInfo (const Theme& t) : nameFont (t.font (kTextLarge, true)), fonts (t)
+    {
+        setInterceptsMouseClicks (false, false);
+        setAccessible (false);
+    }
     void setProgram (const juce::String& n, const juce::String& m, const juce::String& cat, juce::Colour c)
     {
         if (n == name && m == meta && cat == category && c == dot)
@@ -499,10 +503,10 @@ public:
     {
         auto r = getLocalBounds().toFloat();
         g.setColour (colour (Tok::TextPrimary));
-        g.setFont (theme.font (kTextLarge, true));
+        g.setFont (nameFont);
         drawFittedText (g, name, r.removeFromTop (32.0f), juce::Justification::centredLeft);
         g.setColour (colour (Tok::TextSecondary));
-        g.setFont (theme.font (kText));
+        g.setFont (fonts.text);
         drawFittedText (g, meta, r.removeFromTop (20.0f), juce::Justification::centredLeft);
         auto row = r.removeFromTop (22.0f);
         g.setColour (dot);
@@ -513,7 +517,8 @@ public:
     const juce::String& shownName() const noexcept { return name; }
 
 private:
-    const Theme& theme;
+    juce::Font nameFont; // fonts made once: paint() allocates nothing (9.5)
+    PaintFonts fonts;
     juce::String name, meta, category;
     juce::Colour dot;
 };
@@ -521,7 +526,7 @@ private:
 class BrowserPage::ToneSourceSwitch final : public juce::Component
 {
 public:
-    explicit ToneSourceSwitch (const Theme& t) : theme (t)
+    explicit ToneSourceSwitch (const Theme& t) : fonts (t)
     {
         setWantsKeyboardFocus (true);
         setTitle ("Take its tone");
@@ -540,7 +545,6 @@ public:
     std::function<void (int)> onChange;
     void paint (juce::Graphics& g) override
     {
-        static constexpr const char* names[] { "Lower tone", "Upper tone" };
         const float w = static_cast<float> (getWidth()) * 0.5f;
         for (int i = 0; i < 2; ++i)
         {
@@ -551,7 +555,7 @@ public:
             g.setColour (colour (Tok::BgTrack));
             g.drawRoundedRectangle (r, 4.0f, 1.0f);
             g.setColour (on ? colour (Tok::TextOnAccent) : colour (Tok::TextPrimary));
-            g.setFont (theme.font (kText, on));
+            g.setFont (on ? fonts.textBold : fonts.text);
             drawFittedText (g, names[i], r, juce::Justification::centred);
         }
         if (hasKeyboardFocus (false))
@@ -573,7 +577,8 @@ public:
     void focusLost (FocusChangeType) override { repaint(); }
 
 private:
-    const Theme& theme;
+    PaintFonts fonts;
+    const juce::String names[2] { "Lower tone", "Upper tone" }; // made once: paint() allocates nothing (9.5)
     int index = 0;
 };
 

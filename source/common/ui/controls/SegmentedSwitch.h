@@ -4,6 +4,7 @@
 // per value of a choice or stepped parameter (captions = the choice labels unless the page gives
 // aliases, which must be as many as the choices); a toggle is a latching Off/On button.
 
+#include "common/ui/PreparedText.h"
 #include "common/ui/controls/BoundComponent.h"
 #include "common/ui/models/SegmentModel.h"
 
@@ -52,6 +53,8 @@ private:
     void idle (double nowMs) override { model.idle (nowMs); }
     bool isInGesture() const override { return model.isInGesture(); }
     float shownValue() const override;
+    /** Lays the label and the captions out (regular and bold) after a size or style change; paint() only draws. */
+    void prepareText();
 
     juce::StringArray captions;
     model::SegmentModel model;
@@ -60,6 +63,9 @@ private:
     bool cardLayout = false;
     float captionPx = metrics::kText;
     int rowHeightPx = metrics::kSegment;
+    juce::Font captionFont, captionBoldFont;
+    PreparedText labelPrepared;
+    std::vector<PreparedText> captionPrepared, captionBoldPrepared;
 };
 
 class Toggle final : public BoundComponent
@@ -84,8 +90,10 @@ public:
 private:
     void idle (double nowMs) override { model.idle (nowMs); }
     void valueChanged() override;
+    void resized() override;
     float shownValue() const override;
 
     model::ToggleModel model;
+    PreparedText labelPrepared, labelBoldPrepared; // regular when off, bold when on
 };
 } // namespace vs::ui

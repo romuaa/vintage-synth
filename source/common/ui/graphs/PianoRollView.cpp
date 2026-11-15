@@ -148,7 +148,7 @@ void PianoRollView::paint (juce::Graphics& g)
             g.fillRect (plot.getX(), rowY (n), plot.getWidth(), rowH);
         }
     const float beatW = plot.getWidth() / static_cast<float> (beatsIn);
-    g.setFont (theme.font (kTextSmall));
+    g.setFont (theme.fonts().small);
     for (int b = 0; b < beatLabels.size(); ++b)
     {
         const float x = plot.getX() + static_cast<float> (b) * beatW;

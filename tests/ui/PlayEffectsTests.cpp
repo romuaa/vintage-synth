@@ -1291,15 +1291,10 @@ TEST_CASE ("Paint allocations: our own paint code of the new components allocate
     rig.render (rig.samples (0.02), { noteOn (static_cast<int> (rig.now), 60) }, 128);
     checkAll ("dual, a key held by both parts");
 
-    // The reference: the library's own controls (they build their text on change, but Panel
-    // builds a header Path in paint). Reported, not asserted: they belong to M7a.
+    // The library's own controls: Slider and SegmentedSwitch prepare their text and fonts on change too.
     for (const auto& [name, comp] : { std::pair<const char*, juce::Component*> { "Slider", &fx.getSlider ("fx.delay.time") },
                                       { "SegmentedSwitch", &fx.getPingPong() } })
-    {
-        bool stable = false;
-        const int n = allocationsOf ([&] { comp->paint (g); }, stable);
-        WARN (name << ": " << n << " allocations per paint (library control, not asserted)");
-    }
+        check (name, [&] { comp->paint (g); });
 }
 #endif
 

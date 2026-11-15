@@ -36,10 +36,17 @@ juce::Colour tintFor (int part) noexcept
 }
 
 Theme::Theme (juce::Typeface::Ptr regular, juce::Typeface::Ptr semibold)
-    : regularFace (std::move (regular)), semiboldFace (std::move (semibold))
+    : regularFace (std::move (regular)),
+      semiboldFace (std::move (semibold)),
+      themeFonts { juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}),
+                   juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}),
+                   juce::Font (juce::FontOptions {}), juce::Font (juce::FontOptions {}) }
 {
     if (semiboldFace == nullptr)
         semiboldFace = regularFace;
+    using namespace metrics;
+    themeFonts = { font (kTextSmall), font (kTextSmall, true), font (kText), font (kText, true), font (kTextSmall - 1.0f, true),
+                   font (kTextHeader, true), font (kTextEditing, true), font (kTextLarge, true) };
     setColourScheme ({ colour (Tok::BgWindow), colour (Tok::BgPanel), colour (Tok::BgPanel), colour (Tok::BgTrack),
                        colour (Tok::TextPrimary), colour (Tok::AccentGlobal), colour (Tok::TextOnAccent), colour (Tok::BgTrack),
                        colour (Tok::TextPrimary) });

@@ -72,6 +72,13 @@ struct EmbeddedFonts
     juce::Typeface::Ptr regular, semibold;
 };
 
+/** The fonts a paint routine draws with, made once per theme: `Theme::font` builds a Font on every call, so
+    paint() takes these instead (docs/architecture.md 9.5: nothing is made while painting). */
+struct ThemeFonts
+{
+    juce::Font small, smallBold, text, textBold, badgeBold, headerBold, editingBold, largeBold;
+};
+
 /** The look of one editor: fonts and the LookAndFeel for JUCE-drawn parts (menus, text fields). */
 class Theme final : public juce::LookAndFeel_V4
 {
@@ -81,6 +88,8 @@ public:
     /** Logical-pixel font; semibold for headers and lit text. */
     juce::Font font (float px, bool semibold = false) const;
     bool hasEmbeddedFont() const noexcept { return regularFace != nullptr; }
+    /** The fonts for paint(), made when the theme was. */
+    const ThemeFonts& fonts() const noexcept { return themeFonts; }
 
     // juce::LookAndFeel
     juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;
@@ -91,6 +100,7 @@ public:
 
 private:
     juce::Typeface::Ptr regularFace, semiboldFace;
+    ThemeFonts themeFonts;
 };
 
 /** Draws text truncated with an ellipsis (layout never depends on text metrics, 9.2.4). */

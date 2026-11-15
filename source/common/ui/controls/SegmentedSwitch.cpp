@@ -62,7 +62,9 @@ SegmentedSwitch::SegmentedSwitch (UiContext& c, const juce::String& paramId, con
                                   juce::StringArray aliases, Placement placement)
     : BoundComponent (c, paramId, labelText, partIndex, "SegmentedSwitch", placement, 0),
       captions (aliases.isEmpty() ? defaultCaptions (handle) : aliases),
-      model (handle, choiceCount (handle))
+      model (handle, choiceCount (handle)),
+      captionFont (c.theme.fonts().text),
+      captionBoldFont (c.theme.fonts().textBold)
 {
     // The registry entry was made by the base; record the caption count now that it is known.
     ctx.registry.setCaptions (this, captions.size());
@@ -104,12 +106,32 @@ void SegmentedSwitch::resized()
     auto r = getLocalBounds().toFloat();
     labelArea = label.isNotEmpty() ? r.removeFromTop (static_cast<float> (metrics::kLabelRow)) : juce::Rectangle<float>();
     row = cardLayout ? r : r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), static_cast<float> (rowHeightPx)));
+    prepareText();
+}
+
+void SegmentedSwitch::prepareText()
+{
+    if (! labelArea.isEmpty())
+        labelPrepared.setLine (label, ctx.theme.fonts().text, labelArea, juce::Justification::centredLeft);
+    else
+        labelPrepared.clear();
+    captionPrepared.resize (static_cast<size_t> (model.numSegments()));
+    captionBoldPrepared.resize (static_cast<size_t> (model.numSegments()));
+    for (int i = 0; i < model.numSegments(); ++i)
+    {
+        const auto seg = segmentBounds (i).reduced (1.0f);
+        const auto area = cardLayout ? seg.withTrimmedTop (seg.getHeight() - 20.0f).reduced (2.0f, 0.0f) : seg.reduced (2.0f, 0.0f);
+        captionPrepared[static_cast<size_t> (i)].setLine (captions[i], captionFont, area, juce::Justification::centred);
+        captionBoldPrepared[static_cast<size_t> (i)].setLine (captions[i], captionBoldFont, area, juce::Justification::centred);
+    }
 }
 
 void SegmentedSwitch::setLargeStyle (float px, int rowHeight)
 {
     captionPx = px;
     rowHeightPx = rowHeight;
+    captionFont = ctx.theme.font (px);
+    captionBoldFont = ctx.theme.font (px, true);
     resized();
     repaint();
 }
@@ -133,9 +155,8 @@ void SegmentedSwitch::paint (juce::Graphics& g)
     using namespace metrics;
     if (! labelArea.isEmpty())
     {
-        g.setFont (ctx.theme.font (kText));
         g.setColour (inactive ? colour (Tok::TextDisabled) : colour (Tok::TextSecondary));
-        drawFittedText (g, label, labelArea, juce::Justification::centredLeft);
+        labelPrepared.draw (g);
     }
     g.setColour (colour (Tok::BgWindow));
     g.fillRoundedRectangle (row, 4.0f);
@@ -153,9 +174,7 @@ void SegmentedSwitch::paint (juce::Graphics& g)
         if (painter)
             painter (g, seg, i, on);
         g.setColour (on ? colour (Tok::TextOnAccent) : textColour());
-        g.setFont (ctx.theme.font (captionPx, on));
-        drawFittedText (g, captions[i], cardLayout ? seg.withTrimmedTop (seg.getHeight() - 20.0f).reduced (2.0f, 0.0f) : seg.reduced (2.0f, 0.0f),
-                        juce::Justification::centred);
+        (on ? captionBoldPrepared : captionPrepared)[static_cast<size_t> (i)].draw (g);
         if (i > 0 && ! on && i - 1 != lit)
         {
             g.setColour (colour (Tok::BgTrack));
@@ -266,8 +285,7 @@ void Toggle::paint (juce::Graphics& g)
     g.setColour (colour (Tok::BgTrack));
     g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
     g.setColour (on ? colour (Tok::TextOnAccent) : textColour());
-    g.setFont (ctx.theme.font (metrics::kText, on));
-    drawFittedText (g, label, r.reduced (4.0f, 0.0f), juce::Justification::centred);
+    (on ? labelBoldPrepared : labelPrepared).draw (g);
     if (markerAlpha > 0.0f)
         drawExternalMarker (g, r.reduced (2.0f), {}, markerAlpha, ctx.theme, false);
     if (hasKeyboardFocus (false))
@@ -289,6 +307,13 @@ void Toggle::mouseUp (const juce::MouseEvent&)
 {
     model.release();
     refresh();
+}
+
+void Toggle::resized()
+{
+    const auto area = getLocalBounds().toFloat().reduced (1.0f).reduced (4.0f, 0.0f);
+    labelPrepared.setLine (label, ctx.theme.fonts().text, area, juce::Justification::centred);
+    labelBoldPrepared.setLine (label, ctx.theme.fonts().textBold, area, juce::Justification::centred);
 }
 
 void Toggle::valueChanged()

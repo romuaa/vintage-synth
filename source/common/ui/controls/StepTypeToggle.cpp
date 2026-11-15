@@ -28,7 +28,7 @@ public:
         g.setColour (colour (Tok::BgTrack));
         g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
         g.setColour (on ? colour (Tok::TextOnAccent) : (owner.dimmed ? colour (Tok::TextDisabled) : colour (Tok::TextPrimary)));
-        g.setFont (owner.ctx.theme.font (metrics::kTextSmall, on));
+        g.setFont (on ? owner.ctx.theme.fonts().smallBold : owner.ctx.theme.fonts().small);
         g.drawText (caption, r, juce::Justification::centred, false);
         if (hasKeyboardFocus (false))
             drawFocusRing (g, r, 3.0f);

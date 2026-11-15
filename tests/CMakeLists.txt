@@ -118,6 +118,7 @@ target_sources(VintageSynthTests PRIVATE
     ui/EnvLfoReviewTests.cpp
     ui/BrowserModelTests.cpp
     ui/BrowserPageTests.cpp
+    ui/PaintAllocationTests.cpp
     ui/UiShots.cpp)
 target_compile_definitions(VintageSynthTests PRIVATE
     VS_UI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ui/golden"

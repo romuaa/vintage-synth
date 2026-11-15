@@ -11,6 +11,7 @@
 // common/ui/models/ProgramModels.h and tested there.
 
 #include "common/presets/PresetActions.h"
+#include "common/ui/PaintFonts.h"
 #include "common/ui/ParamMirror.h"
 #include "common/ui/PreparedText.h"
 #include "common/ui/controls/BoundComponent.h"

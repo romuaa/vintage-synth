@@ -386,7 +386,7 @@ void ResponseCurveView::paint (juce::Graphics& g)
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
 
     // Grid: decades and their 2 and 5, dB lines every 12 dB; labels below and at the left.
-    g.setFont (theme.font (metrics::kTextSmall));
+    g.setFont (theme.fonts().small);
     int label = 0;
     for (double hz : kGridHz)
     {
@@ -424,7 +424,7 @@ void ResponseCurveView::paint (juce::Graphics& g)
     {
         const auto area = juce::Rectangle<float> (plot.getRight() - 300.0f, plot.getY() + 4.0f, 296.0f, 16.0f);
         g.setColour (colour (Tok::Warn));
-        g.setFont (theme.font (metrics::kTextSmall, true));
+        g.setFont (theme.fonts().smallBold);
         g.drawText (note, area, juce::Justification::centredRight, true);
     }
 }

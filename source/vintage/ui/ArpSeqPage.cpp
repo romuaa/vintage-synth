@@ -398,7 +398,7 @@ void ArpSeqPage::paint (juce::Graphics& g)
     const auto mode = panelBounds (0).toFloat();
     g.setColour (colour (Tok::BgPanel));
     g.fillRoundedRectangle (mode, static_cast<float> (kRadius));
-    g.setFont (ctx.theme.font (kText));
+    g.setFont (ctx.theme.fonts().text);
     g.setColour (colour (Tok::TextSecondary));
     drawFittedText (g, playsThrough, { 816.0f, 8.0f, 300.0f, 20.0f }, juce::Justification::centredLeft);
     g.setColour (colour (Tok::TextPrimary));
@@ -407,7 +407,7 @@ void ArpSeqPage::paint (juce::Graphics& g)
 
 void ArpSeqPage::paintOverChildren (juce::Graphics& g)
 {
-    g.setFont (ctx.theme.font (kTextSmall));
+    g.setFont (ctx.theme.fonts().small);
     g.setColour (colour (Tok::TextSecondary));
     if (view == 0)
     {

@@ -6,7 +6,7 @@ namespace vs::ui
 {
 // ---- PartSwitch ----
 
-PartSwitch::PartSwitch (const Theme& t) : theme (t)
+PartSwitch::PartSwitch (const Theme& t) : headerFont (t.font (metrics::kTextHeader, true))
 {
     setTitle ("Edited part");
     setWantsKeyboardFocus (true);
@@ -42,8 +42,8 @@ void PartSwitch::paint (juce::Graphics& g)
         g.setColour (acc);
         g.drawRoundedRectangle (seg.reduced (0.5f), 4.0f, on ? 1.0f : 1.5f);
         g.setColour (on ? colour (Tok::TextOnAccent) : acc);
-        g.setFont (theme.font (metrics::kTextHeader, true));
-        g.drawText (p == 0 ? "LOWER" : "UPPER", seg, juce::Justification::centred, false);
+        g.setFont (headerFont);
+        g.drawText (p == 0 ? lowerText : upperText, seg, juce::Justification::centred, false);
     }
     if (hasKeyboardFocus (false))
         drawFocusRing (g, r, 4.0f);
@@ -84,7 +84,7 @@ std::unique_ptr<juce::AccessibilityHandler> PartSwitch::createAccessibilityHandl
 class PageRail::Button final : public juce::Component
 {
 public:
-    Button (PageRail& r, int i) : rail (r), index (i)
+    Button (PageRail& r, int i) : rail (r), index (i), font (r.theme.font (metrics::kText, true))
     {
         setTitle (rail.pages[static_cast<size_t> (i)].title);
         setWantsKeyboardFocus (true);
@@ -100,14 +100,14 @@ public:
         g.setColour (on ? acc : (isMouseOver() ? colour (Tok::BgTrack) : colour (Tok::BgPanel)));
         g.fillRoundedRectangle (r, 6.0f);
         const auto fg = on ? colour (Tok::TextOnAccent) : colour (Tok::TextPrimary);
-        auto iconArea = r.withTrimmedBottom (r.getHeight() * 0.38f).withSizeKeepingCentre (30.0f, 26.0f);
-        drawPageIcon (g, rail.pages[static_cast<size_t> (index)].icon, iconArea, fg);
+        drawPageIcon (g, rail.pages[static_cast<size_t> (index)].icon, iconArea(), fg, iconPath);
         g.setColour (fg);
-        g.setFont (rail.theme.font (metrics::kText, true));
+        g.setFont (font);
         g.drawText (getTitle(), r.withTrimmedTop (r.getHeight() * 0.6f), juce::Justification::centred, true);
         if (hasKeyboardFocus (false))
             drawFocusRing (g, r, 6.0f);
     }
+    void resized() override { iconPath = pageIconPath (rail.pages[static_cast<size_t> (index)].icon, iconArea()); } // made on a size change, not in paint()
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
     void mouseExit (const juce::MouseEvent&) override { repaint(); }
     void mouseDown (const juce::MouseEvent&) override { choose(); }
@@ -133,8 +133,15 @@ private:
         if (rail.onPageChosen)
             rail.onPageChosen (index);
     }
+    juce::Rectangle<float> iconArea() const
+    {
+        const auto r = getLocalBounds().toFloat().reduced (2.0f);
+        return r.withTrimmedBottom (r.getHeight() * 0.38f).withSizeKeepingCentre (30.0f, 26.0f);
+    }
     PageRail& rail;
     int index;
+    juce::Path iconPath;
+    juce::Font font; // made once: paint() allocates nothing (9.5)
 };
 
 PageRail::PageRail (const Theme& t, std::vector<Page> p) : theme (t), pages (std::move (p))
@@ -178,9 +185,8 @@ void PageRail::paint (juce::Graphics& g)
     g.fillAll (colour (Tok::BgWindow));
 }
 
-void drawPageIcon (juce::Graphics& g, PageIcon icon, juce::Rectangle<float> a, juce::Colour c)
+juce::Path pageIconPath (PageIcon icon, juce::Rectangle<float> a)
 {
-    g.setColour (c);
     juce::Path p;
     const float x = a.getX(), y = a.getY(), w = a.getWidth(), h = a.getHeight();
     switch (icon)
@@ -206,6 +212,21 @@ void drawPageIcon (juce::Graphics& g, PageIcon icon, juce::Rectangle<float> a, j
             p.lineTo (x + w, y + h * 0.5f);
             break;
         case PageIcon::Play:
+        case PageIcon::ArpSeq:
+        case PageIcon::Effects:
+        case PageIcon::Browser:
+            break; // drawn from shapes
+    }
+    return p;
+}
+
+void drawPageIcon (juce::Graphics& g, PageIcon icon, juce::Rectangle<float> a, juce::Colour c, const juce::Path& stroke)
+{
+    g.setColour (c);
+    const float x = a.getX(), y = a.getY(), w = a.getWidth(), h = a.getHeight();
+    switch (icon)
+    {
+        case PageIcon::Play:
             for (int i = 0; i < 4; ++i)
                 g.fillRoundedRectangle (x + w * 0.25f * static_cast<float> (i) + 1.0f, y, w * 0.25f - 2.0f, h, 2.0f);
             return;
@@ -224,13 +245,17 @@ void drawPageIcon (juce::Graphics& g, PageIcon icon, juce::Rectangle<float> a, j
                     g.fillRoundedRectangle (x + w * 0.2f + static_cast<float> (col) * w * 0.22f, y + static_cast<float> (r) * h * 0.34f,
                                             w * 0.18f, h * 0.28f, 1.5f);
             return;
+        case PageIcon::Sound:
+        case PageIcon::Envelopes:
+        case PageIcon::Lfo:
+            break;
     }
-    g.strokePath (p, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.strokePath (stroke, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 // ---- HelpLine ----
 
-HelpLine::HelpLine (const Theme& t) : theme (t)
+HelpLine::HelpLine (const Theme& t) : fonts (t)
 {
     setTitle ("Help");
     setInterceptsMouseClicks (false, false);
@@ -272,15 +297,15 @@ void HelpLine::paint (juce::Graphics& g)
         g.setColour (colour (Tok::Warn));
         g.fillRoundedRectangle (pill, pill.getHeight() * 0.5f);
         g.setColour (colour (Tok::TextOnAccent));
-        g.setFont (theme.font (metrics::kText, true));
+        g.setFont (fonts.textBold);
         g.drawText (banner, pill.reduced (10.0f, 0.0f), juce::Justification::centred, true);
         r.removeFromRight (12.0f);
     }
-    g.setFont (theme.font (metrics::kTextSmall, true));
+    g.setFont (fonts.smallBold);
     g.setColour (colour (Tok::AccentGlobal));
-    g.drawText ("HELP", r.removeFromLeft (40.0f), juce::Justification::centredLeft, false);
+    g.drawText (helpWord, r.removeFromLeft (40.0f), juce::Justification::centredLeft, false);
     g.setColour (colour (Tok::TextPrimary));
-    g.setFont (theme.font (metrics::kText));
+    g.setFont (fonts.text);
     g.drawText (text, r, juce::Justification::centredLeft, true);
 }
 
@@ -329,7 +354,7 @@ void HelpBubble::paint (juce::Graphics& g)
 
 // ---- OutputMeter ----
 
-OutputMeter::OutputMeter (const Theme& t) : theme (t)
+OutputMeter::OutputMeter (const Theme& t) : fonts (t)
 {
     setTitle ("Output level");
     getProperties().set (helpIdProperty(), "ui.output");
@@ -380,9 +405,9 @@ void OutputMeter::update (float peakLeft, float peakRight, double nowMs)
 void OutputMeter::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
-    g.setFont (theme.font (metrics::kTextSmall));
+    g.setFont (fonts.small);
     g.setColour (colour (Tok::TextSecondary));
-    g.drawText ("OUT", r.removeFromTop (12.0f), juce::Justification::centredLeft, false);
+    g.drawText (outText, r.removeFromTop (12.0f), juce::Justification::centredLeft, false);
     r.removeFromTop (2.0f);
     const float barH = (r.getHeight() - 3.0f) * 0.5f;
     for (int c = 0; c < 2; ++c)
