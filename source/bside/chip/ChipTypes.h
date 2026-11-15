@@ -9,9 +9,19 @@ namespace vs::bside::chip
 {
 enum class Model : std::uint8_t { A, B };
 
+/** Which combined-waveform shapes the chip uses (CombinedWaveforms.h): our fitted ones, or the S2a
+    placeholder that only the independent model's test executable selects (it has no table interface;
+    tests/bside/CMakeLists.txt compiles that executable with BS_CHIP_DEFAULT_SHAPES=placeholder, and all
+    of its sources alike, so the default below is one definition per executable). */
+enum class ShapeSet : std::uint8_t { fitted, placeholder };
+#ifndef BS_CHIP_DEFAULT_SHAPES
+#define BS_CHIP_DEFAULT_SHAPES fitted
+#endif
+
 struct Config
 {
     Model model = Model::B;
+    ShapeSet shapes = ShapeSet::BS_CHIP_DEFAULT_SHAPES;
     std::uint32_t clockHz = 985248;
     double internalRate = 96000.0;
     float variation = 0.5f; // Model A filter curve offset, 0..1 (analog, S3)

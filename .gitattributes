@@ -1,3 +1,6 @@
 # Reference data is hashed byte for byte (tests/bside/reference/MANIFEST, the trace SHA-256 in every
 # .bsref/.bsspec): never convert its line endings on checkout.
 tests/bside/reference/** -text
+# The combined-waveform measurements likewise (tests/bside/shapes/MANIFEST, the trace SHA-256 in every .bsref).
+tests/bside/shapes/** -text
+tests/bside/golden/** -text

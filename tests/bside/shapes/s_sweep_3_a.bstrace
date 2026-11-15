@@ -1,0 +1,13 @@
+bside-trace 1
+# Combined-waveform shape measurement (tests/bside/shapes/ShapePlan.h, kind sweep): waveform bits 03, pulse width 0.
+# Oscillator 3 is read back through the read register; generated, never edited by hand.
+clock 985248
+model A
+check 1
+8 12 08
+16 0e 00
+16 0f 10
+16 10 00
+16 11 00
+40 12 30
+end 2089

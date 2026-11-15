@@ -58,7 +58,9 @@
 //       (c) step 6 changed the register; register and noise output after it. Write-back mode is never
 //       jumped, so these events come in step order.
 //   Changes made by a write (the noise shift when the test bit is cleared, the accumulator reset when it
-//   is set) carry no event: a renderer splits the sample at the write and reads the state there.
+//   is set) carry no event: a renderer splits the sample at the write and reads the state there. The same
+//   holds for powerOnKeepingTime() (accumulators, outputs and envelopes jump to power-on) and
+//   clearEnvelopeCounters(): no event; the renderer splits the sample where it calls them.
 // ORDER. Within one step: noise clocks (oscillator 1..3, part (a)), write-backs (1..3, part (c)), sync
 // resets (by source 1..3, part (d)). A jump contains noise clocks only and reports them OSCILLATOR BY
 // OSCILLATOR (each in time order), NOT by time across oscillators. Stable-sorted by cycle, the events
@@ -244,13 +246,27 @@ public:
     Chip() noexcept
     {
         clock.prepare (cfg.clockHz, cfg.internalRate);
+        shapes = &combined::tablesFor (cfg.model, cfg.shapes);
         reset();
     }
 
-    /** Model, clock and internal rate; resets the chip. Allocates nothing (no member owns memory). */
+    /** Model, clock, internal rate and shape set; resets the chip. Allocates nothing (no member owns
+        memory): the combined-waveform tables are process-wide and built on their first use, which this
+        call (or the constructor) makes, never a step. */
     void prepare (const Config& c) noexcept;
     /** Power-on state at cycle 0 (8.15.1; the configuration is kept). */
     void reset() noexcept;
+
+    /** Power-on state (8.15.1) of every oscillator, envelope, register and the stored filter input, like
+        reset(), but cycle() and the sample clock keep running (a stolen voice restarts its chip while the
+        program engine keeps absolute cycles). Configuration and shape tables are kept. */
+    void powerOnKeepingTime() noexcept;
+    /** Clean restart (8.6.4): envelope n's (0..2) rate counter position := 0 and its divider counter (the
+        exponential counter) := 0, now, without a register write. Exactly these two fields of EnvState
+        (`position`, `divider`) change; the pending rate reset, the divider period and any pending period
+        change, the pipelines, phase, counter, freeze and every oscillator field stay as they are. Another n
+        is ignored. */
+    void clearEnvelopeCounters (int n) noexcept;
 
     /** A register write at the current cycle (trace replay). The address is taken modulo 32;
         0x19..0x1F are ignored (read-only or not modelled). */
@@ -320,6 +336,11 @@ public:
     /** The 12-bit digital output of oscillator n (0..2) as the last step computed it (8.15.2 (c); held
         and fading while no waveform is selected). */
     std::uint16_t output (int n) const noexcept { return osc[checked (n)].out; }
+    /** The step-2 shape tables in use (the combined-waveform values; S2b renders from the same tables).
+        Read a shape only through wave::shape (tables, waveform bits, index, noise output): for pulse with
+        noise (waveform bits 0xc) the shape is `pulseNoise[noise output >> 4]` and the row `wave[0xc]` is
+        unused zeros. */
+    const combined::ShapeTables& shapeTables() const noexcept { return *shapes; }
     float cutoffSmooth() const noexcept { return cutoff; }
     std::uint8_t registerValue (std::uint8_t r) const noexcept { return r < reg::kWritable ? regs[r] : std::uint8_t { 0 }; }
 
@@ -453,9 +474,10 @@ private:
         const std::uint8_t c = ctl (n);
         const std::uint16_t ix = wave::index (ownAcc, c, sourceAcc);
         OutParts p;
-        p.shape = wave::shape (cfg.model, wave::bits (c), ix);
+        const std::uint16_t noiseOut = osc[idx (n)].noiseOut;
+        p.shape = wave::shape (*shapes, wave::bits (c), ix, noiseOut);
         p.pulseMask = (c & ctrl::pulse) == 0 || (c & ctrl::test) != 0 || pulsePrev ? std::uint16_t { 0xfff } : std::uint16_t { 0 };
-        p.noiseMask = (c & ctrl::noise) != 0 ? osc[idx (n)].noiseOut : std::uint16_t { 0xfff };
+        p.noiseMask = (c & ctrl::noise) != 0 ? noiseOut : std::uint16_t { 0xfff };
         return p;
     }
 
@@ -700,6 +722,7 @@ private:
     void skip (std::uint64_t j, Sink& sink) noexcept;
 
     Config cfg {};
+    const combined::ShapeTables* shapes = nullptr; // never null after construction (CombinedWaveforms.h)
     ChipClock clock {};
     std::array<Osc, 3> osc {};
     std::array<Env, 3> env {};

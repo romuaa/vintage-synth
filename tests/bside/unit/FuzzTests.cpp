@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <new>
 
@@ -39,18 +40,27 @@
  #define BS_FUZZ_ASAN 0
 #endif
 
+// Keeps the compiler from seeing through the counting allocator (GCC then warns about new/free pairs it inlines).
+#if defined(_MSC_VER)
+ #define BS_NOINLINE __declspec(noinline)
+#else
+ #define BS_NOINLINE __attribute__((noinline))
+#endif
+
 namespace
 {
 std::atomic<std::size_t> gLive { 0 };
 std::atomic<std::size_t> gPeak { 0 };
+std::atomic<std::size_t> gAllocations { 0 };
 
 #if ! BS_FUZZ_ASAN
-void* countedAlloc (std::size_t n)
+BS_NOINLINE void* countedAlloc (std::size_t n)
 {
     void* p = std::malloc (n + 16);
     if (p == nullptr)
         return nullptr;
     *static_cast<std::size_t*> (p) = n;
+    gAllocations.fetch_add (1, std::memory_order_relaxed);
     const auto live = gLive.fetch_add (n, std::memory_order_relaxed) + n;
     auto peak = gPeak.load (std::memory_order_relaxed);
     while (live > peak && ! gPeak.compare_exchange_weak (peak, live, std::memory_order_relaxed))
@@ -59,13 +69,33 @@ void* countedAlloc (std::size_t n)
     return static_cast<char*> (p) + 16;
 }
 
-void countedFree (void* p) noexcept
+BS_NOINLINE void countedFree (void* p) noexcept
 {
     if (p == nullptr)
         return;
     auto* base = static_cast<char*> (p) - 16;
     gLive.fetch_sub (*reinterpret_cast<std::size_t*> (base), std::memory_order_relaxed);
     std::free (base);
+}
+
+/** Over-aligned allocations (operator new with std::align_val_t): counted as allocations too. */
+BS_NOINLINE void* countedAlignedAlloc (std::size_t n, std::size_t alignment)
+{
+    const std::size_t a = alignment < alignof (void*) ? alignof (void*) : alignment;
+    void* raw = std::malloc (n + a + sizeof (void*));
+    if (raw == nullptr)
+        return nullptr;
+    gAllocations.fetch_add (1, std::memory_order_relaxed);
+    const auto start = reinterpret_cast<std::uintptr_t> (raw) + sizeof (void*);
+    const auto aligned = (start + a - 1) / a * a;
+    reinterpret_cast<void**> (aligned)[-1] = raw;
+    return reinterpret_cast<void*> (aligned);
+}
+
+BS_NOINLINE void countedAlignedFree (void* p) noexcept
+{
+    if (p != nullptr)
+        std::free (reinterpret_cast<void**> (p)[-1]);
 }
 #endif
 
@@ -105,7 +135,37 @@ void operator delete[] (void* p, std::size_t) noexcept { countedFree (p); }
 #endif
 void operator delete (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
 void operator delete[] (void* p, const std::nothrow_t&) noexcept { countedFree (p); }
+
+// The over-aligned forms count too (an allocation of an over-aligned type must not escape the counter).
+void* operator new (std::size_t n, std::align_val_t a)
+{
+    if (void* p = countedAlignedAlloc (n, static_cast<std::size_t> (a)))
+        return p;
+    throw std::bad_alloc();
+}
+void* operator new[] (std::size_t n, std::align_val_t a)
+{
+    if (void* p = countedAlignedAlloc (n, static_cast<std::size_t> (a)))
+        return p;
+    throw std::bad_alloc();
+}
+void* operator new (std::size_t n, std::align_val_t a, const std::nothrow_t&) noexcept { return countedAlignedAlloc (n, static_cast<std::size_t> (a)); }
+void* operator new[] (std::size_t n, std::align_val_t a, const std::nothrow_t&) noexcept { return countedAlignedAlloc (n, static_cast<std::size_t> (a)); }
+void operator delete (void* p, std::align_val_t) noexcept { countedAlignedFree (p); }
+void operator delete[] (void* p, std::align_val_t) noexcept { countedAlignedFree (p); }
+void operator delete (void* p, std::align_val_t, const std::nothrow_t&) noexcept { countedAlignedFree (p); }
+void operator delete[] (void* p, std::align_val_t, const std::nothrow_t&) noexcept { countedAlignedFree (p); }
+#if defined(__cpp_sized_deallocation) && __cpp_sized_deallocation >= 201309L
+void operator delete (void* p, std::size_t, std::align_val_t) noexcept { countedAlignedFree (p); }
+void operator delete[] (void* p, std::size_t, std::align_val_t) noexcept { countedAlignedFree (p); }
 #endif
+#endif
+
+namespace bst
+{
+std::size_t totalAllocations() { return gAllocations.load(); }
+bool allocationsAreCounted() { return ! BS_FUZZ_ASAN; }
+} // namespace bst
 
 using namespace bst;
 using namespace vs::bside::trace;

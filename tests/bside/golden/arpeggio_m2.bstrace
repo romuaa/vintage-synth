@@ -1,0 +1,30 @@
+# golden arpeggio, tick.mult 2, Authentic, 50 Hz system, model-derived (tools/model.py, tools/gen.py)
+bside-trace 1
+clock 985248
+model B
+# 0 direct: rate counters and dividers cleared
+0 00 67
+0 01 11
+0 04 41
+0 00 67
+0 01 11
+0 05 00
+0 06 f6
+0 02 00
+0 03 04
+0 15 00
+0 16 80
+0 17 07
+0 18 1f
+9828 00 ed
+9828 01 15
+19656 00 13
+19656 01 1a
+22156 04 40
+22156 00 67
+22156 01 11
+29484 00 ed
+29484 01 15
+39312 00 13
+39312 01 1a
+end 49139

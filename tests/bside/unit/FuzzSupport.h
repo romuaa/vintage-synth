@@ -3,12 +3,18 @@
 // Deterministic generators for the reader tests: a seeded random source, a generator of valid
 // tables, and a byte/token level mutator. No dependency on the library under test.
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace bst
 {
+/** Number of operator new calls so far (FuzzTests.cpp replaces the global operator new). Under AddressSanitizer
+    it is not replaced: allocationsAreCounted() is then false and the count stays 0. */
+std::size_t totalAllocations();
+bool allocationsAreCounted();
+
 /** xoshiro-style small generator: deterministic across platforms and standard libraries. */
 class Rng
 {

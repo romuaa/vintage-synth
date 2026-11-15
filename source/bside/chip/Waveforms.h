@@ -3,10 +3,12 @@
 // The digital (12-bit) waveform logic of one oscillator (docs/architecture.md 8.15.2 (c), 8.15.3).
 // These are the values the chip's waveform logic produces before its DAC; the read register 0x1B, the
 // noise write-back and (Model A) the top-bit pull-down use them. S2b renders the band-limited analog form
-// of the same shapes and takes the shapes from here, so both agree. JUCE-free, constexpr, no state.
+// of the same shapes and takes the shapes from here, so both agree. JUCE-free, no state.
 
 #include "bside/chip/ChipTypes.h"
+#include "bside/chip/CombinedWaveforms.h"
 
+#include <cassert>
 #include <cstdint>
 
 namespace vs::bside::chip::wave
@@ -71,40 +73,19 @@ constexpr std::uint32_t taps (std::uint16_t out) noexcept
 /** The register mask of the write-back: a set output bit keeps its tap bit, a clear one clears it. */
 constexpr std::uint32_t noiseKeepMask (std::uint16_t out) noexcept { return (kNoiseMask & ~kTapBits) | taps (out); }
 
-/** Combined-waveform shape for the waveform bits that use a table (usesTable; 8.15.2 (c) step 2; our own
-    tables, 8.15.8).
-
-    PLACEHOLDER (S2a): for both models the bitwise AND of the selected triangle and saw shapes (0xfff when
-    neither is selected); pulse and noise enter through the masks of step 3. This is the documented
-    first-order behaviour (a selected waveform can only pull output bits low), not the fitted shapes,
-    which S2b builds per model (8.4.5, Q5). This function is the one place the fitted tables replace; the
-    read register 0x1B, the noise write-back and the Model A pull-down all follow it. Every field it
-    reaches is exempt from the exact comparison (8.15.8). */
-constexpr std::uint16_t combined (Model model, std::uint8_t waveBits, std::uint16_t ix) noexcept
+/** The shape of step 2 for waveform bits 1..15 (8.15.2 (c)): triangle (also with noise), saw (also with
+    noise), 0xfff for pulse or noise alone, our combined-waveform shape otherwise (usesTable). The values
+    come from the tables of CombinedWaveforms.h (one per chip model, computed from our fitted parameters);
+    pulse with noise is indexed by the noise output (`noiseOutput`, used for that combination only). The
+    read register 0x1B, the noise write-back and the Model A pull-down all follow them. */
+inline std::uint16_t shape (const combined::ShapeTables& t, std::uint8_t waveBits, std::uint16_t ix, std::uint16_t noiseOutput) noexcept
 {
-    (void) model;
-    std::uint16_t v = 0xfff;
-    if ((waveBits & kTri) != 0)
-        v &= triangle (ix);
-    if ((waveBits & kSaw) != 0)
-        v &= saw (ix);
-    return v;
-}
-
-/** The shape of step 2 for waveform bits 1..15: triangle (also with noise), saw (also with noise), 0xfff
-    for pulse or noise alone, the combined table otherwise (usesTable). */
-constexpr std::uint16_t shape (Model model, std::uint8_t waveBits, std::uint16_t ix) noexcept
-{
-    switch (waveBits)
+    if ((waveBits & 15u) == combined::kPulseNoise)
     {
-        case kTri:
-        case kTri | kNoise: return triangle (ix);
-        case kSaw:
-        case kSaw | kNoise: return saw (ix);
-        case kPulse:
-        case kNoise: return 0xfff;
-        default: return combined (model, waveBits, ix);
+        assert ((noiseOutput & 0x00fu) == 0); // a noise output (bits 3..0 are always 0), not an index
+        return t.pulseNoise[(noiseOutput >> 4) & 0xffu];
     }
+    return t.wave[waveBits & 15u][ix & 0xfffu];
 }
 
 /** Noise together with another waveform bit: the output is written back into the noise register

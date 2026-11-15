@@ -1471,6 +1471,16 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
      when at least two of triangle, saw and pulse are selected, or pulse together with noise.
      Noise with only triangle or only saw uses no table: the shape is that of the triangle or saw
      (the traces `c_9_*` and `c_a_*` replay exactly this way).
+     **Pulse together with noise and neither triangle nor saw** (S2b, measured): the shape is not
+     indexed by the accumulator: shape := Tpn(noise output bits 11..4), a per-model table of the
+     8 noise output bits (our own fit, the same network form with the noise output driving the
+     bit lines in place of a waveform). Step 3's AND with the noise output still applies.
+     **Structural rules of our tables.** For all 12 bits: a bit is set only on a line where the
+     selected triangle or saw input is high (it holds in every measured sample and is part of
+     the fitted model, not only a cosmetic rule). Bits 3..0 cannot be observed through the
+     read-back; they are set only as the continuation of a run of set bits from bit 4 down (so
+     no entry has low bits alone). A reader of a shape must go through the chip's shape function:
+     the table row for pulse + noise is unused.
   3. out := shape AND (pulse selected ? the pulse comparison of the previous step, high under
      test : 0xfff) AND (noise selected ? noise output : 0xfff).
   4. Model A, saw bit set: if out bit 11 is 0, clear acc bit 23 and the rise flag.
@@ -1480,6 +1490,21 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
      step's shape. The latch is updated only in such steps. Model B otherwise: out. (To confirm
      with the fitted tables in S2b: latching the index and applying the current table instead
      differs only when the waveform bits change.)
+     **Measured in S2b (`s_latch_b`, 40 switches per case; `s_latch_pn_b`):** the steady state
+     follows this rule. A pulse-only step reads 0xff itself and leaves the latch (40 of 40);
+     pulse + noise steps leave it too (60 of 60). In the first step after the waveform bits
+     change, the reference reads the latched shape in 30 of 40 switches from triangle+saw to
+     saw+pulse (1 fits the latched index, 9 fit neither) and in 30 of 40 returns after a
+     pulse-only step; a switch from triangle+saw to saw alone reads
+     saw(index) AND (saw(index) << 1) in all 40 cases, which neither reading gives. The rule
+     above stays for now (the chip latches the shape); **the first step after a change of the
+     waveform bits on Model B is not proven.** Tests pin how many of these reads the chip
+     reproduces (29, 40, 31 and 5 of 40). Candidate for the next chip step (S2b review, measured
+     at 29 indices per transition, exact for all eight switches to a single waveform): the latch
+     holds the previous step's selected triangle/saw lines before the combining network
+     (triangle+saw: x AND (x << 1); saw: x; triangle: tri(x)), and each read passes them through
+     the combining stage of the current waveform bits, then the masks. Only the Model B read
+     value is affected, not the output.
   6. Noise and another waveform bit together (write-back): if the noise pipeline is not 1 and the
      test bit is clear, the register's bits 20, 18, 14, 11, 9, 5, 2, 0 are ANDed with out bits
      11..4, and noise output := noise output AND out. Otherwise (in this case only), noise
@@ -1624,6 +1649,13 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
   replay marks them from the trace's writes and the chip's events, reports per trace and field
   how many checkpoints were exempt and how many of those differ, and fails any `d_*`, `a_*`,
   `c_9_*` or `c_a_*` trace with an exemption (they use no table).
+- **Exemption budget (S2b):** with our own tables the replay also pins, per trace and field, the
+  number of exempt checkpoints that differ from the reference (`tests/bside/trace/
+  exemption-budget.txt`, regenerated with each refit like a golden) and fails on any change: an
+  increase is a regression, a decrease asks for the budget to be regenerated; unknown or
+  duplicate entries fail. As fitted: 81 of 6850, all in `rd1B` of 12 `c_*` traces (one of them
+  in a noise-combination trace, `c_b_b`); every `acc*` and `noise*` field is at 0, so those are
+  effectively exact.
 - **What the exemption leaves unproven (S2a review):** within the `c_*` traces an exempt field can
   also hide an oscillator-path error that is not a shape error (`rd1B` is the only oscillator
   field those traces observe). Until our own tables exist, the `c_*` family proves envelopes and
@@ -1634,6 +1666,42 @@ One step runs these four parts in order: (a) oscillator advance for 1, 2, 3; (b)
   within the fit tolerance, and by the audio comparisons of 8.9.4. Wanted at the next
   regeneration: a trace with a full noise fill after a combined waveform (an exemption that ends
   inside a trace) and one that selects noise before the first shift.
+
+### 8.16 Amendments from S2b and S2c (as built, 2026-11-15; these win over 8.4.7 and 8.6 where they differ)
+The full list of readings, with reasons, is `docs/decisions.md` "B-Side S2c" (rows 1–16) and
+"S2b-1"; the rules below are the ones another work stream can depend on.
+- **Chip entry points for the engine (8.4.7):** `powerOnKeepingTime()` gives the power-on state
+  while `cycle()` keeps running (a stolen voice); `clearEnvelopeCounters (n)` sets exactly
+  envelope n's rate counter position and divider to 0 (the Clean policy's direct operation,
+  8.6.4). `Config::shapes` selects the table set (fitted by default).
+- **The engine** (`source/bside/engine/ProgramEngine.*`) is one note voice driven like the chip:
+  render to `nextTickCycle()`, then run the tick. Tick 0 runs at the note-on cycle; the next
+  tick's cycle is fixed when a tick runs, so a period change applies from the tick after the one
+  already scheduled. Output goes through `ProgramSink` (the real chip or a recorder). A program
+  given to the engine must have passed `validate()`.
+- **Ownership and order inside a tick:** restart writes; the three wave lanes' rows; the
+  host-driven registers of oscillators 1–3; then pulse lanes and the filter lane, each followed
+  by its host-driven registers. Within an oscillator: frequency, envelope, control. A lane
+  command always writes; a register no lane has written for this note follows the host and is
+  written only when its value changes. An oscillator the host leaves off still gets its
+  frequency when it is the sync or ring source of an active one.
+- **Note-off:** a tick on the same cycle runs first; a lane with a `release` label jumps there; a
+  wave lane without one clears its gate. **After note-off no table write can raise the gate**
+  (the gate bit of every later control write is cleared; the other control bits still apply).
+- **Restart section and policies (8.6.4):** Authentic applies no part of the restart section
+  (no idle writes, no tick-0 writes, no `firstwave`, no reset on a steal, no direct clear).
+  Precondition and Clean write the restart state when the voice goes idle, and at tick 0 on a
+  retrigger that was not preconditioned; Clean also clears the envelope counters directly when
+  the voice did not get the full lead. A stolen voice is reset (keeping time) and then gets the
+  restart writes. Without a restart section, Precondition and Clean clear a still-high gate
+  before a retrigger (owner to confirm). `firstwave` applies per active oscillator and ends at
+  the table's first control write, at tick 1 or at note-off, whichever comes first.
+- **Values:** register frequency = 440 × 2^((m − 69)/12) × 2^24 / clock (A4 = 440 Hz, equal
+  temperament), Authentic rounds half up; macros are added after the lane or host value and
+  clamped; ping-pong turns at a limit before the step and stops exactly on a limit.
+- **Goldens (8.9.6):** `tests/bside/golden/` (72 traces; four hand-derived from this contract,
+  the rest derived by `tools/model.py`, which follows the same readings and is therefore not an
+  independent proof of them).
 
 ## 9. M7 — custom editor
 

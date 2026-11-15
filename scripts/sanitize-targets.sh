@@ -15,7 +15,7 @@
 # searched with a shell pattern.
 
 # Test executables that exist today (all required) and the ones a later step adds (optional until then).
-SAN_REQUIRED_TARGETS="VintageSynthTests render_regression bside_unit BSideTests bside_trace"
+SAN_REQUIRED_TARGETS="VintageSynthTests render_regression bside_unit bside_independent BSideTests bside_trace"
 SAN_FUTURE_TARGETS="bside_render"
 
 san_select() {

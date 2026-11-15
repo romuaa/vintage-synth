@@ -11,6 +11,7 @@ void Chip::prepare (const Config& c) noexcept
 {
     cfg = c;
     clock.prepare (cfg.clockHz, cfg.internalRate);
+    shapes = &combined::tablesFor (cfg.model, cfg.shapes);
     reset();
 }
 
@@ -22,6 +23,23 @@ void Chip::reset() noexcept
     cutoff = 0.0f;
     cycleCount = 0;
     clock.reset();
+}
+
+void Chip::powerOnKeepingTime() noexcept
+{
+    osc = {};
+    env = {};
+    regs = {};
+    cutoff = 0.0f;
+}
+
+void Chip::clearEnvelopeCounters (int n) noexcept
+{
+    if (n < 0 || n > 2)
+        return;
+    Env& e = env[idx (n)];
+    e.position = 0;
+    e.divider = 0;
 }
 
 void Chip::writeAttackDecay (int n) noexcept

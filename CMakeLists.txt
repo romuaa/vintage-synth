@@ -194,7 +194,8 @@ if(VS_BUILD_BSIDE)
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/program/TableReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/program/TableWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/params/ParameterLayout.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/TestTonePart.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/TestTonePart.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/ProgramEngine.cpp)
     set(BS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${BS_SOURCES})
     target_sources(BSide PRIVATE ${BS_PLUGIN_SOURCES})
 
