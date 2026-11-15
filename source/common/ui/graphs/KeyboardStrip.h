@@ -3,7 +3,7 @@
 // KeyboardStrip (docs/architecture.md 9.2.2, 9.3.4): the Play page's keyboard. Six octaves, keys
 // coloured by the part that plays them (the key mode's rule), bars above the keys that name each
 // part's range, the split marker (a slider on `key.split_point`: drag its pill, arrows, wheel,
-// double-click the pill) and dots for the keys held (filled) and sounding (ring) from the UI feed.
+// double-click the pill) and the keys held (tinted in the holding part's colour) and sounding (a small bar at the foot of the key) from the UI feed.
 // A press on the keys plays them (9.3.4, "Playing the keys"): one note per mouse through UiNotes,
 // dragging glides from key to key, velocity by the height in the key; the note is released on
 // mouse-up, when the strip or its page is hidden, when the editor stops showing (its timer) or is
@@ -85,7 +85,7 @@ private:
     static bool has (const Masks& m, int slot, int note) noexcept;
     juce::Rectangle<float> keyBounds (int note) const noexcept;
     void paintKey (juce::Graphics&, int note) const;
-    void paintDots (juce::Graphics&, int note) const;
+    void paintSounding (juce::Graphics&, int note) const;
     /** The keys' note at `p` (keys' coordinates) or -1; plays it instead of the current note. */
     void playAt (juce::Point<float> p);
     void releaseNote();

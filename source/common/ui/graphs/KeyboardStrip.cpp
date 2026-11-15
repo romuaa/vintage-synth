@@ -341,9 +341,13 @@ void KeyboardStrip::paintKey (juce::Graphics& g, int note) const
     const auto r = keyBounds (note);
     const bool black = model::isBlackKey (note);
     const int owner = model::ownerMask (mode, splitNote, note);
-    const auto tint = [&] (int partIndex) { return black ? blackTint (partIndex) : whiteTint (partIndex); };
-    if (owner == 3)
+    const bool held[2] { drawsHeld (0, note), drawsHeld (1, note) };
+    // The key's own colour is the part's pale (white keys) or dark (black keys) tint; a held key takes the part's
+    // full accent instead, which is neither (and is not the white focus ring either).
+    const auto tint = [&] (int partIndex) { return held[partIndex] ? accentFor (partIndex) : (black ? blackTint (partIndex) : whiteTint (partIndex)); };
+    if (owner == 3 || (held[0] && held[1]))
     {
+        // Both parts: Lower in the upper half, Upper in the lower half (as the key colouring of Dual).
         g.setColour (tint (0));
         g.fillRect (r.withHeight (r.getHeight() * 0.5f));
         g.setColour (tint (1));
@@ -351,45 +355,36 @@ void KeyboardStrip::paintKey (juce::Graphics& g, int note) const
     }
     else
     {
-        g.setColour (tint (owner == 2 ? 1 : 0));
+        g.setColour (tint (held[1] ? 1 : (held[0] ? 0 : (owner == 2 ? 1 : 0))));
         g.fillRect (r);
     }
     g.setColour (colour (Tok::BgWindow));
     g.drawRect (r, 1.0f);
 }
 
-void KeyboardStrip::paintDots (juce::Graphics& g, int note) const
+/** The sounding mark: a short bar at the foot of the key in the part's colour, outlined in the window colour so
+    it shows on a held key of the same colour. Both parts: Lower left, Upper right. Right-aligned in the key, clear of the C keys' octave name. */
+void KeyboardStrip::paintSounding (juce::Graphics& g, int note) const
 {
-    const bool held[2] { drawsHeld (0, note), drawsHeld (1, note) };
     const bool sounding[2] { drawsSounding (0, note), drawsSounding (1, note) };
-    if (! (held[0] || held[1] || sounding[0] || sounding[1]))
+    if (! (sounding[0] || sounding[1]))
         return;
     const auto r = keyBounds (note);
     const bool black = model::isBlackKey (note);
-    const float y = r.getBottom() - (black ? 11.0f : 26.0f);
-    const bool both = (held[0] || sounding[0]) && (held[1] || sounding[1]);
-    const float radius = black ? 3.5f : 5.0f;
+    const float w = black ? 5.0f : 7.0f, h = 3.0f, gap = 2.0f, inset = 3.0f;
+    const float y = r.getBottom() - h - 3.0f;
+    const bool both = sounding[0] && sounding[1];
     for (int p = 0; p < 2; ++p)
     {
-        if (! (held[p] || sounding[p]))
+        if (! sounding[p])
             continue;
-        // Lower stands left of centre, Upper right, when both play the key: the part is a position, not a colour.
-        const float x = r.getCentreX() + (both ? (p == 0 ? -1.0f : 1.0f) * radius * 0.9f : 0.0f);
-        const juce::Rectangle<float> dot (x - radius, y - radius, 2.0f * radius, 2.0f * radius);
-        if (held[p])
-        {
-            g.setColour (colour (Tok::TextPrimary));
-            g.fillEllipse (dot.expanded (1.0f));
-            g.setColour (colour (Tok::BgWindow));
-            g.fillEllipse (dot);
-        }
-        if (sounding[p])
-        {
-            g.setColour (colour (Tok::TextPrimary));
-            g.drawEllipse (dot.expanded (held[p] ? 3.0f : 1.0f), 2.0f);
-            g.setColour (colour (Tok::BgWindow));
-            g.drawEllipse (dot.expanded (held[p] ? 4.5f : 2.5f), 1.0f);
-        }
+        const float right = r.getRight() - inset; // right-aligned, clear of the octave name on the C keys
+        const float x = both ? right - (p == 0 ? 2.0f * w + gap : w) : right - w;
+        const juce::Rectangle<float> bar (x, y, w, h);
+        g.setColour (colour (Tok::BgWindow));
+        g.fillRect (bar.expanded (1.0f));
+        g.setColour (accentFor (p));
+        g.fillRect (bar);
     }
 }
 
@@ -436,8 +431,6 @@ void KeyboardStrip::paint (juce::Graphics& g)
     for (int n = geometry.low(); n <= geometry.high(); ++n)
         if (model::isBlackKey (n))
             paintKey (g, n);
-    for (int n = geometry.low(); n <= geometry.high(); ++n)
-        paintDots (g, n);
 
     // Octave names on the C keys.
     g.setColour (colour (Tok::BgWindow));
@@ -447,6 +440,10 @@ void KeyboardStrip::paint (juce::Graphics& g)
         const auto r = keyBounds (n);
         g.drawText (octaveLabels[i], r.withTop (r.getBottom() - 16.0f).withTrimmedLeft (3.0f), juce::Justification::centredLeft, false);
     }
+
+    // Sounding marks last, so a held key's tint never covers them.
+    for (int n = geometry.low(); n <= geometry.high(); ++n)
+        paintSounding (g, n);
 
     // The split marker: pill above, line through bars and keys, a triangle under the keys.
     const float mx = keys.getX() + geometry.markerX (splitNote);
