@@ -123,7 +123,7 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   approves before code); clicking the preset name must open a list of the programs, grouped by
   purpose (Horns, Keys, Leads, Noise, Radical, Strings, ...). **Next:** that redesign, then
   M7b–M7e; only the page list in `VintageEditor::buildPages` is a serial edit.
-- **B-Side S2b-1 and S2c are ready on `bside/s2bc`, awaiting the owner's merge approval:** our own
+- **B-Side S2b-1 and S2c are merged to `main`** (owner approved 2026-11-15): our own
   combined-waveform tables (`chip/CombinedWaveforms.*`: a small fitted resistor-network model per
   chip model, tables computed from its parameters; measurements in `tests/bside/shapes/`, fit tool
   `bside_shapefit gen | fit | verify | report`; exempt checkpoints that differ from the reference
