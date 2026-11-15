@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2b-2 follow-up: a stronger kernel for Model A's combined waveforms (2026-11-15)
+- `common/dsp/BlepTable.h`: `BasicBlepTable<zeroCrossings, betaTenths>`; `BlepTable` stays Vintage's
+  8 / 8.0 (bit-identical tables; render goldens, alias gates and `voice_bench` unchanged).
+- B-Side: steps of Model A combined waveforms use 8 zero crossings, Kaiser beta 11 (with a second-order
+  correction of the table interpolation); every other step keeps the shared kernel, unchanged bit for bit
+  (golden test). Latency stays 8. The three Model A combined rows are normal alias gates now (12 dB inside).
+- `chip_bench`: a Model A combined case (the long kernel's cost).
+
 ### B-Side S2b-2 — band-limited waveform rendering (2026-11-15)
 - `Chip::render` / `Chip::renderUntil` (`source/bside/chip/ChipRender.cpp`, design in `Chip.h` "RENDERING"):
   per oscillator the band-limited waveform after the waveform converter, times the envelope converter,
