@@ -10,7 +10,7 @@ namespace vs::bside::chip::render
 {
 namespace
 {
-Converter makeConverter (const std::vector<double>& w, bool ideal)
+Converter makeConverter (const LadderWeights& w, bool ideal)
 {
     Converter c;
     c.ideal = ideal;
@@ -33,7 +33,7 @@ Converter makeConverter (const std::vector<double>& w, bool ideal)
     return c;
 }
 
-double convert (const std::vector<double>& w, unsigned v)
+double convert (const LadderWeights& w, unsigned v)
 {
     double d = 0.0;
     for (std::size_t i = 0; i < w.size(); ++i)
@@ -70,8 +70,8 @@ RenderTables build (Model model, ShapeSet set)
 {
     RenderTables t;
     const bool ideal = model == Model::B;
-    const std::vector<double> w12 = ideal ? ladderWeights (12, 2.0, true) : ladderWeights (12, kModelARatio, false);
-    const std::vector<double> w8 = ideal ? ladderWeights (8, 2.0, true) : ladderWeights (8, kModelARatio, false);
+    const LadderWeights w12 = ideal ? ladderWeights (12, 2.0, true) : ladderWeights (12, kModelARatio, false);
+    const LadderWeights w8 = ideal ? ladderWeights (8, 2.0, true) : ladderWeights (8, kModelARatio, false);
     t.dac = makeConverter (w12, ideal);
     for (unsigned v = 0; v < 4096; ++v)
         t.wave[v] = static_cast<float> ((ideal ? static_cast<double> (v) / 4095.0 : convert (w12, v)) - t.dac.center);
@@ -86,15 +86,15 @@ RenderTables build (Model model, ShapeSet set)
 }
 } // namespace
 
-std::vector<double> ladderWeights (int bits, double ratio, bool terminated)
+LadderWeights ladderWeights (int bits, double ratio, bool terminated) noexcept
 {
+    LadderWeights w {};
     const auto n = static_cast<std::size_t> (std::clamp (bits, 1, 16));
-    std::vector<double> w (n, 0.0);
     const double leg = 1.0 / ratio; // conductance of a bit's leg (series resistors have conductance 1)
     for (std::size_t b = 0; b < n; ++b)
     {
         // Tridiagonal nodal equations G v = I (Thomas algorithm); bit b at 1, every other bit at 0.
-        std::vector<double> diag (n), rhs (n, 0.0), cp (n), dp (n);
+        std::array<double, 16> diag {}, rhs {}, cp {}, dp {}, v {};
         for (std::size_t i = 0; i < n; ++i)
             diag[i] = leg + (i > 0 ? 1.0 : 0.0) + (i + 1 < n ? 1.0 : 0.0) + (i == 0 && terminated ? leg : 0.0);
         rhs[b] = leg;
@@ -106,17 +106,16 @@ std::vector<double> ladderWeights (int bits, double ratio, bool terminated)
             cp[i] = -1.0 / m;
             dp[i] = (rhs[i] + dp[i - 1]) / m;
         }
-        std::vector<double> v (n);
         v[n - 1] = dp[n - 1];
         for (std::size_t i = n - 1; i-- > 0;)
             v[i] = dp[i] - cp[i] * v[i + 1];
         w[b] = v[n - 1];
     }
     double sum = 0.0;
-    for (const double x : w)
-        sum += x;
-    for (double& x : w)
-        x /= sum;
+    for (std::size_t i = 0; i < n; ++i)
+        sum += w[i];
+    for (std::size_t i = 0; i < n; ++i)
+        w[i] /= sum;
     return w;
 }
 

@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdio>
 #include <cstdlib>
 #include <sstream>
 
@@ -280,11 +281,17 @@ AliasResult measureWrites (Model m, int mode, double hz, const RateConfig& rc)
     };
     const std::uint64_t first = 1000;
     const std::uint64_t step = mode == 0 ? kTick : 0;
+    // the signal's own lines lie every lineHz; the analysis needs at least 20 bins between two of them
+    // (the window's main lobe is +-7 bins)
+    const double lineHz = 985248.0 / static_cast<double> (period);
+    int n = 1 << 14;
+    while (rc.internalRate / n > lineHz / 20.0)
+        n <<= 1;
     // mode 1 alternates set (at the tick) and clear (300 cycles later): two writes per tick
     if (mode == 1)
     {
         std::vector<float> y;
-        const int total = kWarmup + (1 << 17);
+        const int total = kWarmup + n;
         y.assign (static_cast<std::size_t> (total), 0.0f);
         int done = 0;
         auto at = [&] (std::uint64_t i) { return first + (i / 2) * kTick + ((i % 2) == 0 ? 0u : 300u); };
@@ -295,13 +302,13 @@ AliasResult measureWrites (Model m, int mode, double hz, const RateConfig& rc)
                 write (c, index++);
         }
         y.erase (y.begin(), y.begin() + kWarmup);
-        auto r = offGridAlias (windowedMagnitudes (y), rc.internalRate, rc.band, 985248.0 / static_cast<double> (period));
+        auto r = offGridAlias (windowedMagnitudes (y), rc.internalRate, rc.band, lineHz, 8.0);
         r.corrections = c.renderCorrections();
         return r;
     }
     renderWithWrites (c, kWarmup, first, step, write, index);
-    const auto y = renderWithWrites (c, 1 << 17, first, step, write, index);
-    auto r = offGridAlias (windowedMagnitudes (y), rc.internalRate, rc.band, 985248.0 / static_cast<double> (period));
+    const auto y = renderWithWrites (c, n, first, step, write, index);
+    auto r = offGridAlias (windowedMagnitudes (y), rc.internalRate, rc.band, lineHz, 8.0);
     r.corrections = c.renderCorrections();
     return r;
 }
@@ -320,6 +327,7 @@ TEST_CASE ("render: alias budget, write discontinuities every tick (<= -90 dB to
                     INFO ((m == Model::A ? "Model A" : "Model B") << (mode == 0 ? ", waveform switch" : ", test-bit reset") << ", " << rc.internalRate
                                                                 << " Hz internal, " << hz << " Hz: worst " << a.worstDb << " dB at " << a.worstHz << " Hz");
                     CHECK (a.worstDb <= -90.0);
+                    CHECK (a.worstDb > -299.0); // something was measured: bins exist between the lines
                     CHECK (a.corrections == 0);
                     worst = std::max (worst, a.worstDb);
                 }
@@ -615,4 +623,44 @@ TEST_CASE ("render: a write's discontinuity lands at its exact cycle; latency is
             CHECK (early > 100.0 * exact); // the comparison resolves one cycle
             CHECK (late > 100.0 * exact);
         }
+}
+
+// Report (hidden): the worst alias per budget row group and internal rate, as a table on stdout.
+TEST_CASE ("render: alias report per budget row and internal rate", "[.render-report]")
+{
+    struct Group
+    {
+        const char* name;
+        std::vector<Row> rows;
+    };
+    const Group groups[] {
+        { "B tri/saw/pulse/sync/ring", basicRows (Model::B) },
+        { "A tri/saw/pulse/sync/ring", basicRows (Model::A) },
+        { "B combined", combinedRows (Model::B) },
+        { "A combined (gated rows)", select (combinedRows (Model::A), false) },
+        { "A combined (shortfall rows)", select (combinedRows (Model::A), true) },
+    };
+    std::printf ("%-30s %9s %12s %12s\n", "rows", "rate", "<=2k worst", "3.85k worst");
+    for (const auto& g : groups)
+        for (const auto& rc : rateConfigs())
+        {
+            double low = -300.0, high = -300.0;
+            for (const auto& r : g.rows)
+                for (const double hz : { 110.0, 1000.0, 2000.0, 3850.0 })
+                {
+                    const double db = measureRow (r, hz, rc).worstDb;
+                    (hz <= 2000.0 ? low : high) = std::max (hz <= 2000.0 ? low : high, db);
+                }
+            std::printf ("%-30s %9.0f %12.1f %12.1f\n", g.name, rc.internalRate, low, high);
+        }
+    for (const Model m : { Model::B, Model::A })
+        for (const int mode : { 0, 1 })
+            for (const auto& rc : rateConfigs())
+            {
+                double worst = -300.0;
+                for (const double hz : { 110.0, 1000.0, 2000.0 })
+                    worst = std::max (worst, measureWrites (m, mode, hz, rc).worstDb);
+                std::printf ("%-30s %9.0f %12.1f %12s\n", (std::string (m == Model::A ? "A " : "B ") + (mode == 0 ? "waveform switch/tick" : "test-bit reset/tick")).c_str(),
+                             rc.internalRate, worst, "-");
+            }
 }

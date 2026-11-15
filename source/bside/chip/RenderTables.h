@@ -30,7 +30,6 @@
 
 #include <array>
 #include <cstdint>
-#include <vector>
 
 namespace vs::bside::chip::render
 {
@@ -52,8 +51,10 @@ constexpr int tableSlot (std::uint8_t tspBits) noexcept
     }
 }
 
-/** Weights of an n-bit resistor ladder (see above), normalised to a sum of 1. n <= 16. */
-std::vector<double> ladderWeights (int bits, double ratio, bool terminated);
+/** Weights of an n-bit resistor ladder (see above), normalised to a sum of 1; entries from n on are 0.
+    n <= 16. Allocates nothing. */
+using LadderWeights = std::array<double, 16>;
+LadderWeights ladderWeights (int bits, double ratio, bool terminated) noexcept;
 
 struct Converter
 {
