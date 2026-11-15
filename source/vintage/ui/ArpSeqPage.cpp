@@ -88,6 +88,9 @@ ArpSeqPage::ArpSeqPage (UiContext& c, UiFeed& f, juce::AudioProcessorValueTreeSt
     binding.bind (state);
     setTitle ("Arp + Seq");
     setComponentID ("arpseq.page");
+    // Their labels are empty (the large switch and the pattern cards carry no label row), so name them for screen readers.
+    modeSwitch.setTitle ("Arpeggiator and sequencer mode");
+    pattern.setTitle ("Arpeggio pattern");
 
     modeIdx = c.mirror.indexOf (ParamID::arpMode);
     targetIdx = c.mirror.indexOf (ParamID::arpTarget);

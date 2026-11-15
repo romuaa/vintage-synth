@@ -17,6 +17,7 @@
 #include "common/ui/models/KeyboardModel.h"
 
 #include <array>
+#include <functional>
 
 namespace vs::ui
 {
@@ -46,6 +47,10 @@ public:
     /** The note this strip's mouse plays now (-1: none) and its velocity (tests). */
     int playingNote() const noexcept { return playing; }
     int playingVelocity() const noexcept { return playingVel; }
+    /** What was announced to screen readers when the last key was pressed ("C4, Upper"). `announce`, if set,
+        receives it instead of the platform (tests). */
+    const juce::String& lastAnnouncement() const noexcept { return announcement; }
+    std::function<void (const juce::String&)> announce;
 
     float shownValue() const override;
     bool showsMirroredValue (juce::String& why) const override;
@@ -94,6 +99,7 @@ private:
     const UiFeed& feed;
     UiNotes* notes = nullptr;
     int playing = -1, playingVel = 0; // the note the mouse plays now
+    juce::String announcement;
     bool playGesture = false;         // mouse-down on the keys until mouse-up
     float grabOffset = 0.0f;          // pill drag: pointer x minus the marker's x at the press
     int modeIndex = -1;

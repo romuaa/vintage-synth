@@ -1,5 +1,7 @@
 #include "common/ui/graphs/KeyboardStrip.h"
 
+#include "common/params/ParamFactory.h" // noteName
+
 namespace vs::ui
 {
 namespace
@@ -95,6 +97,13 @@ void KeyboardStrip::playAt (juce::Point<float> p)
     playingVel = geometry.velocityAt (note, p.y);
     if (notes != nullptr)
         notes->noteOn (note, playingVel);
+    // Screen readers: name the note that was pressed and who plays it ("C4, Upper").
+    const int owner = model::ownerMask (mode, splitNote, note);
+    announcement = noteName (note) + (owner == 3 ? ", Lower and Upper" : (owner == 2 ? ", Upper" : ", Lower"));
+    if (announce)
+        announce (announcement);
+    else
+        juce::AccessibilityHandler::postAnnouncement (announcement, juce::AccessibilityHandler::AnnouncementPriority::low);
 }
 
 void KeyboardStrip::releaseNote()

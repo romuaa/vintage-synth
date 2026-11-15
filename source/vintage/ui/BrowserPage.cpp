@@ -29,6 +29,27 @@ ProgramGrid::ProgramGrid (const Theme& t) : theme (t)
     setComponentID ("browser.grid");
 }
 
+std::unique_ptr<juce::AccessibilityHandler> ProgramGrid::createAccessibilityHandler()
+{
+    juce::AccessibilityActions actions;
+    juce::Component::SafePointer<ProgramGrid> self (this);
+    actions.addAction (juce::AccessibilityActionType::press, [self] {
+        if (self != nullptr && self->onLoad)
+            self->onLoad (self->selectedSlot);
+    });
+    return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::list, std::move (actions));
+}
+
+void ProgramGrid::setSelectionDescription (const juce::String& selected)
+{
+    const auto title = "Programs, selected " + selected;
+    if (title == getTitle())
+        return;
+    setTitle (title);
+    if (auto* h = getAccessibilityHandler())
+        h->notifyAccessibilityEvent (juce::AccessibilityEvent::titleChanged);
+}
+
 juce::Rectangle<int> ProgramGrid::cellBounds (int slot) const
 {
     const int row = slot / 8, col = slot % 8;
@@ -364,12 +385,40 @@ int ChipStrip::chipAt (juce::Point<int> p) const
     return -2;
 }
 
+juce::String ChipStrip::activeLabel() const
+{
+    return activeChip == 0 ? juce::String ("All") : chips[static_cast<size_t> (activeChip - 1)].label;
+}
+
+std::unique_ptr<juce::AccessibilityHandler> ChipStrip::createAccessibilityHandler()
+{
+    struct Value final : juce::AccessibilityTextValueInterface
+    {
+        explicit Value (ChipStrip& s) : strip (s) {}
+        bool isReadOnly() const override { return false; }
+        juce::String getCurrentValueAsString() const override { return strip.activeLabel(); }
+        void setValueAsString (const juce::String& text) override
+        {
+            if (text.equalsIgnoreCase ("All"))
+                strip.choose (0);
+            for (int i = 0; i < strip.numChips(); ++i)
+                if (strip.chips[static_cast<size_t> (i)].label.equalsIgnoreCase (text.trim()))
+                    strip.choose (i + 1);
+        }
+        ChipStrip& strip;
+    };
+    return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::group, juce::AccessibilityActions{},
+                                                         juce::AccessibilityHandler::Interfaces { std::make_unique<Value> (*this) });
+}
+
 void ChipStrip::choose (int index)
 {
     index = juce::jlimit (0, numChips(), index);
     if (index == activeChip)
         return;
     activeChip = index;
+    if (auto* h = getAccessibilityHandler())
+        h->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
     repaint();
     if (onChoose)
         onChoose (index);
@@ -539,6 +588,8 @@ public:
             return;
         index = i;
         repaint();
+        if (auto* h = getAccessibilityHandler())
+            h->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
         if (notify && onChange)
             onChange (index);
     }
@@ -575,6 +626,19 @@ public:
     }
     void focusGained (FocusChangeType) override { repaint(); }
     void focusLost (FocusChangeType) override { repaint(); }
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override
+    {
+        struct Value final : juce::AccessibilityTextValueInterface
+        {
+            explicit Value (ToneSourceSwitch& s) : sw (s) {}
+            bool isReadOnly() const override { return false; }
+            juce::String getCurrentValueAsString() const override { return sw.names[sw.index]; }
+            void setValueAsString (const juce::String& text) override { sw.set (text.containsIgnoreCase ("upper") ? 1 : 0, true); }
+            ToneSourceSwitch& sw;
+        };
+        return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::group, juce::AccessibilityActions{},
+                                                             juce::AccessibilityHandler::Interfaces { std::make_unique<Value> (*this) });
+    }
 
 private:
     PaintFonts fonts;
@@ -779,7 +843,7 @@ void BrowserPage::refreshState()
     if (meta.author.isNotEmpty())
         line += "   by " + meta.author;
     info->setProgram (meta.name, line, categoryName, categoryColour (group < 0 ? 0 : group));
-    grid.setTitle ("Programs, selected " + presets.positionName (selected) + " " + meta.name);
+    grid.setSelectionDescription (presets.positionName (selected) + " " + meta.name);
 
     // The selected program's Upper tone is not heard when its key mode is Whole.
     bool heard = true;

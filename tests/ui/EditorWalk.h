@@ -4,6 +4,7 @@
 
 #include "EditorRig.h"
 
+#include <cctype>
 #include <functional>
 #include <typeinfo>
 #include <vector>
@@ -24,6 +25,27 @@ inline void forEachVisible (juce::Component& root, const std::function<void (juc
 inline juce::String typeNameOf (const juce::Component& c)
 {
     return juce::String (typeid (c).name());
+}
+
+/** The class's own name without its namespaces and enclosing classes ("ToneSourceSwitch" for
+    vs::ui::BrowserPage::ToneSourceSwitch), from the Itanium-mangled name (GCC, Clang) or MSVC's readable one. */
+inline juce::String classNameOf (const juce::Component& c)
+{
+    const auto name = typeNameOf (c);
+    if (name.contains ("::")) // MSVC: "class vs::ui::BrowserPage::ToneSourceSwitch"
+        return name.fromLastOccurrenceOf ("::", false, false).trim();
+    const auto s = name.toStdString(); // "N2vs2ui11BrowserPage16ToneSourceSwitchE" or "6Slider" for an unnested one
+    size_t i = s.rfind ('E') == s.size() - 1 && s.front() == 'N' ? 1 : 0;
+    std::string last;
+    while (i < s.size() && std::isdigit (static_cast<unsigned char> (s[i])) != 0)
+    {
+        size_t n = 0;
+        while (i < s.size() && std::isdigit (static_cast<unsigned char> (s[i])) != 0)
+            n = n * 10 + static_cast<size_t> (s[i++] - '0');
+        last = s.substr (i, n);
+        i += n;
+    }
+    return last.empty() ? name : juce::String (last);
 }
 
 /** Every page and part the editor shows, in rail order: { page index, edited part }. */

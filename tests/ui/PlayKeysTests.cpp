@@ -464,3 +464,31 @@ TEST_CASE ("Play keys: the editor's notes feed the arpeggiator and obey the hold
         CHECK_FALSE (rig.proc.getLowerPart().isSounding());
     }
 }
+
+TEST_CASE ("Play keys: a pressed key is named to screen readers with the part that plays it, once per new note", "[ui][play][keys][a11y]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    PlayRig rig;
+    auto& strip = rig.strip();
+    std::vector<juce::String> heard;
+    strip.announce = [&] (const juce::String& s) { heard.push_back (s); };
+
+    rig.set ("key.mode", 2.0f); // Split at C4 (60)
+    rig.set ("key.split_point", 60.0f);
+    rig.tick();
+    strip.mouseDown (mouseAt (strip, onKey (strip, 48)));
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 48))); // the same key: nothing new
+    strip.mouseDrag (mouseAt (strip, onKey (strip, 67)));
+    strip.mouseUp (mouseAt (strip, onKey (strip, 67)));
+    REQUIRE (heard.size() == 2);
+    CHECK (heard[0] == "C3, Lower");
+    CHECK (heard[1] == "G4, Upper");
+
+    rig.set ("key.mode", 1.0f); // Dual: both parts
+    rig.tick();
+    strip.mouseDown (mouseAt (strip, onKey (strip, 72)));
+    strip.mouseUp (mouseAt (strip, onKey (strip, 72)));
+    REQUIRE (heard.size() == 3);
+    CHECK (heard[2] == "C5, Lower and Upper");
+    CHECK (strip.lastAnnouncement() == heard[2]);
+}
