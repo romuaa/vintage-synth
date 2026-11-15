@@ -330,6 +330,7 @@ void HelpBubble::showFor (const juce::String& t, juce::Rectangle<int> target, ju
     s.append (text, theme.font (metrics::kText), colour (Tok::BgWindow));
     s.setWordWrap (juce::AttributedString::byWord);
     constexpr float maxWidth = 320.0f, pad = 8.0f;
+    juce::TextLayout layout; // only measures the size
     layout.createLayout (s, maxWidth - 2.0f * pad);
     const int w = juce::roundToInt (juce::jmin (maxWidth, layout.getWidth() + 2.0f * pad + 2.0f));
     const int h = juce::roundToInt (layout.getHeight() + 2.0f * pad);
@@ -338,6 +339,9 @@ void HelpBubble::showFor (const juce::String& t, juce::Rectangle<int> target, ju
     if (b.getBottom() > limits.getBottom())
         b.setY (target.getY() - 6 - h);
     b = b.constrainedWithin (limits);
+    // The same wrapped text, drawn from prepared glyphs (inside the 8 px padding).
+    body.set (text, theme.font (metrics::kText), { pad, pad, static_cast<float> (b.getWidth()) - 2.0f * pad, static_cast<float> (b.getHeight()) - 2.0f * pad },
+              juce::Justification::topLeft, 20);
     setBounds (b);
     setVisible (true);
     toFront (false);
@@ -349,7 +353,8 @@ void HelpBubble::paint (juce::Graphics& g)
     const auto r = getLocalBounds().toFloat();
     g.setColour (colour (Tok::TextPrimary));
     g.fillRoundedRectangle (r, 6.0f);
-    layout.draw (g, r.reduced (8.0f));
+    g.setColour (colour (Tok::BgWindow));
+    body.draw (g);
 }
 
 // ---- OutputMeter ----

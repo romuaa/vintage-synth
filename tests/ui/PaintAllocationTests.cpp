@@ -72,6 +72,11 @@ void measurePage (EditorRig& rig, Walked& walked, const juce::String& state)
         for (auto* p = c.getParentComponent(); p != nullptr; p = p->getParentComponent())
             if (isJuceWidget (*p))
                 return;
+        // The one known exception (docs/decisions.md, M7f): the dashed outline of the external-change marker is built in
+        // paint() while a marker shows (2 s after a change from outside). The test lets that window pass before it
+        // measures, and fails here if a marker is still showing, so a measured component never hides the exception.
+        if (auto* bound = dynamic_cast<ui::BoundComponent*> (&c))
+            CHECK (bound->getMarkerAlpha() <= 0.0f);
         ++walked.measured;
         walked.types.insert (typeNameOf (c).toStdString());
         for (const bool focused : { false, true })
@@ -131,9 +136,28 @@ TEST_CASE ("Paint allocations: no component of any page builds a string, path or
     rig.set ("arp.mode", 2.0f);
     sweep ("busy, sequencer");
 
+    // The popover, the hover help and the help bubble are on top of the page: measured over every page.
+    {
+        auto& frame = rig.editor->getFrame();
+        for (const auto& [page, part] : allPages())
+        {
+            showPage (rig, page, part);
+            frame.openOutputPopover();
+            frame.hoverHelp (&frame.getMasterSlider()); // the help line shows the hovered control's text
+            frame.getHelpBubble().showFor ("A help bubble: a few sentences long enough to wrap onto a second and a third line inside its box.",
+                                           frame.getLocalArea (&frame.getMasterSlider(), frame.getMasterSlider().getLocalBounds()),
+                                           frame.getLocalBounds().reduced (4));
+            REQUIRE (frame.getHelpBubble().isVisible());
+            rig.tick (2200.0);
+            rig.tick (100.0);
+            measurePage (rig, walked, "popover open, help bubble shown, hover, page " + juce::String (page) + " part " + juce::String (part));
+            frame.closeOutputPopover();
+        }
+    }
+
     // The walk reached what it should: a few classes from each corner of the editor.
     for (const char* name : { "Slider", "SegmentedSwitch", "Toggle", "Panel", "ResponseCurveView", "ScopeView", "KeyboardStrip", "StepGrid", "ProgramGrid",
-                              "ChipStrip", "PageRail", "PartSwitch", "OutputMeter", "HelpLine", "EnvelopeView", "LfoView", "PianoRollView" })
+                              "ChipStrip", "PageRail", "PartSwitch", "OutputMeter", "HelpLine", "HelpBubble", "OutputPopover", "EnvelopeView", "LfoView", "PianoRollView" })
     {
         bool found = false;
         for (const auto& t : walked.types)

@@ -6,6 +6,7 @@
 
 #include "common/ui/HelpTexts.h"
 #include "common/ui/PaintFonts.h"
+#include "common/ui/PreparedText.h"
 #include "common/ui/Theme.h"
 
 #include <functional>
@@ -107,7 +108,7 @@ public:
 private:
     const Theme& theme;
     juce::String text;
-    juce::TextLayout layout;
+    PreparedText body; // laid out in showFor(): paint() allocates nothing (9.5)
 };
 
 /** Two peak bars, -48 ... 0 dBFS, peak hold 1 s, fall 20 dB/s, red above -0.1 dBFS. */
