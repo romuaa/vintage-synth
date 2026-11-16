@@ -1,120 +1,107 @@
 ---
 name: orchestrate
-description: Start or resume the orchestrator role - plan the next wave, brief implementation/test/review agents with the right model, verify their work, and merge through PRs. Use when the user types /orchestrate or asks to continue milestone work with agents.
+description: Start or resume the orchestrator role in this repository - the project-specific rules (serial files, worktrees, gates, model routing, commit rules) on top of the generic orchestration process. Use when the user types /orchestrate or asks to continue milestone work with agents.
 ---
 
-# Orchestrate
+# Orchestrate (Exitium Vintage Synth and B-Side)
 
-You are the orchestrator for the Exitium Vintage Synth VST3 repository: an experienced audio-plugin
-project manager and software architect. You plan, brief, verify and merge. You do not write
-feature code yourself; implementation and testing are done by agents you spawn.
+This file holds only what is specific to this repository. The process itself (startup, briefs,
+the pipeline, acceptance, records, reporting) is the owner's generic `orchestrate` skill; where
+the two differ, this file wins, and `CLAUDE.md` wins over both.
 
-## Startup (every session, before spawning anything)
+If the generic skill is not installed, the process in one line: contract first → brief →
+implementer → independent reviewer with its own harness → fixes → your own full
+`scripts/preflight.sh` → PR → merge only on the owner's word. You plan, brief, verify and merge;
+agents write the code.
 
-1. Read `CLAUDE.md`, `CHANGELOG.md`, `docs/decisions.md`, `docs/engineering-notes.md`,
-   `docs/architecture.md` (the contracts) and the skills in `.claude/skills/`. `CLAUDE.md` "Status"
-   and the CHANGELOG define where the project is; trust them over this file.
-2. Check `git status`, open branches and PRs (`gh pr list`), and CI (`gh run list --limit 5`).
-   Never push to `main` while a `main` build you still need is running.
-3. Tell the user in a few lines: current wave, what is merged, what is in flight, what you do next.
-   Then proceed without waiting, unless an item below requires the user's answer.
+## Startup
 
-## Standing permissions and limits (owner decision, 2026-11-12)
+1. Read `CLAUDE.md` (its "Status" section says where the project is and what comes next; trust it
+   over this file), `CHANGELOG.md`, `docs/decisions.md`, `docs/engineering-notes.md`,
+   `docs/architecture.md` (the contracts) and the skills in `.claude/skills/`.
+2. Check the repository: `git status`, all branches, worktrees, stashes, `gh pr list`.
+   `gh run list` shows only the `security` workflow; `build` never runs by itself.
+3. Tell the owner in a few lines what is merged, what is in flight and what comes next. **If
+   "Status" says the owner said "wait", start nothing** until the owner says "continue".
 
-- **Git:** agents commit on feature branches; you push them as PRs so CI validates Windows.
-  Merge to `main` only after the user approves that milestone. Never force-push, never commit to
-  `main` directly.
-- **You own acceptance:** read every diff, check raw gate output, do the merges, keep
-  `docs/decisions.md`, `CHANGELOG.md` and the `CLAUDE.md` Status section current.
-- **Judgement calls** (stealing policy, velocity routing, split behaviour, ranges): decide, log them
-  in `docs/decisions.md` marked "(review)", and carry on. Ask only when work is truly blocked.
-- **Audition gates:** stop for the user's ears at the end of M2, M5 and M6 (WAV + spectrogram in the
-  scratchpad via `VS_RENDER_DIR`), and for the UI direction before M7 starts.
-- All `CLAUDE.md` hard rules apply to every agent: real-time safety, no brand names,
-  AGPLv3-compatible dependencies only, alias gate, all three targets, never read ignored paths
-  or `build/`. Put the relevant ones in each brief; agents don't inherit this conversation.
+## Limits specific to this project
 
-## Wave plan (each wave merges before the next starts)
+- **Verification is local-first** (owner decision, permanent). Agents run `scripts/preflight.sh`
+  (`--quick` while iterating, the full default set for engine changes) and never push or trigger
+  CI. You rerun the full gate yourself before a PR. Windows and Linux x86_64 are confirmed by CI
+  only: at most one dispatched run per merge-ready branch
+  (`gh workflow run build.yml --ref <branch> -f targets=no-macos`), only when the owner has
+  Actions minutes, and you warn the owner before any batch. While CI is offline, add each merge
+  to "Merged without Windows / Linux x86_64 verification" in `CLAUDE.md`. Never claim those
+  platforms green without a passing run.
+- **Owner gates:** the owner judges by ear or eye (auditions, editor pages, factory sounds).
+  Prepare what they need: rendered WAV and spectrogram in the scratchpad via `VS_RENDER_DIR`,
+  or the plugin in the dev host (`scripts/dev-host.sh`).
+- **Judgement calls** (ranges, policies, panel interpretation): decide, log them in
+  `docs/decisions.md` marked "(review)", and carry on.
+- **Every brief names the hard rules that apply:** real-time safety, AGPLv3-compatible
+  dependencies only, the alias gates, all five targets, never read ignored paths or `build/`.
+- **No third-party brand names, part numbers or nicknames** anywhere in the repository, briefs
+  included. Describe the B-Side chip generically; its revisions are Model A and Model B. The
+  reference emulator and the other developer tools stay outside the repository and are never
+  named in it.
+- **Commit messages and PR descriptions never contain a `Claude-Session:` link** (owner
+  decision). End commit messages with the Co-Authored-By line only, and say so in every brief.
+- After a merge, delete the local branch too (GitHub deletes the remote one).
 
-| Wave | Serial track (touches `engine/Part`, `engine/Voice`, `PluginProcessor`) | Parallel tracks (new files only) |
-|---|---|---|
-| 0 | Orchestrator writes the contracts in `docs/architecture.md`: voice-allocator API, global/performance parameter list, stereo bus and FX send interface, arp/seq note-event interface | Warm-cache CI timing check; `voice_bench` at 16/32 voices |
-| 1 | **M2** polyphony + per-voice CPU optimisation | **M5** chorus/delay/reverb as JUCE-free blocks with tests; VST3 validator + golden-render harness |
-| 2 | **M3** Upper part, Whole/Dual/Split, stereo output | **M4** arpeggiator + sequencer as a pure note-event module with tests |
-| 3 | Integrate M4 and M5; **M6** presets, banks, state, goldens | Factory preset drafts for audition |
-| 4 | **M7** custom UI | **M8** signing, installers, release pipeline |
+## Serial files (one agent at a time)
 
-**Second instrument (chip synth, `docs/architecture.md` section 8):** S0 (extract the common
-library) is a serial step right after M3 merges, with no other engine work in flight. S1–S4 then
-run as a parallel track next to Waves 3–4, because they live in their own directory. Never write
-third-party brand names, part numbers or nicknames into the repository, briefs included: describe
-the chip generically and call the revisions Model A and Model B.
+- `source/vintage/engine/Part.*`, `source/vintage/engine/Voice.*`, both `PluginProcessor.*`,
+  and `source/common/shell/` (the shared processor skeleton).
+- Parameter lists (`PartParamList.h`, the shared and B-Side parameter files): new parameter IDs
+  are added in one serial step, by one agent, following the skill `add-parameter`.
+- The source lists in `CMakeLists.txt` (`VS_COMMON_SOURCES`, `VS_VINTAGE_SOURCES`,
+  `BS_SOURCES`) and `scripts/sanitize-targets.sh`.
+- The page list in `VintageEditor::buildPages`.
+- `docs/architecture.md`: changed only in its own commit, by you, before the code.
+- `source/bside/chip/` and `tests/bside/unit/IndependentModel.h` are never edited by the same
+  agent (the second is the independent check of the first).
 
-Constraints behind this plan:
+Vintage (`source/vintage/`) and B-Side (`source/bside/`) never include each other, so work on
+one runs in parallel with work on the other. At most 2–4 agents at once.
 
-- Only one agent at a time may edit `engine/Part.*`, `engine/Voice.*` or `PluginProcessor.*`.
-  At most 2-4 agents run concurrently; parallel work must live in new files.
-- New parameter IDs are added in one serial step per wave, by one agent, following the
-  `add-parameter` skill. Never in parallel branches. Same for `VS_PLUGIN_SOURCES` in `CMakeLists.txt`.
-- **CPU:** the baseline is 0.35 % of a core per voice (non-LTO), so 32 voices is about 11.5 %
-  against a 15 % budget, before M2's extra per-voice work and the effects. No milestone is done
-  while the budget is exceeded; check the current figure in the `validate-plugin` skill.
-- **Builds:** agents iterate arm64-only (`-DCMAKE_OSX_ARCHITECTURES=arm64`) in their own worktree
-  with their own build dir. Submodules are empty in a fresh worktree, and the sandbox refuses
-  `git config submodule.*` there. What worked: replace the empty `external/JUCE` and
-  `external/Catch2` directories with symlinks to the main checkout's copies. `git status` then
-  errors in that worktree, so the agent must commit with explicit paths (`git add <file>`, never
-  `git add -A`) and you take the commit by branch name. Agent worktrees live in
-  `.claude/worktrees/` (excluded locally); never stage that directory. **Worktrees start from
-  `main`, not from your current branch:** name the base branch in every brief and have the agent
-  create its branch from it. When an agent is finished and its branch is pushed, remove its
-  worktree (`git worktree remove --force`) so the branch can be checked out elsewhere. The universal
-  build, pluginval and `voice_bench` run at the gate, one at a time, with no other build running,
-  or the benchmark numbers are meaningless.
+## Worktrees and builds
 
-## Pipeline per work item
+- Agent worktrees live in `.claude/worktrees/` (excluded locally; never stage that directory),
+  each with its own build directory and branch. **Worktrees start from `main`, not from your
+  current branch:** name the base branch in every brief.
+- Submodules are empty in a fresh worktree, and the sandbox refuses `git config submodule.*`
+  there. What works: replace the empty `external/JUCE` and `external/Catch2` directories with
+  symlinks to the main checkout's copies. `git status` then errors in that worktree, so the agent
+  commits with explicit paths (`git add <file>`, never `git add -A`) and you take the commit by
+  branch name.
+- Agents never unpack, link or build inside the main checkout or a folder they did not create.
+- Agents iterate arm64-only (`-DCMAKE_OSX_ARCHITECTURES=arm64`). The universal build, pluginval
+  and the benchmarks (`voice_bench`, `fx_bench`, `chip_bench`) run at your gate, one at a time,
+  with no other build running, or the numbers mean nothing.
+- When an agent is finished, remove its worktree (`git worktree remove --force`).
 
-1. **Brief:** goal, the contract section, files the agent may touch, files it must not touch,
-   gates it must pass, what to return (branch name, diff summary, raw command output).
-2. **Implementer** builds against the contract.
-3. A separate **test agent** writes tests from the spec, not from the implementation.
-4. A fresh **reviewer** (not the author, not given the author's conclusions) runs the
-   `realtime-review` skill on the diff.
-5. A **verifier** runs build, ctest, pluginval strictness 10 and `voice_bench` and returns raw output.
-6. You accept or reject. Then push the PR and confirm macOS, Win x64 and Win ARM64 are green in CI
-   before calling it done. Never claim Windows is green without a passing run.
+## Budgets (gates; current figures in the skill `validate-plugin` and the contracts)
 
-**Commit messages and PR descriptions never contain a `Claude-Session:` link** (owner decision);
-end commit messages with the Co-Authored-By line only, and say so in every brief.
+- Vintage: 32 voices at 2× oversampling under 15 % of one core at 48 kHz, effects included.
+- B-Side: the S4 render budget and the alias budgets of `docs/architecture.md` 8.4.5 and 8.17.
 
-**Local-first (owner decision, permanent):** agents run `scripts/preflight.sh` (at least `--quick`;
-the full set for engine changes) and never push or trigger CI. You dispatch at most ONE CI run per
-merge-ready branch (`gh workflow run build.yml --ref <branch> -f targets=no-macos`), only when the
-owner has CI minutes; while CI is offline, record merges in `CLAUDE.md` under "Merged without
-Windows / Linux x86_64 verification". Warn the owner before any batch of CI runs.
-
-**CI minutes are billed while the repo is private.** Push each branch once, after steps 2–5 and a
-local sanitizer run and `scripts/linux-check.sh` (GCC in a container); batch docs with code; never push docs-only commits to a code PR. Open PRs as
-drafts (Windows x64 only) and mark them ready for the full matrix once, at the end.
+No item is done while a budget is exceeded.
 
 ## Model routing
 
 | Model | Used for |
 |---|---|
 | Orchestrator (session model) | Contracts, briefs, acceptance, merges, decision log |
-| `opus` | Voice allocator and stealing, CPU optimisation, chorus/reverb design, real-time review, diagnosing a failed quality gate |
-| `sonnet` | Implementation against a written interface: tests, benchmark, arp/seq logic, delay, parameter plumbing, CMake/CI, preset I/O, UI components, the verifier role |
-| `haiku` | CI watching, log triage, changelog/docs sync, brand-name grep |
+| `opus` | DSP and algorithm design, CPU optimisation, the chip model and its renderer, real-time code, independent review (with the skill `realtime-review` for audio-thread code), diagnosing a failed gate |
+| `sonnet` | Implementation against a written interface: tests, benchmarks, parameter plumbing, preset I/O, CMake and CI files, UI components |
+| `haiku` | Log triage, changelog and docs sync, simple searches |
 
-- **Escalation:** an agent that fails the same gate twice is not retried. Have a diagnostic test
-  written that isolates the stage, then hand the item one tier up.
-- Don't spawn an agent for something that is a handful of commands; do those checks yourself.
-- Rerun the agent's tests and benchmark yourself before accepting, and check that a passing CI test
-  really ran (a validator that "passes" in 0.2 s proves nothing until its output is checked).
-- The independent review pays off: brief the reviewer with the code and the contract, never with
-  the author's conclusions, and ask whether each test can actually fail.
+An agent that fails the same gate twice is not retried: have a diagnostic test written that
+isolates the stage, then hand the item one tier up.
 
 ## Reporting
 
-End every turn that stops with the "What I need from you" section (the owner's global instructions define it). State
-plainly which gates were not run and why. Report failures with their output, not a summary.
+End every turn that stops with the "What I need from you" section (the owner's global
+instructions define it). Say plainly which gates were not run and why; report failures with
+their output, not a summary.

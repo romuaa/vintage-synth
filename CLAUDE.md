@@ -115,9 +115,11 @@ GitHub deletes a PR's branch on merge; delete the local branch after each merge 
 
 **Skill `orchestrate` exists twice (2026-11-16):** the owner's personal, generic one
 (`~/.claude/skills/orchestrate/`) and this repository's (`.claude/skills/orchestrate/SKILL.md`).
-The personal one is the one a session lists; its first instruction is to read this repository's
-file, which overrides it (wave plan, permissions, commit rules). If a session did not read the
-repository's file, read it by hand before orchestrating.
+The personal one is the one a session lists and holds the process; its first instruction is to
+read this repository's file, which holds only what is specific to this project (serial files,
+worktrees, gates, model routing, commit rules) and overrides it. If a session did not read the
+repository's file, read it by hand before orchestrating. Checked 2026-11-16: `/orchestrate`
+loads the personal skill and reaches the repository's file through that instruction.
 
 **Next steps, in the order the owner was given. Owner, 2026-11-16: "wait". Start none of them
 until the owner says "continue" (or names another order):**

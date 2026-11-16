@@ -5,6 +5,12 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### Orchestrate skill trimmed (2026-11-16)
+- `.claude/skills/orchestrate/SKILL.md` now holds only what is specific to this repository (serial files,
+  worktrees, local-first gates, budgets, model routing, commit rules). Removed: the finished Wave 0–4 plan
+  and the steps from the time CI ran on every push (draft PRs, "green in CI before done", three targets).
+  The process itself is the owner's generic skill, which reads this file first.
+
 ### B-Side S2b-2 third review fixes (2026-11-16)
 - Fixes: ring state from a per-cycle source's accumulator at writes and activation; a predicted reset dropped
   when a write stops the source's rise; no pull-down confirmed by a sync reset; the gate re-read after a
