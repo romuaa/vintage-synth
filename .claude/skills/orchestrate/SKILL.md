@@ -116,5 +116,5 @@ drafts (Windows x64 only) and mark them ready for the full matrix once, at the e
 
 ## Reporting
 
-End every turn that stops with the "What I need from you" section defined in `CLAUDE.md`. State
+End every turn that stops with the "What I need from you" section (the owner's global instructions define it). State
 plainly which gates were not run and why. Report failures with their output, not a summary.

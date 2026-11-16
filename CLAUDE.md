@@ -139,7 +139,19 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Contract as built: architecture 8.15.2, 8.15.8, 8.16. Both reviewed independently and fixed.
   Not wired into the plugin yet. **Open:** the first Model B step after a waveform change is not
   proven (8.15.2 (c) step 5); pulse combinations fit worst (about 92 % of entries exact on
-  Model B). **Next:** S2b-2 (band-limited waveform rendering), the parameter step (8.7), then S3.
+  Model B).
+- **B-Side S2b-2 (band-limited waveform rendering) is merged to `main`** (owner approved
+  2026-11-16, with the open points below): `Chip::render` (`chip/ChipRender.cpp`, `RenderTables.*`): the three
+  oscillators after envelope and converter, before the filter; latency 8 internal samples; every
+  alias budget of 8.4.5 met with at least 3 dB to spare (measured before any decimator). The
+  shared `BlepTable.h` is now a template; Vintage's instance is bit-identical. Reviewed
+  independently four times (each of the first three rounds found defects in the prediction of
+  sync, ring and pull-downs around writes; a state check against the chip now guards them).
+  Contract as built: architecture 8.17. Not wired into the plugin. **Open:** three small known
+  defects (8.17: a synced pulse at frequency 0, a placeholder-shapes ring case, a frequency drop
+  on a sync source); cost is far above
+  the S4 budget (a cost step comes before S4); S4 must gate aliasing after its decimator.
+  **Next:** the render cost step, the parameter step (8.7), then S3 (filter and output path).
 - **B-Side S2a (chip digital core) is merged to `main`** (PR #24, owner approved 2026-11-15):
   `source/bside/chip/` follows the per-cycle specification (8.15); every committed
   trace replays without a mismatch (`bside_trace`; fields that depend on a combined-waveform
@@ -224,6 +236,9 @@ None right now. When a new one comes up, list it here; once decided, move it to 
       x86_64), the program engine, the allocation counter's `BS_NOINLINE` (2026-11-15).
   14. M7f: accessibility handlers, prepared text in controls, the editor walk's class-name
       parser (its MSVC branch has never run) (2026-11-15).
+  15. S2b-2: the renderer and the `BasicBlepTable` template (double-precision instance,
+      floating-point contraction may differ: one test accepts 1e-6 outside Apple Clang),
+      `chip_bench` (2026-11-16).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -395,40 +410,3 @@ Say plainly which of these steps you could not run locally (e.g. Windows ARM64 r
 | `realtime-review` | Writing or reviewing any code reachable from `processBlock` |
 | `release` | Signing, notarization, installers, version bumps |
 | `orchestrate` | Starting or resuming milestone work with agents (`/orchestrate`) |
-
-## Ending a turn — "What I need from you"
-
-If a turn stops because the next step is the user's, end it with a section titled
-**"What I need from you"**.
-
-- **Numbered list.** Each item is one concrete action or one decision.
-- **Each item says** what to do, where to do it (command, file, app, URL), and what to send back.
-- **Order:** the most blocking or quickest item first.
-- **After the list,** one line on what you carry on with meanwhile, or "Blocked until #1".
-- **Decisions:** give the options and mark your recommendation.
-- **Never bury a request** mid-update. If you need it, it goes in this section, even if it
-  was mentioned earlier in the turn.
-- **Nothing needed:** end with "Nothing needed from you right now" plus whether the work is
-  **finished** or **still going** (and what's next).
-
-Example — user action needed:
-
-```
-## What I need from you
-1. Install the build tools: run `! brew install cmake ninja` here. Send nothing back; I'll see the output.
-2. Choose the JUCE license: commercial (closed source, paid) or AGPLv3 (source must be published).
-   I recommend commercial if you plan to sell. Reply "commercial" or "AGPL".
-3. Apple notarization: put your Team ID in `cmake/signing.cmake` → `APPLE_TEAM_ID`, then reply "done".
-
-Meanwhile I'm writing the oscillator unit tests, which don't depend on any of these.
-```
-
-Example — nothing needed:
-
-```
-Nothing needed from you right now — M1 is finished: all tests and pluginval pass on macOS.
-Windows ARM64 is still building in CI; I'll report when it's green.
-```
-
-Bad (avoid): "…filter is done. Also could you maybe check the license thing at some point? Next
-I refactored the LFO…" A request buried in the middle like this is easy to miss.

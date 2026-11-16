@@ -159,6 +159,12 @@ TEST_CASE ("combined waveforms: building the tables and preparing a chip allocat
     // forced inside a shared test executable (another test may have built the statics already); its only
     // other step, the thread-safe static guard, does not allocate.
     auto t = std::make_unique<combined::ShapeTables>();
+    // The BLEP tables (common/dsp/BlepTable.h, vector storage; the short one is Vintage's too, the long one
+    // B-Side's for Model A's combined waveforms) allocate once per process on their first use, which a
+    // chip's construction makes (S2b-2); everything of our own (shape tables, render tables, the chip)
+    // allocates nothing. Take that first use outside the count.
+    (void) Chip::ShortBlep::get();
+    (void) Chip::LongBlep::get();
 #if VS_SEQ_COUNT_ALLOCATIONS
     {
         vs::seq::test::AllocationCounter probe;

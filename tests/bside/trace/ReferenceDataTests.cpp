@@ -5,8 +5,8 @@
 // SHA-256 and names the generator commits the files carry. The digital replay runs every trace through
 // our chip (docs/architecture.md 8.9.4, 8.15, ChipReplay.h): exact at every checkpoint, with the
 // shape exemption of 8.15.8 counted and reported per trace (`[replay]` lines on stdout); a `d_*` trace
-// may have no exemption. The analog tolerances need the chip's output path (S2b/S3) and report
-// themselves skipped until it exists.
+// may have no exemption. The analog tolerances need the chip's filter and output stage (S3) and report
+// themselves skipped until it exists; the rendered noise spectra (S2b) are in RenderReferenceTests.cpp.
 
 #include "bside/trace/ChipReplay.h"
 #include "bside/trace/ReferenceFormat.h"
@@ -360,5 +360,5 @@ TEST_CASE ("reference data: our fitted shapes against the S2a placeholder in the
 TEST_CASE ("reference data: analog tolerances against our chip", "[trace][reference][chip]")
 {
     // Compare.h: filter corners, resonance peaks, distortion, voice DC steps, noise spectra (8.9.4).
-    SKIP ("needs the chip's output path (S2b/S3): the digital core exists and is replayed above, but there is no audio path yet");
+    SKIP ("needs the chip's filter and output stage (S3); the rendered noise spectra are compared in RenderReferenceTests.cpp");
 }

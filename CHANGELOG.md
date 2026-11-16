@@ -5,6 +5,69 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2b-2 third review fixes (2026-11-16)
+- Fixes: ring state from a per-cycle source's accumulator at writes and activation; a predicted reset dropped
+  when a write stops the source's rise; no pull-down confirmed by a sync reset; the gate re-read after a
+  width write just before the rise (from the chip's first landing); the rising edge after a late reset;
+  no late falling edge at width 0; no carried flip back across a write; the gate re-derived after a
+  correction.
+- `Chip::renderCheckStates` / `renderStateMismatches` (white-box check, tests only); `[schedule]` with every
+  write kind (gate, sync, ring, raw bytes, restarts, dense writes, Authentic); the reviews' cases as
+  regression cases; hidden long runs `[.render-corrections-long]` (50 000 patches) and
+  `[.render-schedule-long]` (3 000 schedules), both clean.
+
+### B-Side S2b-2 second review fixes (2026-11-16)
+- Fixes: sync and ring from noise+saw sources (taken from the digital core); oscillator 1's one-cycle glitch
+  of its source oscillator 3; the pull-down's pulse gate at the rise from whole cycles; the Model A
+  pull-down followed landing by landing above one cell per step (rises, writes, corrections); predictions
+  across a write (pending pull-downs and resets, offU rescaled with the frequency, ring state after the
+  sources' pull-downs); two lines crossing at the same instant (an inverted ring); a pulse edge lost after a
+  reset reached late (a stuck gate).
+- Hysteresis of the Model A converter bits: taken back below half the limit; seeded afresh on a waveform
+  change.
+- Fades of a deselected output on the long kernel.
+- Tests: random write schedules against the chip's own output stream (`[schedule]`, noise combinations,
+  sync, ring, test bit) with two regression cases; noise combinations in the random-patch test; fades and
+  per-cycle noise combinations in the write-discontinuity gate; `[dac]` tightened (from the second frame,
+  tolerances just above the model's figures, saws only); the short-kernel golden replaced by an
+  independent model of a free-running saw (`[kernel]`); hysteresis cases of the review.
+- `Chip::renderLargeCorrections()` (corrections above 1e-4 of a period) and a test with writes a few cycles
+  into a sample (`[corrections]`); `chip_bench`: a noise+saw source case and a control-write-per-tick case.
+
+### B-Side S2b-2 review fixes (2026-11-15)
+- Fix: sync and ring from a Model A saw combination (the line simulation now applies the pull-down).
+- The stronger kernel (8 zero crossings, Kaiser beta 12, double precision) for every pulse and combined-
+  waveform step on both models; `BasicBlepTable` takes the sample type too (Vintage unchanged).
+- Gates extended: pulse widths 1 to 4095, combined waveforms at four widths, combined sync targets, sync
+  chains, ring on combined targets; a second, independent measurement (Kaiser window, 20 fundamentals);
+  comparison with the chip's own output stream; converter levels and harmonics against the reference;
+  no corrections over random patches; physical peak; timing through `render()`; smooth start; hysteresis.
+- Output pre-filled at activation; hysteresis for the Model A converter terms; tables built in place;
+  BLEP tables fetched in `prepare`; `chip_bench` cases of the review.
+
+### B-Side S2b-2 follow-up: a stronger kernel for Model A's combined waveforms (2026-11-15)
+- `common/dsp/BlepTable.h`: `BasicBlepTable<zeroCrossings, betaTenths>`; `BlepTable` stays Vintage's
+  8 / 8.0 (bit-identical tables; render goldens, alias gates and `voice_bench` unchanged).
+- B-Side: steps of Model A combined waveforms use 8 zero crossings, Kaiser beta 11 (with a second-order
+  correction of the table interpolation); every other step keeps the shared kernel, unchanged bit for bit
+  (golden test). Latency stays 8. The three Model A combined rows are normal alias gates now (12 dB inside).
+- `chip_bench`: a Model A combined case (the long kernel's cost).
+
+### B-Side S2b-2 — band-limited waveform rendering (2026-11-15)
+- `Chip::render` / `Chip::renderUntil` (`source/bside/chip/ChipRender.cpp`, design in `Chip.h` "RENDERING"):
+  per oscillator the band-limited waveform after the waveform converter, times the envelope converter,
+  summed (filter, mixer, volume and board filters follow in S3). BLEP/BLAMP from the shared table at every
+  edge, reset and write, placed at its exact sub-sample time; combined waveforms as exact band-limited
+  staircases; noise as band-limited sample-and-hold; sync resets predicted from the source's line; Model A
+  pull-down predicted; writes split a sample at their cycle (`renderUntil`). Latency 8 internal samples.
+- `source/bside/chip/RenderTables.*`: converter model (resistor ladder; Model A ratio 2.2 unterminated,
+  Model B ideal) and the combined-waveform step tables, built at prepare.
+- Tests (`ChipRenderTests.cpp`, `RenderReferenceTests.cpp`): alias budgets of 8.4.5 at every internal rate
+  of 4.4 (all rows pass except three Model A combined shapes: a known shortfall, isolated to the BLEP
+  kernel, test marked should-fail); digital state after rendering equals stepping (random writes, both
+  models, any split); bit-identical audio across block sizes; state independent of the internal rate; no
+  allocation; exact write timing and latency; noise spectra within 0.18 dB of the reference (allowed 1.5).
+- `chip_bench` (tests/bside/benchmarks): ns per internal sample per chip, typical and worst case.
 ### M7f editor polish (2026-11-15)
 - Our own paint code allocates nothing, in any component (strings, fonts and paths are made when a value or size
   changes; text layout inside the framework's renderer is not counted, 9.5). The one known exception is the dashed

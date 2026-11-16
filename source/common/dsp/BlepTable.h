@@ -17,27 +17,34 @@ namespace vs::dsp
     points covering t in (j, j + 1]. Cells use one-sided limits at t = 0, where the
     step residual jumps from +0.5 to -0.5.
 
-    Build once off the audio thread (BlepTable::get() in prepare()).
+    Build once off the audio thread (get() in prepare()).
+
+    One table per (zero crossings, Kaiser beta in tenths): `BlepTable` is the instance Vintage uses (8 zero
+    crossings, beta 8.0, float, unchanged); an instrument that needs more stop-band attenuation or precision
+    instantiates another one (B-Side: beta 12 in double precision for pulse edges and combined waveforms,
+    docs/decisions.md S2b-2); a longer one delays its output by its own kZeroCrossings.
 */
-class BlepTable
+template <int ZeroCrossings, int KaiserBetaTenths, class Sample = float>
+class BasicBlepTable
 {
 public:
-    static constexpr int kZeroCrossings = 8;  // taps on each side
+    using SampleType = Sample;
+    static constexpr int kZeroCrossings = ZeroCrossings;  // taps on each side
     static constexpr int kResolution = 512;   // table points per sample
     static constexpr double kCutoff = 0.45;   // of the (oversampled) rate
-    static constexpr double kKaiserBeta = 8.0;
+    static constexpr double kKaiserBeta = KaiserBetaTenths / 10.0;
 
-    static const BlepTable& get()
+    static const BasicBlepTable& get()
     {
-        static const BlepTable table;
+        static const BasicBlepTable table;
         return table;
     }
 
     /** Step residual at t = j + d (j in [-Z, Z-1], d in (0, 1]) for a unit step. */
-    float step (int j, float d) const noexcept { return lookup (stepCells, j, d); }
+    Sample step (int j, Sample d) const noexcept { return lookup (stepCells, j, d); }
 
     /** Ramp residual at t = j + d for a unit slope change (per sample). */
-    float ramp (int j, float d) const noexcept { return lookup (rampCells, j, d); }
+    Sample ramp (int j, Sample d) const noexcept { return lookup (rampCells, j, d); }
 
     /**
         The band-limiting kernel itself (the windowed sinc whose integrals are the step and ramp
@@ -45,14 +52,14 @@ public:
         interpolation in a table of kKernelResolution points per sample (error below 1e-7).
         Used to band-limit corrections that are not polynomial (the sine's hard-sync reset).
     */
-    float kernelAt (float t) const noexcept
+    Sample kernelAt (Sample t) const noexcept
     {
-        const float pos = std::abs (t) * static_cast<float> (kKernelResolution);
+        const Sample pos = std::abs (t) * static_cast<Sample> (kKernelResolution);
         const int k = static_cast<int> (pos);
         if (k >= kZeroCrossings * kKernelResolution)
             return 0.0f;
-        const float frac = pos - static_cast<float> (k);
-        const float* c = kernelCells.data() + k;
+        const Sample frac = pos - static_cast<Sample> (k);
+        const Sample* c = kernelCells.data() + k;
         return c[0] + (c[1] - c[0]) * frac;
     }
     static constexpr int kKernelResolution = 4096;
@@ -61,7 +68,7 @@ private:
     static constexpr int kCells = 2 * kZeroCrossings;
     static constexpr int kCellSize = kResolution + 1;
 
-    BlepTable()
+    BasicBlepTable()
     {
         stepCells.resize (static_cast<size_t> (kCells * kCellSize));
         rampCells.resize (static_cast<size_t> (kCells * kCellSize));
@@ -97,7 +104,7 @@ private:
         // The kernel (even), normalised like the residuals: kernelCells[k] = h (k / kKernelResolution) / norm.
         kernelCells.resize (static_cast<size_t> (kZeroCrossings * kKernelResolution + 1));
         for (size_t k = 0; k < kernelCells.size(); ++k)
-            kernelCells[k] = static_cast<float> (kernel (static_cast<double> (k) / kKernelResolution) / norm);
+            kernelCells[k] = static_cast<Sample> (kernel (static_cast<double> (k) / kKernelResolution) / norm);
 
         for (int j = -kZeroCrossings; j < kZeroCrossings; ++j)
             for (int k = 0; k <= kResolution; ++k)
@@ -107,8 +114,8 @@ private:
                 // One-sided limit at t = 0: cell j = -1 ends "just before" the edge.
                 const bool afterEdge = j >= 0;
                 const auto cell = static_cast<size_t> ((j + kZeroCrossings) * kCellSize + k);
-                stepCells[cell] = static_cast<float> (blep[idx] - (afterEdge ? 1.0 : 0.0));
-                rampCells[cell] = static_cast<float> (blep2[idx] - (t > 0.0 ? t : 0.0));
+                stepCells[cell] = static_cast<Sample> (blep[idx] - (afterEdge ? 1.0 : 0.0));
+                rampCells[cell] = static_cast<Sample> (blep2[idx] - (t > 0.0 ? t : 0.0));
             }
     }
 
@@ -133,17 +140,20 @@ private:
         return 2.0 * kCutoff * sinc * w;
     }
 
-    static float lookup (const std::vector<float>& cells, int j, float d) noexcept
+    static Sample lookup (const std::vector<Sample>& cells, int j, Sample d) noexcept
     {
-        const float pos = d * static_cast<float> (kResolution);
+        const Sample pos = d * static_cast<Sample> (kResolution);
         int k = static_cast<int> (pos);
         if (k >= kResolution)
             k = kResolution - 1;
-        const float frac = pos - static_cast<float> (k);
-        const float* c = cells.data() + (j + kZeroCrossings) * kCellSize + k;
+        const Sample frac = pos - static_cast<Sample> (k);
+        const Sample* c = cells.data() + (j + kZeroCrossings) * kCellSize + k;
         return c[0] + (c[1] - c[0]) * frac;
     }
 
-    std::vector<float> stepCells, rampCells, kernelCells;
+    std::vector<Sample> stepCells, rampCells, kernelCells;
 };
+
+/** Vintage's table (and B-Side's short kernel): 8 zero crossings, Kaiser beta 8.0. */
+using BlepTable = BasicBlepTable<8, 80>;
 } // namespace vs::dsp
