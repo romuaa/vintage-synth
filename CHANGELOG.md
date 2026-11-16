@@ -5,6 +5,17 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S2b-2 third review fixes (2026-11-16)
+- Fixes: ring state from a per-cycle source's accumulator at writes and activation; a predicted reset dropped
+  when a write stops the source's rise; no pull-down confirmed by a sync reset; the gate re-read after a
+  width write just before the rise (from the chip's first landing); the rising edge after a late reset;
+  no late falling edge at width 0; no carried flip back across a write; the gate re-derived after a
+  correction.
+- `Chip::renderCheckStates` / `renderStateMismatches` (white-box check, tests only); `[schedule]` with every
+  write kind (gate, sync, ring, raw bytes, restarts, dense writes, Authentic); the reviews' cases as
+  regression cases; hidden long runs `[.render-corrections-long]` (50 000 patches) and
+  `[.render-schedule-long]` (3 000 schedules), both clean.
+
 ### B-Side S2b-2 second review fixes (2026-11-16)
 - Fixes: sync and ring from noise+saw sources (taken from the digital core); oscillator 1's one-cycle glitch
   of its source oscillator 3; the pull-down's pulse gate at the rise from whole cycles; the Model A

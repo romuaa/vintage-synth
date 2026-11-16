@@ -352,6 +352,12 @@ public:
     std::uint64_t renderCorrections() const noexcept { return rs.corrections; }
     /** The corrections larger than 1e-4 of a period (the others round the sub-cycle time of a sync reset). */
     std::uint64_t renderLargeCorrections() const noexcept { return rs.largeCorrections; }
+    /** Test aid (white-box): when on, every sample end compares the renderer's pulse gate and ring state
+        with the chip's own comparison and the ring source's top bit, wherever the digital line is more
+        than three cycles from a boundary (wrap, half, width), no write and no prediction is pending; a
+        difference is counted. Off by default (one branch per sample). */
+    void renderCheckStates (bool on) noexcept { renderCheck = on; }
+    std::uint64_t renderStateMismatches() const noexcept { return rs.stateMismatches; }
     /** Times the set of Model A converter bits rendered as square waves changed with the frequency (each a
         small band-limited step; hysteresis keeps a vibrato around a limit from repeating it). */
     std::uint64_t renderConverterSwitches() const noexcept { return rs.converterSwitches; }
@@ -809,6 +815,7 @@ private:
         std::array<double, 3> leftValue {}, leftSlope {}, leftSlopeU {}; // captured before a write
         std::uint64_t corrections = 0; // re-anchorings that moved a line (diagnostic)
         std::uint64_t largeCorrections = 0; // of those, the ones above 1e-4 of a period
+        std::uint64_t stateMismatches = 0;  // renderCheckStates: gate or ring state unlike the chip's
         std::uint64_t converterSwitches = 0; // changes of the set of Model A converter bits rendered (diagnostic)
     };
     struct PieceEvents; // ChipRender.cpp
@@ -825,7 +832,10 @@ private:
     bool renderPullDown (int n, double t, bool atWrite) noexcept;
     int renderPullCell (int n, int cell, double tCross) const noexcept;
     bool renderGateAtRise (int n, double tCross) const noexcept;
+    bool renderGateAfterRise (int n, double tCross) const noexcept;
     void renderLanding (int n, double tw) noexcept;
+    void renderCheckSample() noexcept;
+    bool renderCheck = false;
     void renderEmit (int n, double t, double dv, double ds) noexcept;
     void renderEmitWith (int n, double t, double dv, double ds, bool longKernel) noexcept;
     double renderSlopeU (int n) const noexcept; // periods per cycle

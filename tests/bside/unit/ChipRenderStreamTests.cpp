@@ -8,10 +8,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <complex>
 #include <functional>
+#include <mutex>
 #include <string>
+#include <thread>
 
 using namespace bs_render_test;
 namespace ctrl = vs::bside::chip::ctrl;
@@ -37,13 +40,14 @@ double i0 (double x)
     largest complex difference relative to the strongest line, in dB. The digital stream itself is sampled
     at 1 MHz and the rendering leads it by 0 to 1 cycle, so the difference grows with frequency; what the
     test catches are wrong shapes (an inverted ring, a missing or extra reset), tens of dB above that. */
-Chip makeChipWith (Model m, double rate, vs::bside::chip::ShapeSet shapes)
+Chip makeChipWith (Model m, double rate, vs::bside::chip::ShapeSet shapes, bool authentic = false)
 {
     Chip c;
     Config cfg;
     cfg.model = m;
     cfg.internalRate = rate;
     cfg.shapes = shapes;
+    cfg.authentic = authentic;
     c.prepare (cfg);
     return c;
 }
@@ -269,7 +273,9 @@ TEST_CASE ("render: no corrections and a physical peak over random patches witho
 namespace
 {
 /** One write of a schedule: all three oscillators (kind 0: controls), or oscillator n only (1: frequency,
-    2: width, 3: the test bit). The registers it holds are the full state after the write. */
+    2: width, 3: the test bit, 7: the gate, 8: sync or ring); 4: one raw register write (reg, value);
+    5: powerOnKeepingTime(); 6: clearEnvelopeCounters (n). f, pw, ct hold the generator's view of the
+    oscillators after the write (kinds 0-3, 7, 8 write them through setOscillator). */
 struct ScheduledWrite
 {
     std::uint64_t at = 0;
@@ -278,13 +284,21 @@ struct ScheduledWrite
     double f[3] {};
     float pw[3] {};
     std::uint8_t ct[3] {};
+    std::uint8_t reg = 0, value = 0;
 };
 
 void applyWrite (Chip& c, const ScheduledWrite& w)
 {
-    for (int q = 0; q < 3; ++q)
-        if (w.kind == 0 || q == w.n)
-            setOsc (c, q, w.f[q], w.pw[q], w.ct[q]);
+    if (w.kind == 4)
+        c.write (w.reg, w.value);
+    else if (w.kind == 5)
+        c.powerOnKeepingTime();
+    else if (w.kind == 6)
+        c.clearEnvelopeCounters (w.n);
+    else
+        for (int q = 0; q < 3; ++q)
+            if (w.kind == 0 || q == w.n)
+                setOsc (c, q, w.f[q], w.pw[q], w.ct[q]);
 }
 
 struct Schedule
@@ -292,29 +306,44 @@ struct Schedule
     Model m = Model::A;
     vs::bside::chip::ShapeSet shapes = vs::bside::chip::ShapeSet::fitted;
     double rate = 96000.0;
+    bool authentic = false;
     ScheduledWrite initial;
     std::vector<ScheduledWrite> writes;
     std::uint64_t total = 240000; // cycles rendered
 };
 
-/** A random patch (noise combinations, sync and ring included; no sync chains, 8.15.2 (d)) and about 70
-    writes at random cycles: controls, frequency, width, test bit. Widths are whole: a fractional width is
-    rendered continuous (pulseWidthSmooth), the chip compares the integer part. */
+/** A random patch and a random schedule of writes. Patch: every one of the 16 waveform values, sync and
+    ring (no sync chains, 8.15.2 (d), at the controls the generator writes; a raw write may make one),
+    both models and shape sets, every internal rate, Authentic or not. Writes, at random cycles (dense:
+    30 to 600 cycles apart in a third of the schedules, else 300 to 6000): all three controls, a frequency,
+    a width, the test bit, the gate, sync or ring, a raw single register byte, powerOnKeepingTime,
+    clearEnvelopeCounters. Widths are whole: a fractional width is rendered continuous (pulseWidthSmooth),
+    the chip compares the integer part. */
 Schedule randomSchedule (bst::Rng& rng)
 {
-    static constexpr std::uint8_t waves[] { 0x10, 0x20, 0x40, 0x30, 0x50, 0x60, 0x70, 0x00, 0x80, 0x90, 0xa0, 0xc0, 0xf0, 0xb0, 0xe0 };
     Schedule s;
     s.m = rng.chance (50) ? Model::A : Model::B;
     s.shapes = rng.chance (33) ? vs::bside::chip::ShapeSet::placeholder : vs::bside::chip::ShapeSet::fitted;
     s.rate = rateConfigs()[rng.below (7)].internalRate;
+    s.authentic = rng.chance (25);
     const bool syncRing = rng.chance (60);
-    auto pick = [&] (std::uint8_t* ct) {
-        for (int n = 0; n < 3; ++n)
-            ct[n] = static_cast<std::uint8_t> (waves[rng.below (static_cast<std::uint32_t> (std::size (waves)))]
-                                               | (syncRing && rng.chance (50) ? ctrl::sync : 0) | (syncRing && rng.chance (25) ? ctrl::ring : 0) | ctrl::gate);
+    const bool dense = rng.chance (33);
+    auto noChain = [] (std::uint8_t* ct) {
         for (int n = 0; n < 3; ++n)
             if ((ct[n] & ctrl::sync) != 0 && (ct[vs::bside::chip::detail::syncSource (n)] & ctrl::sync) != 0)
                 ct[n] = static_cast<std::uint8_t> (ct[n] & ~ctrl::sync);
+    };
+    // a write of oscillator n alone may only change n: it drops its own sync bit if that would make a chain
+    auto noChainAt = [] (std::uint8_t* ct, int n) {
+        const int src = vs::bside::chip::detail::syncSource (n), tgt = vs::bside::chip::detail::syncTarget (n);
+        if ((ct[n] & ctrl::sync) != 0 && ((ct[src] & ctrl::sync) != 0 || (ct[tgt] & ctrl::sync) != 0))
+            ct[n] = static_cast<std::uint8_t> (ct[n] & ~ctrl::sync);
+    };
+    auto pick = [&] (std::uint8_t* ct) {
+        for (int n = 0; n < 3; ++n)
+            ct[n] = static_cast<std::uint8_t> ((rng.below (16) << 4) | (syncRing && rng.chance (50) ? ctrl::sync : 0) | (syncRing && rng.chance (25) ? ctrl::ring : 0)
+                                               | (rng.chance (90) ? ctrl::gate : 0));
+        noChain (ct);
     };
     auto freq = [&] {
         const int r = rng.range (0, 4);
@@ -332,12 +361,13 @@ Schedule randomSchedule (bst::Rng& rng)
     std::uint64_t at = 20000;
     while (true)
     {
-        at += static_cast<std::uint64_t> (rng.range (300, 6000));
+        at += static_cast<std::uint64_t> (dense ? rng.range (30, 600) : rng.range (300, 6000));
         if (at + 3000 > s.total)
             break;
         ScheduledWrite w = cur;
         w.at = at;
-        w.kind = static_cast<int> (rng.below (4));
+        const unsigned r = rng.below (100);
+        w.kind = r < 25 ? 0 : r < 40 ? 1 : r < 52 ? 2 : r < 60 ? 3 : r < 70 ? 7 : r < 80 ? 8 : r < 92 ? 4 : r < 96 ? 6 : 5;
         w.n = static_cast<int> (rng.below (3));
         if (w.kind == 0)
             pick (w.ct);
@@ -345,8 +375,28 @@ Schedule randomSchedule (bst::Rng& rng)
             w.f[w.n] = rng.chance (20) ? freq() : rng.below (65536) + 0.25;
         else if (w.kind == 2)
             w.pw[w.n] = static_cast<float> (rng.below (4096));
-        else
+        else if (w.kind == 3)
             w.ct[w.n] = static_cast<std::uint8_t> (w.ct[w.n] ^ ctrl::test);
+        else if (w.kind == 7)
+            w.ct[w.n] = static_cast<std::uint8_t> (w.ct[w.n] ^ ctrl::gate);
+        else if (w.kind == 8)
+        {
+            w.ct[w.n] = static_cast<std::uint8_t> (w.ct[w.n] ^ (rng.chance (50) ? ctrl::sync : ctrl::ring));
+            noChainAt (w.ct, w.n);
+        }
+        else if (w.kind == 4)
+        {
+            // one byte of an oscillator's registers (0..6), or of the filter and volume (0x15..0x18)
+            w.reg = static_cast<std::uint8_t> (rng.chance (85) ? 7 * w.n + static_cast<int> (rng.below (7)) : 0x15 + static_cast<int> (rng.below (4)));
+            w.value = static_cast<std::uint8_t> (rng.below (256));
+            if (w.reg % 7 == 4 && w.reg < 21)
+            {
+                const int q = w.reg / 7;
+                w.ct[q] = w.value;
+                noChainAt (w.ct, q);
+                w.value = w.ct[q];
+            }
+        }
         s.writes.push_back (w);
         cur = w;
     }
@@ -356,6 +406,8 @@ Schedule randomSchedule (bst::Rng& rng)
 struct ScheduleResult
 {
     std::uint64_t corrections = 0;
+    std::uint64_t largeCorrections = 0; // above 1e-4 of a period
+    std::uint64_t stateMismatches = 0;  // Chip::renderCheckStates
     double worst = 0.0; // the largest difference of the smoothed signals (full scale 1 per oscillator)
     double rms = 0.0;
 };
@@ -370,7 +422,8 @@ struct ScheduleResult
     frequencies, 0.04 typical. */
 ScheduleResult runSchedule (const Schedule& s)
 {
-    Chip r = makeChipWith (s.m, s.rate, s.shapes);
+    Chip r = makeChipWith (s.m, s.rate, s.shapes, s.authentic);
+    r.renderCheckStates (true);
     applyWrite (r, s.initial);
     const double cps = cyclesPerSample (r);
     std::vector<float> y;
@@ -398,7 +451,7 @@ ScheduleResult runSchedule (const Schedule& s)
 
     // the digital twin: the same writes at the same cycles; the value after each step holds for one cycle
     const auto& T = vs::bside::chip::render::tablesFor (s.m, s.shapes);
-    Chip d = makeChipWith (s.m, s.rate, s.shapes);
+    Chip d = makeChipWith (s.m, s.rate, s.shapes, s.authentic);
     applyWrite (d, s.initial);
     std::vector<double> v;
     v.reserve (static_cast<std::size_t> (s.total));
@@ -445,6 +498,8 @@ ScheduleResult runSchedule (const Schedule& s)
     };
     ScheduleResult res;
     res.corrections = r.renderCorrections();
+    res.largeCorrections = r.renderLargeCorrections();
+    res.stateMismatches = r.renderStateMismatches();
     const int from = static_cast<int> (8000.0 / cps) + reachS; // after the attack
     const int to = static_cast<int> (y.size()) - reachS - 1;
     double sum = 0.0;
@@ -462,7 +517,7 @@ ScheduleResult runSchedule (const Schedule& s)
 }
 } // namespace
 
-TEST_CASE ("render: random write schedules against the chip's own stream (noise combinations, sync, ring, test bit)", "[render][stream][schedule]")
+TEST_CASE ("render: random write schedules against the chip's own stream (every waveform, sync, ring, every write kind)", "[render][stream][schedule]")
 {
     bst::Rng rng (2024);
     double worst = 0.0, rms = 0.0;
@@ -470,11 +525,16 @@ TEST_CASE ("render: random write schedules against the chip's own stream (noise 
     {
         const Schedule s = randomSchedule (rng);
         const auto res = runSchedule (s);
-        INFO ("trial " << trial << ", " << (s.m == Model::A ? "Model A" : "Model B") << ", " << s.rate << " Hz, controls " << int (s.initial.ct[0]) << " "
-                       << int (s.initial.ct[1]) << " " << int (s.initial.ct[2]) << ": corrections " << res.corrections << ", worst " << res.worst << ", rms " << res.rms);
-        CHECK (res.corrections == 0);
+        INFO ("trial " << trial << ", " << (s.m == Model::A ? "Model A" : "Model B") << ", " << s.rate << " Hz" << (s.authentic ? ", Authentic" : "") << ", "
+                       << s.writes.size() << " writes, controls " << int (s.initial.ct[0]) << " " << int (s.initial.ct[1]) << " " << int (s.initial.ct[2])
+                       << ": corrections " << res.corrections << " (" << res.largeCorrections << " large), state mismatches " << res.stateMismatches
+                       << ", worst " << res.worst << ", rms " << res.rms);
+        CHECK (res.largeCorrections == 0);
+        CHECK (res.stateMismatches == 0);
         CHECK (res.worst <= 0.3);
-        CHECK (res.rms <= 0.03);
+        // (no bound on the rms: a static combined waveform at the top of the range, sampled at the clock,
+        // reaches 0.1 rms against the continuous rendering, with nothing wrong; the worst value and the
+        // state check are the defect detectors)
         worst = std::max (worst, res.worst);
         rms = std::max (rms, res.rms);
     }
@@ -548,85 +608,278 @@ TEST_CASE ("render: against the chip's own stream, two cases the random schedule
     }
 }
 
+namespace
+{
+/** A schedule from full oscillator states: the initial one and writes {cycle, kind, n, states}. */
+Schedule fixedSchedule (Model m, vs::bside::chip::ShapeSet shapes, double rate, std::uint64_t total, const double (&f)[3], const float (&pw)[3], const std::uint8_t (&ct)[3])
+{
+    Schedule s;
+    s.m = m;
+    s.shapes = shapes;
+    s.rate = rate;
+    s.total = total;
+    for (int n = 0; n < 3; ++n)
+    {
+        s.initial.f[n] = f[n];
+        s.initial.pw[n] = pw[n];
+        s.initial.ct[n] = ct[n];
+    }
+    return s;
+}
+
+ScheduledWrite after (const Schedule& s, std::uint64_t at, int kind, int n)
+{
+    ScheduledWrite w = s.writes.empty() ? s.initial : s.writes.back();
+    w.at = at;
+    w.kind = kind;
+    w.n = n;
+    return w;
+}
+} // namespace
+
+// Hidden, for manual use: 3 000 random schedules (as "[schedule]"), on all cores.
+TEST_CASE ("render: random write schedules against the chip's own stream, long run", "[.render-schedule-long]")
+{
+    constexpr int count = 3000;
+    std::vector<Schedule> all;
+    bst::Rng rng (4711);
+    for (int i = 0; i < count; ++i)
+        all.push_back (randomSchedule (rng));
+    std::atomic<int> next { 0 };
+    std::mutex mu;
+    std::vector<std::string> bad;
+    double worst = 0.0;
+    std::vector<std::thread> pool;
+    for (unsigned t = 0; t < std::max (1u, std::thread::hardware_concurrency()); ++t)
+        pool.emplace_back ([&] {
+            for (int i; (i = next++) < count;)
+            {
+                const auto r = runSchedule (all[static_cast<std::size_t> (i)]);
+                std::lock_guard<std::mutex> lock (mu);
+                worst = std::max (worst, r.worst);
+                if (r.largeCorrections != 0 || r.stateMismatches != 0 || r.worst > 0.3)
+                    bad.push_back (std::to_string (i) + " (large " + std::to_string (r.largeCorrections) + ", mismatches " + std::to_string (r.stateMismatches)
+                                   + ", worst " + std::to_string (r.worst) + ")");
+            }
+        });
+    for (auto& th : pool)
+        th.join();
+    std::string list;
+    for (const auto& b : bad)
+        list += " " + b;
+    WARN (count << " schedules, largest smoothed difference " << worst << "; with a finding:" << list);
+    CHECK (bad.empty());
+}
+
+TEST_CASE ("render: the third review's cases against the chip's own stream and the state check", "[render][stream][schedule]")
+{
+    using vs::bside::chip::ShapeSet;
+    auto check = [] (const char* name, const Schedule& s, double tol) {
+        const auto res = runSchedule (s);
+        INFO (name << ": large corrections " << res.largeCorrections << ", state mismatches " << res.stateMismatches << ", smoothed difference " << res.worst);
+        CHECK (res.largeCorrections == 0);
+        CHECK (res.stateMismatches == 0);
+        CHECK (res.worst <= tol);
+    };
+    // F1: a ring target whose source is in per-cycle mode (Model A noise+saw: its top bit never changes
+    // again) must take the source's top bit from the accumulator at a write, not from the line (which
+    // carries offU); a write anywhere (here oscillator 3's gate) recomputed it, inverted, for good
+    for (const std::uint64_t w : { 40133u, 40269u })
+    {
+        Schedule s = fixedSchedule (Model::A, ShapeSet::fitted, 384000.0, 60000, { 61632.37, 11633.96, 65427.37 }, { 2048.0f, 2048.0f, 2048.0f }, { 0x23, 0x15, 0x21 });
+        auto w1 = after (s, 30000, 0, 0);
+        w1.ct[0] = 0xa1;
+        s.writes.push_back (w1);
+        auto w2 = after (s, w, 7, 2);
+        w2.ct[2] = 0x20;
+        s.writes.push_back (w2);
+        check ("F1: ring from a noise+saw source, a write elsewhere", s, 0.3);
+    }
+    // F2: a write that stops the source's rise (here its test bit) after the source's line has crossed: the
+    // target's predicted reset must be dropped
+    for (const std::uint64_t w : { 40553u, 41185u })
+    {
+        Schedule s = fixedSchedule (Model::B, ShapeSet::fitted, 192000.0, 60000, { 35658.0, 27409.0, 26524.0 }, { 2048.0f, 2048.0f, 2048.0f }, { 0x21, 0x21, 0x23 });
+        auto w1 = after (s, 30000, 0, 0);
+        w1.ct[0] = 0x23;
+        w1.ct[2] = 0x21;
+        s.writes.push_back (w1);
+        auto w2 = after (s, w, 3, 2);
+        w2.ct[2] = 0x29;
+        s.writes.push_back (w2);
+        check ("F2: the source's test bit set after its line crossed", s, 0.3);
+    }
+    // F4 (placeholder shapes): a width write one step before the rise; the gate forced open at the rise from
+    // the stale comparison must be re-read a cycle later with the new width
+    {
+        Schedule s = fixedSchedule (Model::A, ShapeSet::placeholder, 384000.0, 60000, { 64407.37, 0.0, 0.0 }, { 405.0f, 2048.0f, 2048.0f }, { 0x71, 0x00, 0x00 });
+        Chip probe = makeChipWith (Model::A, 384000.0, ShapeSet::placeholder);
+        applyWrite (probe, s.initial);
+        probe.advanceCycles (30000);
+        while ((probe.accumulator (0) >> 16) != 0x7f)
+            probe.stepCycle();
+        auto w1 = after (s, probe.cycle(), 2, 0);
+        w1.pw[0] = 2646.0f;
+        s.writes.push_back (w1);
+        check ("F4: a width write one step before the rise (placeholder shapes)", s, 0.3);
+    }
+    // F5: a reset reached late loses the falling edge (row 21) and, at a narrow width, the rising edge after it
+    {
+        Schedule s = fixedSchedule (Model::B, ShapeSet::fitted, 352800.0, 120000, { 61432.37, 63771.37, 63235.37 }, { 2048.0f, 2.0f, 2048.0f }, { 0x23, 0x41, 0x21 });
+        auto w1 = after (s, 30000, 0, 0);
+        w1.ct[0] = 0xe1;
+        w1.ct[1] = 0x43;
+        s.writes.push_back (w1);
+        check ("F5: a late reset of a narrow pulse", s, 0.3);
+    }
+}
+
+namespace
+{
+struct NearWriteResult
+{
+    std::uint64_t corrections = 0, large = 0, mismatches = 0;
+};
+
+/** One patch of the review's harness kind: a random patch (noise combinations, sync, ring, test bit, both
+    models and shape sets, every rate, Authentic in a quarter), blocks of 256 samples, and after a third of
+    them a write 1 to 40 cycles into the next sample. mode 0: mixed (the next three and a test-bit toggle),
+    1: a frequency, 2: a width, 3: all three controls. */
+NearWriteResult nearWritePatch (int mode, std::uint64_t seed)
+{
+    static constexpr std::uint8_t waves[] { 0x10, 0x20, 0x40, 0x30, 0x50, 0x60, 0x70, 0x00, 0x80, 0x90, 0xa0, 0xc0, 0xf0 };
+    bst::Rng rng (seed);
+    const Model m = rng.chance (50) ? Model::A : Model::B;
+    const auto shapes = rng.chance (33) ? vs::bside::chip::ShapeSet::placeholder : vs::bside::chip::ShapeSet::fitted;
+    Chip c = makeChipWith (m, rateConfigs()[rng.below (7)].internalRate, shapes, rng.chance (25));
+    c.renderCheckStates (true);
+    std::uint8_t ct[3] {};
+    auto pick = [&] {
+        for (int n = 0; n < 3; ++n)
+            ct[n] = static_cast<std::uint8_t> (waves[rng.below (static_cast<std::uint32_t> (std::size (waves)))] | (rng.chance (50) ? ctrl::sync : 0)
+                                               | (rng.chance (25) ? ctrl::ring : 0) | ctrl::gate | (rng.below (40) == 0 ? ctrl::test : 0));
+        for (int n = 0; n < 3; ++n)
+            if ((ct[n] & ctrl::sync) != 0 && (ct[vs::bside::chip::detail::syncSource (n)] & ctrl::sync) != 0)
+                ct[n] = static_cast<std::uint8_t> (ct[n] & ~ctrl::sync);
+    };
+    pick();
+    double f[3];
+    float pw[3];
+    for (int n = 0; n < 3; ++n)
+    {
+        const int r = rng.range (0, 4);
+        f[n] = r == 0 ? static_cast<double> (rng.below (65536)) : r == 1 ? 60000.0 + rng.below (5536) + 0.37
+               : r == 2 ? 2000.0 + rng.below (30000) * 1.0001 : r == 3 ? rng.below (2000) + 0.5 : 65535.0;
+        pw[n] = static_cast<float> (rng.below (4096));
+        setOsc (c, n, f[n], pw[n], ct[n]);
+    }
+    std::vector<float> y (256), part (64);
+    for (int b = 0; b < 80; ++b)
+    {
+        c.render (y.data(), 256);
+        if (! rng.chance (33))
+            continue;
+        c.renderUntil (part.data(), 64, c.cycle() + 1 + rng.below (40));
+        const int n = static_cast<int> (rng.below (3));
+        const int kind = mode == 0 ? static_cast<int> (rng.below (4)) : mode;
+        if (kind == 3)
+        {
+            pick();
+            for (int q = 0; q < 3; ++q)
+                setOsc (c, q, f[q], pw[q], ct[q]);
+            continue;
+        }
+        if (kind == 1)
+            f[n] = rng.below (65536) + 0.25;
+        else if (kind == 2)
+            pw[n] = static_cast<float> (rng.below (4096));
+        else
+            ct[n] = static_cast<std::uint8_t> (ct[n] ^ ctrl::test);
+        setOsc (c, n, f[n], pw[n], ct[n]);
+    }
+    return { c.renderCorrections(), c.renderLargeCorrections(), c.renderStateMismatches() };
+}
+} // namespace
+
 TEST_CASE ("render: writes a few cycles into a sample, no prediction error above rounding", "[render][corrections]")
 {
-    // The review's harness, smaller: random patches (noise combinations, sync, ring, test bit, both models,
-    // both shape sets, every rate), blocks of 256 samples, and a write 1 to 40 cycles into the next sample
-    // after a third of them: all three controls, a frequency, a width, or a mix. Corrections below 1e-4 of
+    // The review's harness, smaller (nearWritePatch, 300 patches per write kind). Corrections below 1e-4 of
     // a period round the sub-cycle time of a sync reset (docs/decisions.md S2b-2 row 17); a larger one is a
-    // prediction the chip did not make (a pull-down, a reset, a ring state) and is counted here.
-    static constexpr std::uint8_t waves[] { 0x10, 0x20, 0x40, 0x30, 0x50, 0x60, 0x70, 0x00, 0x80, 0x90, 0xa0, 0xc0, 0xf0 };
+    // prediction the chip did not make (a pull-down, a reset, a ring state). The white-box state check
+    // (Chip::renderCheckStates) runs throughout.
     const char* names[] { "mixed writes", "frequency writes", "width writes", "control writes" };
-    std::uint64_t large = 0, all = 0;
+    std::uint64_t all = 0;
     for (int mode = 0; mode < 4; ++mode)
     {
-        std::uint64_t modeLarge = 0;
+        std::uint64_t large = 0, mismatches = 0;
         for (int trial = 0; trial < 300; ++trial)
         {
-            bst::Rng rng (static_cast<std::uint64_t> (1000003 * trial + 77 * mode + 5));
-            const Model m = rng.chance (50) ? Model::A : Model::B;
-            const auto shapes = rng.chance (33) ? vs::bside::chip::ShapeSet::placeholder : vs::bside::chip::ShapeSet::fitted;
-            Chip c = makeChipWith (m, rateConfigs()[rng.below (7)].internalRate, shapes);
-            std::uint8_t ct[3] {};
-            auto pick = [&] {
-                for (int n = 0; n < 3; ++n)
-                    ct[n] = static_cast<std::uint8_t> (waves[rng.below (static_cast<std::uint32_t> (std::size (waves)))] | (rng.chance (50) ? ctrl::sync : 0)
-                                                       | (rng.chance (25) ? ctrl::ring : 0) | ctrl::gate | (rng.below (40) == 0 ? ctrl::test : 0));
-                for (int n = 0; n < 3; ++n)
-                    if ((ct[n] & ctrl::sync) != 0 && (ct[vs::bside::chip::detail::syncSource (n)] & ctrl::sync) != 0)
-                        ct[n] = static_cast<std::uint8_t> (ct[n] & ~ctrl::sync);
-            };
-            pick();
-            double f[3];
-            float pw[3];
-            for (int n = 0; n < 3; ++n)
-            {
-                const int r = rng.range (0, 4);
-                f[n] = r == 0 ? static_cast<double> (rng.below (65536)) : r == 1 ? 60000.0 + rng.below (5536) + 0.37
-                       : r == 2 ? 2000.0 + rng.below (30000) * 1.0001 : r == 3 ? rng.below (2000) + 0.5 : 65535.0;
-                pw[n] = static_cast<float> (rng.below (4096));
-                setOsc (c, n, f[n], pw[n], ct[n]);
-            }
-            std::vector<float> y (256);
-            for (int b = 0; b < 80; ++b)
-            {
-                c.render (y.data(), 256);
-                if (! rng.chance (33))
-                    continue;
-                std::vector<float> part (64);
-                c.renderUntil (part.data(), 64, c.cycle() + 1 + rng.below (40));
-                const int n = static_cast<int> (rng.below (3));
-                const int kind = mode == 0 ? static_cast<int> (rng.below (4)) : mode;
-                if (kind == 3)
-                {
-                    pick();
-                    for (int q = 0; q < 3; ++q)
-                        setOsc (c, q, f[q], pw[q], ct[q]);
-                }
-                else if (kind == 1)
-                {
-                    f[n] = rng.below (65536) + 0.25;
-                    setOsc (c, n, f[n], pw[n], ct[n]);
-                }
-                else if (kind == 2)
-                {
-                    pw[n] = static_cast<float> (rng.below (4096));
-                    setOsc (c, n, f[n], pw[n], ct[n]);
-                }
-                else
-                {
-                    ct[n] = static_cast<std::uint8_t> (ct[n] ^ ctrl::test);
-                    setOsc (c, n, f[n], pw[n], ct[n]);
-                }
-            }
-            modeLarge += c.renderLargeCorrections();
-            all += c.renderCorrections();
+            const auto r = nearWritePatch (mode, static_cast<std::uint64_t> (1000003 * trial + 77 * mode + 5));
+            large += r.large;
+            mismatches += r.mismatches;
+            all += r.corrections;
         }
-        INFO (names[mode] << ": " << modeLarge << " corrections above 1e-4 of a period in 300 patches");
-        CHECK (modeLarge == 0);
-        large += modeLarge;
+        INFO (names[mode] << ": " << large << " corrections above 1e-4 of a period, " << mismatches << " state mismatches in 300 patches");
+        CHECK (large == 0);
+        CHECK (mismatches == 0);
     }
-    UNSCOPED_INFO ("corrections above 1e-4 of a period " << large << ", in all " << all);
+    UNSCOPED_INFO ("corrections in all " << all);
+}
+
+TEST_CASE ("render: writes a few cycles into a sample, the long run's findings", "[render][corrections]")
+{
+    // Patches of the long run (index i: write kind i % 4, seed 7777777 + i) that found defects, fixed since:
+    // 10395, 33935, 47331 a late reset at width 0 made a falling edge (the comparison is always high there);
+    // 27567 a flip back carried across a write that had taken the ring state afresh; 39314 a width write one
+    // step before the rise re-read the gate from the continuous line instead of the chip's first landing;
+    // 6591 a digital sync reset taken as the confirmation of a pending pull-down (third review, F3)
+    for (const int i : { 6591, 10395, 27567, 33935, 39314, 47331 })
+    {
+        const auto r = nearWritePatch (i % 4, static_cast<std::uint64_t> (7777777 + i));
+        INFO ("patch " << i << ": " << r.large << " corrections above 1e-4 of a period, " << r.mismatches << " state mismatches");
+        CHECK (r.large == 0);
+        CHECK (r.mismatches == 0);
+    }
+}
+
+// Hidden, for manual use: the same over 50 000 patches (12 500 per write kind), on all cores.
+TEST_CASE ("render: writes a few cycles into a sample, long run", "[.render-corrections-long]")
+{
+    constexpr int perMode = 12500;
+    std::atomic<int> next { 0 };
+    std::atomic<std::uint64_t> large { 0 }, mismatches { 0 }, patchesLarge { 0 }, patchesMismatch { 0 };
+    std::mutex mu;
+    std::vector<int> bad;
+    std::vector<std::thread> pool;
+    const unsigned threads = std::max (1u, std::thread::hardware_concurrency());
+    for (unsigned t = 0; t < threads; ++t)
+        pool.emplace_back ([&] {
+            for (int i; (i = next++) < 4 * perMode;)
+            {
+                const int mode = i % 4;
+                const auto r = nearWritePatch (mode, static_cast<std::uint64_t> (7777777 + i));
+                large += r.large;
+                mismatches += r.mismatches;
+                patchesLarge += r.large != 0 ? 1u : 0u;
+                patchesMismatch += r.mismatches != 0 ? 1u : 0u;
+                if (r.large != 0 || r.mismatches != 0)
+                {
+                    std::lock_guard<std::mutex> lock (mu);
+                    bad.push_back (i);
+                }
+            }
+        });
+    for (auto& th : pool)
+        th.join();
+    std::sort (bad.begin(), bad.end());
+    std::string list;
+    for (const int i : bad)
+        list += " " + std::to_string (i);
+    WARN ("patches with a finding (index; write kind = index % 4):" << list);
+    WARN (4 * perMode << " patches: " << large.load() << " corrections above 1e-4 of a period (in " << patchesLarge.load() << " patches), " << mismatches.load()
+                      << " state mismatches (in " << patchesMismatch.load() << " patches)");
+    CHECK (large.load() == 0);
+    CHECK (mismatches.load() == 0);
 }
 
 TEST_CASE ("render: the first samples after activation or reset start on the chip's value (no step from 0)", "[render][start]")
