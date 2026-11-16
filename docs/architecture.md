@@ -1740,6 +1740,14 @@ S2b-2" (rows 1–27); the rules below are the ones another work stream can depen
   random write schedules without sync chains (50 000 patches and 3000 schedules in the hidden
   long runs). Sync chains (a synced oscillator that itself syncs another) are the documented
   exception: self-healing, counted, not gated.
+- **Known defects left by the fourth review (to fix in the cost step, which reworks this code):**
+  a synced pulse at frequency 0 keeps the wrong gate (reachable only by raw writes or trace
+  replay; the program engine never writes frequency 0, and the state check skips a line frozen at
+  a boundary); with the placeholder shapes only, a ring target can stay inverted for up to one
+  source period after a width write in the step before the source's rise; a large frequency drop
+  on a sync source between its rendered crossing and its digital rise leaves a timed-out
+  prediction (a glitch of a few cycles, 4 of 3000 timings tried). Sync chains are not compared
+  with the chip's output at all.
 - **Known limits:** at exact power-of-two periods the chip visits only every N-th table cell and
   differs from the continuous line; sync on combined-waveform targets changes single harmonics
   against the chip's own output (the 0–1 cycle lead); the reference shows a second harmonic on

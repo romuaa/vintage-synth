@@ -147,7 +147,9 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   shared `BlepTable.h` is now a template; Vintage's instance is bit-identical. Reviewed
   independently four times (each of the first three rounds found defects in the prediction of
   sync, ring and pull-downs around writes; a state check against the chip now guards them).
-  Contract as built: architecture 8.17. Not wired into the plugin. **Open:** cost is far above
+  Contract as built: architecture 8.17. Not wired into the plugin. **Open:** three small known
+  defects (8.17: a synced pulse at frequency 0, a placeholder-shapes ring case, a frequency drop
+  on a sync source); cost is far above
   the S4 budget (a cost step comes before S4); S4 must gate aliasing after its decimator.
   **Next:** the render cost step, the parameter step (8.7), then S3 (filter and output path).
 - **B-Side S2a (chip digital core) is merged to `main`** (PR #24, owner approved 2026-11-15):
