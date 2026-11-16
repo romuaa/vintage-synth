@@ -140,8 +140,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Not wired into the plugin yet. **Open:** the first Model B step after a waveform change is not
   proven (8.15.2 (c) step 5); pulse combinations fit worst (about 92 % of entries exact on
   Model B).
-- **B-Side S2b-2 (band-limited waveform rendering) is ready on `bside/s2b-render`, awaiting the
-  owner's merge approval:** `Chip::render` (`chip/ChipRender.cpp`, `RenderTables.*`): the three
+- **B-Side S2b-2 (band-limited waveform rendering) is merged to `main`** (owner approved
+  2026-11-16, with the open points below): `Chip::render` (`chip/ChipRender.cpp`, `RenderTables.*`): the three
   oscillators after envelope and converter, before the filter; latency 8 internal samples; every
   alias budget of 8.4.5 met with at least 3 dB to spare (measured before any decimator). The
   shared `BlepTable.h` is now a template; Vintage's instance is bit-identical. Reviewed
