@@ -1703,6 +1703,52 @@ The full list of readings, with reasons, is `docs/decisions.md` "B-Side S2c" (ro
   the rest derived by `tools/model.py`, which follows the same readings and is therefore not an
   independent proof of them).
 
+### 8.17 Amendments from S2b-2: waveform rendering (as built, 2026-11-16; these win over 8.4.5 and 8.4.7 where they differ)
+The full list of readings, with reasons and measured figures, is `docs/decisions.md` "B-Side
+S2b-2" (rows 1–27); the rules below are the ones another work stream can depend on.
+- **Interface:** `Chip::render (out, n)` adds the sum of the three oscillators after their
+  envelopes and converters, before routing, filter, volume and the board filters (those are S3).
+  `renderUntil (out, max, untilCycle)` stops inside a sample so that a write lands at its exact
+  cycle. Rendering never changes the digital state: after any sequence of renders and writes
+  `DigitalState` equals pure stepping, and the output is bit-identical for any block split. A
+  `Chip` must be constructed and prepared off the audio thread (tables are built and the BLEP
+  tables fetched there); `render` allocates nothing.
+- **Latency:** `Chip::kLatencySamples` = 8 internal samples (both kernels have 8 zero crossings).
+- **What is rendered:** each oscillator as a continuous line through the digital accumulator,
+  every discontinuity as a band-limited step or ramp at its exact sub-sample time. Triangle and
+  saw in closed form (Model A: each converter bit as its own square wave, with hysteresis where a
+  bit becomes too fast); pulse edges one cycle after the line crosses the width; combined
+  waveforms as exact band-limited staircases of the fitted shapes (not mip tables); noise as
+  sample-and-hold per noise clock; noise combined with another waveform, and no waveform, cycle
+  by cycle from the digital output. The line leads the chip's own 1 MHz output by 0–1 cycle, sync
+  resets are placed at the source's crossing, and Model A's one-cycle pull-down glitch is not
+  rendered except where oscillator 1 sees it through ring.
+- **Kernels** (`common/dsp/BlepTable.h` is `BasicBlepTable<zero crossings, β × 10, sample type>`;
+  Vintage's `BlepTable` is the unchanged 8 / 8.0 / float instance): pulse edges, combined-waveform
+  steps and the writes entering or leaving them use 8 zero crossings, Kaiser β 12, double
+  precision, read with a second-order correction of the table interpolation; everything else the
+  8 / 8.0 kernel. An 8 / 8.0 kernel attenuates at most about 85 dB of what folds into the band.
+- **Alias budgets of 8.4.5:** met with at least 3 dB to spare in every gated row at every
+  internal rate (the closest: Model B pulse width 4095 at 3.85 kHz, 88.2 kHz, 5.3 dB inside),
+  measured at the internal rate by two methods. **S4 must gate after its decimator**, which has to
+  attenuate 24–44 kHz by about 85 dB or more. No budget exists above 3.85 kHz.
+- **Predictions and their guard:** sync resets, ring flips and Model A pull-downs are predicted
+  from the lines and confirmed by the digital core; a prediction the core does not confirm is
+  corrected band-limited and counted (`renderCorrections()`; above 1e-4 of a period:
+  `renderLargeCorrections()`). Guaranteed by tests: no large correction and no mismatch between
+  the renderer's gate and ring state and the chip's (`renderCheckStates`) over random patches and
+  random write schedules without sync chains (50 000 patches and 3000 schedules in the hidden
+  long runs). Sync chains (a synced oscillator that itself syncs another) are the documented
+  exception: self-healing, counted, not gated.
+- **Known limits:** at exact power-of-two periods the chip visits only every N-th table cell and
+  differs from the continuous line; sync on combined-waveform targets changes single harmonics
+  against the chip's own output (the 0–1 cycle lead); the reference shows a second harmonic on
+  the triangle that a converter linear in its bits cannot produce (a nonlinearity after the
+  converters: S3). **Cost is open:** about 56 ns per internal sample per chip for a light Model B
+  patch at 96 kHz, about 200 ns on Model A, several thousand for three combined waveforms at
+  12 kHz, against about 31 ns per chip including the filter at S4 (8.5): a cost step comes before
+  S4 (decisions row 14 lists the candidates).
+
 ## 9. M7 — custom editor
 
 The custom editor of Exitium Vintage Synth, replacing the preset bar + generic editor. Built on a

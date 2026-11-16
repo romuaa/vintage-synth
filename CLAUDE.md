@@ -139,7 +139,17 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   Contract as built: architecture 8.15.2, 8.15.8, 8.16. Both reviewed independently and fixed.
   Not wired into the plugin yet. **Open:** the first Model B step after a waveform change is not
   proven (8.15.2 (c) step 5); pulse combinations fit worst (about 92 % of entries exact on
-  Model B). **Next:** S2b-2 (band-limited waveform rendering), the parameter step (8.7), then S3.
+  Model B).
+- **B-Side S2b-2 (band-limited waveform rendering) is ready on `bside/s2b-render`, awaiting the
+  owner's merge approval:** `Chip::render` (`chip/ChipRender.cpp`, `RenderTables.*`): the three
+  oscillators after envelope and converter, before the filter; latency 8 internal samples; every
+  alias budget of 8.4.5 met with at least 3 dB to spare (measured before any decimator). The
+  shared `BlepTable.h` is now a template; Vintage's instance is bit-identical. Reviewed
+  independently four times (each of the first three rounds found defects in the prediction of
+  sync, ring and pull-downs around writes; a state check against the chip now guards them).
+  Contract as built: architecture 8.17. Not wired into the plugin. **Open:** cost is far above
+  the S4 budget (a cost step comes before S4); S4 must gate aliasing after its decimator.
+  **Next:** the render cost step, the parameter step (8.7), then S3 (filter and output path).
 - **B-Side S2a (chip digital core) is merged to `main`** (PR #24, owner approved 2026-11-15):
   `source/bside/chip/` follows the per-cycle specification (8.15); every committed
   trace replays without a mismatch (`bside_trace`; fields that depend on a combined-waveform
@@ -224,6 +234,9 @@ None right now. When a new one comes up, list it here; once decided, move it to 
       x86_64), the program engine, the allocation counter's `BS_NOINLINE` (2026-11-15).
   14. M7f: accessibility handlers, prepared text in controls, the editor walk's class-name
       parser (its MSVC branch has never run) (2026-11-15).
+  15. S2b-2: the renderer and the `BasicBlepTable` template (double-precision instance,
+      floating-point contraction may differ: one test accepts 1e-6 outside Apple Clang),
+      `chip_bench` (2026-11-16).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
