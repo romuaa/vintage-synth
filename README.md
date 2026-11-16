@@ -4,11 +4,12 @@ A bi-timbral, analog-style polyphonic synthesizer instrument in VST3 format, by 
 It's a two-oscillator subtractive synth in the style of the classic 80s flagship polys, with our own
 naming and design.
 
-> **Status: in development (pre-release).** Milestone M3 is done: two 16-voice parts (Lower and
-> Upper) with Whole, Dual and Split modes and stereo output. Arpeggiator, sequencer and effects in
-> the plugin, presets and the custom UI come in later milestones (see [Roadmap](#roadmap)). The
-> plugin shows its own editor (M7a: frame, Sound page, live automation; the other pages are
-> placeholders listing their parameters until M7b–M7e).
+> **Status: in development (pre-release).** The instrument is feature-complete for a first
+> release: two 16-voice parts (Lower and Upper) with Whole, Dual and Split modes, arpeggiator and
+> 16-step sequencer, chorus, delay and reverb, 64 factory programs with banks, and its own editor
+> (pages Sound, Envelopes, LFO, Play with a playable keyboard, Arp + Seq, Effects, Browser; live
+> host automation). What remains is hardening, signing and installers (see [Roadmap](#roadmap)).
+> Windows and Linux x86_64 builds are currently unverified (CI is offline).
 
 ## Features
 
@@ -73,7 +74,8 @@ The plugin is at `build/mac/VintageSynth_artefacts/Release/VST3/Exitium Vintage 
 `~/Library/Audio/Plug-Ins/VST3/` to use it in a DAW.
 
 **Two plugins.** The same build also produces **Exitium B-Side**, the second instrument (a chip synth, in
-development: today a shell around test tones, see the [Roadmap](#roadmap)), at
+development: the plugin is still a shell around test tones while its chip model is built and tested
+as a library, see the [Roadmap](#roadmap)), at
 `build/mac/BSide_artefacts/Release/VST3/Exitium B-Side.vst3`. `-DVS_BUILD_BSIDE=OFF` builds only
 Exitium Vintage Synth and its tests, exactly as before B-Side existed. Build one plugin with
 `cmake --build build/mac --target VintageSynth_VST3` or `--target BSide_VST3`.
@@ -192,11 +194,11 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 | M1 | Single-part voice engine | Done |
 | M2 | Polyphony: 16 voices, Poly/Unison/Solo, portamento, voice stealing, velocity, bend range | Done |
 | M3 | Bi-timbral: Upper part, Whole/Dual/Split | Done |
-| M4 | Arpeggiator and 16-step sequencer | Module done, not connected |
-| M5 | Chorus, delay and reverb | Blocks done, not connected |
-| M6 | Presets, patch banks, golden-render regression tests | |
-| M7 | Custom UI | M7a done (frame, Sound page, live automation); M7b–M7f next |
-| M8 | Hardening, signing, installers, release | |
+| M4 | Arpeggiator and 16-step sequencer | Done |
+| M5 | Chorus, delay and reverb | Done |
+| M6 | Presets, patch banks, 64 factory programs, golden-render regression tests | Done |
+| M7 | Custom UI | Done (M7a–M7f); final category colours and a top-bar redesign deferred |
+| M8 | Hardening, signing, installers, release | Not started |
 
 A second instrument is planned in this repository: **B-Side**, a polyphonic synth modelled on a classic 3-voice
 sound chip from early-1980s home computers, as its own plugin sharing the common engine code. Step S1a
@@ -204,9 +206,19 @@ is done: the instrument-independent processor (MIDI, key modes, arpeggiator/sequ
 output stage, bypass, presets, state) is a shared skeleton in `source/common/shell/`. Step S1b is done:
 **Exitium B-Side** exists as a second VST3 plugin (`source/bside/`, built unless `-DVS_BUILD_BSIDE=OFF`)
 with the shared parameters, 64 programs, state, the arpeggiator and the effects around a placeholder
-test-tone part. It makes no chip sound yet; the chip model follows in S2 to S4. The first reference
-data for it (digital state at chosen cycles and audio features of 76 synthetic register traces,
-generated with a reference emulator outside this repository) is committed in `tests/bside/reference/`.
+test-tone part. It makes no chip sound yet. Reference data (digital state at chosen cycles and
+audio features of 76 synthetic register traces, generated with a reference emulator outside this
+repository) is committed in `tests/bside/reference/`.
+
+| B-Side step | Scope | Status |
+|---|---|---|
+| S1 | Plugin shell, patch tables, trace formats, tables in presets | Done |
+| S2a | Chip digital core, exact against the reference per cycle | Done |
+| S2b | Own combined-waveform tables (fitted, never copied); band-limited waveform rendering | Done; render cost still far above budget |
+| S2c | Patch program engine | Done |
+| S2 rest | Render cost step, parameters | Next |
+| S3 | Filter and output path | Not started |
+| S4 | Polyphony, wiring into the plugin, factory patches | Not started |
 
 ## License
 

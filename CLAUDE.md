@@ -95,6 +95,52 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
+### Where the project is (2026-11-16) — read this first when resuming
+
+**Everything below is merged to `main`; no branch, agent or build is in flight.** Verified by the
+local gate only (Windows and Linux x86_64: the list "Merged without ... verification" below).
+
+- **Exitium Vintage Synth is feature-complete up to M7:** engine, effects, arp/seq, presets and
+  64 factory programs, the custom editor with all pages (M7a–M7f). The owner has tried and
+  approved every page.
+- **Exitium B-Side:** the plugin is still the S1 shell with test tones. The chip model exists as
+  a JUCE-free library, not wired in: digital core (S2a), own combined-waveform tables (S2b-1),
+  program engine (S2c), band-limited rendering before the filter (S2b-2).
+
+**Next steps, in the order the owner was given (owner has not objected; confirm "continue"):**
+1. **B-Side render cost step** (opus; contract 8.17, `docs/decisions.md` "B-Side S2b-2" row 14):
+   bring `Chip::render` towards the S4 budget (about 31 ns per chip per internal sample at 96 kHz
+   incl. filter; today about 56 ns for a light Model B patch, about 200 ns on Model A, thousands
+   for three combined waveforms at 12 kHz), and fix the three known render defects of 8.17 under
+   the existing tests (`[schedule]`, `[corrections]`, the state check, the hidden long runs).
+   Candidates: an idle/event-free fast path per oscillator, tables for the Model A converter
+   deviation, a higher-resolution long kernel table instead of the second-order correction, a cap
+   or tables for combined waveforms above 3.85 kHz. Alias budgets must stay met.
+2. **B-Side parameter step** (8.7; sonnet; skill `add-parameter`), in parallel with 1 (other files).
+3. **S3: filter and output path** (8.4.4; both models; the reference shows a nonlinearity after
+   the converters), then **S4** (polyphony 8.5, wiring into the plugin, decimator with the alias
+   gate after it, factory patches, owner audition).
+4. **Chip follow-ups, small:** the Model B read value in the first step after a waveform change
+   (candidate rule in 8.15.2 (c) step 5); at the next reference regeneration a full-noise-fill
+   trace and a noise-before-first-shift trace; an independent model for the program engine's
+   goldens (today derived by the engine author's own model).
+5. **Vintage, M8:** hardening, signing, installers, release (skill `release`); before it the
+   owner's studio check of the factory sounds and MIDI Program Change timing.
+
+**Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
+equal width, playing from the computer keyboard, a "Clean" Cross Mod switch. **Not done anywhere:**
+a real screen-reader pass; any Windows or Linux x86_64 run.
+
+**How work is run:** skill `orchestrate` (brief → implementer → independent reviewer → fixes →
+orchestrator's full `scripts/preflight.sh` → PR → merge only on the owner's word). Lessons of
+this wave are in `docs/engineering-notes.md`; the main one: an independent reviewer with its own
+harness found real defects in every step, also after an author reported "all gates pass".
+Developer-only tools outside the repository (reference adapter, tune-to-trace tool, rendered
+listening files) live under `~/Library/Caches/bside-oracle/`; nothing there is named in the
+repository.
+
+### History (newest facts first within each area)
+
 - **Wave 3 is merged to `main`** (PR #9, owner approved 2026-11-13): M5 (effects and arp/sequencer
   in the plugin, 170 parameters, host bypass, sine-sync alias fix, offline = real time for Cross
   Mod), S0 (common library `source/common/`) and M6a (presets and banks, preset bar, 8 placeholder

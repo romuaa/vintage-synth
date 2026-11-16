@@ -84,6 +84,17 @@ Graphs:
   playing the highlighted step follows the sound.
 - Effects: delay/reverb power switch turns off (level 0) and back on to the previous level.
 
+Play page keyboard:
+- Press a key: the note plays; lower in the key is louder; dragging glides one note at a time;
+  dragging off the keys or releasing stops it. Switch page, close the editor or hide the window
+  while a key is pressed: the note stops, nothing hangs.
+- A held key is tinted in its part's colour (Dual: Lower in the upper half, Upper in the lower
+  half); a sounding note shows a small bar above the octave names, also during the release tail
+  and on notes the arpeggiator or sequencer plays. The bars never cover "C3", "C4", ...
+- The split marker moves only by its pill (drag, arrows, wheel, double-click), not by a press on
+  the keys. With the plugin bypassed, the keys play nothing.
+- Program name in the top bar: a click opens the list of programs grouped by category.
+
 Browser and files:
 - Click, double-click, arrows + Enter in the grid; categories and search dim the rest; Load program,
   Load tone (Lower or Upper tone of the selected program into Lower or Upper), Save into a user bank,
