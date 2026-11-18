@@ -121,8 +121,15 @@ worktrees, gates, model routing, commit rules) and overrides it. If a session di
 repository's file, read it by hand before orchestrating. Checked 2026-11-16: `/orchestrate`
 loads the personal skill and reaches the repository's file through that instruction.
 
-**Next steps, in the order the owner was given. Owner, 2026-11-16: "wait". Start none of them
-until the owner says "continue" (or names another order):**
+**In flight (owner said "continue", 2026-11-18):** steps 1 and 2 below, in parallel. Step 1 on
+branch `bside/render-cost` (its gates and cost targets: architecture 8.18), step 2 on
+`bside/params` (contract 8.7). Until they merge, the first line of this section does not hold.
+
+**Going public (owner, 2026-11-18):** the repository becomes public only once the release work is
+done, **B-Side's release work included** (so after S4 and M8 for both plugins). Until then CI
+stays offline; every Windows and Linux x86_64 check waits for that moment.
+
+**Next steps, in the order the owner was given:**
 1. **B-Side render cost step** (opus; contract 8.17, `docs/decisions.md` "B-Side S2b-2" row 14):
    bring `Chip::render` towards the S4 budget (about 31 ns per chip per internal sample at 96 kHz
    incl. filter; today about 56 ns for a light Model B patch, about 200 ns on Model A, thousands
