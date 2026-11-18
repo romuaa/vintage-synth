@@ -1757,6 +1757,53 @@ S2b-2" (rows 1–27); the rules below are the ones another work stream can depen
   12 kHz, against about 31 ns per chip including the filter at S4 (8.5): a cost step comes before
   S4 (decisions row 14 lists the candidates).
 
+### 8.18 Render cost step (contract, 2026-11-18; before S3 and S4)
+Goal: bring `Chip::render` to a cost that lets S4 meet 8.5 (about 31 ns per chip per internal
+sample at 96 kHz, filter included), and fix the three known defects of 8.17. No change of sound
+is intended: what 8.17 guarantees stays guaranteed.
+
+- **Unchanged (gates):** the interface and latency of 8.17 (`kLatencySamples` = 8); the digital
+  state (bit-exact rule 8.4.3: every committed trace, the independent model, pure stepping equal
+  to rendering, any block split bit-identical); every alias budget of 8.4.5, by both measurements,
+  at every internal rate, with **at least 3 dB to spare** as today; no large correction and no
+  state mismatch in `[schedule]`, `[corrections]` and the two hidden long runs; the reference
+  comparisons (`bside_trace`); real-time rules (no allocation in `render`, bounded loops). No
+  existing threshold is relaxed and no test is removed or weakened; a test whose expectation must
+  change (a golden figure of the old code path) is listed with its reason.
+- **Output may differ from today's** within those gates (another table resolution, another order
+  of float operations). Where it differs, the step reports the largest difference against the
+  renderer of `main` over the random patches (expected: below −100 dB of full scale).
+- **Cost targets** (`chip_bench`, this Mac, non-LTO, best of 5, nothing else running; ns per
+  internal sample per chip at 96 kHz; the 48 and 192 kHz columns are reported and must not be
+  worse than today's):
+
+  | Case | Today | Target |
+  |---|---|---|
+  | `silent` (nothing selected) | 60 | ≤ 3 (8.5: idle costs no CPU) |
+  | `typical` (Model B) | 56 | ≤ 20 |
+  | `typicalA`, `sawsA` (Model A) | 200, 263 | ≤ 24 |
+  | new `s4gate` (Model A: pulse with a width write every tick, saw, one combined waveform, about A3–A4; the patch of the S4 gate, 8.5) | not measured | ≤ 24 |
+  | `combined` (Model A, three combined waveforms) | 364 | ≤ 60 |
+  | `comb12kA`, `comb12kB` | 4922, 4215 | ≤ 150 |
+  | `worst`, `noise`, `noisesrc`, `landA` | 753, 166, 316, 640 | not slower; reported |
+
+  The targets leave about 7 ns of the 31 for S3's filter (an estimate). A target that is not
+  reached after a real attempt is reported with a per-stage breakdown (digital core, line
+  simulation, sweeps, kernel reads, ring buffers) and what would be needed; the orchestrator then
+  decides (accept, another round, or an owner question about the S4 budget).
+- **Above 3.85 kHz** (Smooth allows 12 kHz; no alias budget exists there): combined waveforms may
+  be rendered by a cheaper method (band-limited tables or a cap on the steps rendered per
+  sample). The switch between methods must not click (hysteresis, as for the Model A converter
+  bits), and the measured aliasing above 3.85 kHz is reported; at and below 3.85 kHz nothing
+  changes.
+- **The three defects of 8.17** (a synced pulse at frequency 0; the placeholder-shapes ring
+  target after a width write in the step before the source's rise; a large frequency drop on a
+  sync source between its rendered crossing and its digital rise) are each fixed with a
+  regression test that fails on today's code. The state check no longer skips a line frozen at a
+  boundary unless a reason is given.
+- **The digital core** (`Chip.h`, `Chip.cpp`) may be made faster under the bit-exact gates.
+  `tests/bside/unit/IndependentModel.h` is not edited by whoever edits `source/bside/chip/`.
+
 ## 9. M7 — custom editor
 
 The custom editor of Exitium Vintage Synth, replacing the preset bar + generic editor. Built on a
