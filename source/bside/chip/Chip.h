@@ -925,6 +925,11 @@ private:
         std::uint64_t landStart = 0;
         double landT = 0.0;
         bool shownTop = false;          // per-cycle source: the top bit last shown to its ring target
+        bool frozenEdge = false;        // a frozen pulse line's gate falls one cycle after its reset, at:
+        std::uint64_t frozenEdgeStart = 0;
+        double frozenEdgeT = 0.0;
+        std::uint64_t jumpStart = 0;    // the last sync reset taken by the line (rs.start and time of it)
+        double jumpT = -1.0e9;
         std::uint64_t glitchStart = 0;
         double glitchT = 0.0;
         std::uint16_t held = 0;  // the digital value shown in noise, per-cycle and off modes
@@ -965,7 +970,7 @@ private:
     void renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept;
     void renderSweepLine (int n, double tEnd) noexcept;
     void renderLines (PieceEvents& ev, double tEnd) noexcept;
-    bool renderPullDown (int n, double t, bool atWrite) noexcept;
+    bool renderPullDown (int n, double t, bool atWrite, bool reread) noexcept;
     int renderPullCell (int n, int cell, double tCross) const noexcept;
     bool renderGateAtRise (int n, double tCross) const noexcept;
     bool renderGateAfterRise (int n, double tCross) const noexcept;

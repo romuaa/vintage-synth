@@ -442,7 +442,7 @@ int Chip::renderPullCell (int n, int cell, double tCross) const noexcept
     return rtab->steps[static_cast<std::size_t> (slot)].firstClear[static_cast<std::size_t> (c)];
 }
 
-bool Chip::renderPullDown (int n, double t, bool atWrite) noexcept
+bool Chip::renderPullDown (int n, double t, bool atWrite, bool reread) noexcept
 {
     // 8.15.2 (c) step 4: Model A, a combination with the saw: in a cell of the upper half whose output has
     // bit 11 clear, the accumulator's top bit is cleared. The renderer does it where the line enters such a
@@ -465,9 +465,11 @@ bool Chip::renderPullDown (int n, double t, bool atWrite) noexcept
         return false;
     const bool pulse = (ctl (n) & ctrl::pulse) != 0;
     // the pulse gate: at a write, the chip's own comparison for its next step; entering the upper half, as
-    // the chip decides it at whole cycles; inside it, the rendered gate (it only opens there)
-    const bool open = ! pulse || (ctl (n) & ctrl::test) != 0 || (atWrite ? osc[idx (n)].pulseHigh : cell == 2048 ? renderGateAtRise (n, t) : v.gate);
-    if (pulse && cell == 2048 && open && ! atWrite)
+    // the chip decides it at whole cycles; inside it, and when the gate was re-read one cycle after the rise
+    // (`reread`: a line slower than one cell per cycle is still in cell 0x800 then), the rendered gate
+    const bool entering = cell == 2048 && ! reread;
+    const bool open = ! pulse || (ctl (n) & ctrl::test) != 0 || (atWrite ? osc[idx (n)].pulseHigh : entering ? renderGateAtRise (n, t) : v.gate);
+    if (pulse && entering && open && ! atWrite)
     {
         // the chip's gate is open in this first upper-half cycle (its comparison was made before a width
         // write, perhaps); the rendered one follows it, and re-reads the comparison one cycle on if the
@@ -654,6 +656,7 @@ void Chip::renderSyncOsc (int n) noexcept
     v.longKernel = v.mode == rmTable || v.mode == rmPulse; // combined waveforms and pulse edges (docs/decisions.md S2b-2)
     v.gate = gateAt (v.u, slope, osc[idx (n)].pwSmooth, (c & ctrl::test) != 0);
     v.gateCheckU = -1.0;
+    v.frozenEdge = false;
     v.shownTop = (osc[idx (n)].phase & kPhaseMsb) != 0;
     v.held = v.mode == rmNoise ? osc[idx (n)].noiseOut : osc[idx (n)].out;
 }
@@ -751,13 +754,17 @@ void Chip::renderAfterChange (int testSetMask) noexcept
     {
         RenderOsc& v = rs.osc[idx (n)];
         renderLanding (n, tw);
-        if (! v.landPull && renderPullDown (n, tw, true))
+        if (! v.landPull && renderPullDown (n, tw, true, false))
             v.gateCheckU = v.u + renderSlopeU (n);
     }
     // A predicted reset whose source's line has crossed but whose digital rise is still to come is dropped
     // when the write stops that rise: the source's test bit is set, the source is a Model A saw combination
     // pulled down at the write, or a Model A per-cycle source with the saw (its pull-down depends on the
-    // noise output; a reset it does make comes from the digital core).
+    // noise output; a reset it does make comes from the digital core). Likewise when the write moves the
+    // crossing itself (render cost step, the third defect of 8.17): after a write right at a sample end the
+    // line had been rendered up to a cycle beyond it, and a lower frequency puts the source's line, re-taken
+    // from the accumulator with the new slope, below its top bit again; the crossing then lies ahead and is
+    // predicted anew, where the old prediction would wait for a rise that comes much later.
     for (int n = 0; n < 3; ++n)
     {
         RenderOsc& v = rs.osc[idx (n)];
@@ -770,12 +777,13 @@ void Chip::renderAfterChange (int testSetMask) noexcept
         const bool test = (ctl (s) & ctrl::test) != 0;
         const bool pulledNow = sv.pending && sv.pendingPull && sv.pendingStart == rs.start && std::abs (sv.pendingT - tw) < 1.0e-9;
         const bool perCycleA = sv.mode == rmCycle && cfg.model == Model::A && (ctl (s) & ctrl::saw) != 0;
-        if (test || pulledNow || perCycleA)
+        const bool notCrossed = sv.mode != rmCycle && ! sv.pending && frac01 (sv.u) < 0.5;
+        if (test || pulledNow || perCycleA || notCrossed)
         {
             v.pending = false;
             renderSyncOsc (n);
             renderLanding (n, tw);
-            if (! v.landPull && renderPullDown (n, tw, true))
+            if (! v.landPull && renderPullDown (n, tw, true, false))
                 v.gateCheckU = v.u + renderSlopeU (n);
         }
     }
@@ -819,6 +827,18 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
     int id = 0, ih = 0, ir = 0;
     double t = rs.sweepT;
     const bool test = (ctl (n) & ctrl::test) != 0;
+    // a frozen line's falling gate one cycle after its reset, carried from the stretch before (see below)
+    if (v.frozenEdge)
+    {
+        const double tf = static_cast<double> (v.frozenEdgeStart) - static_cast<double> (rs.start) + v.frozenEdgeT;
+        if (tf <= tEnd)
+        {
+            v.frozenEdge = false;
+            const double wl = renderValue (n, v.u);
+            v.gate = false;
+            renderEmit (n, tf, renderValue (n, v.u) - wl, 0.0);
+        }
+    }
     for (int guard = 0; guard < kSweepGuard; ++guard)
     {
         double ue = 0.0;
@@ -874,7 +894,7 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
                 v.pendingT = t;
                 v.gateCheckU = v.u + slope;
             }
-            else if (renderPullDown (n, t, false))
+            else if (renderPullDown (n, t, false, kind == 3))
                 v.gateCheckU = v.u + slope;
             const double wr = renderValue (n, v.u);
             const double sr = renderDerivative (n, v.u);
@@ -903,6 +923,8 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
                     uAfter = 0.0;
                     v.pending = d.kind == PieceEvents::kJumpSyncPending;
                     v.pendingPull = false;
+                    v.jumpStart = rs.start;
+                    v.jumpT = d.t;
                     if (v.pending)
                     {
                         v.pendingStart = rs.start;
@@ -911,12 +933,27 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
                     else
                         v.offU = test ? 0.0 : d.off;
                     // (at width 0 the comparison is always high: no edge)
-                    if (! test && v.gate && osc[ni].pwSmooth > 0.0f && (v.mode == rmPulse || (v.mode == rmTable && (ctl (n) & ctrl::pulse) != 0)) && t - d.t >= 1.0 - 1.0e-9)
-                        lateEdge = d.t + 1.0;
+                    if (! test && v.gate && osc[ni].pwSmooth > 0.0f && (v.mode == rmPulse || (v.mode == rmTable && (ctl (n) & ctrl::pulse) != 0)))
+                    {
+                        if (! (slope > 0.0))
+                        {
+                            // A frozen line (frequency 0) has no next edge to find: one cycle after the reset its
+                            // comparison reads the accumulator's 0 and the gate falls, then stays (the first
+                            // defect of 8.17, render cost step). Emitted below if this sweep reaches it, else
+                            // carried to the next one.
+                            v.frozenEdge = true;
+                            v.frozenEdgeStart = rs.start;
+                            v.frozenEdgeT = d.t + 1.0;
+                        }
+                        else if (t - d.t >= 1.0 - 1.0e-9)
+                            lateEdge = d.t + 1.0;
+                    }
                     break;
                 default: // kJumpConfirm
                     v.offU = test ? 0.0 : d.off;
                     v.pending = false;
+                    v.jumpStart = rs.start;
+                    v.jumpT = d.t;
                     break;
             }
             v.u = frac01 (v.u);
@@ -955,6 +992,14 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
         const double wr = renderValueAt (n, uAfter);
         const double sr = renderDerivativeAt (n, uAfter);
         renderEmit (n, tn, wr - wl, (sr - sl) * rate);
+        if (v.frozenEdge && static_cast<double> (v.frozenEdgeStart) - static_cast<double> (rs.start) + v.frozenEdgeT <= tEnd)
+        {
+            v.frozenEdge = false;
+            const double tf = static_cast<double> (v.frozenEdgeStart) - static_cast<double> (rs.start) + v.frozenEdgeT;
+            const double fl = renderValue (n, v.u);
+            v.gate = false;
+            renderEmit (n, tf, renderValue (n, v.u) - fl, 0.0);
+        }
         if (lateEdge >= 0.0)
         {
             // the gate's falling edge (one cycle after the reset) lies already behind the sweep position:
@@ -1259,6 +1304,17 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
                     continue;
                 }
                 pullU[ci] = c < 4096 ? base + static_cast<double> (c) / 4096.0 : -1.0;
+                // A gate the rise found open only from a comparison made before a width write, while the line
+                // itself has it closed: re-read one cycle on, where the chip's comparison on its first landing
+                // (with the new width) pulls the line if it is low (renderPullDown's gateCheckU). The second
+                // defect of 8.17 (render cost step): a ring target kept the rise until the shape's own pull.
+                if ((ctl (cs) & ctrl::pulse) != 0 && (ctl (cs) & ctrl::test) == 0 && ! gateAt (uc, slope[ci], osc[ci].pwSmooth, false)
+                    && renderGateAtRise (cs, tc) && ! renderGateAfterRise (cs, tc))
+                {
+                    const double reread = uc + slope[ci];
+                    if (pullU[ci] < 0.0 || reread < pullU[ci])
+                        pullU[ci] = reread;
+                }
             }
             settle (cs, tc);
             const int tg = detail::syncTarget (cs);
@@ -1571,10 +1627,10 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
     };
     std::array<Line, 3> line {};
     constexpr double kMargin = 1.0e-7; // periods: an event this close to a sample's end goes to the general path
-    auto limitOf = [&] (int n) {
+    auto limitOf = [&] (int n, double t) { // t: the time the line is at (time-based events: a landing)
         double ue = 0.0;
         int kind = 0;
-        const double tl = renderNextLineEvent (n, 0.0, line[idx (n)].slope, ue, kind);
+        const double tl = renderNextLineEvent (n, t, line[idx (n)].slope, ue, kind);
         return tl < kInf ? ue - kMargin : kInf;
     };
     for (int n = 0; n < 3; ++n)
@@ -1587,7 +1643,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         l.inc = test ? 0u : osc[idx (n)].inc;
         l.constant = v.mode == rmOff && rs.sample >= v.quietSince + static_cast<std::uint64_t> (kRing);
         l.contribution = l.constant ? static_cast<double> (rtab->envelope[env[idx (n)].counter]) * renderValue (n, v.u) : 0.0;
-        l.uLimit = l.constant ? kInf : limitOf (n);
+        l.uLimit = l.constant ? kInf : limitOf (n, rs.sweepT);
     }
 
     const std::uint64_t c0 = cycleCount;
@@ -1623,7 +1679,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
             else
             {
                 renderSweep (n, rs.tEnd, nullptr);
-                l.uLimit = limitOf (n);
+                l.uLimit = limitOf (n, rs.tEnd);
             }
         }
         rs.sweepT = rs.tEnd;
@@ -1641,7 +1697,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
             const double uBefore = rs.osc[idx (n)].u;
             renderFinishOsc (n, slot, phaseEnd, cyc, c0 + end, false);
             if (rs.corrections != corrections)
-                l.uLimit = limitOf (n); // the line moved
+                l.uLimit = limitOf (n, rs.tEnd); // the line moved
             else if (rs.osc[idx (n)].u < uBefore - 0.5)
                 l.uLimit -= 1.0; // pulse and off modes keep their line in [0, 1): it wrapped
         }
@@ -1728,7 +1784,12 @@ void Chip::renderCheckSample() noexcept
         const bool test = (ctl (n) & ctrl::test) != 0;
         const bool pulse = v.mode == rmPulse || (v.mode == rmTable && (ctl (n) & ctrl::pulse) != 0);
         const double pw = static_cast<double> (o.pw) / 4096.0;
-        if (pulse && ! test && std::abs (static_cast<double> (o.pwSmooth) - static_cast<double> (o.pw)) < 1.0e-9 && ! near (ud, 0.0) && ! near (ud, pw) && ! near (ud, 0.5))
+        // a frozen line (frequency 0) sits on its value for good: checked wherever it sits, boundaries included,
+        // except within three cycles of a reset (the comparison is one cycle late, the rendered reset up to
+        // two cycles early) and while its gate's fall after a reset is still to come
+        const bool frozen = ! (o.inc > 0) && ! v.frozenEdge && tc - static_cast<double> (v.jumpStart) - v.jumpT >= 3.0;
+        const bool away = frozen || (! (o.inc == 0) && ! near (ud, 0.0) && ! near (ud, pw) && ! near (ud, 0.5));
+        if (pulse && ! test && std::abs (static_cast<double> (o.pwSmooth) - static_cast<double> (o.pw)) < 1.0e-9 && away)
             if (v.gate != (ud >= pw))
                 ++rs.stateMismatches;
         if (v.ring)

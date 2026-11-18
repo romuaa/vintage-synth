@@ -302,3 +302,60 @@ TEST_CASE ("chip: the fast path ends a jump on a pull-down as stepping does (osc
             }
         }
 }
+
+TEST_CASE ("render cost: the batched path renders exactly as the general path around Model A pull-downs and their landings", "[render][batch]")
+{
+    // Writes that switch slow Model A oscillators to saw combinations while their accumulators are in the upper
+    // half: the chip pulls them down at a later landing (renderLanding), a time-based event the batched path
+    // must find at the same place as the general one (the long run of "[.render-corrections-long]" found three
+    // patches where it did not: the landing's time taken against the wrong sweep position)
+    const std::uint8_t combos[] { 0x31, 0x61, 0x71, 0x21, 0x41, 0x51 };
+    for (const ShapeSet set : { ShapeSet::fitted, ShapeSet::placeholder })
+        for (std::uint64_t seed = 1; seed <= 40; ++seed)
+        {
+            bst::Rng r (seed * 31u + (set == ShapeSet::fitted ? 0u : 7u));
+            Config cfg;
+            cfg.model = Model::A;
+            cfg.shapes = set;
+            cfg.internalRate = rateConfigs()[r.below (7)].internalRate;
+            Chip a, b;
+            a.prepare (cfg);
+            b.prepare (cfg);
+            b.renderBatchingEnabled (false);
+            double f[3];
+            float pw[3];
+            std::uint8_t ct[3];
+            for (int n = 0; n < 3; ++n)
+            {
+                f[n] = r.chance (50) ? 200.0 + r.below (3000) : 2000.0 + r.below (60000);
+                pw[n] = static_cast<float> (r.below (4096));
+                ct[n] = combos[r.below (6)];
+                for (Chip* c : { &a, &b })
+                    c->setOscillator (n, input (f[n], pw[n], ct[n], 0x00, 0xf0));
+            }
+            std::vector<float> ya, yb, block (256);
+            for (int w = 0; w < 60; ++w)
+            {
+                const std::uint64_t at = a.cycle() + 50 + r.below (3000);
+                for (auto [c, y] : { std::pair<Chip*, std::vector<float>*> { &a, &ya }, std::pair<Chip*, std::vector<float>*> { &b, &yb } })
+                    while (c->cycle() < at)
+                    {
+                        std::fill (block.begin(), block.end(), 0.0f);
+                        const int done = c->renderUntil (block.data(), 256, at);
+                        y->insert (y->end(), block.begin(), block.begin() + done);
+                    }
+                const int n = static_cast<int> (r.below (3));
+                if (r.chance (60))
+                    ct[n] = combos[r.below (6)];
+                else
+                    pw[n] = static_cast<float> (r.below (4096));
+                for (Chip* c : { &a, &b })
+                    c->setOscillator (n, input (f[n], pw[n], ct[n], 0x00, 0xf0));
+            }
+            INFO ((set == ShapeSet::fitted ? "fitted" : "placeholder") << " seed " << seed);
+            REQUIRE (ya.size() == yb.size());
+            CHECK (std::memcmp (ya.data(), yb.data(), ya.size() * sizeof (float)) == 0);
+            CHECK (a.state() == b.state());
+            CHECK (a.renderCorrections() == b.renderCorrections());
+        }
+}
