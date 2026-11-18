@@ -1250,9 +1250,11 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 //
 // THE LINES. Every oscillator is a straight line in phase between events: u (t), in periods, through the
 // digital accumulator (u = digital phase + offU, offU being non-zero only after a sync reset, see below).
-// Each internal sample is processed in pieces of at most 32 digital cycles: the digital core advances
-// (advanceCycles, or stepCycle in per-cycle mode) and reports its events; then each line is swept from the
-// previous position to the piece's end, stopping at every event in time order. At an event the waveform's
+// Each internal sample is processed in pieces of at most 32 digital cycles, which start at the sample's start
+// or at a write and end at the sample's end (never where renderUntil stops without a write: a stop that is
+// not a write does not change the output; a stop inside a piece only advances the digital core): the digital
+// core advances (advanceCycles, or stepCycle in per-cycle mode) and reports its events; then each line is
+// swept from the previous position to the piece's end, stopping at every event in time order. At an event the waveform's
 // value and slope just before and after it give a step (BLEP) and a slope change (BLAMP) from the shared
 // BlepTable (pulses and combined waveforms: the stronger kernel, RenderTables.h), placed at the event's exact
 // time (a sub-sample position; events up to one sample back are allowed and corrected in the samples already
@@ -1286,8 +1288,9 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 //                   change of d (shape (index)) between index cells is a BLEP; the pulse gate, the ring
 //                   fold (half a table further) and phase jumps are exact too. Above the register's highest
 //                   frequency (Smooth only, up to 12 kHz) the same staircase, its steps within a stretch of
-//                   the line (at most a sample) emitted together by their time moments up to the fourth
-//                   (RenderTables.h kStepMoments; entered 3 % above the register's top; the waveform does not
+//                   the line (at most half a sample, between fixed points of the sample) emitted together
+//                   by their time moments up to the fourth (RenderTables.h kStepMoments; a pulling
+//                   oscillator's upper half keeps its steps one by one; entered 3 % above the register's top; the waveform does not
 //                   change at a switch, only how its steps are emitted). Model A combinations with
 //                   the saw pull their top bit down (8.15.2 (c) step 4) in the first step whose landing
 //                   cell has output bit 11 clear: from a rise the line is pulled where it enters such a

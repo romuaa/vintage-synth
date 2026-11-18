@@ -61,6 +61,9 @@ int iminWithHysteresis (double periodsPerSample, int current) noexcept
     waveform's steps are emitted one by one; above it (Smooth only) a stretch's steps together with their time
     moments (RenderTables.h kStepMoments). */
 constexpr double kRegisterMaxSlope = 65535.0 / 16777216.0;
+/** The parts of a sample a stretch of step moments covers at most (RenderTables.h kStepMoments): its steps lie
+    at most half a part from its centre. */
+constexpr double kMomentParts = 2.0;
 
 /** Whether a combined waveform's steps go by their moments (1) or one by one (0), with hysteresis: never at or
     below the register's top, from one by one only from 3 % above it; and only while a sample covers less than
@@ -1254,6 +1257,34 @@ void Chip::renderSweepTable (int n, double tEnd) noexcept
                     kind = 3;
                     best = tq;
                 }
+            }
+        }
+        if (! cells)
+        {
+            // the stretches also end at fixed points of the sample (kMomentParts per sample): they bound the
+            // distance of a step from its stretch's centre, and with it the moments' error (render cost review)
+            const double part = rs.cps / kMomentParts;
+            const double next = rs.tStart + part * (std::floor ((t - rs.tStart) / part + 1.0e-9) + 1.0);
+            if (next < std::fmin (best, tEnd))
+            {
+                double uM = v.u + slope * (next - t);
+                const auto lastM = static_cast<std::int64_t> (std::floor (uM * 4096.0));
+                if (lastM > v.k)
+                {
+                    if (! pulse || v.gate)
+                        renderStepMoments (n, v.k + 1, lastM, t, v.u, next);
+                    v.k = lastM;
+                    if (v.k >= 4096)
+                    {
+                        v.k -= 4096;
+                        uM -= 1.0;
+                        if (v.gateCheckU >= 0.0)
+                            v.gateCheckU -= 1.0;
+                    }
+                }
+                v.u = uM;
+                t = next;
+                continue;
             }
         }
         const bool stop = best <= tEnd;

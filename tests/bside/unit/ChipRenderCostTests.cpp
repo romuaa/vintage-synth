@@ -634,7 +634,9 @@ TEST_CASE ("chip: a Model A saw combination at frequency 0 or below one accumula
     // The closed form of the pull-down (pullRun) divided by the increment: frequency 0 (a control written
     // before any frequency, a trace) crashed on x86-64. Every saw combination, with and without the pulse, the
     // accumulator in either half, frequency 0 and Smooth increments below one accumulator step; the fast path
-    // against stepping, and rendering (the sanitizer build runs this too).
+    // against stepping, and rendering. NOTE: on arm64 an integer division by zero returns 0 without a trap, so
+    // in a plain arm64 build this test passes with the guard removed; it proves the guard only under UBSan
+    // (scripts/sanitize-targets.sh, halt_on_error) or on x86-64 (render cost review, round 3).
     const std::uint8_t combos[] { 0x31, 0x61, 0x71 };
     for (const ShapeSet set : { ShapeSet::fitted, ShapeSet::placeholder })
         for (const std::uint8_t combo : combos)
@@ -840,6 +842,57 @@ TEST_CASE ("chip: an envelope whose counter step is still pending is not inert (
         INFO (windows << " sample boundaries in the window");
         CHECK (windows >= 10);
     }
+    // ... and in a sample's last cycle (render cost review, round 3): renderUntil to the sample's end, which
+    // keeps the sample in progress, where the counter step is one cycle from landing (step pipeline 1), and the
+    // sustain written to the counter's level there: the batched path takes over right after the sample. The review's counter-example: Model B, 96 kHz, decay 3, counter 0xaa at cycle 8928. With envInert
+    // ignoring the pending step, this case differs from the chip stepped cycle by cycle.
+    int lastCycleWindows = 0;
+    for (const auto& rc : rateConfigs())
+        for (const std::uint8_t decay : { std::uint8_t { 0 }, std::uint8_t { 1 }, std::uint8_t { 2 }, std::uint8_t { 3 } })
+            for (const bool settled : { false, true })
+        {
+            const double rate = rc.internalRate;
+            Chip base = makeChip (Model::B, rate);
+            if (settled)
+                base.advanceCycles (3000000); // the other envelopes frozen at 0: the batched path can run
+            base.setOscillator (0, input (3000.0, 2048.0f, ctrl::saw | ctrl::gate, 0x00, 0xf0));
+            std::vector<float> y (256, 0.0f);
+            while (base.envelope (0) != 0xff)
+                base.render (y.data(), 1);
+            base.setOscillator (0, input (3000.0, 2048.0f, ctrl::saw | ctrl::gate, decay, 0x00));
+            for (int i = 0; i < 40000 && base.envelope (0) != 0; ++i)
+            {
+                Chip probe = base;
+                probe.render (y.data(), 1);
+                const std::uint64_t last = probe.cycle(); // the sample's end: renderUntil keeps it in progress
+                Chip at = base;
+                REQUIRE (at.renderUntil (y.data(), 1, last) == 0);
+                REQUIRE (at.cycle() == last);
+                const std::uint8_t counter = at.envelope (0);
+                const auto now = at.state();
+                const auto& envelopes = now.env;
+                base.render (y.data(), 1);
+                if (counter % 0x11 != 0 || counter == 0 || envelopes[0].stepPipeline != 1)
+                    continue;
+                ++lastCycleWindows;
+                Chip r1 = at, r2 = at, d = at;
+                const auto sr = static_cast<std::uint8_t> ((counter / 0x11) << 4);
+                for (Chip* x : { &r1, &r2, &d })
+                    x->write (0x06, sr);
+                r2.renderBatchingEnabled (false);
+                std::vector<float> y1 (256, 0.0f), y2 (256, 0.0f);
+                r1.render (y1.data(), 256);
+                r2.render (y2.data(), 256);
+                while (d.cycle() < r1.cycle())
+                    d.stepCycle();
+                INFO (rate << " Hz, decay " << int (decay) << ", sustain written at counter " << int (counter) << " in the last cycle of a sample, cycle " << last);
+                REQUIRE (std::memcmp (y1.data(), y2.data(), y1.size() * sizeof (float)) == 0);
+                REQUIRE (r1.state() == d.state());
+                REQUIRE (r2.state() == d.state());
+            }
+        }
+    INFO (lastCycleWindows << " last cycles of a sample in the window");
+    CHECK (lastCycleWindows >= 4);
 }
 
 TEST_CASE ("render: the Model A converter bits rendered as square waves follow the frequency (none above half the rate)", "[render][hysteresis]")
@@ -1090,4 +1143,128 @@ TEST_CASE ("render: split cases the S2b-2 renderer got wrong (stops without a wr
             CHECK (firstDifference (renderSplit (s, 0), renderSplit (s, split)) == -1);
         }
     }
+}
+
+namespace
+{
+struct AboveAlias
+{
+    double strongestDb = -300.0; // the strongest line in 0 .. 20 kHz, dB re 1
+    double aliasDb = -300.0;     // the worst component off the lines, dB re the strongest line
+    double hz = 0.0;
+};
+
+/** A combined waveform (control c, width pw) above the register's range on oscillator 2: plain, synced by
+    oscillator 1 (variant 1) or as a ring target of it (variant 2); every line a multiple of `lineHz` (the
+    source at a third of the target's increment, exactly). 7-term Blackman-Harris, not bin-centred. */
+AboveAlias aboveAlias (Model m, std::uint8_t c, float pw, int variant, double hz, double rate, bool moments = true)
+{
+    Chip chip = makeChip (m, rate);
+    chip.renderStepMomentsEnabled (moments);
+    const double reg = std::floor (hz * 16777216.0 / 985248.0 / 3.0) * 3.0 + 0.75; // a multiple of 3 x 0.25
+    const double lineReg = variant == 0 ? reg : reg / 3.0;
+    if (variant != 0)
+        setOsc (chip, 0, lineReg, 2048.0f, ctrl::saw);
+    const auto control = static_cast<std::uint8_t> (c | ctrl::gate | (variant == 1 ? ctrl::sync : 0) | (variant == 2 ? ctrl::ring : 0));
+    setOsc (chip, 1, reg, pw, control);
+    renderSamples (chip, 3000);
+    const auto y = renderSamples (chip, 1 << 15);
+    const auto mag = windowedMagnitudes (y);
+    const double lineHz = lineReg * 985248.0 / 16777216.0;
+    const auto r = offGridAlias (mag, rate, 20000.0, lineHz, 9.0);
+    double strongest = 0.0;
+    const double binHz = rate / static_cast<double> (y.size());
+    for (std::size_t b = 1; b < mag.size() && static_cast<double> (b) * binHz <= 20000.0; ++b)
+        strongest = std::max (strongest, mag[b]);
+    AboveAlias a;
+    a.strongestDb = 20.0 * std::log10 (2.0 * strongest / (static_cast<double> (y.size()) * 0.27105140069342) + 1e-300);
+    a.aliasDb = r.worstDb;
+    a.hz = r.worstHz;
+    return a;
+}
+
+/** Over a grid (strongest line above -60 dB re 1 only): how far the worst row lies above its limit, -80 dB re the
+    strongest line; for a synced target the larger of that and the one-by-one rendering's own figure plus 1 dB
+    (the chip resets a synced target at whole cycles, so a synced line is not periodic at the source's period:
+    the one-by-one rendering shows -59 dB there too, render cost review). Also the worst plain or ring row. */
+struct AboveAliasWorst
+{
+    double excess = -300.0, plainOrRing = -300.0, synced = -300.0;
+};
+AboveAliasWorst worstAboveAlias (const std::vector<double>& rates, const std::vector<double>& freqs, const std::vector<float>& widths, bool print)
+{
+    AboveAliasWorst w;
+    for (const Model m : { Model::A, Model::B })
+        for (const std::uint8_t c : { std::uint8_t { 0x30 }, std::uint8_t { 0x50 }, std::uint8_t { 0x60 }, std::uint8_t { 0x70 } })
+            for (const float pw : widths)
+                for (const int variant : { 0, 1, 2 })
+                    for (const double rate : rates)
+                        for (const double hz : freqs)
+                        {
+                            if ((c & ctrl::pulse) == 0 && pw > 1.0f)
+                                continue; // the width matters only with the pulse
+                            const auto a = aboveAlias (m, c, pw, variant, hz, rate);
+                            if (a.strongestDb < -60.0)
+                                continue;
+                            const double oneByOne = variant == 1 ? aboveAlias (m, c, pw, variant, hz, rate, false).aliasDb : -300.0;
+                            const double limit = variant == 1 ? std::max (-80.0, oneByOne + 1.0) : -80.0;
+                            if (print && a.aliasDb > limit - 5.0)
+                                std::printf ("%c %02x width %4.0f %-6s %6.0f Hz %7.0f Hz: strongest %6.1f dB, alias %6.1f dB at %7.0f Hz (limit %6.1f dB)\n", m == Model::A ? 'A' : 'B', c,
+                                             static_cast<double> (pw), variant == 0 ? "plain" : variant == 1 ? "synced" : "ring", rate, hz, a.strongestDb, a.aliasDb, a.hz, limit);
+                            w.excess = std::max (w.excess, a.aliasDb - limit);
+                            (variant == 1 ? w.synced : w.plainOrRing) = std::max (variant == 1 ? w.synced : w.plainOrRing, a.aliasDb);
+                        }
+    return w;
+}
+} // namespace
+
+TEST_CASE ("render cost: the step moments alias at most -80 dB re the strongest line above the register's top", "[render][levels][alias]")
+{
+    // The budget row of 8.4.5 for combined waveforms extended upwards (render cost review, item 4): combined
+    // waveforms whose strongest line is above -60 dB re 1 alias at most -80 dB re that line in 0 .. 20 kHz,
+    // measured not bin-centred. A subset of the hidden grid below (both models, every combination, plain,
+    // synced and ring targets).
+    const auto w = worstAboveAlias ({ 88200.0, 96000.0 }, { 4100.0, 5300.0, 9300.0, 12000.0 }, { 1.0f, 64.0f, 2048.0f, 4095.0f }, false);
+    INFO ("worst plain or ring " << w.plainOrRing << " dB, synced " << w.synced << " dB re the strongest line; " << w.excess << " dB from the limit");
+    CHECK (w.excess <= 0.0);
+}
+
+TEST_CASE ("render cost: the step moments' aliasing over the whole grid (report and assertion)", "[.render-above-alias]")
+{
+    const auto w = worstAboveAlias ({ 88200.0, 96000.0, 192000.0 }, { 4000.0, 5300.0, 7000.0, 9300.0, 12000.0 },
+                                    { 1.0f, 64.0f, 1024.0f, 2048.0f, 3000.0f, 4032.0f, 4095.0f }, true);
+    std::printf ("worst plain or ring %.1f dB, synced %.1f dB re the strongest line; %.1f dB from the limit\n", w.plainOrRing, w.synced, w.excess);
+    CHECK (w.excess <= 0.0);
+}
+
+TEST_CASE ("render: a pulling Model A saw combination above the register's top keeps its upper half's cells one by one", "[render][levels][pull]")
+{
+    // Render cost review, round 3: above the register's top the cell steps go by their moments, except in a
+    // pulling oscillator's upper half, where a pull-down may come in any cell (placeholder shapes: the top bit
+    // falls a quarter period in). No sync chain: free lines, plain. Emitting that half by moments too passed
+    // every other test; here it misses the pull-downs (state mismatches, large corrections).
+    int cases = 0;
+    for (const ShapeSet shapes : { ShapeSet::placeholder, ShapeSet::fitted })
+        for (const std::uint8_t combo : { std::uint8_t { 0x31 }, std::uint8_t { 0x51 }, std::uint8_t { 0x61 }, std::uint8_t { 0x71 } })
+            for (const double hz : { 4300.0, 7000.0, 12000.0 })
+                for (const double rate : { 88200.0, 96000.0 })
+                {
+                    Chip c;
+                    Config cfg;
+                    cfg.model = Model::A;
+                    cfg.internalRate = rate;
+                    cfg.shapes = shapes;
+                    c.prepare (cfg);
+                    c.renderCheckStates (true);
+                    setOsc (c, 1, hz * 16777216.0 / 985248.0, 1500.0f, static_cast<std::uint8_t> (combo | ctrl::gate));
+                    std::vector<float> y (4096, 0.0f);
+                    c.render (y.data(), 4096);
+                    INFO ((shapes == ShapeSet::fitted ? "fitted" : "placeholder") << ", control " << int (combo) << ", " << hz << " Hz at " << rate
+                                                                                   << " Hz: state mismatches " << c.renderStateMismatches() << ", large corrections "
+                                                                                   << c.renderLargeCorrections() << ", level switches " << c.renderMethodSwitches());
+                    CHECK (c.renderStateMismatches() == 0);
+                    CHECK (c.renderLargeCorrections() == 0);
+                    ++cases;
+                }
+    CHECK (cases == 48);
 }

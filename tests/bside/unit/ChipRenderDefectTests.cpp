@@ -163,9 +163,13 @@ TEST_CASE ("render defect 1, sibling (render cost review): a frozen Model A pull
     // Oscillator 1 plays a triangle at the register's top until its cell is in the upper half, its frequency is
     // written to 0, then a saw+pulse combination with a width above the cell: the chip pulls the top bit down at
     // once and its comparison goes low. The re-read one cycle later was scheduled as a phase, which a frozen line
-    // never reaches: the rendered gate stayed open for good.
+    // never reaches: the rendered gate stayed open for good. The writes land at a sample's start, or 0 to 2 cycles
+    // before its end (renderUntil): the pull-down and its re-read then straddle the sample's end, where a re-read
+    // scheduled a cycle early, or one the batched path dropped, shows in the state check (render cost review,
+    // round 3).
     for (const std::uint8_t combo : { std::uint8_t { 0x61 }, std::uint8_t { 0x71 } })
         for (const double rate : { 88200.0, 96000.0 })
+            for (const int beforeEnd : { -1, 0, 1, 2 })
         {
             Chip c = chipWith (Model::A, rate, ShapeSet::fitted);
             c.renderCheckStates (true);
@@ -174,6 +178,12 @@ TEST_CASE ("render defect 1, sibling (render cost review): a frozen Model A pull
             c.render (y.data(), 1000);
             while (! (((c.accumulator (0) >> 12) & 0xfffu) >= 3000u && ((c.accumulator (0) >> 12) & 0xfffu) <= 3500u))
                 c.render (y.data(), 1);
+            if (beforeEnd >= 0)
+            {
+                Chip probe = c;
+                probe.render (y.data(), 1);
+                REQUIRE (c.renderUntil (y.data(), 1, probe.cycle() - static_cast<std::uint64_t> (beforeEnd)) == 0); // the sample stays in progress
+            }
             Chip d = c;
             for (Chip* x : { &c, &d })
             {
@@ -184,8 +194,8 @@ TEST_CASE ("render defect 1, sibling (render cost review): a frozen Model A pull
             std::fill (y.begin(), y.end(), 0.0f);
             c.render (y.data(), 4000);
             d.advanceCycles (c.cycle() - d.cycle());
-            INFO ("control " << int (combo) << ", " << rate << " Hz: rendered " << y.back() << ", chip " << digitalOutput (d, Model::A, ShapeSet::fitted)
-                             << ", state mismatches " << c.renderStateMismatches());
+            INFO ("control " << int (combo) << ", " << rate << " Hz" << ", write " << beforeEnd << " cycles before a sample's end (-1: at its start)" << ": rendered " << y.back() << ", chip "
+                             << digitalOutput (d, Model::A, ShapeSet::fitted) << ", state mismatches " << c.renderStateMismatches());
             CHECK (std::abs (static_cast<double> (y.back()) - digitalOutput (d, Model::A, ShapeSet::fitted)) < 1.0e-6);
             CHECK (c.renderStateMismatches() == 0);
             CHECK (c.renderFrozenStateChecks() > 1000);
@@ -240,4 +250,51 @@ TEST_CASE ("render: a frozen Model A saw combination pulled down by a write (wid
             if (! ring)
                 CHECK (std::abs (static_cast<double> (y[2999]) - digitalOutput (d, Model::A, k.shapes)) < 1.0e-6);
         }
+}
+
+TEST_CASE ("render: a frozen Model A pull-down whose gate the re-read finds high (a width below the pulled cell), with and without a ring source", "[render][defects]")
+{
+    // Render cost review, round 3: the sibling above with the width below the cell the pull-down lands on. The
+    // re-read one cycle later must take the comparison of the frozen accumulator, which is high here; a re-read
+    // that always closed the gate passed every other test. With oscillator 3 running and the ring bit set, the
+    // re-read falls in a stretch with the source's flips (the sweep's event loop instead of its start).
+    int pulled = 0, high = 0;
+    for (const std::uint8_t combo : { std::uint8_t { 0x61 }, std::uint8_t { 0x71 } })
+        for (const bool ring : { false, true })
+            for (const float pw : { 16.0f, 400.0f, 900.0f, 2284.0f })
+                for (const double rate : { 88200.0, 96000.0 })
+                {
+                    Chip c = chipWith (Model::A, rate, ShapeSet::fitted);
+                    c.renderCheckStates (true);
+                    setOsc (c, 0, 65535.0, 2048.0f, ctrl::triangle | ctrl::gate);
+                    if (ring)
+                        setOsc (c, 2, 3000.0, 2048.0f, 0x00); // runs, silent: the output stays comparable
+                    std::vector<float> y (4000, 0.0f);
+                    c.render (y.data(), 1000);
+                    while (! (((c.accumulator (0) >> 12) & 0xfffu) >= 3000u && ((c.accumulator (0) >> 12) & 0xfffu) <= 3500u))
+                        c.render (y.data(), 1);
+                    Chip d = c;
+                    const auto control = static_cast<std::uint8_t> (combo | (ring ? ctrl::ring : 0));
+                    for (Chip* x : { &c, &d })
+                    {
+                        x->write (0x00, 0x00);
+                        x->write (0x01, 0x00);
+                        setOsc (*x, 0, 0.0, pw, control);
+                    }
+                    std::fill (y.begin(), y.end(), 0.0f);
+                    c.render (y.data(), 4000);
+                    d.advanceCycles (c.cycle() - d.cycle());
+                    const bool wasPulled = (d.phase (0) & kPhaseMsb) == 0;
+                    const bool gate = d.state().osc[0].pulseHigh;
+                    pulled += wasPulled ? 1 : 0;
+                    high += wasPulled && gate ? 1 : 0;
+                    INFO ("control " << int (control) << ", width " << pw << ", " << rate << " Hz: rendered " << y.back() << ", chip "
+                                     << digitalOutput (d, Model::A, ShapeSet::fitted) << ", pulled " << wasPulled << ", gate " << gate
+                                     << ", state mismatches " << c.renderStateMismatches());
+                    CHECK (std::abs (static_cast<double> (y.back()) - digitalOutput (d, Model::A, ShapeSet::fitted)) < 1.0e-6);
+                    CHECK (c.renderStateMismatches() == 0);
+                    CHECK (c.renderLargeCorrections() == 0);
+                }
+    INFO (pulled << " pulled down, " << high << " of them with the gate high");
+    CHECK (high > 0);
 }
