@@ -370,6 +370,13 @@ public:
         difference is counted. Off by default (one branch per sample). */
     void renderCheckStates (bool on) noexcept { renderCheck = on; }
     std::uint64_t renderStateMismatches() const noexcept { return rs.stateMismatches; }
+    /** How many pulse gates the state check compared, and of those how many on a frozen line (frequency 0):
+        the tests' proof that the check covers what it should. */
+    std::uint64_t renderStateChecks() const noexcept { return rs.stateChecks; }
+    std::uint64_t renderFrozenStateChecks() const noexcept { return rs.frozenStateChecks; }
+    /** Test aid: the lowest index bit oscillator n (0..2) renders as its own square wave (Model A triangle and
+        saw: the converter terms; 11 otherwise, 0 for a combined waveform). */
+    int renderLowestConverterBit (int n) const noexcept { return rs.osc[checked (n)].imin; }
     /** Test aid (white-box): off renders every sample by the general path, without the batched one
         (renderBatch: whole samples while nothing couples the lines to the digital core, the digital core
         advanced once). Both give bit-identical output and digital state; the tests compare them. On by default. */
@@ -909,6 +916,7 @@ private:
         std::uint64_t corrections = 0; // re-anchorings that moved a line (diagnostic)
         std::uint64_t largeCorrections = 0; // of those, the ones above 1e-4 of a period
         std::uint64_t stateMismatches = 0;  // renderCheckStates: gate or ring state unlike the chip's
+        std::uint64_t stateChecks = 0, frozenStateChecks = 0; // renderCheckStates: gates compared (on frozen lines)
         std::uint64_t converterSwitches = 0; // changes of the set of Model A converter bits rendered (diagnostic)
         std::uint64_t levelSwitches = 0;     // switches of how a combined waveform's steps are emitted (diagnostic)
     };

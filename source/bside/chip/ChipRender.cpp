@@ -2217,8 +2217,13 @@ void Chip::renderCheckSample() noexcept
         const bool frozen = ! (o.inc > 0) && ! v.frozenEdge && tc - static_cast<double> (v.jumpStart) - v.jumpT >= 3.0;
         const bool away = frozen || (! (o.inc == 0) && ! near (ud, 0.0) && ! near (ud, pw) && ! near (ud, 0.5));
         if (pulse && ! test && std::abs (static_cast<double> (o.pwSmooth) - static_cast<double> (o.pw)) < 1.0e-9 && away)
+        {
+            ++rs.stateChecks;
+            if (frozen)
+                ++rs.frozenStateChecks;
             if (v.gate != (ud >= pw))
                 ++rs.stateMismatches;
+        }
         if (v.ring)
         {
             const int s = detail::syncSource (n);

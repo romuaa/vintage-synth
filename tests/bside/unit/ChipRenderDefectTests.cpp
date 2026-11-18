@@ -73,6 +73,8 @@ TEST_CASE ("render defect 1 (8.17): a synced pulse at frequency 0 takes the chip
                 CHECK (std::abs (static_cast<double> (y.back()) - digitalOutput (d, m, ShapeSet::fitted)) < 1.0e-6);
                 CHECK (c.renderStateMismatches() == 0);
                 CHECK (c.renderLargeCorrections() == 0);
+                // the state check covers the frozen line (8.18: it skips one only for a stated reason)
+                CHECK (c.renderFrozenStateChecks() > 1000);
             }
 }
 
@@ -186,5 +188,6 @@ TEST_CASE ("render defect 1, sibling (render cost review): a frozen Model A pull
                              << ", state mismatches " << c.renderStateMismatches());
             CHECK (std::abs (static_cast<double> (y.back()) - digitalOutput (d, Model::A, ShapeSet::fitted)) < 1.0e-6);
             CHECK (c.renderStateMismatches() == 0);
+            CHECK (c.renderFrozenStateChecks() > 1000);
         }
 }

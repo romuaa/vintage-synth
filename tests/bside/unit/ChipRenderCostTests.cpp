@@ -755,3 +755,113 @@ TEST_CASE ("render: narrow pulses at small-denominator frequencies, rectangular 
     for (std::size_t i = 0; i < std::min<std::size_t> (rows.size(), 15); ++i)
         std::printf ("%10.0f %10.2f %8.0f %12.2f %10.1f\n", rows[i].rate, rows[i].f, static_cast<double> (rows[i].width), rows[i].db, rows[i].hz);
 }
+
+TEST_CASE ("chip: an envelope whose counter step is still pending is not inert (a sustain write in the one-cycle window)", "[bside][chip][equivalence]")
+{
+    // Decaying at the fastest rate, the sustain register is written to the counter's own level right after
+    // every step around a counter step: where that step is already in its pipeline, the counter still moves,
+    // so the envelope must not count as inert (its long skip and the batched path's stability depend on it).
+    for (const Model m : { Model::A, Model::B })
+    {
+        Config cfg;
+        cfg.model = m;
+        Chip base;
+        base.prepare (cfg);
+        base.advanceCycles (3000000); // the power-on envelopes decay to 0 and freeze: the batched path can run
+        REQUIRE (base.envelope (1) == 0);
+        REQUIRE (base.envelope (2) == 0);
+        base.setOscillator (0, input (3000.0, 2048.0f, ctrl::saw | ctrl::gate, 0x00, 0xf0));
+        while (base.envelope (0) != 0xff)
+            base.stepCycle();
+        base.setOscillator (0, input (3000.0, 2048.0f, ctrl::saw | ctrl::gate, 0x00, 0x00)); // decay towards 0
+        int tried = 0, windows = 0;
+        for (int i = 0; i < 6000 && tried < 400; ++i)
+        {
+            base.stepCycle();
+            const std::uint8_t counter = base.envelope (0);
+            if (counter % 0x11 != 0 || counter == 0)
+                continue;
+            ++tried;
+            Chip fast = base, ref = base;
+            const auto sr = static_cast<std::uint8_t> ((counter / 0x11) << 4);
+            fast.write (0x06, sr);
+            ref.write (0x06, sr);
+            const auto written = fast.state();
+            const auto& envelopes = written.env;
+            windows += envelopes[0].stepPipeline != 0 ? 1 : 0;
+            fast.advanceCycles (3000);
+            for (int k = 0; k < 3000; ++k)
+                ref.stepCycle();
+            INFO ((m == Model::A ? "Model A" : "Model B") << ", sustain written at counter " << int (counter) << ", cycle " << base.cycle());
+            REQUIRE (fast.state() == ref.state());
+        }
+        INFO (tried << " writes, " << windows << " of them with the counter step pending");
+        CHECK (tried >= 50);
+        CHECK (windows >= 3);
+    }
+    // Rendered: the batched path takes an envelope's stability from envInert. Sample by sample, the same write
+    // at a sample boundary that falls in the window, then the batched and the general path over 256 samples.
+    int windows = 0;
+    for (const auto& rc : rateConfigs())
+        for (const std::uint8_t decay : { std::uint8_t { 0 }, std::uint8_t { 1 }, std::uint8_t { 2 }, std::uint8_t { 3 } })
+    {
+        const double rate = rc.internalRate;
+        Chip base = makeChip (Model::B, rate);
+        base.advanceCycles (3000000);
+        base.setOscillator (0, input (3000.0, 2048.0f, ctrl::saw | ctrl::gate, 0x00, 0xf0));
+        std::vector<float> y (256, 0.0f);
+        while (base.envelope (0) != 0xff)
+            base.render (y.data(), 1);
+        base.setOscillator (0, input (3000.0, 2048.0f, ctrl::saw | ctrl::gate, decay, 0x00));
+        for (int i = 0; i < 40000 && base.envelope (0) != 0; ++i)
+        {
+            base.render (y.data(), 1);
+            const std::uint8_t counter = base.envelope (0);
+            const auto now = base.state();
+            const auto& envelopes = now.env;
+            if (counter % 0x11 != 0 || counter == 0 || envelopes[0].stepPipeline == 0)
+                continue;
+            ++windows;
+            Chip r1 = base, r2 = base;
+            const auto sr = static_cast<std::uint8_t> ((counter / 0x11) << 4);
+            r1.write (0x06, sr);
+            r2.write (0x06, sr);
+            r2.renderBatchingEnabled (false);
+            std::vector<float> y1 (256, 0.0f), y2 (256, 0.0f);
+            r1.render (y1.data(), 256);
+            r2.render (y2.data(), 256);
+            INFO (rate << " Hz, decay " << int (decay) << ", sustain written at counter " << int (counter));
+            REQUIRE (std::memcmp (y1.data(), y2.data(), y1.size() * sizeof (float)) == 0);
+            REQUIRE (r1.state() == r2.state());
+        }
+    }
+    {
+        INFO (windows << " sample boundaries in the window");
+        CHECK (windows >= 10);
+    }
+}
+
+TEST_CASE ("render: the Model A converter bits rendered as square waves follow the frequency (none above half the rate)", "[render][hysteresis]")
+{
+    // Taken afresh (a change of waveform), the lowest rendered bit toggles less than once per sample and the one
+    // below it would toggle at least once (8.4.5: the bits whose square waves stay below half the internal rate)
+    for (const double rate : { 88200.0, 96000.0, 192000.0 })
+        for (const std::uint8_t wave : { std::uint8_t { 0x11 }, std::uint8_t { 0x21 } })
+            for (double f = 3.0; f < 70000.0; f *= 1.37)
+            {
+                Chip c = makeChip (Model::A, rate);
+                setOsc (c, 0, f, 2048.0f, ctrl::pulse | ctrl::gate);
+                renderSamples (c, 4);
+                setOsc (c, 0, f, 2048.0f, wave);
+                renderSamples (c, 4);
+                const double pps = static_cast<double> (c.increment (0)) / 72057594037927936.0 * cyclesPerSample (c);
+                const int imin = c.renderLowestConverterBit (0);
+                INFO (rate << " Hz, control " << int (wave) << ", frequency " << f << ": lowest bit " << imin << ", periods per sample " << pps);
+                REQUIRE (imin >= 0);
+                REQUIRE (imin <= 11);
+                if (imin < 11)
+                    CHECK (pps * std::ldexp (1.0, 12 - imin) < 1.0);
+                if (imin > 0)
+                    CHECK (pps * std::ldexp (1.0, 13 - imin) >= 1.0);
+            }
+}
