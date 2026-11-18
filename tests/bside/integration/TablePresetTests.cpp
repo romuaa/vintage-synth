@@ -176,7 +176,7 @@ TEST_CASE ("B-Side tables: the instrument has them, with limits that match the t
     CHECK (inst.maxTableLines == prog::kMaxLines);
     CHECK (inst.maxTableBytes == prog::kMaxTextBytes);
     CHECK (inst.fileCap() == 12u * 1024u * 1024u);
-    CHECK (inst.maxJsonValues == 160000);
+    CHECK (inst.maxJsonValues == 192000); // raised from 160000 by the per-part parameters (8.7)
     CHECK (bs::validateTableText (linesOf (kTableA)).isEmpty());
     CHECK (bs::validateTableText ({ "not a table" }).contains ("line 1"));
     // The canonical form is stable and itself a table.
