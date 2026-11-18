@@ -156,6 +156,17 @@ repository.
 
 ### History (newest facts first within each area)
 
+- **B-Side parameter step: done on `bside/params`, awaiting the owner's merge approval**
+  (2026-11-18): the 127 host parameters of 8.7 (63 per part from one X-macro list in
+  `source/bside/params/PartParamList.h`, then `chip.clock`; 202 in all), mappings in
+  `bside/params/PartMappings.h` (continuous register values for Smooth, `authenticRegister` for
+  Authentic), a binding per part (`PartParamBinding`). **Inert:** nothing on the audio thread
+  reads them until S4. Typed text always gives a finite value in range; choices accept any case
+  and a bare number. Reviewed independently (no contract difference; test gaps closed). The JSON
+  value cap of B-Side preset files rose to 192 000. **Open for the owner:** `chip.clock` is saved
+  with a program (it could be a session setting instead). **Follow-up, small:** Vintage's shared
+  text parser (`common/params/ParamFactory.cpp`) still turns typed "nan" into a NaN value.
+
 - **Wave 3 is merged to `main`** (PR #9, owner approved 2026-11-13): M5 (effects and arp/sequencer
   in the plugin, 170 parameters, host bypass, sine-sync alias fix, offline = real time for Cross
   Mod), S0 (common library `source/common/`) and M6a (presets and banks, preset bar, 8 placeholder
@@ -300,6 +311,8 @@ repository.
   15. S2b-2: the renderer and the `BasicBlepTable` template (double-precision instance,
       floating-point contraction may differ: one test accepts 1e-6 outside Apple Clang),
       `chip_bench` (2026-11-16).
+  16. B-Side parameter step: a nested X-macro with `#N` stringizing (MSVC's preprocessor has never
+      seen it), a `juce::AudioParameterChoice` subclass, `std::optional` number parsing (2026-11-18).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
