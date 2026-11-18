@@ -357,6 +357,10 @@ public:
         difference is counted. Off by default (one branch per sample). */
     void renderCheckStates (bool on) noexcept { renderCheck = on; }
     std::uint64_t renderStateMismatches() const noexcept { return rs.stateMismatches; }
+    /** Test aid (white-box): off renders every sample by the general path, without the batched one
+        (renderBatch: whole samples while nothing couples the lines to the digital core, the digital core
+        advanced once). Both give bit-identical output and digital state; the tests compare them. On by default. */
+    void renderBatchingEnabled (bool on) noexcept { renderBatching = on; }
     /** Times the set of Model A converter bits rendered as square waves changed with the frequency (each a
         small band-limited step; hysteresis keeps a vibrato around a limit from repeating it). */
     std::uint64_t renderConverterSwitches() const noexcept { return rs.converterSwitches; }
@@ -709,8 +713,55 @@ private:
                && e.position != e.compare;
     }
 
-    /** j envelope steps of envelope n: runs of pure increments in one go, every other step by envStep. */
+    /** True while envelope n's counter cannot change before a write: no phase change or counter step in its
+        pipelines, and frozen at zero (decay or release) or holding its sustain level (8.15.4 steps 4-6: the
+        divider then never asks for a counter step). Only the rate counter and the divider move. */
+    bool envInert (int n) const noexcept
+    {
+        const Env& e = env[idx (n)];
+        if (e.phasePipeline != 0 || e.stepPipeline != 0)
+            return false;
+        if (e.frozen && e.phase != static_cast<std::uint8_t> (EnvPhase::attack))
+            return true;
+        return e.phase == static_cast<std::uint8_t> (EnvPhase::decaySustain) && e.counter == sustainLevel (n);
+    }
+
+    /** Steps over which envelope n's counter certainly keeps its value (no write in between): unbounded
+        (~0) while envInert; while only the rate counter moves (envQuiet), the steps to its match; else 0. */
+    std::uint64_t envStableSteps (int n) const noexcept
+    {
+        if (envInert (n))
+            return ~std::uint64_t { 0 };
+        const Env& e = env[idx (n)];
+        if (envQuiet (e))
+            return (static_cast<std::uint64_t> (e.compare) + kRatePositions - e.position) % kRatePositions;
+        return 0;
+    }
+
+    /** j envelope steps of envelope n: runs of pure increments in one go, every other step by envStep. An
+        inert envelope (envInert) repeats its state every (compare + 1) x divider period steps once its rate
+        counter is on its cycle: for a long j one such period is stepped, and if the state came back, whole
+        repetitions are skipped (exact: the steps depend only on the state and the registers, which do not
+        change during an advance). */
     void envAdvance (int n, std::uint64_t j) noexcept
+    {
+        Env& e = env[idx (n)];
+        if (envInert (n))
+        {
+            const std::uint64_t period = (static_cast<std::uint64_t> (e.compare) + 1) * std::max<std::uint64_t> (e.dividerPeriod, 1);
+            if (j >= 2 * period)
+            {
+                const Env before = e;
+                envSteps (n, period);
+                j -= period;
+                if (e == before)
+                    j %= period;
+            }
+        }
+        envSteps (n, j);
+    }
+
+    void envSteps (int n, std::uint64_t j) noexcept
     {
         Env& e = env[idx (n)];
         while (j > 0)
@@ -797,6 +848,8 @@ private:
         std::uint64_t glitchStart = 0;
         double glitchT = 0.0;
         std::uint16_t held = 0;  // the digital value shown in noise, per-cycle and off modes
+        double lastValue = 0.0, lastLevel = -1.0; // the value and envelope level last written to the ring
+        std::uint64_t quietSince = 0; // from this sample on no step was emitted and value and level kept still
         std::array<double, kRing> buf {}; // double: a nearly silent shape on a large offset keeps its detail
         std::array<float, kRing> env {};
     };
@@ -823,6 +876,9 @@ private:
     void renderStartSample() noexcept;
     void renderPiece (std::uint64_t cycles, bool toSampleEnd) noexcept;
     float renderFinishSample() noexcept;
+    void renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std::uint64_t cyclesDone, std::uint64_t cycleNow) noexcept;
+    float renderOutput() noexcept;
+    int renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noexcept;
     void renderBeforeChange() noexcept;
     void renderAfterChange (int testSetMask) noexcept;
     void renderSyncOsc (int n) noexcept;
@@ -835,6 +891,7 @@ private:
     void renderLanding (int n, double tw) noexcept;
     void renderCheckSample() noexcept;
     bool renderCheck = false;
+    bool renderBatching = true;
     void renderEmit (int n, double t, double dv, double ds) noexcept;
     void renderEmitWith (int n, double t, double dv, double ds, bool longKernel) noexcept;
     double renderSlopeU (int n) const noexcept; // periods per cycle
