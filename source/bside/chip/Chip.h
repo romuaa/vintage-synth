@@ -960,6 +960,7 @@ private:
         double tStart = 0.0, tEnd = 0.0; // the sample's start and end, in cycles since C_s
         double sweepT = 0.0;      // how far the oscillators' lines have been rendered, cycles since C_s
         double cps = 1.0;         // cycles per internal sample
+        double samplesPerCycle = 1.0; // 1 / cps
         std::array<RenderOsc, 3> osc {};
         std::array<double, 3> leftValue {}, leftSlope {}, leftSlopeU {}; // captured before a write
         std::uint64_t corrections = 0; // re-anchorings that moved a line (diagnostic)
@@ -982,6 +983,7 @@ private:
     void renderSyncOsc (int n) noexcept;
     void renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept;
     void renderSweepLine (int n, double tEnd) noexcept;
+    void renderSweepTable (int n, double tEnd) noexcept;
     void renderLines (PieceEvents& ev, double tEnd) noexcept;
     bool renderPullDown (int n, double t, bool atWrite, bool reread) noexcept;
     int renderPullCell (int n, int cell, double tCross) const noexcept;
@@ -994,7 +996,7 @@ private:
     bool renderCoarse = true;
     int renderTableLevel (int n, int current) const noexcept; // ChipRender.cpp
     void renderEmit (int n, double t, double dv, double ds) noexcept;
-    void renderEmitWith (int n, double t, double dv, double ds, bool longKernel) noexcept;
+    void renderEmitWith (int n, double t, double dv, double ds, bool longKernel, bool cellStep = false) noexcept;
     double renderSlopeU (int n) const noexcept; // periods per cycle
     double renderDigitalU (int n, double t) const noexcept;
     double renderValue (int n, double u) const noexcept;

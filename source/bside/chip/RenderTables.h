@@ -134,16 +134,24 @@ const RenderTables& tablesFor (Model m, ShapeSet s);
     and every tap shares one interpolation weight (the taps' sub-sample offsets are equal).
     The short kernel (`common/dsp/BlepTable.h` 8 / 8.0, float) keeps its own points and its linear
     interpolation. The long kernel (8 zero crossings, Kaiser beta 12, double) is read by cubic Hermite
-    interpolation between its points with the exact derivatives (step' = the kernel, ramp' = step): the
-    second-order correction of S2b-2 without its three kernel reads per tap. Built from the BLEP tables'
-    own points (BasicBlepTable::step, ramp at whole points, kernelAt at multiples of 1 / 4096), on first use. */
+    interpolation between its own points with the exact derivatives (step' = the kernel, ramp' = step; the
+    second-order correction of S2b-2 without its three kernel reads per tap), and for the cell steps of a
+    combined waveform from its step refined that way to kFineResolution points and read linearly (two rows
+    instead of four; an error of about 7e-8 of a step, which the nearly cancelling edge pairs of the narrowest
+    pulses would show, so pulse edges keep the Hermite read). Built from the BLEP tables' own points
+    (BasicBlepTable::step, ramp at whole points, kernelAt at multiples of 1 / 4096), on first use. */
 constexpr int kKernelTaps = 2 * kLongZeroCrossings;
 constexpr int kKernelResolution = 512;
+/** The long kernel's step for the cell steps of a combined waveform, read linearly: its own 512 points refined
+    by their cubic Hermite interpolation (error about 1e-12 of a step) to kFineResolution points per sample. */
+constexpr int kFineResolution = 2048;
 struct KernelTables
 {
     static constexpr std::size_t kPoints = static_cast<std::size_t> (kKernelResolution + 1) * kKernelTaps;
+    static constexpr std::size_t kFinePoints = static_cast<std::size_t> (kFineResolution + 1) * kKernelTaps;
     std::array<float, kPoints> shortStep {}, shortRamp {};
     std::array<double, kPoints> longStep {}, longRamp {}, longKernel {};
+    std::array<double, kFinePoints> longStepFine {};
 };
 const KernelTables& kernelTables();
 

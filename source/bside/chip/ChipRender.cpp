@@ -225,6 +225,37 @@ std::uint8_t Chip::renderMode (int n) const noexcept
 
 namespace
 {
+/** renderValue of a triangle or saw line at index cell k (k x sigma <= u), Model A converter terms from imin
+    on (the one place this arithmetic is written; renderSweepLine and renderBatch use it too). */
+double triSawValue (const render::Converter& d, bool saw, int imin, std::int64_t k, bool ringFlip, double u) noexcept
+{
+    const double sigma = sigmaOf (imin);
+    const auto ixBase = static_cast<std::uint32_t> ((static_cast<std::uint64_t> (k) << imin) & 0xfffu);
+    const double ixc = static_cast<double> (ixBase) + 4096.0 * (u - static_cast<double> (k) * sigma);
+    double val = 0.0;
+    if (saw)
+    {
+        val = d.g * ixc;
+        if (! d.ideal) // the index bits below imin are 0: the table holds the sum over the others
+            val += d.excludedSaw[static_cast<std::size_t> (imin)] + d.devSaw[ixBase];
+    }
+    else
+    {
+        const std::uint32_t top = (ixBase >> 11) & 1u;
+        const std::uint32_t b = top ^ (ringFlip ? 1u : 0u);
+        const double x = ixc - 2048.0 * static_cast<double> (top);
+        const double c = b != 0 ? 2048.0 - x : x;
+        val = d.g * 2.0 * c;
+        if (! d.ideal)
+        {
+            // bits imin..10 of the index, inverted when b is set (the bits below imin are 0)
+            const double set = d.devTri[ixBase & 0x7ffu];
+            val += d.excludedTri[static_cast<std::size_t> (imin)] + (b != 0 ? d.triTail[static_cast<std::size_t> (imin)] - set : set);
+        }
+    }
+    return val - d.center;
+}
+
 bool gateAt (double u, double slope, float pw, bool test) noexcept
 {
     if (test || ! (pw > 0.0f))
@@ -244,35 +275,7 @@ double Chip::renderValue (int n, double u) const noexcept
         case rmCycle: return static_cast<double> (T.wave[v.held & 0xfffu]);
         case rmPulse: return static_cast<double> (v.gate ? T.wave[0xfff] : T.wave[0]);
         case rmTri:
-        case rmSaw:
-        {
-            const render::Converter& d = T.dac;
-            const double sigma = sigmaOf (v.imin);
-            const auto ixBase = static_cast<std::uint32_t> ((static_cast<std::uint64_t> (v.k) << v.imin) & 0xfffu);
-            const double ixc = static_cast<double> (ixBase) + 4096.0 * (u - static_cast<double> (v.k) * sigma);
-            double val = 0.0;
-            if (v.mode == rmSaw)
-            {
-                val = d.g * ixc;
-                if (! d.ideal) // the index bits below imin are 0: the table holds the sum over the others
-                    val += d.excludedSaw[static_cast<std::size_t> (v.imin)] + d.devSaw[ixBase];
-            }
-            else
-            {
-                const std::uint32_t top = (ixBase >> 11) & 1u;
-                const std::uint32_t b = top ^ (v.ringFlip ? 1u : 0u);
-                const double x = ixc - 2048.0 * static_cast<double> (top);
-                const double c = b != 0 ? 2048.0 - x : x;
-                val = d.g * 2.0 * c;
-                if (! d.ideal)
-                {
-                    // bits imin..10 of the index, inverted when b is set (the bits below imin are 0)
-                    const double set = d.devTri[ixBase & 0x7ffu];
-                    val += d.excludedTri[static_cast<std::size_t> (v.imin)] + (b != 0 ? d.triTail[static_cast<std::size_t> (v.imin)] - set : set);
-                }
-            }
-            return val - d.center;
-        }
+        case rmSaw: return triSawValue (T.dac, v.mode == rmSaw, v.imin, v.k, v.ringFlip, u);
         case rmTable:
         {
             const std::uint8_t c = ctl (n);
@@ -597,14 +600,17 @@ namespace
     behind). Tap j (-8 .. 7) is the kernel's cell j at the event's sub-sample offset d (equal for every tap)
     and lands on sample `sample + j - c + 1`, c = ceil (base); samples from `sample` on are evaluated after
     the event, so they take the residual alone and the samples before it the whole band-limited edge
-    (render cost step; equal to S2b-2's per-tap loop, with the long kernel read by cubic Hermite
-    interpolation instead of the linear one with a second-order correction, RenderTables.h). */
-template <bool kLong, std::size_t N>
+    (render cost step; equal to S2b-2's per-tap loop, with the long kernel read by cubic Hermite interpolation
+    instead of linearly with a second-order correction, and a combined waveform's cell steps from the refined
+    points, RenderTables.h). */
+enum class Kernel : std::uint8_t { shortKernel, longKernel, longCellStep };
+
+template <Kernel kKernel, std::size_t N>
 void addStep (const render::KernelTables& kt, std::array<double, N>& buf, std::uint64_t sample, double base, double dv, double ds) noexcept
 {
     constexpr int z = render::kLongZeroCrossings;
     constexpr int taps = render::kKernelTaps;
-    constexpr int res = render::kKernelResolution;
+    constexpr int res = kKernel == Kernel::longCellStep ? render::kFineResolution : render::kKernelResolution;
     static_assert (2 * z + 2 <= static_cast<int> (N) && (N & (N - 1)) == 0, "the output ring must hold the BLEP window and one sample of look-back");
     const double cb = std::ceil (base);
     const int c = static_cast<int> (cb);              // 0, 1 or 2
@@ -614,7 +620,14 @@ void addStep (const render::KernelTables& kt, std::array<double, N>& buf, std::u
     const double x = pos - static_cast<double> (k);
     std::array<double, taps> add {};
     const bool ramp = std::abs (ds) > 0.0; // a pure step (most edges) skips the ramp table
-    if constexpr (kLong)
+    if constexpr (kKernel == Kernel::longCellStep)
+    {
+        // a cell step of a combined waveform (no slope change): the refined points, read linearly
+        const double* s0 = kt.longStepFine.data() + k * taps;
+        for (int jj = 0; jj < taps; ++jj)
+            add[static_cast<std::size_t> (jj)] = dv * (s0[jj] + (s0[jj + taps] - s0[jj]) * x);
+    }
+    else if constexpr (kKernel == Kernel::longKernel)
     {
         // cubic Hermite with the exact derivatives (h = 1 / res): step' = kernel, ramp' = step
         const double x2 = x * x, x3 = x2 * x;
@@ -662,7 +675,7 @@ void Chip::renderEmit (int n, double t, double dv, double ds) noexcept
     renderEmitWith (n, t, dv, ds, rs.osc[idx (n)].longKernel);
 }
 
-void Chip::renderEmitWith (int n, double t, double dv, double ds, bool longKernel) noexcept
+void Chip::renderEmitWith (int n, double t, double dv, double ds, bool longKernel, bool cellStep) noexcept
 {
     if (! (std::abs (dv) > 1.0e-15) && ! (std::abs (ds) > 1.0e-18))
         return;
@@ -670,11 +683,13 @@ void Chip::renderEmitWith (int n, double t, double dv, double ds, bool longKerne
     v.quietSince = rs.sample + 1; // the ring holds this step's residue for the next 2 x 8 samples
     // time from the event to the grid point of the current sample (its end), in samples; an event lies at
     // most one sample before the current sample's start
-    const double base = std::fmin (std::fmax ((rs.tEnd - t) / rs.cps, 0.0), 2.0);
-    if (longKernel)
-        addStep<true> (*ktab, v.buf, rs.sample, base, dv, ds);
+    const double base = std::fmin (std::fmax ((rs.tEnd - t) * rs.samplesPerCycle, 0.0), 2.0);
+    if (cellStep && ! (std::abs (ds) > 0.0))
+        addStep<Kernel::longCellStep> (*ktab, v.buf, rs.sample, base, dv, ds);
+    else if (longKernel)
+        addStep<Kernel::longKernel> (*ktab, v.buf, rs.sample, base, dv, ds);
     else
-        addStep<false> (*ktab, v.buf, rs.sample, base, dv, ds);
+        addStep<Kernel::shortKernel> (*ktab, v.buf, rs.sample, base, dv, ds);
 }
 
 // ---- state from the digital core ----
@@ -718,6 +733,7 @@ void Chip::renderActivate() noexcept
     rs = RenderState {};
     rs.active = true;
     rs.cps = static_cast<double> (clock.increment()) / kTwo32;
+    rs.samplesPerCycle = 1.0 / rs.cps;
     renderStartSample();
     for (int n = 0; n < 3; ++n)
         renderSyncOsc (n);
@@ -874,6 +890,11 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
     if ((v.mode == rmTri || v.mode == rmSaw) && nd == 0 && nh == 0 && nr == 0)
     {
         renderSweepLine (n, tEnd);
+        return;
+    }
+    if (v.mode == rmTable && nd == 0 && nh == 0 && nr == 0 && slope > 0.0 && ! v.frozenEdge)
+    {
+        renderSweepTable (n, tEnd);
         return;
     }
     int id = 0, ih = 0, ir = 0;
@@ -1095,34 +1116,10 @@ void Chip::renderSweepLine (int n, double tEnd) noexcept
         const double sigma = sigmaOf (imin);
         const std::int64_t period = std::int64_t { 1 } << (12 - imin);
         const bool saw = v.mode == rmSaw;
-        const double excluded = saw ? d.excludedSaw[static_cast<std::size_t> (imin)] : d.excludedTri[static_cast<std::size_t> (imin)];
-        const double tail = d.triTail[static_cast<std::size_t> (imin)];
         const std::uint32_t flip = v.ringFlip ? 1u : 0u;
-        // renderValue (tri, saw) at index cell kk with the continuous index ixc; renderDerivative at kk
-        auto value = [&] (std::int64_t kk, double ixc) {
-            const auto ixBase = static_cast<std::uint32_t> ((static_cast<std::uint64_t> (kk) << imin) & 0xfffu);
-            double val = 0.0;
-            if (saw)
-            {
-                val = d.g * ixc;
-                if (! d.ideal)
-                    val += excluded + d.devSaw[ixBase];
-            }
-            else
-            {
-                const std::uint32_t top = (ixBase >> 11) & 1u;
-                const std::uint32_t b = top ^ flip;
-                const double x = ixc - 2048.0 * static_cast<double> (top);
-                const double c = b != 0 ? 2048.0 - x : x;
-                val = d.g * 2.0 * c;
-                if (! d.ideal)
-                {
-                    const double set = d.devTri[ixBase & 0x7ffu];
-                    val += excluded + (b != 0 ? tail - set : set);
-                }
-            }
-            return val - d.center;
-        };
+        const double invSlope = 1.0 / slope;
+        // renderValue (tri, saw) at index cell kk; renderDerivative at kk
+        auto value = [&] (std::int64_t kk) { return triSawValue (d, saw, imin, kk, flip != 0, v.u); };
         auto derivative = [&] (std::int64_t kk) {
             if (saw)
                 return d.g * 4096.0;
@@ -1132,7 +1129,7 @@ void Chip::renderSweepLine (int n, double tEnd) noexcept
         for (int guard = 0; guard < kSweepGuard; ++guard)
         {
             const double ue = static_cast<double> (v.k + 1) * sigma;
-            const double tl = t + (ue - v.u) / slope;
+            const double tl = t + (ue - v.u) * invSlope;
             if (! (tl <= tEnd))
                 break;
             if (tl > t)
@@ -1141,10 +1138,7 @@ void Chip::renderSweepLine (int n, double tEnd) noexcept
                 t = tl;
             }
             const std::int64_t before = v.k;
-            auto ixAt = [&] (std::int64_t kk) {
-                return static_cast<double> ((static_cast<std::uint64_t> (kk) << imin) & 0xfffu) + 4096.0 * (v.u - static_cast<double> (kk) * sigma);
-            };
-            const double wl = value (before, ixAt (before));
+            const double wl = value (before);
             const double sl = derivative (before);
             v.k += 1; // = llround (ue / sigma): sigma is a power of two
             if (v.k >= period)
@@ -1154,8 +1148,149 @@ void Chip::renderSweepLine (int n, double tEnd) noexcept
                 if (v.gateCheckU >= 0.0)
                     v.gateCheckU -= 1.0;
             }
-            renderEmit (n, t, value (v.k, ixAt (v.k)) - wl, (derivative (v.k) - sl) * rate);
+            renderEmit (n, t, value (v.k) - wl, (derivative (v.k) - sl) * rate);
         }
+    }
+    if (tEnd > t)
+        v.u += slope * (tEnd - t);
+}
+
+void Chip::renderSweepTable (int n, double tEnd) noexcept
+{
+    // A combined waveform's line with no digital event, ring flip or held value in the stretch, slope > 0: the
+    // general loop of renderSweep for it, with renderNextLineEvent, renderValue and renderDerivative (0 for a
+    // staircase) written out for the table mode (the same order; times by the inverse slope), constants taken once.
+    RenderOsc& v = rs.osc[idx (n)];
+    const double slope = renderSlopeU (n);
+    const std::uint8_t c = ctl (n);
+    const bool test = (c & ctrl::test) != 0;
+    const bool pulse = (c & ctrl::pulse) != 0;
+    const bool pulling = cfg.model == Model::A && (c & ctrl::saw) != 0;
+    const auto slot = static_cast<std::size_t> (render::tableSlot (static_cast<std::uint8_t> (wave::bits (c) & 7u)));
+    const render::StepTable& st = rtab->steps[slot];
+    const double low = static_cast<double> (rtab->wave[0]);
+    const float pwSmooth = osc[idx (n)].pwSmooth;
+    const double pw = static_cast<double> (pwSmooth) / 4096.0;
+    const double rate = slope * rs.cps;
+    const double invSlope = 1.0 / slope;
+    auto valueNow = [&] {
+        if (pulse && ! v.gate)
+            return low;
+        const auto cell = static_cast<std::size_t> ((static_cast<std::uint64_t> (v.k) + (v.ringFlip ? 2048u : 0u)) & 0xfffu);
+        if (v.level > 0)
+            return static_cast<double> (st.coarseValue[render::coarseOffset (v.level) + (cell >> v.level)]);
+        return static_cast<double> (st.value[cell]);
+    };
+    double t = rs.sweepT;
+    for (int guard = 0; guard < kSweepGuard; ++guard)
+    {
+        double ue = 0.0;
+        int kind = 0;
+        double best = kInf;
+        {
+            const auto cell = static_cast<std::size_t> ((static_cast<std::uint64_t> (v.k) + (v.ringFlip ? 2048u : 0u)) & 0xfffu);
+            std::size_t d = st.nextChange[cell];
+            if (v.level > 0)
+            {
+                const std::size_t ci = cell >> v.level, dc = st.coarseNext[render::coarseOffset (v.level) + ci];
+                d = dc != 0 ? ((ci + dc) << v.level) - cell : 0;
+            }
+            if (d != 0)
+            {
+                ue = static_cast<double> (v.k + static_cast<std::int64_t> (d)) / 4096.0;
+                kind = 1;
+                best = t + (ue - v.u) * invSlope;
+            }
+        }
+        if (pulling && (static_cast<std::uint64_t> (v.k) & 0xfffu) < 2048u)
+        {
+            const double uh = static_cast<double> ((v.k & ~std::int64_t { 0xfff }) + 2048) / 4096.0;
+            const double th = t + (uh - v.u) * invSlope;
+            if (th < best)
+            {
+                ue = uh;
+                kind = 1;
+                best = th;
+            }
+        }
+        if (v.landPull)
+        {
+            const double tl = static_cast<double> (v.landStart) - static_cast<double> (rs.start) + v.landT;
+            if (tl < best)
+            {
+                ue = v.u + slope * (tl - t);
+                kind = 4;
+                best = tl;
+            }
+        }
+        if (pulse && pw > 0.0)
+        {
+            const double vph = v.u - slope; // the comparison is one cycle late (8.15.2 (c))
+            const double fl = std::floor (vph);
+            const double fr = vph - fl;
+            const double up = v.gate ? (fr < 1.0e-9 ? fl : fl + 1.0) + slope : (fr < pw + 1.0e-9 ? fl + pw : fl + 1.0 + pw) + slope;
+            const double tp = t + (up - v.u) * invSlope;
+            if (tp < best)
+            {
+                ue = up;
+                kind = 2;
+                best = tp;
+            }
+            if (v.gateCheckU >= 0.0)
+            {
+                const double tq = t + (v.gateCheckU - v.u) * invSlope;
+                if (tq < best)
+                {
+                    ue = v.gateCheckU;
+                    kind = 3;
+                    best = tq;
+                }
+            }
+        }
+        if (! (best <= tEnd))
+            break;
+        if (best > t)
+        {
+            v.u = ue;
+            t = best;
+        }
+        const double wl = valueNow();
+        if (kind == 1)
+        {
+            v.k = static_cast<std::int64_t> (std::llround (ue * 4096.0));
+            if (v.k >= 4096)
+            {
+                v.k -= 4096;
+                v.u -= 1.0;
+                if (v.gateCheckU >= 0.0)
+                    v.gateCheckU -= 1.0;
+            }
+        }
+        else if (kind == 2)
+            v.gate = ! v.gate;
+        else if (kind == 3)
+        {
+            v.gate = gateAt (v.u, slope, pwSmooth, test);
+            v.gateCheckU = -1.0;
+        }
+        if (kind == 4)
+        {
+            // the pull-down the chip makes at the landing renderLanding found (as renderSweep)
+            v.landPull = false;
+            v.landHold = false;
+            v.u -= 0.5;
+            v.k = static_cast<std::int64_t> (std::floor (frac01 (v.u) * 4096.0));
+            v.u = frac01 (v.u);
+            v.pending = true;
+            v.pendingPull = true;
+            v.pendingStart = rs.start;
+            v.pendingT = t;
+            v.gateCheckU = v.u + slope;
+        }
+        else if (pulling && renderPullDown (n, t, false, kind == 3))
+            v.gateCheckU = v.u + slope;
+        // a cell step (kind 1) without a gate change reads the refined long table; pulse edges keep the Hermite read
+        renderEmitWith (n, t, valueNow() - wl, 0.0 * rate, true, kind == 1);
     }
     if (tEnd > t)
         v.u += slope * (tEnd - t);
@@ -1703,7 +1838,10 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         double slope, uLimit;
         std::uint64_t phase0, inc;
         bool constant; // deselected and settled: its ring holds the same value and level every sample
+        bool triSaw;   // a triangle or saw line: its next event is its next boundary
+        bool wraps;    // the finish keeps the line in [0, 1) (pulse and off modes)
         double contribution;
+        float level;   // the envelope converter's output (constant in the batch)
     };
     std::array<Line, 3> line {};
     constexpr double kMargin = 1.0e-7; // periods: an event this close to a sample's end goes to the general path
@@ -1722,11 +1860,66 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         l.phase0 = osc[idx (n)].phase;
         l.inc = test ? 0u : osc[idx (n)].inc;
         l.constant = v.mode == rmOff && rs.sample >= v.quietSince + static_cast<std::uint64_t> (kRing);
-        l.contribution = l.constant ? static_cast<double> (rtab->envelope[env[idx (n)].counter]) * renderValue (n, v.u) : 0.0;
+        l.triSaw = v.mode == rmTri || v.mode == rmSaw;
+        l.wraps = v.mode != rmTri && v.mode != rmSaw && v.mode != rmTable;
+        l.level = rtab->envelope[env[idx (n)].counter];
+        l.contribution = l.constant ? static_cast<double> (l.level) * renderValue (n, v.u) : 0.0;
         l.uLimit = l.constant ? kInf : limitOf (n, rs.sweepT);
     }
 
     const std::uint64_t c0 = cycleCount;
+    if (line[0].constant && line[1].constant && line[2].constant && ! renderCheck)
+    {
+        // nothing sounds that moves: every sample is the same sum (renderOutput's order); the ring and the rest
+        // of the render state are brought to where the general path would leave them below
+        double sum = 0.0;
+        for (const auto& l : line)
+            sum += l.contribution;
+        const auto y = static_cast<float> (sum);
+        std::uint64_t cum = 0, lastStart = c0, lastCycles = 0;
+        std::uint32_t lastFraction = 0;
+        int done = 0;
+        while (done < maxSamples)
+        {
+            const std::uint32_t f = clock.fraction();
+            const std::uint64_t cyc = clock.nextSample();
+            if (cum + cyc > budget || c0 + cum + cyc >= untilCycle)
+            {
+                clock.rewind (f);
+                break;
+            }
+            lastStart = c0 + cum;
+            lastCycles = cyc;
+            lastFraction = f;
+            cum += cyc;
+            out[done++] += y;
+        }
+        if (done == 0)
+            return 0;
+        rs.sample += static_cast<std::uint64_t> (done);
+        rs.start = lastStart;
+        rs.cycles = lastCycles;
+        rs.tStart = static_cast<double> (lastFraction) / kTwo32;
+        rs.tEnd = rs.tStart + rs.cps;
+        rs.sweepT = rs.tEnd;
+        rs.inProgress = false;
+        advanceCycles (cum);
+        for (int n = 0; n < 3; ++n)
+        {
+            RenderOsc& v = rs.osc[idx (n)];
+            const double value = renderValue (n, v.u);
+            for (int s2 = 0; s2 < kRing; ++s2)
+            {
+                const std::uint64_t age = (rs.sample + static_cast<std::uint64_t> (kRing) - static_cast<std::uint64_t> (s2)) % static_cast<std::uint64_t> (kRing);
+                const bool held = age >= 1 && age <= static_cast<std::uint64_t> (kLatency + 1);
+                v.buf[static_cast<std::size_t> (s2)] = held ? value : 0.0;
+                v.env[static_cast<std::size_t> (s2)] = held ? line[idx (n)].level : 0.0f;
+            }
+            v.u = frac01 (renderDigitalU (n, rs.tEnd) + v.offU);
+        }
+        return done;
+    }
+
     std::uint64_t cum = 0;
     int done = 0;
     while (done < maxSamples)
@@ -1756,6 +1949,11 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
             const double uNew = v.u + l.slope * (rs.tEnd - rs.sweepT); // renderSweep's own step when no event lies inside
             if (uNew < l.uLimit)
                 v.u = uNew;
+            else if (l.triSaw)
+            {
+                renderSweepLine (n, rs.tEnd); // what renderSweep does for it here (no event lists)
+                l.uLimit = static_cast<double> (v.k + 1) * sigmaOf (v.imin) - kMargin; // renderNextLineEvent's boundary
+            }
             else
             {
                 renderSweep (n, rs.tEnd, nullptr);
@@ -1773,13 +1971,34 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
             // the digital phase at the sample's end (stepping adds inc per cycle modulo 2^56; the product may wrap
             // modulo 2^64, a multiple of 2^56)
             const std::uint64_t phaseEnd = stepEach ? osc[idx (n)].phase : (l.phase0 + l.inc * end) & mask[idx (n)];
-            const std::uint64_t corrections = rs.corrections;
-            const double uBefore = rs.osc[idx (n)].u;
-            renderFinishOsc (n, slot, phaseEnd, cyc, c0 + end, false);
-            if (rs.corrections != corrections)
-                l.uLimit = limitOf (n, rs.tEnd); // the line moved
-            else if (rs.osc[idx (n)].u < uBefore - 0.5)
-                l.uLimit -= 1.0; // pulse and off modes keep their line in [0, 1): it wrapped
+            RenderOsc& v = rs.osc[idx (n)];
+            const double uBefore = v.u;
+            // renderFinishOsc's re-anchoring, first: where it waits or corrects, renderFinishOsc itself
+            const double ua0 = static_cast<double> (phaseEnd) / kTwo56 + l.slope * (rs.tEnd - static_cast<double> (cyc)) + v.offU;
+            const double ua = ua0 + std::round (v.u - ua0);
+            if (v.pending || ! (std::abs (ua - v.u) <= 1.0e-9))
+            {
+                const std::uint64_t corrections = rs.corrections;
+                renderFinishOsc (n, slot, phaseEnd, cyc, c0 + end, false);
+                if (rs.corrections != corrections)
+                    l.uLimit = limitOf (n, rs.tEnd); // the line moved
+                else if (v.u < uBefore - 0.5)
+                    l.uLimit -= 1.0; // pulse and off modes keep their line in [0, 1): it wrapped
+                continue;
+            }
+            // ... else what it does there, written out
+            const double value = l.triSaw ? triSawValue (rtab->dac, v.mode == rmSaw, v.imin, v.k, v.ringFlip, v.u) : renderValue (n, v.u);
+            v.buf[slot] += value;
+            v.env[slot] = l.level;
+            if (! sameBits (value, v.lastValue) || ! sameBits (static_cast<double> (l.level), v.lastLevel))
+            {
+                v.lastValue = value;
+                v.lastLevel = static_cast<double> (l.level);
+                v.quietSince = rs.sample + 1;
+            }
+            v.u = l.wraps ? frac01 (ua) : ua;
+            if (v.u < uBefore - 0.5)
+                l.uLimit -= 1.0; // it wrapped
         }
         if (renderCheck)
             renderCheckSample();

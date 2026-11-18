@@ -257,6 +257,25 @@ const KernelTables& kernelTables()
                 storage.longRamp[at] = first ? l.ramp (j, 0.0) : l.ramp (j, d);
                 storage.longKernel[at] = l.kernelAt (static_cast<double> (j) + d);
             }
+        // the long kernel's step at kFineResolution points: cubic Hermite between its own points with the exact
+        // derivatives (h = 1 / 512: step' = kernel)
+        constexpr int refine = kFineResolution / kKernelResolution;
+        static_assert (kFineResolution % kKernelResolution == 0, "the long kernel's own points lie on the refined ones");
+        for (int k = 0; k < kKernelResolution; ++k)
+            for (int r = 0; r <= refine; ++r)
+            {
+                if (r == refine && k + 1 < kKernelResolution)
+                    continue; // the next cell's first point
+                const double x = static_cast<double> (r) / refine, x2 = x * x, x3 = x2 * x;
+                const double h00 = 2.0 * x3 - 3.0 * x2 + 1.0, h01 = 3.0 * x2 - 2.0 * x3;
+                const double h10 = (x3 - 2.0 * x2 + x) / kKernelResolution, h11 = (x3 - x2) / kKernelResolution;
+                for (int jj = 0; jj < kKernelTaps; ++jj)
+                {
+                    const auto p0 = static_cast<std::size_t> (k * kKernelTaps + jj), p1 = p0 + kKernelTaps;
+                    const auto at = static_cast<std::size_t> ((k * refine + r) * kKernelTaps + jj);
+                    storage.longStepFine[at] = h00 * storage.longStep[p0] + h01 * storage.longStep[p1] + h10 * storage.longKernel[p0] + h11 * storage.longKernel[p1];
+                }
+            }
         return storage;
     }();
     return t;
