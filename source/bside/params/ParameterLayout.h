@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
+#include <optional>
 
 #include "bside/params/PartMappings.h"
 #include "bside/params/PartParamList.h"
@@ -25,6 +26,11 @@ inline constexpr int kUpperFirstIndex = kShellParameterCount + kPartParamCount;
 inline constexpr int kChipClockIndex = kShellParameterCount + 2 * kPartParamCount;
 /** Number of host parameters of the plugin after S2: 75 + 2 x 63 + 1 = 202. */
 inline constexpr int kParameterCount = kChipClockIndex + 1;
+
+/** The first well-formed number in typed text: an optional sign, digits, an optional fraction, an optional exponent;
+    a unit after it is ignored ("12 ct" gives 12, "1e3" 1000, "--5" -5, " +7 " 7). None if the text holds no number.
+    An exponent past the double range gives infinity: callers treat a non-finite value as "no usable value". */
+std::optional<double> parseFirstNumber (const juce::String& text);
 
 /** Cached raw-value pointers for one part. Bound once off the audio thread, read once per block
     (lock-free). Nothing reads it yet: the chip is wired in later. */

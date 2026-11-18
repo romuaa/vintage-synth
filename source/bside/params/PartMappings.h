@@ -16,26 +16,37 @@ namespace bs::map
 // ---- Pulse width and macro offsets: percent -> chip register units --------------------------------
 inline constexpr int kPulseWidthMax = 4095; // 12-bit pulse width register
 
-/** Pulse width in percent (0 ... 100) -> register value 0 ... 4095. */
-inline int pulseWidthRegister (float percent) noexcept
+/** Pulse width in percent (0 ... 100) -> the continuous register value 0 ... 4095. In Smooth resolution the
+    chip is written with this value as it is (8.4.6: pulse width and cutoff are continuous); Authentic
+    rounds it with `authenticRegister`. */
+inline float pulseWidthRegister (float percent) noexcept
 {
     const float p = percent < 0.0f ? 0.0f : (percent > 100.0f ? 100.0f : percent);
-    return static_cast<int> (std::lround (p * static_cast<float> (kPulseWidthMax) / 100.0f));
+    return p * static_cast<float> (kPulseWidthMax) / 100.0f;
 }
-inline float pulseWidthPercent (int reg) noexcept { return static_cast<float> (reg) * 100.0f / static_cast<float> (kPulseWidthMax); }
 
-/** PW offset in percent (-50 ... +50) -> a register offset of -2048 ... +2048. */
-inline int pwOffsetRegister (float percent) noexcept
+/** PW offset in percent (-50 ... +50) -> a continuous register offset of -2048 ... +2048. */
+inline float pwOffsetRegister (float percent) noexcept
 {
     const float p = percent < -50.0f ? -50.0f : (percent > 50.0f ? 50.0f : percent);
-    return static_cast<int> (std::lround (p * 2048.0f / 50.0f));
+    return p * 2048.0f / 50.0f;
 }
 
-/** Cutoff offset in percent (-100 ... +100) -> a register offset of -2047 ... +2047. */
-inline int cutoffOffsetRegister (float percent) noexcept
+/** Cutoff offset in percent (-100 ... +100) -> a continuous register offset of -2047 ... +2047. */
+inline float cutoffOffsetRegister (float percent) noexcept
 {
     const float p = percent < -100.0f ? -100.0f : (percent > 100.0f ? 100.0f : percent);
-    return static_cast<int> (std::lround (p * 2047.0f / 100.0f));
+    return p * 2047.0f / 100.0f;
+}
+
+/** A continuous register value as the integer the chip stores (Authentic resolution, and display text where an
+    integer is shown): rounded to nearest (halves away from zero) and limited to lo ... hi. A non-finite value gives lo. */
+inline int authenticRegister (float value, int lo, int hi) noexcept
+{
+    if (! std::isfinite (value))
+        return lo;
+    const float c = value < static_cast<float> (lo) ? static_cast<float> (lo) : (value > static_cast<float> (hi) ? static_cast<float> (hi) : value);
+    return static_cast<int> (std::lround (c));
 }
 
 /** Cutoff is shown and used in register units (0 ... 2047) until S6 shows Hz. */

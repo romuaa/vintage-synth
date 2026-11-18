@@ -439,17 +439,53 @@ TEST_CASE ("B-Side params: the tick rate is exponential", "[bside][params]")
 TEST_CASE ("B-Side params: the mappings shared with the DSP", "[bside][params][mappings]")
 {
     namespace m = bs::map;
-    CHECK (m::pulseWidthRegister (0.0f) == 0);
-    CHECK (m::pulseWidthRegister (50.0f) == 2048);
-    CHECK (m::pulseWidthRegister (100.0f) == 4095);
-    CHECK (m::pulseWidthRegister (-5.0f) == 0);
-    CHECK (m::pulseWidthRegister (500.0f) == 4095);
-    CHECK (m::pwOffsetRegister (-50.0f) == -2048);
-    CHECK (m::pwOffsetRegister (50.0f) == 2048);
-    CHECK (m::pwOffsetRegister (0.0f) == 0);
-    CHECK (m::cutoffOffsetRegister (-100.0f) == -2047);
-    CHECK (m::cutoffOffsetRegister (100.0f) == 2047);
-    CHECK (m::cutoffOffsetRegister (50.0f) == 1024);
+    // Smooth resolution (8.4.6): the register values are continuous, not rounded.
+    CHECK (m::pulseWidthRegister (0.0f) == Catch::Approx (0.0f));
+    CHECK (m::pulseWidthRegister (50.0f) == Catch::Approx (2047.5f));
+    CHECK (m::pulseWidthRegister (33.3f) == Catch::Approx (1363.635f).epsilon (1.0e-6));
+    CHECK (m::pulseWidthRegister (100.0f) == Catch::Approx (4095.0f));
+    CHECK (m::pulseWidthRegister (-5.0f) == Catch::Approx (0.0f));
+    CHECK (m::pulseWidthRegister (500.0f) == Catch::Approx (4095.0f));
+    CHECK (m::pwOffsetRegister (-50.0f) == Catch::Approx (-2048.0f));
+    CHECK (m::pwOffsetRegister (50.0f) == Catch::Approx (2048.0f));
+    CHECK (m::pwOffsetRegister (0.0f) == Catch::Approx (0.0f));
+    CHECK (m::pwOffsetRegister (0.01f) == Catch::Approx (0.4096f).epsilon (1.0e-5)); // not rounded to 0
+    CHECK (m::cutoffOffsetRegister (-100.0f) == Catch::Approx (-2047.0f));
+    CHECK (m::cutoffOffsetRegister (100.0f) == Catch::Approx (2047.0f));
+    CHECK (m::cutoffOffsetRegister (50.0f) == Catch::Approx (1023.5f));
+    // Authentic: the integer the chip stores, rounded to nearest and limited.
+    CHECK (m::authenticRegister (m::pulseWidthRegister (50.0f), 0, 4095) == 2048);
+    CHECK (m::authenticRegister (m::pulseWidthRegister (100.0f), 0, 4095) == 4095);
+    CHECK (m::authenticRegister (m::pulseWidthRegister (0.0f), 0, 4095) == 0);
+    CHECK (m::authenticRegister (m::pwOffsetRegister (-50.0f), -2048, 2048) == -2048);
+    CHECK (m::authenticRegister (m::pwOffsetRegister (25.0f), -2048, 2048) == 1024);
+    CHECK (m::authenticRegister (m::cutoffOffsetRegister (50.0f), -2047, 2047) == 1024);
+    CHECK (m::authenticRegister (m::cutoffOffsetRegister (-50.0f), -2047, 2047) == -1024); // halves away from zero
+    CHECK (m::authenticRegister (1.4f, 0, 4095) == 1);
+    CHECK (m::authenticRegister (5000.0f, 0, 4095) == 4095);
+    CHECK (m::authenticRegister (-5.0f, 0, 4095) == 0);
+    CHECK (m::authenticRegister (std::numeric_limits<float>::quiet_NaN(), 3, 9) == 3);
+    // The tick rate: the exponential map clamps, so an out-of-range value normalises inside 0 ... 1 (a mutation
+    // without the clamp fails here; the range object clamps again in JUCE, so only this direct check sees it).
+    CHECK (m::tickFreeNorm (1000.0f) == Catch::Approx (1.0f));
+    CHECK (m::tickFreeNorm (1.0f) == Catch::Approx (0.0f));
+    CHECK (m::tickFreeNorm (0.0f) == Catch::Approx (0.0f));
+    CHECK (m::tickFreeNorm (-5.0f) == Catch::Approx (0.0f));
+    CHECK (m::tickFreeHz (2.0f) == Catch::Approx (400.0f));
+    CHECK (m::tickFreeHz (-1.0f) == Catch::Approx (10.0f));
+    // The names used by the X-macro for the wave defaults.
+    CHECK (bs::kOscWavePulse == 3);
+    CHECK (bs::kOscWaveOff == 0);
+    // The envelope lookup is nearest in the LOG domain (decisions.md): between 250 and 500 ms the midpoint is
+    // 353.6 ms (linear: 375 ms), so 360 ms is nearer 500 ms in the log domain and nearer 250 ms in the linear one.
+    CHECK (m::envSettingFromMs (m::EnvStage::Attack, 360.0) == 10);
+    CHECK (m::envSettingFromMs (m::EnvStage::Attack, 350.0) == 9);
+    CHECK (m::envSettingFromMs (m::EnvStage::Attack, 370.0) == 10);
+    CHECK (m::envSettingFromMs (m::EnvStage::Decay, 1080.0) == 10); // 750 and 1500 ms: midpoint 1061 ms (linear 1125)
+    CHECK (m::envSettingFromMs (m::EnvStage::Attack, 3.0) == 0);    // 2 and 8 ms: midpoint 4 ms (linear 5 ms)
+    CHECK (m::envSettingFromMs (m::EnvStage::Attack, 5.1) == 1);
+    CHECK (m::envSettingFromMs (m::EnvStage::Attack, 4.1) == 1);   // log: 4.1 > 4 so 8; linear: 4.1 < 5 so 2
+    CHECK (m::envSettingFromMs (m::EnvStage::Attack, -3.0) == 0);
     CHECK (m::sweepDepthFactor (100.0f) == Catch::Approx (1.0f));
     CHECK (m::sweepDepthFactor (200.0f) == Catch::Approx (2.0f));
     CHECK (m::percentToFraction (25.0f) == Catch::Approx (0.25f));
@@ -645,4 +681,247 @@ TEST_CASE ("B-Side params: the binding reads the host values, sanitised", "[bsid
     CHECK (lo.osc1Coarse == 24);
     CHECK (lo.osc1Wave == 0);
     CHECK (lo.osc2Attack == 0);
+}
+
+TEST_CASE ("B-Side params: typed non-finite or huge text gives a finite value inside the range, for all 127", "[bside][params][display]")
+{
+    Rig rig;
+    std::vector<juce::String> ids;
+    for (const char* prefix : { "lower.", "upper." })
+        for (const auto& e : contract())
+            ids.push_back (juce::String (prefix) + e.suffix);
+    ids.push_back ("chip.clock");
+    REQUIRE (ids.size() == 127);
+    for (const auto& id : ids)
+        for (const char* text : { "nan", "NaN", "-nan", "inf", "-inf", "Infinity", "1e999", "-1e999", "1e39 ms", "9999999999999999999999" })
+        {
+            INFO (id << " <- " << text);
+            const float v = rig.param (id)->getValueForText (text);
+            CHECK (std::isfinite (v));
+            CHECK (v >= 0.0f);
+            CHECK (v <= 1.0f);
+        }
+    // Not-a-number text means "no value": the default (the shared parsers behind velocity, portamento and pan said NaN).
+    for (const char* id : { "lower.vel.volume", "upper.vel.cutoff", "lower.porta.time", "upper.mix.pan", "lower.mix.pan", "lower.osc1.fine", "lower.filter.cutoff",
+                            "lower.osc1.coarse", "lower.osc1.attack", "lower.tick.free_hz" })
+        for (const char* text : { "nan", "NaN", "inf", "1e999", "abc", "" })
+        {
+            INFO (id << " <- " << text);
+            auto* p = rig.param (id);
+            CHECK (p->getValueForText (text) == Catch::Approx (p->getDefaultValue()).margin (1.0e-6));
+        }
+}
+
+TEST_CASE ("B-Side params: the first well-formed number in typed text", "[bside][params][display]")
+{
+    const auto num = [] (const char* t) { return bs::parseFirstNumber (t); };
+    CHECK (num ("1e3").value() == Catch::Approx (1000.0));
+    CHECK (num ("--5").value() == Catch::Approx (-5.0)); // the first well-formed number is "-5"
+    CHECK (num ("-1e3").value() == Catch::Approx (-1000.0));
+    CHECK_FALSE (num ("abc").has_value());
+    CHECK_FALSE (num ("").has_value());
+    CHECK_FALSE (num ("nan").has_value());
+    CHECK_FALSE (num ("inf").has_value());
+    CHECK_FALSE (num ("-").has_value());
+    CHECK_FALSE (num (".").has_value());
+    CHECK (num (" 12 ct ").value() == Catch::Approx (12.0));
+    CHECK (num ("+7").value() == Catch::Approx (7.0));
+    CHECK (num ("1.5 s").value() == Catch::Approx (1.5));
+    CHECK (num (".5").value() == Catch::Approx (0.5));
+    CHECK (num ("-.5 %").value() == Catch::Approx (-0.5));
+    CHECK (num ("2e").value() == Catch::Approx (2.0)); // an exponent needs digits
+    CHECK (num ("2e+").value() == Catch::Approx (2.0));
+    CHECK (num ("3E-2").value() == Catch::Approx (0.03));
+    CHECK (num ("x 4 y 5").value() == Catch::Approx (4.0));
+    CHECK (num ("-5 -6").value() == Catch::Approx (-5.0));
+    CHECK_FALSE (std::isfinite (num ("1e999").value()));
+
+    // Through a parameter (the sign and the exponent are read, nothing else is dropped).
+    Rig rig;
+    CHECK (rig.fromText ("lower.macro.cutoff_offset", "1e1") == Catch::Approx (10.0f));
+    CHECK (rig.fromText ("lower.macro.cutoff_offset", "-1e1 %") == Catch::Approx (-10.0f));
+    CHECK (rig.fromText ("lower.macro.cutoff_offset", "--5") == Catch::Approx (-5.0f));
+    CHECK (rig.fromText ("lower.macro.cutoff_offset", "-1e3") == Catch::Approx (-100.0f)); // limited to the range
+    CHECK (rig.fromText ("lower.macro.cutoff_offset", " +7 ") == Catch::Approx (7.0f));
+    CHECK (rig.fromText ("lower.macro.cutoff_offset", "abc") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("lower.macro.cutoff_offset", "") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("lower.filter.cutoff", "1e3") == Catch::Approx (1000.0f));
+    CHECK (rig.fromText ("lower.filter.cutoff", "abc") == Catch::Approx (1024.0f)); // the default
+    CHECK (rig.fromText ("lower.osc2.fine", " 12 ct ") == Catch::Approx (12.0f));
+    CHECK (rig.fromText ("lower.osc2.fine", "+7") == Catch::Approx (7.0f));
+    CHECK (rig.fromText ("lower.osc1.coarse", "-5 st") == Catch::Approx (-5.0f));
+    CHECK (rig.fromText ("lower.osc1.coarse", "1e1") == Catch::Approx (10.0f));
+    CHECK (rig.fromText ("lower.osc1.coarse", "abc") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("lower.filter.resonance", "") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("lower.osc1.sustain", "abc") == Catch::Approx (15.0f)); // default 15
+    // The envelope parser reads the sign (a negative time is the shortest) and the exponent.
+    CHECK (rig.fromText ("lower.osc1.attack", "-250 ms") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("lower.osc1.attack", "2.5e2") == Catch::Approx (9.0f));
+    CHECK (rig.fromText ("lower.osc1.attack", "0.25e3 ms") == Catch::Approx (9.0f));
+    CHECK (rig.fromText ("lower.osc1.attack", "abc") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("lower.osc1.release", "garbage") == Catch::Approx (6.0f)); // the default setting
+    // Envelope text is nearest in the log domain: 360 ms is nearer 500 ms (setting 10), 350 ms nearer 250 ms.
+    CHECK (rig.fromText ("lower.osc1.attack", "360 ms") == Catch::Approx (10.0f));
+    CHECK (rig.fromText ("lower.osc1.attack", "350 ms") == Catch::Approx (9.0f));
+    CHECK (rig.fromText ("lower.osc1.decay", "1.08 s") == Catch::Approx (10.0f));
+}
+
+TEST_CASE ("B-Side params: choices understand any case and a bare number that names one label", "[bside][params][display]")
+{
+    Rig rig;
+    // A label in any case.
+    CHECK (rig.fromText ("lower.osc1.sync", "on") == Catch::Approx (1.0f));
+    CHECK (rig.fromText ("lower.osc1.sync", "ON") == Catch::Approx (1.0f));
+    CHECK (rig.fromText ("lower.osc1.sync", " off ") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("lower.osc1.wave", "pulse") == Catch::Approx (3.0f));
+    CHECK (rig.fromText ("upper.osc2.wave", "TRI+SAW") == Catch::Approx (5.0f));
+    CHECK (rig.fromText ("lower.filter.mode", "band+high") == Catch::Approx (5.0f));
+    CHECK (rig.fromText ("chip.clock", "60 hz SYSTEM") == Catch::Approx (1.0f));
+    // A bare number that is the leading number of exactly one label.
+    CHECK (rig.fromText ("lower.tick.sync", "24") == Catch::Approx (2.0f));
+    CHECK (rig.fromText ("lower.tick.sync", "6") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("lower.tick.sync", "48") == Catch::Approx (3.0f));
+    CHECK (rig.fromText ("lower.tick.sync", "012") == Catch::Approx (1.0f)); // leading zeros do not matter
+    CHECK (rig.fromText ("lower.bend.range", "5") == Catch::Approx (5.0f));
+    CHECK (rig.fromText ("lower.bend.range", "12") == Catch::Approx (12.0f));
+    CHECK (rig.fromText ("lower.bend.range", "0") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("upper.bend.range", "1") == Catch::Approx (1.0f)); // not "10 st" or "11 st"
+    CHECK (rig.fromText ("lower.assign.unison_voices", "4") == Catch::Approx (1.0f));
+    CHECK (rig.fromText ("lower.assign.unison_voices", "16") == Catch::Approx (3.0f));
+    CHECK (rig.fromText ("chip.clock", "60") == Catch::Approx (1.0f));
+    // Anything else keeps JUCE's behaviour and never leaves the range: an unknown text, a number that names no
+    // label, or the "Off"/"On" switches, which have no number.
+    for (const char* id : { "lower.tick.sync", "lower.bend.range", "lower.osc1.sync", "lower.osc1.wave", "chip.clock" })
+        for (const char* text : { "garbage", "99", "7", "-1", "2.5", "" })
+        {
+            INFO (id << " <- " << text);
+            const float v = rig.param (id)->getValueForText (text);
+            CHECK (std::isfinite (v));
+            CHECK (v >= 0.0f);
+            CHECK (v <= 1.0f);
+        }
+    // No label starts with 7 / has a number: JUCE's answer (the first label), unchanged.
+    CHECK (rig.fromText ("lower.tick.sync", "7") == Catch::Approx (0.0f));
+    CHECK (rig.fromText ("lower.osc1.sync", "1") == Catch::Approx (0.0f));
+}
+
+TEST_CASE ("B-Side params: the binding turns non-finite and out-of-range host values into defaults and limits", "[bside][params][binding]")
+{
+    Rig rig;
+    bs::PartParamBinding lower;
+    bs::ChipClockBinding clock;
+    lower.bind (rig.proc.getState(), bs::kLowerPrefix);
+    clock.bind (rig.proc.getState());
+    const auto raw = [&] (const char* id) { return rig.proc.getState().getRawParameterValue (id); };
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    bs::PartParams out;
+
+    // NaN gives the DEFAULT, also where the default is not 0 (a choice and an integer), not index or value 0.
+    raw ("lower.chip.model")->store (nan);    // default Model B = 1
+    raw ("lower.osc1.wave")->store (nan);     // default Pulse = 3
+    raw ("lower.bend.range")->store (inf);    // default 2 st
+    raw ("lower.osc1.sustain")->store (nan);  // integer, default 15
+    raw ("lower.tick.mult")->store (nan);     // integer 1 ... 8, default 1 (the lowest is not 0)
+    raw ("lower.osc3.release")->store (-inf); // integer, default 6
+    raw ("lower.tick.sync")->store (nan);     // default 24 per beat = 2
+    raw ("lower.vibrato.rate")->store (nan);  // float, default 5.5
+    lower.read (out);
+    CHECK (out.chipModel == 1);
+    CHECK (out.osc1Wave == 3);
+    CHECK (out.bendRange == 2);
+    CHECK (out.osc1Sustain == 15);
+    CHECK (out.tickMult == 1);
+    CHECK (out.osc3Release == 6);
+    CHECK (out.tickSync == 2);
+    CHECK (out.vibratoRate == Catch::Approx (5.5f));
+
+    // The upper bound is the last label, not the label count: a value equal to the count, and far above.
+    struct Choice
+    {
+        const char* id;
+        int last;
+        int bs::PartParams::*member;
+    };
+    const Choice choices[] { { "lower.assign.mode", 2, &bs::PartParams::assignMode },
+                             { "lower.filter.mode", 7, &bs::PartParams::filterMode },
+                             { "lower.osc1.wave", 8, &bs::PartParams::osc1Wave },
+                             { "lower.osc1.sync", 1, &bs::PartParams::osc1Sync },
+                             { "lower.bend.range", 12, &bs::PartParams::bendRange },
+                             { "lower.tick.sync", 3, &bs::PartParams::tickSync },
+                             { "lower.assign.unison_voices", 3, &bs::PartParams::unisonVoices },
+                             { "lower.restart.policy", 2, &bs::PartParams::restartPolicy } };
+    for (const auto& c : choices)
+        for (const float value : { static_cast<float> (c.last + 1), static_cast<float> (c.last) + 0.4f, 1000.0f, 3.0e9f })
+        {
+            INFO (c.id << " raw " << value);
+            raw (c.id)->store (value);
+            lower.read (out);
+            CHECK (out.*c.member == c.last);
+            raw (c.id)->store (-5.0f);
+            lower.read (out);
+            CHECK (out.*c.member == 0);
+        }
+    for (const float value : { 2.0f, 3.0f, 1000.0f, 3.0e9f })
+    {
+        INFO ("chip.clock raw " << value);
+        raw ("chip.clock")->store (value);
+        CHECK (clock.read() == 1);
+    }
+    raw ("chip.clock")->store (-3.0f);
+    CHECK (clock.read() == 0);
+    raw ("chip.clock")->store (nan);
+    CHECK (clock.read() == 0);
+    raw ("chip.clock")->store (inf); // non-finite: the default, not the top
+    CHECK (clock.read() == 0);
+}
+
+namespace
+{
+const Expected* contractEntry (const char* id)
+{
+    for (const auto& e : contract())
+        if (juce::String (e.suffix) == id)
+            return &e;
+    return nullptr;
+}
+} // namespace
+
+TEST_CASE ("B-Side params: every member of a default PartParams is the contract's default and what a fresh processor reads", "[bside][params][binding]")
+{
+    Rig rig;
+    bs::PartParamBinding lower, upper;
+    lower.bind (rig.proc.getState(), bs::kLowerPrefix);
+    upper.bind (rig.proc.getState(), bs::kUpperPrefix);
+    bs::PartParams lo, up;
+    lower.read (lo);
+    upper.read (up);
+    const bs::PartParams defaults;
+    int members = 0;
+#define BS_T_FLOAT(member, id, name, mn, mx, dflt, kind)       \
+    {                                                         \
+        INFO (id);                                            \
+        const auto* e = contractEntry (id);                   \
+        REQUIRE (e != nullptr);                               \
+        CHECK (defaults.member == Catch::Approx (e->def));    \
+        CHECK (lo.member == Catch::Approx (defaults.member)); \
+        CHECK (up.member == Catch::Approx (defaults.member)); \
+        ++members;                                            \
+    }
+#define BS_T_INT(member, id, name, mn, mx, dflt, kind)         \
+    {                                                         \
+        INFO (id);                                            \
+        const auto* e = contractEntry (id);                   \
+        REQUIRE (e != nullptr);                               \
+        CHECK (defaults.member == static_cast<int> (e->def)); \
+        CHECK (lo.member == defaults.member);                 \
+        CHECK (up.member == defaults.member);                 \
+        ++members;                                            \
+    }
+#define BS_T_CHOICE(member, id, name, labels, dflt) BS_T_INT (member, id, name, 0, 0, dflt, 0)
+    BS_PART_PARAMS (BS_T_FLOAT, BS_T_CHOICE, BS_T_INT)
+#undef BS_T_FLOAT
+#undef BS_T_INT
+#undef BS_T_CHOICE
+    CHECK (members == 63);
 }

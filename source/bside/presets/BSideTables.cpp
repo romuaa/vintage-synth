@@ -23,9 +23,9 @@ constexpr size_t kMaxFileBytes = 12u * 1024u * 1024u;
 
 /** Values in the JSON tree of that bank: per table one array and up to 1024 strings, per program
     its own members (about 207 since the per-part parameters of 8.7: 202 parameters, the name, category and
-    author and a few headers), for 64 programs: 64 x (2 x 1025 + 207) = 144 455 (measured), which with 160 000
-    left under 10 % of headroom; now 192 000 (25 % used up by the constructed worst bank, the test asks for
-    at most 90 %). */
+    author and a few headers), for 64 programs: 64 x (2 x 1025 + 207) = 144 448, 144 455 measured, which with 160 000
+    left under 10 % of headroom; now 192 000 (the constructed worst bank uses 75 %, 25 % headroom; the test asks
+    for at most 90 % used). */
 constexpr int kMaxJsonValues = 192000;
 } // namespace
 

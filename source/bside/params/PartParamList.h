@@ -89,9 +89,9 @@ enum class IntDisp
 
 // The 63 per-part parameters, in the contract's order.
 #define BS_PART_PARAMS(F, C, I)                                                                                         \
-    BS_OSC_PARAMS (1, 3, F, C, I)                                                                                       \
-    BS_OSC_PARAMS (2, 0, F, C, I)                                                                                       \
-    BS_OSC_PARAMS (3, 0, F, C, I)                                                                                       \
+    BS_OSC_PARAMS (1, ::bs::kOscWavePulse, F, C, I)                                                                                       \
+    BS_OSC_PARAMS (2, ::bs::kOscWaveOff, F, C, I)                                                                                       \
+    BS_OSC_PARAMS (3, ::bs::kOscWaveOff, F, C, I)                                                                                       \
     C (osc3Mute,        "osc3.mute",            "Osc 3 Mute",           vs::kOffOnLabels, 0)                            \
     F (filterCutoff,    "filter.cutoff",        "Filter Cutoff",        0.0f, 2047.0f, 1024.0f, Register)               \
     I (filterResonance, "filter.resonance",     "Filter Resonance",     0, 15, 0, Plain)                                \
