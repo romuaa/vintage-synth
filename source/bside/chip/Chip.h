@@ -754,7 +754,7 @@ private:
     void envAdvance (int n, std::uint64_t j) noexcept
     {
         Env& e = env[idx (n)];
-        if (j >= 2 * (kRateMatch[0] + 1) && envInert (n)) // (no period is shorter)
+        if (j >= 2u * (static_cast<std::uint64_t> (kRateMatch[0]) + 1u) && envInert (n)) // (no period is shorter)
         {
             const std::uint64_t period = (static_cast<std::uint64_t> (e.compare) + 1) * std::max<std::uint64_t> (e.dividerPeriod, 1);
             if (j >= 2 * period)

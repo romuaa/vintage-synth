@@ -1987,7 +1987,9 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
                 continue;
             }
             // ... else what it does there, written out
-            const double value = l.triSaw ? triSawValue (rtab->dac, v.mode == rmSaw, v.imin, v.k, v.ringFlip, v.u) : renderValue (n, v.u);
+            const double value = l.triSaw ? triSawValue (rtab->dac, v.mode == rmSaw, v.imin, v.k, v.ringFlip, v.u)
+                                 : v.mode == rmPulse ? static_cast<double> (v.gate ? rtab->wave[0xfff] : rtab->wave[0]) // (renderValue)
+                                                     : renderValue (n, v.u);
             v.buf[slot] += value;
             v.env[slot] = l.level;
             if (! sameBits (value, v.lastValue) || ! sameBits (static_cast<double> (l.level), v.lastLevel))

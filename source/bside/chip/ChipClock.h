@@ -52,7 +52,7 @@ public:
 
     /** Back to a sample start taken before (its fraction()), undoing nextSample (the renderer's batched path
         looks one sample ahead). */
-    void rewind (std::uint32_t fraction) noexcept { frac = fraction; }
+    void rewind (std::uint32_t startFraction) noexcept { frac = startFraction; }
 
     /** The fraction of a cycle at the current sample start (0 .. 2^32 - 1). Read it before
         Chip::takeSampleCycles() to get the start of the sample being taken. */
