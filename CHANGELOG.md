@@ -5,6 +5,19 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side render cost step, review fixes (2026-11-18)
+- Fixed: a division by a zero increment in the Model A pull-down's closed form (SIGFPE on x86-64 at frequency
+  0); a frozen Model A pull-down kept its pulse gate (one-cycle re-reads are now scheduled in time on frozen
+  lines); `BS_CHIP_INLINE` is plain `inline` on MSVC (C4714).
+- Above the register's range combined waveforms keep their staircase and emit a stretch's steps by their time
+  moments (no switch click; the audio band within about -78 dB re 1 of one-by-one steps, against -18 dB of the
+  coarse levels it replaces); `comb12k` 132 / 103 ns at 96 kHz.
+- Tests: the sanitizer build passes every `bside` and `trace` test; regression tests for frequency 0, the frozen
+  pull-down, switches without clicks, the entry hysteresis, frozen lines in the state check, the converter
+  bits against the frequency, a pending envelope step; hidden `[.render-exact]` report.
+- Measured and not adopted: dropping a free saw's converter bit at half a toggle per sample (-62 dB in the
+  band around phase resets and waveform switches).
+
 ### B-Side render cost step (2026-11-18)
 - `Chip::render` per internal sample per chip at 96 kHz (`chip_bench`, this Mac, back to back with the branch
   point): silent 61 -> 1.9 ns, typical 57 -> 13, Model A typical 217 -> 36, three Model A saws 297 -> 44,
