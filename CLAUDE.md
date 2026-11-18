@@ -121,29 +121,26 @@ worktrees, gates, model routing, commit rules) and overrides it. If a session di
 repository's file, read it by hand before orchestrating. Checked 2026-11-16: `/orchestrate`
 loads the personal skill and reaches the repository's file through that instruction.
 
-**In flight (owner said "continue", 2026-11-18):** steps 1 and 2 below, in parallel. Step 1 on
-branch `bside/render-cost` (its gates and cost targets: architecture 8.18), step 2 on
-`bside/params` (contract 8.7). Until they merge, the first line of this section does not hold.
+**In flight (2026-11-19):** the B-Side render cost step, done on `bside/render-cost` and
+awaiting the owner's merge approval (see History). Until it merges, the first line of this
+section does not hold.
 
 **Going public (owner, 2026-11-18):** the repository becomes public only once the release work is
 done, **B-Side's release work included** (so after S4 and M8 for both plugins). Until then CI
 stays offline; every Windows and Linux x86_64 check waits for that moment.
 
 **Next steps, in the order the owner was given:**
-1. **B-Side render cost step** (opus; contract 8.17, `docs/decisions.md` "B-Side S2b-2" row 14):
-   bring `Chip::render` towards the S4 budget (about 31 ns per chip per internal sample at 96 kHz
-   incl. filter; today about 56 ns for a light Model B patch, about 200 ns on Model A, thousands
-   for three combined waveforms at 12 kHz), and fix the three known render defects of 8.17 under
-   the existing tests (`[schedule]`, `[corrections]`, the state check, the hidden long runs).
-   Candidates: an idle/event-free fast path per oscillator, tables for the Model A converter
-   deviation, a higher-resolution long kernel table instead of the second-order correction, a cap
-   or tables for combined waveforms above 3.85 kHz. Alias budgets must stay met.
-2. **B-Side parameter step:** done and merged (PR #31, 2026-11-19).
+1. **B-Side render cost step:** done, awaiting merge (architecture 8.18.1).
+2. **B-Side parameter step:** done and merged (PR #31, 2026-11-18).
 3. **S3: filter and output path** (8.4.4; both models; the reference shows a nonlinearity after
    the converters), then **S4** (polyphony 8.5, wiring into the plugin, decimator with the alias
    gate after it, factory patches, owner audition).
-4. **Narrow-pulse alias step** (owner decision 2026-11-19: fix it, no exemption; after the cost
-   step): Model B pulse widths 1 and 4095 miss the -100 dB budget by up to 2.6 dB at frequencies
+4. **Alias follow-up step** (opus; owner decision 2026-11-18: fix it, no exemption; may run in
+   parallel with S3 only if S3 stays out of `source/bside/chip/ChipRender.cpp`). Two defects the
+   gates did not see, both older than the cost step (8.18.1, known defects 1 and 2). Second: a
+   synced target at an exact integer ratio to its source shows a spurious line at half the source
+   rate (-43.8 dB on a Model B saw at 3 kHz); first settle which ratios are affected
+   (`[.render-sync-integer]`), then add exact ratios to the sync gate. First: Model B pulse widths 1 and 4095 miss the -100 dB budget by up to 2.6 dB at frequencies
    with a small-denominator ratio to the internal rate (worst -97.42 dB at 88.2 kHz internal,
    measured with a rectangular DFT over whole signal periods; the bin-centred tests show about
    -116 dB and so do not see it). Older than the cost step.
@@ -168,13 +165,26 @@ repository.
 
 ### History (newest facts first within each area)
 
-- **B-Side parameter step is merged to `main`** (PR #31, owner approved 2026-11-19): the 127 host parameters of 8.7 (63 per part from one X-macro list in
+- **B-Side render cost step: done on `bside/render-cost`, awaiting the owner's merge approval**
+  (2026-11-19; contract as built: architecture 8.18.1; decisions "B-Side render cost step").
+  `Chip::render` at 96 kHz, ns per chip per internal sample: silent 61 -> 2, typical Model B
+  56 -> 13, Model A typical 217 -> 36, the S4 gate patch 265 -> 31, three combined waveforms at
+  12 kHz about 5000 -> 183. **Model A is still above its target of 24** (every further saving
+  changed the audible band); S3/S4 must find more or ask the owner about the Model A budget.
+  The three defects of 8.17 and two siblings fixed; output no longer depends on where
+  `renderUntil` stops; above 3.85 kHz combined waveforms use step moments (alias limit -80 dB).
+  Three independent reviews, each with findings (the first: a division by zero that only
+  x86-64 or UBSan shows). **Open, older defects, reports only:** narrow pulses and
+  integer-ratio sync (the alias follow-up step), a width write's edge two cycles early, frozen
+  against crawling lines.
+
+- **B-Side parameter step is merged to `main`** (PR #31, owner approved 2026-11-18): the 127 host parameters of 8.7 (63 per part from one X-macro list in
   `source/bside/params/PartParamList.h`, then `chip.clock`; 202 in all), mappings in
   `bside/params/PartMappings.h` (continuous register values for Smooth, `authenticRegister` for
   Authentic), a binding per part (`PartParamBinding`). **Inert:** nothing on the audio thread
   reads them until S4. Typed text always gives a finite value in range; choices accept any case
   and a bare number. Reviewed independently (no contract difference; test gaps closed). The JSON
-  value cap of B-Side preset files rose to 192 000. **Owner decision 2026-11-19:** `chip.clock` is saved
+  value cap of B-Side preset files rose to 192 000. **Owner decision 2026-11-18:** `chip.clock` is saved
   with a program (it is part of the sound). **Follow-up, small:** Vintage's shared
   text parser (`common/params/ParamFactory.cpp`) still turns typed "nan" into a NaN value.
 
@@ -324,6 +334,9 @@ repository.
       `chip_bench` (2026-11-16).
   16. B-Side parameter step: a nested X-macro with `#N` stringizing (MSVC's preprocessor has never
       seen it), a `juce::AudioParameterChoice` subclass, `std::optional` number parsing (2026-11-18).
+  17. Render cost step: the reworked renderer and digital fast path (`std::bit_cast`, the
+      inline macro's MSVC branch, a closed form that divided by zero on x86-64 before its fix:
+      no x86-64 run has ever executed this code), kernel tables (2026-11-19).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
