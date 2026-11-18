@@ -58,6 +58,37 @@ int iminWithHysteresis (double periodsPerSample, int current) noexcept
         return may;
     return current;
 }
+/** The highest frequency the register can set, in periods per cycle (65535 / 2^24): at and below it a combined
+    waveform is rendered cell by cell; above it (Smooth only) by its coarse levels. */
+constexpr double kRegisterMaxSlope = 65535.0 / 16777216.0;
+/** Coarse cells per internal sample a combined waveform may pass above the register's highest frequency. */
+constexpr double kCoarseCellsPerSample = 2.0;
+
+/** The finest coarse level (kFirstCoarseLevel .. kCoarseLevels) whose cells pass at most kCoarseCellsPerSample
+    per sample. */
+int coarseLevelFor (double periodsPerSample) noexcept
+{
+    for (int level = render::kFirstCoarseLevel; level < render::kCoarseLevels; ++level)
+        if (static_cast<double> (4096 >> level) * periodsPerSample <= kCoarseCellsPerSample)
+            return level;
+    return render::kCoarseLevels;
+}
+
+/** A combined waveform's level with hysteresis (as iminWithHysteresis): 0 at and below the register's highest
+    frequency, and from 0 only from 3 % above it; a coarser level as soon as the cells would pass too fast, a
+    finer one only once it would pass at most half as many. `slope` in periods per cycle. */
+int tableLevelWithHysteresis (double slope, double periodsPerSample, int current) noexcept
+{
+    if (! (slope > kRegisterMaxSlope) || (current == 0 && ! (slope > kRegisterMaxSlope * 1.03)))
+        return 0;
+    const int must = coarseLevelFor (periodsPerSample);
+    const int may = coarseLevelFor (2.0 * periodsPerSample);
+    if (current < must)
+        return must;
+    if (current > may)
+        return may;
+    return current;
+}
 } // namespace
 
 // ---- events of one piece (at most kPieceCycles digital cycles inside one sample) ----
@@ -156,6 +187,12 @@ struct RenderSinkT
 
 // ---- small helpers ----
 
+int Chip::renderTableLevel (int n, int current) const noexcept
+{
+    const double slope = renderSlopeU (n);
+    return renderCoarse ? tableLevelWithHysteresis (slope, slope * rs.cps, current) : 0;
+}
+
 double Chip::renderSlopeU (int n) const noexcept
 {
     return (ctl (n) & ctrl::test) != 0 ? 0.0 : static_cast<double> (osc[idx (n)].inc) / kTwo56;
@@ -245,7 +282,10 @@ double Chip::renderValue (int n, double u) const noexcept
             if (slot < 0)
                 return 0.0;
             const auto cell = static_cast<std::size_t> ((static_cast<std::uint64_t> (v.k) + (v.ringFlip ? 2048u : 0u)) & 0xfffu);
-            return static_cast<double> (T.steps[static_cast<std::size_t> (slot)].value[cell]);
+            const render::StepTable& st = T.steps[static_cast<std::size_t> (slot)];
+            if (v.level > 0)
+                return static_cast<double> (st.coarseValue[render::coarseOffset (v.level) + (cell >> v.level)]);
+            return static_cast<double> (st.value[cell]);
         }
         default: return 0.0;
     }
@@ -320,10 +360,17 @@ double Chip::renderNextLineEvent (int n, double t, double slope, double& ue, int
                 if (slot >= 0)
                 {
                     const auto cell = static_cast<std::size_t> ((static_cast<std::uint64_t> (v.k) + (v.ringFlip ? 2048u : 0u)) & 0xfffu);
-                    const std::uint16_t d = rtab->steps[static_cast<std::size_t> (slot)].nextChange[cell];
+                    const render::StepTable& st = rtab->steps[static_cast<std::size_t> (slot)];
+                    std::size_t d = st.nextChange[cell];
+                    if (v.level > 0)
+                    {
+                        // to the first index cell of the next coarse cell with another value
+                        const std::size_t ci = cell >> v.level, dc = st.coarseNext[render::coarseOffset (v.level) + ci];
+                        d = dc != 0 ? ((ci + dc) << v.level) - cell : 0;
+                    }
                     if (d != 0)
                     {
-                        ue = static_cast<double> (v.k + d) / 4096.0;
+                        ue = static_cast<double> (v.k + static_cast<std::int64_t> (d)) / 4096.0;
                         kind = 1;
                         best = t + (ue - v.u) / slope;
                     }
@@ -651,6 +698,11 @@ void Chip::renderSyncOsc (int n) noexcept
     if (continues && imin != v.imin)
         ++rs.converterSwitches;
     v.imin = imin;
+    // a combined waveform's coarse level continues from a combined waveform, else starts afresh
+    const int level = v.mode == rmTable ? renderTableLevel (n, previousMode == rmTable ? v.level : 0) : 0;
+    if (previousMode == rmTable && v.mode == rmTable && level != v.level)
+        ++rs.levelSwitches;
+    v.level = level;
     v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));
     v.ring = (c & ctrl::ring) != 0 && (c & ctrl::saw) == 0 && (v.mode == rmTri || v.mode == rmTable);
     v.longKernel = v.mode == rmTable || v.mode == rmPulse; // combined waveforms and pulse edges (docs/decisions.md S2b-2)
@@ -1429,7 +1481,7 @@ void Chip::renderPiece (std::uint64_t k, bool toSampleEnd) noexcept
         {
             sink.pendingCount = 0;
             sink.pulled = {};
-            stepCycle (sink);
+            stepOscillators (sink); // the envelopes after the loop
             const double eRel = static_cast<double> (cycleCount - rs.start);
             for (int n = 0; n < 3; ++n)
             {
@@ -1459,6 +1511,8 @@ void Chip::renderPiece (std::uint64_t k, bool toSampleEnd) noexcept
                 }
             }
         }
+        for (int n = 0; n < 3; ++n)
+            envAdvance (n, k);
     }
     else
     {
@@ -1529,6 +1583,14 @@ void Chip::renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std
         v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));
         renderEmit (n, rs.tEnd, renderValue (n, v.u) - wl, 0.0);
     }
+    const int tableLevel = converterTerms && v.mode == rmTable ? renderTableLevel (n, v.level) : v.level;
+    if (tableLevel != v.level)
+    {
+        ++rs.levelSwitches;
+        const double wl = renderValue (n, v.u);
+        v.level = tableLevel;
+        renderEmit (n, rs.tEnd, renderValue (n, v.u) - wl, 0.0);
+    }
     const double value = renderValue (n, v.u);
     const float level = rtab->envelope[env[idx (n)].counter];
     v.buf[slot] += value;
@@ -1587,8 +1649,10 @@ void Chip::renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std
 // envelope is a constant and the digital phase at a sample's end is phase + increment x cycles. Such samples
 // are rendered here exactly as the general path renders them (the same sweep, the same finish, the same
 // arithmetic), and the digital core is advanced once over all of them (advanceCycles: equal to stepping).
-// Under renderCheckStates, and where a Model A saw combination pulls its top bit down (its digital phase is
-// then no closed form of the increment), the digital core is advanced sample by sample instead.
+// A Model A saw combination that pulls its top bit down at every landing (its top bit low, every cell it can
+// land on in the upper half with output bit 11 clear: our fitted shapes up to the top of Smooth's range)
+// runs on its lower 55 bits alone, phase + increment x cycles modulo 2^55. Under renderCheckStates, and for a
+// pulling oscillator whose top bit may stay up, the digital core is advanced sample by sample instead.
 
 int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noexcept
 {
@@ -1609,10 +1673,26 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
             budget = std::min<std::uint64_t> (budget, osc[idx (n)].fadeTimer - 1u); // the next fade step stays outside
         if ((v.mode == rmTri || v.mode == rmSaw) && ! rtab->dac.ideal && iminWithHysteresis (renderSlopeU (n) * rs.cps, v.imin) != v.imin)
             return 0; // the converter terms switch at the next sample end: the general path
+        if (v.mode == rmTable && renderTableLevel (n, v.level) != v.level)
+            return 0; // likewise a combined waveform's coarse level
     }
     if (budget == 0)
         return 0;
-    const bool stepEach = renderCheck || pulls (0) || pulls (1) || pulls (2);
+    // a pulling oscillator pulled at every landing (see above) keeps a closed form; any other one is stepped
+    std::array<std::uint64_t, 3> mask { kPhaseMask, kPhaseMask, kPhaseMask };
+    bool stepEach = renderCheck;
+    for (int n = 0; n < 3; ++n)
+    {
+        if (! pulls (n))
+            continue;
+        const Osc& o = osc[idx (n)];
+        const int slot = render::tableSlot (static_cast<std::uint8_t> (wave::bits (ctl (n)) & 7u));
+        const std::uint64_t highestLanding = 2048u + (o.inc >> 44) + 1u; // the lower bits after a carry are below inc
+        if (slot >= 0 && (o.phase & kPhaseMsb) == 0 && highestLanding < rtab->steps[static_cast<std::size_t> (slot)].firstSetUpper)
+            mask[idx (n)] = kPhaseMsb - 1;
+        else
+            stepEach = true;
+    }
     for (const auto& v : rs.osc)
         if (! stepEach && (v.pending || v.landPull || v.landHold))
             return 0; // (left from a pull-down: only with a pulling oscillator's digital core stepped per sample)
@@ -1692,7 +1772,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
                 continue;
             // the digital phase at the sample's end (stepping adds inc per cycle modulo 2^56; the product may wrap
             // modulo 2^64, a multiple of 2^56)
-            const std::uint64_t phaseEnd = stepEach ? osc[idx (n)].phase : (l.phase0 + l.inc * end) & kPhaseMask;
+            const std::uint64_t phaseEnd = stepEach ? osc[idx (n)].phase : (l.phase0 + l.inc * end) & mask[idx (n)];
             const std::uint64_t corrections = rs.corrections;
             const double uBefore = rs.osc[idx (n)].u;
             renderFinishOsc (n, slot, phaseEnd, cyc, c0 + end, false);

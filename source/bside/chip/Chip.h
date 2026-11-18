@@ -17,10 +17,12 @@
 // Our chip clears an oscillator's rise flag while its test bit is held (8.15.2 (a), 8.15.6).
 //
 // ---- The fast path (advanceCycles) ----
-// Equal to repeated stepCycle (proven by test, states and events). Per call it steps whole cycles with
-// stepCycle while any oscillator writes back into its noise register (noise with another waveform) or,
-// on Model A, combines the saw with another waveform (the top-bit pull-down), and for every cycle in
-// which an oscillator's top bit rises while its sync target has its sync bit set. In between, the
+// Equal to repeated stepCycle (proven by test, states and events). Per call it steps the oscillators cycle by
+// cycle while any oscillator writes back into its noise register (noise with another waveform; the envelopes,
+// which read nothing of the oscillators, then advance over the same cycles in one go), and steps whole cycles
+// with stepCycle for every cycle in which an oscillator's top bit rises while its sync target has its sync bit
+// set (for an oscillator that pulls its top bit down: every carry into it). A Model A combination with the saw
+// pulls its top bit down (8.15.2 (c) step 4) in closed form (pullRun, render cost step). In between, the
 // oscillators are independent of each other and of the envelopes, so the jump (skip) advances each one
 // on its own: accumulator in closed form, bit-19 rises and the noise pipeline event by event, fill and
 // fade timers event by event, and the output, read value, Model B latch and pulse comparison computed
@@ -361,9 +363,15 @@ public:
         (renderBatch: whole samples while nothing couples the lines to the digital core, the digital core
         advanced once). Both give bit-identical output and digital state; the tests compare them. On by default. */
     void renderBatchingEnabled (bool on) noexcept { renderBatching = on; }
+    /** Test aid: off renders combined waveforms cell by cell at every frequency (no coarse levels above the
+        register's highest frequency), the reference the tests measure the coarse levels against. On by default. */
+    void renderCoarseLevelsEnabled (bool on) noexcept { renderCoarse = on; }
     /** Times the set of Model A converter bits rendered as square waves changed with the frequency (each a
         small band-limited step; hysteresis keeps a vibrato around a limit from repeating it). */
     std::uint64_t renderConverterSwitches() const noexcept { return rs.converterSwitches; }
+    /** Times a combined waveform changed its coarse level above the register's highest frequency (each a
+        band-limited step at a sample end; hysteresis keeps a vibrato around a limit from repeating it). */
+    std::uint64_t renderLevelSwitches() const noexcept { return rs.levelSwitches; }
 
     DigitalState state() const noexcept;
     std::uint64_t cycle() const noexcept { return cycleCount; }
@@ -896,6 +904,9 @@ private:
     /** j cycles (1 <= j <= kMaxSkip) with no sync reset and no cycle that mustStep() covers. */
     template <class Sink>
     void skip (std::uint64_t j, Sink& sink) noexcept;
+    /** One cycle of the oscillators alone (stepCycle without the envelope steps; see there). */
+    template <class Sink>
+    void stepOscillators (Sink& sink) noexcept;
 
     // ---- rendering state and steps (ChipRender.cpp) ----
     // per-oscillator output ring: a power of two >= 2 x kLatencySamples + 2
@@ -907,6 +918,7 @@ private:
         double offU = 0.0;       // rendered minus digital phase, periods (set by a sync reset)
         std::int64_t k = 0;      // boundaries passed: k x sigma <= u (triangle, saw; combined: the index cell)
         int imin = 11;           // lowest index bit rendered as its own square (sigma = 2^imin / 4096); 0 for combined
+        int level = 0;           // combined: the staircase's coarse level (RenderTables.h; 0: every cell)
         std::uint8_t mode = rmOff;
         bool gate = true;        // pulse comparison as rendered
         double gateCheckU = -1.0; // after a phase jump: where the (one cycle late) comparison reads the new line
@@ -954,6 +966,7 @@ private:
         std::uint64_t largeCorrections = 0; // of those, the ones above 1e-4 of a period
         std::uint64_t stateMismatches = 0;  // renderCheckStates: gate or ring state unlike the chip's
         std::uint64_t converterSwitches = 0; // changes of the set of Model A converter bits rendered (diagnostic)
+        std::uint64_t levelSwitches = 0;     // changes of a combined waveform's coarse level (diagnostic)
     };
     struct PieceEvents; // ChipRender.cpp
 
@@ -978,6 +991,8 @@ private:
     void renderCheckSample() noexcept;
     bool renderCheck = false;
     bool renderBatching = true;
+    bool renderCoarse = true;
+    int renderTableLevel (int n, int current) const noexcept; // ChipRender.cpp
     void renderEmit (int n, double t, double dv, double ds) noexcept;
     void renderEmitWith (int n, double t, double dv, double ds, bool longKernel) noexcept;
     double renderSlopeU (int n) const noexcept; // periods per cycle
@@ -1017,6 +1032,30 @@ void Chip::stepCycle (Sink& sink) noexcept
         oscAdvance (n, now, sink, ev[n]);
     for (int n = 0; n < 3; ++n)
         envStep (n);
+    for (int n = 0; n < 3; ++n)
+        oscOutput (n, now, sink, ev[n]);
+    syncStep (now, sink);
+    if constexpr (detail::wantsStepEvents<Sink>())
+        for (int n = 0; n < 3; ++n)
+            sink.oscStep (ev[n]);
+    cycleCount = now;
+}
+
+template <class Sink>
+void Chip::stepOscillators (Sink& sink) noexcept
+{
+    // stepCycle without part (b): the envelopes read nothing of the oscillators and the oscillators nothing of
+    // the envelopes, so a run of these followed by envAdvance over the same cycles equals stepCycle each cycle
+    const std::uint64_t now = cycleCount + 1;
+    OscStepEvent ev[3] {};
+    for (int n = 0; n < 3; ++n)
+    {
+        ev[n].osc = n;
+        ev[n].cycle = now;
+        ev[n].control = ctl (n);
+    }
+    for (int n = 0; n < 3; ++n)
+        oscAdvance (n, now, sink, ev[n]);
     for (int n = 0; n < 3; ++n)
         oscOutput (n, now, sink, ev[n]);
     syncStep (now, sink);
@@ -1155,14 +1194,18 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
             stepCycle (sink);
         return;
     }
+    if (mustStep())
+    {
+        // the write-back acts every cycle (8.15.2 (c) step 6): the oscillators cycle by cycle, the envelopes
+        // over the same cycles afterwards (stepOscillators)
+        for (std::uint64_t i = 0; i < n; ++i)
+            stepOscillators (sink);
+        for (int e = 0; e < 3; ++e)
+            envAdvance (e, n);
+        return;
+    }
     while (n > 0)
     {
-        if (mustStep())
-        {
-            stepCycle (sink);
-            --n;
-            continue;
-        }
         const std::uint64_t span = std::min (n, kMaxSkip);
         const std::uint64_t e = nextSyncRise();
         const std::uint64_t k = e > span ? span : e - 1;

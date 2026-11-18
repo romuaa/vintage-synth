@@ -7,6 +7,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <complex>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -357,5 +361,143 @@ TEST_CASE ("render cost: the batched path renders exactly as the general path ar
             CHECK (std::memcmp (ya.data(), yb.data(), ya.size() * sizeof (float)) == 0);
             CHECK (a.state() == b.state());
             CHECK (a.renderCorrections() == b.renderCorrections());
+        }
+}
+
+namespace
+{
+/** Everything of x above `band` Hz removed (a brick wall in the spectrum; x zero-padded to a power of two). */
+std::vector<double> lowpass (const std::vector<float>& x, double rate, double band)
+{
+    std::size_t n = 1;
+    while (n < x.size())
+        n <<= 1;
+    std::vector<std::complex<double>> a (n);
+    for (std::size_t i = 0; i < x.size(); ++i)
+        a[i] = static_cast<double> (x[i]);
+    fft (a);
+    for (std::size_t b = 0; b < n; ++b)
+    {
+        const double hz = static_cast<double> (std::min (b, n - b)) * rate / static_cast<double> (n);
+        if (hz > band)
+            a[b] = 0.0;
+    }
+    for (auto& c : a)
+        c = std::conj (c);
+    fft (a);
+    std::vector<double> y (x.size());
+    for (std::size_t i = 0; i < x.size(); ++i)
+        y[i] = a[i].real() / static_cast<double> (n);
+    return y;
+}
+
+struct AboveResult
+{
+    double aliasDb = -300.0;     // worst non-harmonic component up to 20 kHz, dB re the fundamental (coarse levels)
+    double aliasFineDb = -300.0; // the same rendered cell by cell
+    double bandDiffDb = -300.0;  // the largest in-band (<= 20 kHz) difference between the two, dB re full scale
+};
+
+/** One combined waveform (control c) at fundamental hz (Smooth, above the register's range) on a bin-centred
+    frequency: its aliasing with and without the coarse levels, and their difference in the audio band. */
+AboveResult measureAbove (Model m, std::uint8_t c, double hz, double rate)
+{
+    constexpr int n = 1 << 15;
+    AboveResult r;
+    std::vector<float> y[2];
+    for (int coarse = 0; coarse < 2; ++coarse)
+    {
+        Chip chip = makeChip (m, rate);
+        chip.renderCoarseLevelsEnabled (coarse == 1);
+        const int bin = oddBin (hz, rate, n);
+        setOsc (chip, 0, binFrequency (chip, bin, n), 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
+        renderSamples (chip, 4000);
+        y[coarse] = renderSamples (chip, n);
+        const auto a = aliasOf (y[coarse], rate, 20000.0, -1, bin); // (a Model A saw combination pulled at once repeats every half period)
+        (coarse == 1 ? r.aliasDb : r.aliasFineDb) = a.worstDb;
+    }
+    const auto l0 = lowpass (y[0], rate, 20000.0), l1 = lowpass (y[1], rate, 20000.0);
+    double worst = 0.0;
+    for (std::size_t i = 1000; i + 1000 < l0.size(); ++i)
+        worst = std::max (worst, std::abs (l0[i] - l1[i]));
+    r.bandDiffDb = 20.0 * std::log10 (worst + 1e-300);
+    return r;
+}
+} // namespace
+
+TEST_CASE ("render cost: combined waveforms above the register's range, coarse levels against cell by cell (report)", "[.render-above]")
+{
+    // The coarse levels (RenderTables.h, kCoarseLevels) above the register's highest frequency: aliasing up to
+    // 20 kHz, with and without them, and how far the audio band moves (Smooth reaches 12 kHz; no budget exists
+    // above 3.85 kHz, 8.18).
+    std::printf ("%-7s %-5s %9s %8s %12s %12s %14s\n", "model", "wave", "rate", "f (Hz)", "alias (dB)", "cell by cell", "band diff (dB)");
+    for (const Model m : { Model::A, Model::B })
+        for (const std::uint8_t c : { std::uint8_t { 0x30 }, std::uint8_t { 0x50 }, std::uint8_t { 0x60 }, std::uint8_t { 0x70 } })
+            for (const double rate : { 88200.0, 96000.0, 192000.0 })
+                for (const double hz : { 4000.0, 5000.0, 7000.0, 9000.0, 12000.0 })
+                {
+                    const auto r = measureAbove (m, c, hz, rate);
+                    std::printf ("%-7s %-5x %9.0f %8.0f %12.1f %12.1f %14.1f\n", m == Model::A ? "A" : "B", c, rate, hz, r.aliasDb, r.aliasFineDb, r.bandDiffDb);
+                }
+}
+
+TEST_CASE ("render cost: coarse levels only above the register's range, with hysteresis, and close to cell by cell in the band", "[render][levels]")
+{
+    // At and below the register's highest frequency nothing changes (no level, output bit-identical with the
+    // levels off); above it a glide switches a few times, a vibrato across a level limit at most once; and the
+    // coarse rendering (switches included) stays close to the cell-by-cell one in the audio band.
+    for (const Model m : { Model::A, Model::B })
+        for (const std::uint8_t c : { std::uint8_t { 0x30 }, std::uint8_t { 0x60 }, std::uint8_t { 0x70 } })
+        {
+            const double rate = 96000.0;
+            Chip a = makeChip (m, rate), b = makeChip (m, rate);
+            b.renderCoarseLevelsEnabled (false);
+            // a glide from 1 kHz to the register's top (65535), then on to 12 kHz, a write every 2000 cycles
+            const double top = 12000.0 * 16777216.0 / 985248.0;
+            std::vector<float> ya, yb;
+            std::vector<float> block (64);
+            for (int step = 0; step <= 400; ++step)
+            {
+                const double f = step <= 200 ? 1000.0 * 16777216.0 / 985248.0 + (65535.0 - 1000.0 * 16777216.0 / 985248.0) * step / 200.0
+                                             : 65535.0 + (top - 65535.0) * (step - 200) / 200.0;
+                const std::uint64_t at = 2000u * static_cast<std::uint64_t> (step + 1);
+                for (auto [chip, y] : { std::pair<Chip*, std::vector<float>*> { &a, &ya }, std::pair<Chip*, std::vector<float>*> { &b, &yb } })
+                {
+                    setOsc (*chip, 0, f, 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
+                    while (chip->cycle() < at)
+                    {
+                        std::fill (block.begin(), block.end(), 0.0f);
+                        const int done = chip->renderUntil (block.data(), 64, at);
+                        y->insert (y->end(), block.begin(), block.begin() + done);
+                    }
+                }
+                if (step == 200)
+                {
+                    INFO ((m == Model::A ? "Model A" : "Model B") << ", control " << int (c) << ": up to the register's top");
+                    CHECK (a.renderLevelSwitches() == 0);
+                    CHECK (std::memcmp (ya.data(), yb.data(), ya.size() * sizeof (float)) == 0);
+                }
+            }
+            INFO ((m == Model::A ? "Model A" : "Model B") << ", control " << int (c) << ": " << a.renderLevelSwitches() << " level switches on the glide");
+            CHECK (a.renderLevelSwitches() >= 2);
+            CHECK (a.renderLevelSwitches() <= 12);
+            const auto la = lowpass (ya, rate, 20000.0), lb = lowpass (yb, rate, 20000.0);
+            double worst = 0.0;
+            for (std::size_t i = 1000; i + 1000 < la.size(); ++i)
+                worst = std::max (worst, std::abs (la[i] - lb[i]));
+            UNSCOPED_INFO ((m == Model::A ? "Model A" : "Model B") << ", control " << int (c) << ": in-band difference on the glide " << 20.0 * std::log10 (worst + 1e-300) << " dB");
+            CHECK (worst < 0.05);
+            // a vibrato of +-1 % around 6 kHz: at most one switch
+            Chip v = makeChip (m, rate);
+            setOsc (v, 0, 6000.0 * 16777216.0 / 985248.0, 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
+            renderSamples (v, 2000);
+            const auto before = v.renderLevelSwitches();
+            for (int i = 0; i < 400; ++i)
+            {
+                const double f = 6000.0 * (1.0 + 0.01 * std::sin (i * 0.3)) * 16777216.0 / 985248.0;
+                setOsc (v, 0, f, 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
+                renderSamples (v, 64);
+            }
+            CHECK (v.renderLevelSwitches() - before <= 1);
         }
 }
