@@ -191,3 +191,53 @@ TEST_CASE ("render defect 1, sibling (render cost review): a frozen Model A pull
             CHECK (c.renderFrozenStateChecks() > 1000);
         }
 }
+
+TEST_CASE ("render: a frozen Model A saw combination pulled down by a write (width or waveform), with a ring target", "[render][defects]")
+{
+    // Render cost review, item 3: frequency 0 in the upper half; a width write closes the comparison
+    // (placeholder shapes: the shape keeps bit 11 there), or a waveform write lands on a cell whose bit 11 is
+    // clear (fitted shapes): the chip pulls the top bit down one or two steps later. renderLanding returned at
+    // once for a zero increment and nothing was predicted: one large correction, and oscillator 3's ring kept
+    // the old top bit.
+    struct Case
+    {
+        ShapeSet shapes;
+        double rate;
+        bool widthWrite;
+        std::uint8_t control;
+    };
+    const Case cases[] { { ShapeSet::placeholder, 128000.0, true, 0x71 }, { ShapeSet::placeholder, 96000.0, true, 0x61 },
+                         { ShapeSet::fitted, 128000.0, false, 0x31 }, { ShapeSet::fitted, 96000.0, false, 0x71 } };
+    for (const auto& k : cases)
+        for (const bool ring : { false, true })
+        {
+            Chip c = chipWith (Model::A, k.rate, k.shapes);
+            c.renderCheckStates (true);
+            const std::uint8_t first = k.widthWrite ? k.control : std::uint8_t { 0x11 };
+            setOsc (c, 1, 20000.0, 2016.0f, first);
+            if (ring)
+                setOsc (c, 2, 3000.0, 2048.0f, ctrl::triangle | ctrl::ring | ctrl::gate);
+            std::vector<float> y (4000, 0.0f);
+            c.render (y.data(), 1000);
+            while (! (((c.accumulator (1) >> 12) & 0xfffu) >= 2900u && ((c.accumulator (1) >> 12) & 0xfffu) <= 3100u))
+                c.render (y.data(), 1);
+            setOsc (c, 1, 0.0, 2016.0f, first); // frozen in the upper half
+            c.render (y.data(), 200);
+            const auto large = c.renderLargeCorrections();
+            const auto mismatches = c.renderStateMismatches();
+            Chip d = c;
+            for (Chip* x : { &c, &d })
+                setOsc (*x, 1, 0.0, k.widthWrite ? 4057.0f : 2016.0f, k.control);
+            std::fill (y.begin(), y.end(), 0.0f);
+            c.render (y.data(), 3000);
+            d.advanceCycles (c.cycle() - d.cycle());
+            INFO ((k.shapes == ShapeSet::fitted ? "fitted" : "placeholder") << ", " << k.rate << " Hz, " << (k.widthWrite ? "width write" : "waveform write")
+                                                                               << ", control " << int (k.control) << (ring ? ", ring target" : "") << ": large corrections "
+                                                                               << c.renderLargeCorrections() - large << ", state mismatches " << c.renderStateMismatches() - mismatches);
+            REQUIRE ((d.phase (1) & kPhaseMsb) == 0); // the chip did pull it down
+            CHECK (c.renderLargeCorrections() == large);
+            CHECK (c.renderStateMismatches() == mismatches);
+            if (! ring)
+                CHECK (std::abs (static_cast<double> (y[2999]) - digitalOutput (d, Model::A, k.shapes)) < 1.0e-6);
+        }
+}

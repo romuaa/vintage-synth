@@ -487,8 +487,8 @@ void Chip::renderLanding (int n, double tw) noexcept
     if (cfg.model != Model::A || v.mode != rmTable || (ctl (n) & ctrl::saw) == 0 || (ctl (n) & ctrl::test) != 0)
         return;
     const Osc& o = osc[idx (n)];
-    if (o.inc == 0)
-        return;
+    // (a frozen line, frequency 0, still lands every step on its cell: a width or waveform write can close its
+    // gate or clear its bit 11 there, and the chip pulls it down one or two steps on; render cost review)
     if ((o.phase & kPhaseMsb) == 0)
         return; // the lower half: the next rise is the line's own rule
     if (frac01 (v.u) < 0.5 && std::abs (frac01 (v.u - renderDigitalU (n, rs.sweepT) - v.offU + 0.5) - 0.5) > 0.25)
@@ -518,6 +518,8 @@ void Chip::renderLanding (int n, double tw) noexcept
             return;
         }
         gate = cell >= o.pw;
+        if (o.inc == 0 && k >= 2)
+            break; // frozen: every further step lands the same (its gate settled after one step)
     }
     v.landHold = false; // not decided within 4096 steps (a slow line, below one cell per step): the line's own rule
 }
@@ -890,6 +892,26 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
     int id = 0, ih = 0, ir = 0;
     double t = rs.sweepT;
     const bool test = (ctl (n) & ctrl::test) != 0;
+    // a frozen Model A saw combination pulled down at the landing renderLanding found (a moving line takes it as
+    // its line event, kind 4; a frozen one has none)
+    if (v.landPull && ! (slope > 0.0))
+    {
+        const double tl = static_cast<double> (v.landStart) - static_cast<double> (rs.start) + v.landT;
+        if (tl <= tEnd)
+        {
+            const double wl = renderValue (n, v.u);
+            v.landPull = false;
+            v.landHold = false;
+            v.u = frac01 (v.u - 0.5);
+            v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));
+            v.pending = true;
+            v.pendingPull = true;
+            v.pendingStart = rs.start;
+            v.pendingT = tl;
+            renderScheduleReread (n, tl);
+            renderEmit (n, tl, renderValue (n, v.u) - wl, 0.0);
+        }
+    }
     // a frozen line's falling gate one cycle after its reset, carried from the stretch before (see below)
     if (v.frozenEdge)
     {
@@ -1430,6 +1452,30 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
             v.glitchPending = false;
         }
     }
+    // a frozen source pulled down by a write's landing (renderLanding; the sweep pulls its line): its top bit
+    // falls then, which its ring target sees (oscillator 1 one cycle later, as at every pull-down)
+    for (int n = 0; n < 3; ++n)
+    {
+        const auto ni = idx (n);
+        const RenderOsc& sv = rs.osc[ni];
+        if (! sv.landPull || slope[ni] > 0.0 || digital[ni] || ! wanted[ni] || ! top[ni])
+            continue;
+        const double tl = static_cast<double> (sv.landStart) - static_cast<double> (rs.start) + sv.landT;
+        if (tl <= tEnd) // (it may lie up to a cycle before the sweep position: a write right after render())
+        {
+            top[ni] = false;
+            if (detail::syncTarget (n) != 0)
+                ev.addFlip (n, tl, false);
+            else if (tl + 1.0 <= tEnd)
+                ev.addFlip (n, tl + 1.0, false);
+            else
+            {
+                rs.osc[ni].glitchPending = true;
+                rs.osc[ni].glitchStart = rs.start;
+                rs.osc[ni].glitchT = tl + 1.0;
+            }
+        }
+    }
     if (! wanted[0] && ! wanted[1] && ! wanted[2] && ev.rawCount[0] == 0 && ev.rawCount[1] == 0 && ev.rawCount[2] == 0)
         return; // no sync, no ring, no digital jump: nothing couples the lines
     // Oscillator 1 reads oscillator 3's top bit before oscillator 3's own output step (8.15.2 (c) step 1):
@@ -1880,7 +1926,8 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         // (a predicted pull-down, its landing and the gate's re-read are the line's own events and waits, which
         // the sweep and the finish handle here as in the general path; the digital core is then stepped per
         // sample, below)
-        if ((c & ctrl::sync) != 0 || v.ring || v.mode == rmNoise || v.mode == rmCycle || (v.pending && ! v.pendingPull) || v.glitchPending || v.frozenEdge)
+        if ((c & ctrl::sync) != 0 || v.ring || v.mode == rmNoise || v.mode == rmCycle || (v.pending && ! v.pendingPull) || v.glitchPending || v.frozenEdge
+            || (v.landPull && ! (renderSlopeU (n) > 0.0)))
             return 0;
         budget = std::min (budget, envStableSteps (n));
         if (wave::bits (c) == 0 && osc[idx (n)].fadeTimer != 0)
