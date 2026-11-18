@@ -1804,6 +1804,44 @@ is intended: what 8.17 guarantees stays guaranteed.
 - **The digital core** (`Chip.h`, `Chip.cpp`) may be made faster under the bit-exact gates.
   `tests/bside/unit/IndependentModel.h` is not edited by whoever edits `source/bside/chip/`.
 
+#### 8.18.1 As built (2026-11-19; these win over the targets above and over 8.17 where they differ)
+Full record: `docs/decisions.md` "B-Side render cost step" (rows 1-24). Reviewed independently
+three times.
+- **Cost reached** (`chip_bench`, this Mac, alone, ns per internal sample per chip at 96 kHz):
+  `silent` 2.0, `typical` 13.4, `typicalA` 35.5, `sawsA` 41.9, `s4gate` 30.7, `combined` 92.2,
+  `comb12kA` / `comb12kB` 183 / 160, `worst` 330, `noise` 166, `noisesrc` 182, `landA` 196.
+  **Not met:** `typicalA`, `sawsA`, `s4gate` (target 24) and `combined` (target 60). Every
+  further saving found for the Model A converter bits changed the 0-20 kHz band (measured -55
+  to -63 dB re 1), so none was taken. **S4 consequence:** the gate patch of 8.5 costs about as
+  much as the whole budget of 8.5 before the filter; S3 and S4 must either find a cheaper
+  batched sample loop or put the Model A budget to the owner.
+- **`comb12k` target raised to 200 ns** (orchestrator, 2026-11-18) to pay for the alias limit
+  of the next point.
+- **Above 3.85 kHz** a combined waveform keeps its exact staircase; the steps of one stretch
+  (half a sample) are emitted as one step with time moments up to the fourth. At and below the
+  register's top the output is bit-identical with the method off. **New limit (orchestrator;
+  extends the combined-waveform row of 8.4.5 upwards):** aliasing in 0-20 kHz at most -80 dB re
+  the strongest line up to 12 kHz, for shapes whose strongest line is above -50 dB re 1,
+  measured not bin-centred, synced targets at a non-integer ratio. Measured worst -81.5 dB over
+  1209 rows; 12 quieter rows are recorded (worst -76.1 dB).
+- **Any split, now also at stops that are not writes:** a piece of the line simulation runs
+  from a sample's start or a write to the sample's end; a `renderUntil` stop inside it only
+  advances the digital core (hidden `[.render-split-long]`; older code differed by up to 0.396).
+- **The three defects of 8.17 are fixed**, and two siblings on frozen lines (frequency 0).
+- **Known defects left open, all older than this step** (reports only, no gate):
+  1. Model B pulse widths 1 and 4095 miss -100 dB by up to 2.6 dB at frequencies with a
+     small-denominator ratio to the internal rate (`[.render-exact]`).
+  2. A synced target at an exact integer frequency ratio to its source carries a spurious line
+     at half the source rate (-43.8 dB for a Model B saw at 3 kHz, where the chip's own output
+     is at -89.8 dB); no gate measures an exact ratio (`[.render-sync-integer]`; which ratios
+     are affected is not settled).
+  3. A width write moves the rendered pulse edge two cycles ahead of the chip (8.17 says 0-1).
+  4. A frozen line and one crawling below one accumulator step render up to 0.05 apart for one
+     sample in a few cases; which is right is not settled (`[.render-frozen-crawl]`).
+  Items 1 and 2 are the **alias follow-up step** (owner decision 2026-11-18: fix, no exemption).
+- **Sanitizers are part of this code's gate:** the frequency-0 division of the first round
+  passed every Release test on arm64 and would have crashed x86-64 hosts.
+
 ## 9. M7 — custom editor
 
 The custom editor of Exitium Vintage Synth, replacing the preset bar + generic editor. Built on a
