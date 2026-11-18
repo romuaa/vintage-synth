@@ -151,7 +151,8 @@ if(VS_BUILD_BSIDE)
         integration/ShellContractTests.cpp
         integration/ShellTests.cpp
         integration/TestTonePartTests.cpp
-        integration/TablePresetTests.cpp)
+        integration/TablePresetTests.cpp
+        integration/ParamTests.cpp)
     target_link_libraries(BSideTests PRIVATE
         bs_test_core
         Catch2::Catch2WithMain)

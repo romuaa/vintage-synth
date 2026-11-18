@@ -26,6 +26,15 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | A divide by a zero increment passed every test on arm64 and was caught only by UBSan. | arm64 returns 0 for an integer division by zero without a trap; only x86-64 raises SIGFPE. | The frequency-0 regression test proves the guard only in the sanitizer build (UBSan `halt_on_error`) or on x86-64; say so at the test. |
 | A shell command with a compiler include flag ending in the source directory's name was refused by the worktree guard. | The guard reads the word as the shell's `source` command. | Put such commands in a script file (in the scratchpad) and run the script. |
 
+## B-Side parameter step (2026-11-18)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The contract's order mixes float, integer and choice parameters, so Vintage's two lists (all floats, then all choices) would give another order. | Vintage's X-macro lists are split by type, which fixes the order to floats first. | One list with three entry macros (`BS_PART_PARAMS (F, C, I)`), written in the contract's order. Repeated blocks (`oscN.*`) are one nested macro, so the three oscillators cannot differ. |
+| `juce::String (float, 0)` is "default formatting", not "no decimals". | JUCE treats 0 decimal places as "as many as needed". | Build whole-number text from an `int` (`juce::roundToInt`); a signed zero ("-0.0") is shown without a sign. |
+| A float `==` against zero to detect "-0.0" would not build on GCC. | `-Wfloat-equal` is an error there. | Decide on the text (`containsAnyOf ("123456789")`), not on the float. |
+| The exponential 10 ... 400 Hz tick rate cannot be a plain `NormalisableRange (min, max)`. | The default range is linear. | A `NormalisableRange` with `convertFrom0to1` / `convertTo0to1` lambdas; the host value stays in Hz, so the binding, the preset files and the display text are all in Hz. |
+
 ## B-Side S2b-2: band-limited rendering (2026-11-15)
 
 | Problem | Cause | Fix / rule |

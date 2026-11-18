@@ -17,12 +17,16 @@ std::string joined (const std::vector<std::string>& lines) { return vs::presets:
     backslash cost 2, every other byte 1 for 1, a tab being written as the two-byte escape), and about 12
     bytes per line for indent, quotes, comma and line end. Worst case: every line made of 31 tabs:
     75 782 bytes per table, 9.70 MB for 128 tables; with the parameters, names and values of 64 programs at
-    their longest the constructed worst bank is 9 884 536 bytes. The cap leaves 27 % on top. */
+    their longest the constructed worst bank was 9 884 536 bytes before the per-part parameters and is 10 109 368 now. The cap
+    leaves 24 % on top. */
 constexpr size_t kMaxFileBytes = 12u * 1024u * 1024u;
 
 /** Values in the JSON tree of that bank: per table one array and up to 1024 strings, per program
-    its own members (about 190), for 64 programs: 64 x (2 x 1025 + 190) = 143 000; rounded up. */
-constexpr int kMaxJsonValues = 160000;
+    its own members (about 207 since the per-part parameters of 8.7: 202 parameters, the name, category and
+    author and a few headers), for 64 programs: 64 x (2 x 1025 + 207) = 144 448, 144 455 measured, which with 160 000
+    left under 10 % of headroom; now 192 000 (the constructed worst bank uses 75 %, 25 % headroom; the test asks
+    for at most 90 % used). */
+constexpr int kMaxJsonValues = 192000;
 } // namespace
 
 juce::String validateTableText (const std::vector<std::string>& lines)
