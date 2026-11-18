@@ -76,6 +76,13 @@ struct Converter
         bit j, so index bits 0..imin-1 carry e_1..e_imin; triangle bit 0 is always 0). */
     std::array<double, 13> excludedSaw {}, excludedTri {};
     double center = 0.5;                    // (d (0) + d (4095)) / 2: the renderer outputs d (v) - center
+    /** The converter terms as tables (render cost step): devSaw[v] = sum of e_i over the set bits i of v
+        (0..11), devTri[v] = sum of e_(i+1) over the set bits i of v (0..10; the triangle's bit i+1 follows
+        index bit i), triTail[imin] = sum of e_(i+1) for i = imin..10. The renderer's index bits below imin
+        are 0, so devSaw and devTri give the sums over the bits from imin on in one read. */
+    std::array<double, 4096> devSaw {};
+    std::array<double, 2048> devTri {};
+    std::array<double, 13> triTail {};
 };
 
 /** One combined waveform: the converter output of every index cell (minus the centre) and, per cell c,
@@ -101,5 +108,24 @@ struct RenderTables
 
 /** The tables of a chip model with a shape set (built once per process on first use, thread-safe). */
 const RenderTables& tablesFor (Model m, ShapeSet s);
+
+/** Both BLEP kernels laid out for the renderer (render cost step, docs/decisions.md "B-Side render cost
+    step"): per table point k (0 .. kKernelResolution, kKernelResolution + 1 points over one sample), the
+    values of all kKernelTaps cells j = -8 .. 7 side by side, so one discontinuity reads two contiguous rows
+    and every tap shares one interpolation weight (the taps' sub-sample offsets are equal).
+    The short kernel (`common/dsp/BlepTable.h` 8 / 8.0, float) keeps its own points and its linear
+    interpolation. The long kernel (8 zero crossings, Kaiser beta 12, double) is read by cubic Hermite
+    interpolation between its points with the exact derivatives (step' = the kernel, ramp' = step): the
+    second-order correction of S2b-2 without its three kernel reads per tap. Built from the BLEP tables'
+    own points (BasicBlepTable::step, ramp at whole points, kernelAt at multiples of 1 / 4096), on first use. */
+constexpr int kKernelTaps = 2 * kLongZeroCrossings;
+constexpr int kKernelResolution = 512;
+struct KernelTables
+{
+    static constexpr std::size_t kPoints = static_cast<std::size_t> (kKernelResolution + 1) * kKernelTaps;
+    std::array<float, kPoints> shortStep {}, shortRamp {};
+    std::array<double, kPoints> longStep {}, longRamp {}, longKernel {};
+};
+const KernelTables& kernelTables();
 
 } // namespace vs::bside::chip::render

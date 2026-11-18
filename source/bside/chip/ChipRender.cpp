@@ -31,8 +31,10 @@ double sigmaOf (int imin) noexcept { return kSigma[static_cast<std::size_t> (imi
     bit i toggles 2^(12 - i) times per period. */
 int iminFor (double periodsPerSample) noexcept
 {
+    // 2^(12 - i): multiplying by a power of two is exact, as ldexp is
+    constexpr double kToggles[11] { 4096.0, 2048.0, 1024.0, 512.0, 256.0, 128.0, 64.0, 32.0, 16.0, 8.0, 4.0 };
     for (int i = 0; i < 11; ++i)
-        if (periodsPerSample * std::ldexp (1.0, 12 - i) < 1.0)
+        if (periodsPerSample * kToggles[i] < 1.0)
             return i;
     return 11;
 }
@@ -210,13 +212,8 @@ double Chip::renderValue (int n, double u) const noexcept
             if (v.mode == rmSaw)
             {
                 val = d.g * ixc;
-                if (! d.ideal)
-                {
-                    val += d.excludedSaw[static_cast<std::size_t> (v.imin)];
-                    for (int i = v.imin; i < 12; ++i)
-                        if (((ixBase >> i) & 1u) != 0)
-                            val += d.e[static_cast<std::size_t> (i)];
-                }
+                if (! d.ideal) // the index bits below imin are 0: the table holds the sum over the others
+                    val += d.excludedSaw[static_cast<std::size_t> (v.imin)] + d.devSaw[ixBase];
             }
             else
             {
@@ -227,10 +224,9 @@ double Chip::renderValue (int n, double u) const noexcept
                 val = d.g * 2.0 * c;
                 if (! d.ideal)
                 {
-                    val += d.excludedTri[static_cast<std::size_t> (v.imin)];
-                    for (int i = v.imin; i < 11; ++i)
-                        if ((((ixBase >> i) & 1u) ^ b) != 0)
-                            val += d.e[static_cast<std::size_t> (i + 1)];
+                    // bits imin..10 of the index, inverted when b is set (the bits below imin are 0)
+                    const double set = d.devTri[ixBase & 0x7ffu];
+                    val += d.excludedTri[static_cast<std::size_t> (v.imin)] + (b != 0 ? d.triTail[static_cast<std::size_t> (v.imin)] - set : set);
                 }
             }
             return val - d.center;
@@ -542,57 +538,65 @@ void Chip::renderLanding (int n, double tw) noexcept
 
 namespace
 {
-/** Adds a band-limited step dv and slope change ds at `base` samples before the grid point of sample
-    `sample` into a ring, with the kernel `tab` (its window +-Z around the sample; the output is read
-    kLatency + 1 samples behind, so a short kernel's step comes out exactly as before, only later). */
-template <bool kSecondOrder, class Table, std::size_t N>
-void addStep (const Table& tab, std::array<double, N>& buf, std::uint64_t sample, double base, double dv, double ds) noexcept
+/** Adds a band-limited step dv and slope change ds at `base` samples (0 .. 2) before the grid point of sample
+    `sample` into a ring (the kernel's window +-8 around the event; the output is read kLatency + 1 samples
+    behind). Tap j (-8 .. 7) is the kernel's cell j at the event's sub-sample offset d (equal for every tap)
+    and lands on sample `sample + j - c + 1`, c = ceil (base); samples from `sample` on are evaluated after
+    the event, so they take the residual alone and the samples before it the whole band-limited edge
+    (render cost step; equal to S2b-2's per-tap loop, with the long kernel read by cubic Hermite
+    interpolation instead of the linear one with a second-order correction, RenderTables.h). */
+template <bool kLong, std::size_t N>
+void addStep (const render::KernelTables& kt, std::array<double, N>& buf, std::uint64_t sample, double base, double dv, double ds) noexcept
 {
-    constexpr int z = Table::kZeroCrossings;
-    static_assert (2 * z + 2 <= static_cast<int> (N), "the output ring must hold the BLEP window and one sample of look-back");
-    for (int m = -(z + 1); m <= z; ++m)
+    constexpr int z = render::kLongZeroCrossings;
+    constexpr int taps = render::kKernelTaps;
+    constexpr int res = render::kKernelResolution;
+    static_assert (2 * z + 2 <= static_cast<int> (N) && (N & (N - 1)) == 0, "the output ring must hold the BLEP window and one sample of look-back");
+    const double cb = std::ceil (base);
+    const int c = static_cast<int> (cb);              // 0, 1 or 2
+    const double d = base - (cb - 1.0);               // in (0, 1]
+    const double pos = d * res;
+    const int k = std::min (static_cast<int> (pos), res - 1);
+    const double x = pos - static_cast<double> (k);
+    std::array<double, taps> add {};
+    if constexpr (kLong)
     {
-        const double tt = base + static_cast<double> (m);
-        if (tt <= -static_cast<double> (z))
-            continue;
-        const bool included = m >= 0; // samples from the current one on are evaluated after the event
-        double add = 0.0;
-        if (tt > static_cast<double> (z))
+        // cubic Hermite with the exact derivatives (h = 1 / res): step' = kernel, ramp' = step
+        const double x2 = x * x, x3 = x2 * x;
+        const double h00 = 2.0 * x3 - 3.0 * x2 + 1.0, h01 = 3.0 * x2 - 2.0 * x3;
+        const double h10 = (x3 - 2.0 * x2 + x) / res, h11 = (x3 - x2) / res;
+        const double* s0 = kt.longStep.data() + k * taps;
+        const double* r0 = kt.longRamp.data() + k * taps;
+        const double* k0 = kt.longKernel.data() + k * taps;
+        for (int jj = 0; jj < taps; ++jj)
         {
-            if (included)
-                break;
-            add = dv + ds * tt; // (only reachable with a clamped base; kept for completeness)
+            const double s = h00 * s0[jj] + h01 * s0[jj + taps] + h10 * k0[jj] + h11 * k0[jj + taps];
+            const double r = h00 * r0[jj] + h01 * r0[jj + taps] + h10 * s0[jj] + h11 * s0[jj + taps];
+            add[static_cast<std::size_t> (jj)] = dv * s + ds * r;
         }
-        else
-        {
-            const int j = static_cast<int> (std::ceil (tt)) - 1;
-            using S = typename Table::SampleType;
-            const auto d = static_cast<S> (tt - static_cast<double> (j));
-            double stepCum = static_cast<double> (tab.step (j, d)) + (j >= 0 ? 1.0 : 0.0);
-            const double pos = tt > 0.0 ? tt : 0.0;
-            double rampCum = static_cast<double> (tab.ramp (j, d)) + pos;
-            if constexpr (kSecondOrder)
-            {
-                // The tables interpolate linearly between kResolution points per sample, an error of about
-                // 1e-6 of a step; under the long kernel's deeper stop band that is what remains of a nearly
-                // silent combined shape. Remove it with the second derivative, which the kernel gives in
-                // closed form (step'' = kernel', ramp'' = kernel).
-                constexpr double res = Table::kResolution;
-                const double p = static_cast<double> (d) * res;
-                const double cellFrac = p - std::fmin (std::floor (p), res - 1.0);
-                const double w = 0.5 * cellFrac * (1.0 - cellFrac) / (res * res);
-                const auto tf = static_cast<S> (tt);
-                constexpr S e = S (1) / S (2048);
-                const double k1 = (static_cast<double> (tab.kernelAt (tf + e)) - static_cast<double> (tab.kernelAt (tf - e))) / (2.0 * static_cast<double> (e));
-                stepCum -= w * k1;
-                rampCum -= w * static_cast<double> (tab.kernelAt (tf));
-            }
-            add = dv * (stepCum - (included ? 1.0 : 0.0)) + ds * (rampCum - (included ? pos : 0.0));
-        }
-        const auto slot = static_cast<std::size_t> ((sample + static_cast<std::uint64_t> (N) + static_cast<std::uint64_t> (static_cast<std::int64_t> (m)))
-                                                    % static_cast<std::uint64_t> (N));
-        buf[slot] += add;
     }
+    else
+    {
+        // the short kernel's own linear interpolation, in float as BlepTable reads it
+        const auto xf = static_cast<float> (x);
+        const float* s0 = kt.shortStep.data() + k * taps;
+        const float* r0 = kt.shortRamp.data() + k * taps;
+        for (int jj = 0; jj < taps; ++jj)
+        {
+            const float s = s0[jj] + (s0[jj + taps] - s0[jj]) * xf;
+            const float r = r0[jj] + (r0[jj + taps] - r0[jj]) * xf;
+            add[static_cast<std::size_t> (jj)] = dv * static_cast<double> (s) + ds * static_cast<double> (r);
+        }
+    }
+    // the whole edge on the samples before the event (tap j = -1 when c = 0; j = 0 when c = 2, where the
+    // ramp has run d samples)
+    if (c == 0)
+        add[static_cast<std::size_t> (z - 1)] -= dv;
+    else if (c == 2)
+        add[static_cast<std::size_t> (z)] += dv + ds * d;
+    const std::uint64_t first = sample + static_cast<std::uint64_t> (N) + 1u - static_cast<std::uint64_t> (c) - static_cast<std::uint64_t> (z);
+    for (int jj = 0; jj < taps; ++jj)
+        buf[static_cast<std::size_t> ((first + static_cast<std::uint64_t> (jj)) & (N - 1))] += add[static_cast<std::size_t> (jj)];
 }
 } // namespace
 
@@ -610,9 +614,9 @@ void Chip::renderEmitWith (int n, double t, double dv, double ds, bool longKerne
     // most one sample before the current sample's start
     const double base = std::fmin (std::fmax ((rs.tEnd - t) / rs.cps, 0.0), 2.0);
     if (longKernel)
-        addStep<true> (*blepLong, v.buf, rs.sample, base, dv, ds);
+        addStep<true> (*ktab, v.buf, rs.sample, base, dv, ds);
     else
-        addStep<false> (*blep, v.buf, rs.sample, base, dv, ds);
+        addStep<false> (*ktab, v.buf, rs.sample, base, dv, ds);
 }
 
 // ---- state from the digital core ----

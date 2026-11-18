@@ -250,8 +250,7 @@ public:
         clock.prepare (cfg.clockHz, cfg.internalRate);
         shapes = &combined::tablesFor (cfg.model, cfg.shapes);
         rtab = &render::tablesFor (cfg.model, cfg.shapes);
-        blep = &ShortBlep::get();
-        blepLong = &LongBlep::get();
+        ktab = &render::kernelTables();
         reset();
     }
 
@@ -850,8 +849,7 @@ private:
     Config cfg {};
     const combined::ShapeTables* shapes = nullptr; // never null after construction (CombinedWaveforms.h)
     const render::RenderTables* rtab = nullptr;    // never null after construction (RenderTables.h)
-    const ShortBlep* blep = nullptr;               // never null after construction
-    const LongBlep* blepLong = nullptr;            // never null after construction
+    const render::KernelTables* ktab = nullptr;    // both BLEP kernels (RenderTables.h); never null after construction
     RenderState rs {};
     ChipClock clock {};
     std::array<Osc, 3> osc {};

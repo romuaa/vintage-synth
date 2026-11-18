@@ -2,6 +2,7 @@
 
 #include "bside/chip/CombinedWaveforms.h"
 #include "bside/chip/Waveforms.h"
+#include "common/dsp/BlepTable.h"
 
 #include <algorithm>
 #include <cmath>
@@ -30,6 +31,29 @@ Converter makeConverter (const LadderWeights& w, bool ideal)
         c.excludedTri[static_cast<std::size_t> (imin)] = t;
     }
     c.center = 0.5; // d (0) = 0 and d (4095) = 1 by normalisation
+    for (unsigned v = 0; v < 4096; ++v)
+    {
+        double s = 0.0;
+        for (std::size_t i = 0; i < 12; ++i)
+            if (((v >> i) & 1u) != 0)
+                s += c.e[i];
+        c.devSaw[v] = s;
+    }
+    for (unsigned v = 0; v < 2048; ++v)
+    {
+        double s = 0.0;
+        for (std::size_t i = 0; i < 11; ++i)
+            if (((v >> i) & 1u) != 0)
+                s += c.e[i + 1];
+        c.devTri[v] = s;
+    }
+    for (int imin = 0; imin <= 12; ++imin)
+    {
+        double s = 0.0;
+        for (int i = imin; i < 11; ++i)
+            s += c.e[static_cast<std::size_t> (i + 1)];
+        c.triTail[static_cast<std::size_t> (imin)] = s;
+    }
     return c;
 }
 
@@ -136,6 +160,36 @@ LadderWeights ladderWeights (int bits, double ratio, bool terminated) noexcept
     for (std::size_t i = 0; i < n; ++i)
         w[i] /= sum;
     return w;
+}
+
+const KernelTables& kernelTables()
+{
+    static const KernelTables& t = [] () -> const KernelTables& {
+        static KernelTables storage;
+        using Short = vs::dsp::BlepTable;
+        using Long = vs::dsp::BasicBlepTable<kLongZeroCrossings, kLongBetaTenths, double>;
+        static_assert (Short::kZeroCrossings == kLongZeroCrossings && Short::kResolution == kKernelResolution && Long::kResolution == kKernelResolution,
+                       "both kernels share the taps and points of the renderer's layout");
+        static_assert (Long::kKernelResolution % kKernelResolution == 0, "the long kernel's points lie on its kernel table");
+        const Short& s = Short::get();
+        const Long& l = Long::get();
+        for (int k = 0; k <= kKernelResolution; ++k)
+            for (int jj = 0; jj < kKernelTaps; ++jj)
+            {
+                const int j = jj - kLongZeroCrossings;
+                const auto at = static_cast<std::size_t> (k * kKernelTaps + jj);
+                // a whole point: step (j, d) interpolates nothing there (d = 1 reads the cell's last point)
+                const double d = static_cast<double> (k) / kKernelResolution;
+                const bool first = k == 0;
+                storage.shortStep[at] = first ? s.step (j, 0.0f) : s.step (j, static_cast<float> (d));
+                storage.shortRamp[at] = first ? s.ramp (j, 0.0f) : s.ramp (j, static_cast<float> (d));
+                storage.longStep[at] = first ? l.step (j, 0.0) : l.step (j, d);
+                storage.longRamp[at] = first ? l.ramp (j, 0.0) : l.ramp (j, d);
+                storage.longKernel[at] = l.kernelAt (static_cast<double> (j) + d);
+            }
+        return storage;
+    }();
+    return t;
 }
 
 const RenderTables& tablesFor (Model m, ShapeSet s)
