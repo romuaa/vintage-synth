@@ -5,6 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side parameter step, review fixes (2026-11-18)
+- Typed text: every B-Side text -> value path is finite and in range (NaN, inf, 1e999 give the default);
+  `parseFirstNumber` reads sign and exponent; choices accept any case and a bare number naming one label.
+- `PartMappings.h`: pulse width, PW offset and cutoff offset are continuous (Smooth); `authenticRegister` rounds.
+  The tick-rate range uses the mapping functions. Unused `pulseWidthPercent` removed; wave defaults use
+  `kOscWavePulse` / `kOscWaveOff`.
+- Tests that kill the surviving mutations (choice and clock upper bound, NaN default, all `PartParams` defaults,
+  tick clamp, log-domain envelope lookup).
+
 ### B-Side parameter step (2026-11-18)
 - Exitium B-Side now reports 202 host parameters (docs/architecture.md 8.7): the 75 shared ones, then
   `lower.*` (63), `upper.*` (63) and `chip.clock`. Inert: nothing on the audio thread reads them yet
