@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <complex>
 
 namespace vs::bside::chip::render
 {
@@ -58,19 +57,6 @@ Converter makeConverter (const LadderWeights& w, bool ideal)
     return c;
 }
 
-using Cx = std::complex<double>;
-
-/** The spectrum of a staircase of n equal cells over one period at harmonic m, per unit DFT of its values:
-    the integral of e^(-2 pi i m u) over the first cell (1 / n at m = 0). */
-Cx cellResponse (long m, std::size_t n)
-{
-    if (m == 0)
-        return Cx (1.0 / static_cast<double> (n), 0.0);
-    constexpr double pi = 3.14159265358979323846;
-    const double x = 2.0 * pi * static_cast<double> (m);
-    return (Cx (1.0, 0.0) - std::polar (1.0, -x / static_cast<double> (n))) / Cx (0.0, x);
-}
-
 double convert (const LadderWeights& w, unsigned v)
 {
     double d = 0.0;
@@ -118,53 +104,18 @@ void buildSteps (const RenderTables& t, const combined::ShapeTables& shapes, std
         }
         st.nextChange[c] = d;
     }
-    // The coarse levels: a staircase of `cells` cells whose harmonics below cells / 2 equal the fine staircase's
-    // exactly (its values from the fine spectrum divided by the coarse cell's response, transformed back; the
-    // harmonic cells / 2 left out). Above the register's range a level is chosen with at least half a coarse
-    // cell per sample, so harmonic cells / 2 lies at a quarter of the internal rate or above (22 kHz at 88.2
-    // kHz): the audio band is the fine staircase's (cell means instead would fold the shape's high harmonics
-    // back into it, 1 dB and more at 8 cells per period). Only the levels from kFirstCoarseLevel on are used
-    // (128 cells or fewer: the fine spectrum up to harmonic 64), computed directly, without allocation.
-    constexpr double pi = 3.14159265358979323846;
-    constexpr std::size_t harmonics = (4096u >> kFirstCoarseLevel) / 2;
-    std::array<Cx, harmonics + 1> fine {};
-    for (std::size_t m = 0; m <= harmonics; ++m)
+    // the step moments' prefix sums (kStepMoments)
+    for (auto& p : st.momentPrefix)
+        p[0] = 0.0;
+    for (std::size_t c = 0; c < 4096; ++c)
     {
-        Cx sum (0.0, 0.0), rot = std::polar (1.0, -2.0 * pi * static_cast<double> (m) / 4096.0), ph (1.0, 0.0);
-        for (std::size_t c = 0; c < 4096; ++c)
+        const double a = static_cast<double> (st.value[c]) - static_cast<double> (st.value[(c + 4095u) & 0xfffu]);
+        const double x = static_cast<double> (c) / 4096.0;
+        double power = 1.0;
+        for (std::size_t j = 0; j <= static_cast<std::size_t> (kStepMoments); ++j)
         {
-            sum += static_cast<double> (st.value[c]) * ph;
-            ph *= rot;
-        }
-        fine[m] = sum * cellResponse (static_cast<long> (m), 4096); // the fine staircase's coefficient at harmonic m
-    }
-    for (int level = kFirstCoarseLevel; level <= kCoarseLevels; ++level)
-    {
-        const unsigned cells = 4096u >> level;
-        float* value = st.coarseValue.data() + coarseOffset (level);
-        std::uint16_t* next = st.coarseNext.data() + coarseOffset (level);
-        for (unsigned ci = 0; ci < cells; ++ci)
-        {
-            // v_i = (1 / cells) (V0 + 2 Re sum over m of V_m e^(2 pi i m i / cells)), V_m = F_m / response_m
-            double sum = (fine[0] / cellResponse (0, cells)).real();
-            for (unsigned m = 1; m < cells / 2; ++m)
-                sum += 2.0 * (fine[m] / cellResponse (static_cast<long> (m), cells) * std::polar (1.0, 2.0 * pi * m * ci / cells)).real();
-            value[ci] = static_cast<float> (sum / static_cast<double> (cells));
-        }
-        for (unsigned ci = 0; ci < cells; ++ci)
-        {
-            std::uint16_t d = 0;
-            for (unsigned j = 1; j < cells; ++j)
-            {
-                const float a = value[(ci + j - 1) % cells];
-                const float b = value[(ci + j) % cells];
-                if (a < b || b < a)
-                {
-                    d = static_cast<std::uint16_t> (j);
-                    break;
-                }
-            }
-            next[ci] = d;
+            st.momentPrefix[j][c + 1] = st.momentPrefix[j][c] + a * power;
+            power *= x;
         }
     }
 }
@@ -257,6 +208,44 @@ const KernelTables& kernelTables()
                 storage.longRamp[at] = first ? l.ramp (j, 0.0) : l.ramp (j, d);
                 storage.longKernel[at] = l.kernelAt (static_cast<double> (j) + d);
             }
+        // The long kernel's derivatives (the step moments, kStepMoments): its windowed sinc (as BasicBlepTable
+        // defines it: cutoff 0.45, Kaiser window, kLongZeroCrossings) differentiated by five-point differences,
+        // normalised as kernelAt (its value at 0 against ours). Accurate to about 1e-5 of each derivative's size;
+        // they weigh corrections of at most a few per cent of a step.
+        {
+            constexpr double pi = 3.14159265358979323846, cutoff = 0.45, beta = kLongBetaTenths / 10.0;
+            constexpr double zc = kLongZeroCrossings;
+            auto i0 = [] (double x) {
+                double sum = 1.0, term = 1.0;
+                for (int k = 1; k < 50; ++k)
+                {
+                    term *= (x / (2.0 * k)) * (x / (2.0 * k));
+                    sum += term;
+                }
+                return sum;
+            };
+            const double i0beta = i0 (beta);
+            auto raw = [&] (double at) {
+                const double r = at / zc;
+                if (std::abs (r) >= 1.0)
+                    return 0.0;
+                const double x = 2.0 * cutoff * at;
+                const double sinc = std::abs (x) < 1.0e-12 ? 1.0 : std::sin (pi * x) / (pi * x);
+                return 2.0 * cutoff * sinc * i0 (beta * std::sqrt (1.0 - r * r)) / i0beta;
+            };
+            const double scale = l.kernelAt (0.0) / raw (0.0);
+            constexpr double e = 1.0 / 512.0;
+            for (int k = 0; k <= kKernelResolution; ++k)
+                for (int jj = 0; jj < kKernelTaps; ++jj)
+                {
+                    const double tau = static_cast<double> (jj - kLongZeroCrossings) + static_cast<double> (k) / kKernelResolution;
+                    const double m2 = raw (tau - 2.0 * e), m1 = raw (tau - e), z0 = raw (tau), p1 = raw (tau + e), p2 = raw (tau + 2.0 * e);
+                    const auto at = static_cast<std::size_t> (k * kKernelTaps + jj);
+                    storage.longKernelD1[at] = scale * (-p2 + 8.0 * p1 - 8.0 * m1 + m2) / (12.0 * e);
+                    storage.longKernelD2[at] = scale * (-p2 + 16.0 * p1 - 30.0 * z0 + 16.0 * m1 - m2) / (12.0 * e * e);
+                    storage.longKernelD3[at] = scale * (p2 - 2.0 * p1 + 2.0 * m1 - m2) / (2.0 * e * e * e);
+                }
+        }
         // the long kernel's step at kFineResolution points: cubic Hermite between its own points with the exact
         // derivatives (h = 1 / 512: step' = kernel)
         constexpr int refine = kFineResolution / kKernelResolution;

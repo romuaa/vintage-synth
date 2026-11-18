@@ -59,35 +59,18 @@ int iminWithHysteresis (double periodsPerSample, int current) noexcept
     return current;
 }
 /** The highest frequency the register can set, in periods per cycle (65535 / 2^24): at and below it a combined
-    waveform is rendered cell by cell; above it (Smooth only) by its coarse levels. */
+    waveform's steps are emitted one by one; above it (Smooth only) a stretch's steps together with their time
+    moments (RenderTables.h kStepMoments). */
 constexpr double kRegisterMaxSlope = 65535.0 / 16777216.0;
-/** Coarse cells per internal sample a combined waveform may pass above the register's highest frequency. */
-constexpr double kCoarseCellsPerSample = 2.0;
 
-/** The finest coarse level (kFirstCoarseLevel .. kCoarseLevels) whose cells pass at most kCoarseCellsPerSample
-    per sample. */
-int coarseLevelFor (double periodsPerSample) noexcept
-{
-    for (int level = render::kFirstCoarseLevel; level < render::kCoarseLevels; ++level)
-        if (static_cast<double> (4096 >> level) * periodsPerSample <= kCoarseCellsPerSample)
-            return level;
-    return render::kCoarseLevels;
-}
-
-/** A combined waveform's level with hysteresis (as iminWithHysteresis): 0 at and below the register's highest
-    frequency, and from 0 only from 3 % above it; a coarser level as soon as the cells would pass too fast, a
-    finer one only once it would pass at most half as many. `slope` in periods per cycle. */
+/** Whether a combined waveform's steps go by their moments (1) or one by one (0), with hysteresis: never at or
+    below the register's top, from one by one only from 3 % above it; and only while a sample covers less than
+    half a period (a stretch then holds every cell at most once). `slope` in periods per cycle. */
 int tableLevelWithHysteresis (double slope, double periodsPerSample, int current) noexcept
 {
-    if (! (slope > kRegisterMaxSlope) || (current == 0 && ! (slope > kRegisterMaxSlope * 1.03)))
+    if (! (slope > kRegisterMaxSlope) || ! (periodsPerSample < 0.5) || (current == 0 && ! (slope > kRegisterMaxSlope * 1.03)))
         return 0;
-    const int must = coarseLevelFor (periodsPerSample);
-    const int may = coarseLevelFor (2.0 * periodsPerSample);
-    if (current < must)
-        return must;
-    if (current > may)
-        return may;
-    return current;
+    return 1;
 }
 } // namespace
 
@@ -190,7 +173,7 @@ struct RenderSinkT
 int Chip::renderTableLevel (int n, int current) const noexcept
 {
     const double slope = renderSlopeU (n);
-    return renderCoarse ? tableLevelWithHysteresis (slope, slope * rs.cps, current) : 0;
+    return renderMoments ? tableLevelWithHysteresis (slope, slope * rs.cps, current) : 0;
 }
 
 void Chip::renderScheduleReread (int n, double t) noexcept
@@ -302,10 +285,7 @@ double Chip::renderValue (int n, double u) const noexcept
             if (slot < 0)
                 return 0.0;
             const auto cell = static_cast<std::size_t> ((static_cast<std::uint64_t> (v.k) + (v.ringFlip ? 2048u : 0u)) & 0xfffu);
-            const render::StepTable& st = T.steps[static_cast<std::size_t> (slot)];
-            if (v.level > 0)
-                return static_cast<double> (st.coarseValue[render::coarseOffset (v.level) + (cell >> v.level)]);
-            return static_cast<double> (st.value[cell]);
+            return static_cast<double> (T.steps[static_cast<std::size_t> (slot)].value[cell]);
         }
         default: return 0.0;
     }
@@ -380,14 +360,7 @@ double Chip::renderNextLineEvent (int n, double t, double slope, double& ue, int
                 if (slot >= 0)
                 {
                     const auto cell = static_cast<std::size_t> ((static_cast<std::uint64_t> (v.k) + (v.ringFlip ? 2048u : 0u)) & 0xfffu);
-                    const render::StepTable& st = rtab->steps[static_cast<std::size_t> (slot)];
-                    std::size_t d = st.nextChange[cell];
-                    if (v.level > 0)
-                    {
-                        // to the first index cell of the next coarse cell with another value
-                        const std::size_t ci = cell >> v.level, dc = st.coarseNext[render::coarseOffset (v.level) + ci];
-                        d = dc != 0 ? ((ci + dc) << v.level) - cell : 0;
-                    }
+                    const std::size_t d = rtab->steps[static_cast<std::size_t> (slot)].nextChange[cell];
                     if (d != 0)
                     {
                         ue = static_cast<double> (v.k + static_cast<std::int64_t> (d)) / 4096.0;
@@ -687,6 +660,63 @@ void addStep (const render::KernelTables& kt, std::array<double, N>& buf, std::u
 }
 } // namespace
 
+namespace
+{
+/** addStep for a group of steps given by their moments about T0 (`base` samples before the grid point, as
+    addStep): M0 as a step on the refined long table, M1 .. M4 on the long kernel's derivatives, signs and
+    factorials of the Taylor series (RenderTables.h kStepMoments). The naive edge (the samples before T0) is
+    M0's alone. */
+template <std::size_t N>
+void addMoments (const render::KernelTables& kt, std::array<double, N>& buf, std::uint64_t sample, double base, const std::array<double, render::kStepMoments + 1>& m) noexcept
+{
+    constexpr int z = render::kLongZeroCrossings;
+    constexpr int taps = render::kKernelTaps;
+    const double cb = std::ceil (base);
+    const int c = static_cast<int> (cb);
+    const double d = base - (cb - 1.0);
+    const double posF = d * render::kFineResolution;
+    const int kF = std::min (static_cast<int> (posF), render::kFineResolution - 1);
+    const double xF = posF - static_cast<double> (kF);
+    const double pos = d * render::kKernelResolution;
+    const int k = std::min (static_cast<int> (pos), render::kKernelResolution - 1);
+    const double x = pos - static_cast<double> (k);
+    const double* s0 = kt.longStepFine.data() + kF * taps;
+    const double* h0 = kt.longKernel.data() + k * taps;
+    const double* h1 = kt.longKernelD1.data() + k * taps;
+    const double* h2 = kt.longKernelD2.data() + k * taps;
+    const double* h3 = kt.longKernelD3.data() + k * taps;
+    const double w1 = -m[1], w2 = m[2] / 2.0, w3 = -m[3] / 6.0, w4 = m[4] / 24.0;
+    std::array<double, taps> add {};
+    for (int jj = 0; jj < taps; ++jj)
+        add[static_cast<std::size_t> (jj)] = m[0] * (s0[jj] + (s0[jj + taps] - s0[jj]) * xF) + w1 * (h0[jj] + (h0[jj + taps] - h0[jj]) * x)
+                                              + w2 * (h1[jj] + (h1[jj + taps] - h1[jj]) * x) + w3 * (h2[jj] + (h2[jj + taps] - h2[jj]) * x)
+                                              + w4 * (h3[jj] + (h3[jj + taps] - h3[jj]) * x);
+    if (c == 0)
+        add[static_cast<std::size_t> (z - 1)] -= m[0];
+    else if (c == 2)
+        add[static_cast<std::size_t> (z)] += m[0];
+    const auto firstSlot = static_cast<std::size_t> ((sample + static_cast<std::uint64_t> (N) + 1u - static_cast<std::uint64_t> (c) - static_cast<std::uint64_t> (z)) & (N - 1));
+    const std::size_t head = std::min<std::size_t> (static_cast<std::size_t> (taps), N - firstSlot);
+    for (std::size_t i = 0; i < head; ++i)
+        buf[firstSlot + i] += add[i];
+    for (std::size_t i = head; i < static_cast<std::size_t> (taps); ++i)
+        buf[i - head] += add[i];
+}
+} // namespace
+
+void Chip::renderEmitMoments (int n, double t0, const std::array<double, render::kStepMoments + 1>& m) noexcept
+{
+    double size = 0.0;
+    for (const double x : m)
+        size = std::fmax (size, std::abs (x));
+    if (! (size > 1.0e-15))
+        return;
+    RenderOsc& v = rs.osc[idx (n)];
+    v.quietSince = rs.sample + 1;
+    const double base = std::fmin (std::fmax ((rs.tEnd - t0) * rs.samplesPerCycle, 0.0), 2.0);
+    addMoments (*ktab, v.buf, rs.sample, base, m);
+}
+
 void Chip::renderEmit (int n, double t, double dv, double ds) noexcept
 {
     renderEmitWith (n, t, dv, ds, rs.osc[idx (n)].longKernel);
@@ -730,7 +760,7 @@ void Chip::renderSyncOsc (int n) noexcept
     if (continues && imin != v.imin)
         ++rs.converterSwitches;
     v.imin = imin;
-    // a combined waveform's coarse level continues from a combined waveform, else starts afresh
+    // how a combined waveform's steps are emitted continues from a combined waveform, else starts afresh
     const int level = v.mode == rmTable ? renderTableLevel (n, previousMode == rmTable ? v.level : 0) : 0;
     if (previousMode == rmTable && v.mode == rmTable && level != v.level)
         ++rs.levelSwitches;
@@ -1194,8 +1224,6 @@ void Chip::renderSweepTable (int n, double tEnd) noexcept
         if (pulse && ! v.gate)
             return low;
         const auto cell = static_cast<std::size_t> ((static_cast<std::uint64_t> (v.k) + (v.ringFlip ? 2048u : 0u)) & 0xfffu);
-        if (v.level > 0)
-            return static_cast<double> (st.coarseValue[render::coarseOffset (v.level) + (cell >> v.level)]);
         return static_cast<double> (st.value[cell]);
     };
     double t = rs.sweepT;
@@ -1204,14 +1232,13 @@ void Chip::renderSweepTable (int n, double tEnd) noexcept
         double ue = 0.0;
         int kind = 0;
         double best = kInf;
+        // above the register's top (level 1) the cell steps go by their moments, not one by one; a pulling
+        // oscillator's upper half keeps them one by one (a pull-down may come in any of its cells)
+        const bool cells = v.level == 0 || (pulling && (static_cast<std::uint64_t> (v.k) & 0xfffu) >= 2048u);
+        if (cells)
         {
             const auto cell = static_cast<std::size_t> ((static_cast<std::uint64_t> (v.k) + (v.ringFlip ? 2048u : 0u)) & 0xfffu);
-            std::size_t d = st.nextChange[cell];
-            if (v.level > 0)
-            {
-                const std::size_t ci = cell >> v.level, dc = st.coarseNext[render::coarseOffset (v.level) + ci];
-                d = dc != 0 ? ((ci + dc) << v.level) - cell : 0;
-            }
+            const std::size_t d = st.nextChange[cell];
             if (d != 0)
             {
                 ue = static_cast<double> (v.k + static_cast<std::int64_t> (d)) / 4096.0;
@@ -1264,7 +1291,38 @@ void Chip::renderSweepTable (int n, double tEnd) noexcept
                 }
             }
         }
-        if (! (best <= tEnd))
+        const bool stop = best <= tEnd;
+        if (! cells)
+        {
+            // the cell steps up to the event (a boundary event takes its own step) or to the stretch's end, as one
+            // step with their moments (the gate shut: no steps)
+            const double tB = stop ? best : tEnd;
+            double uB = stop ? ue : v.u + slope * (tEnd - t);
+            const std::int64_t last = stop && kind == 1 ? static_cast<std::int64_t> (std::llround (ue * 4096.0)) - 1
+                                                        : static_cast<std::int64_t> (std::floor (uB * 4096.0));
+            if (last > v.k)
+            {
+                if (! pulse || v.gate)
+                    renderStepMoments (n, v.k + 1, last, t, v.u, tB);
+                v.k = last;
+                if (v.k >= 4096)
+                {
+                    v.k -= 4096;
+                    v.u -= 1.0;
+                    uB -= 1.0;
+                    ue -= 1.0;
+                    if (v.gateCheckU >= 0.0)
+                        v.gateCheckU -= 1.0;
+                }
+            }
+            if (! stop)
+            {
+                v.u = uB;
+                t = tEnd;
+                break;
+            }
+        }
+        if (! stop)
             break;
         if (best > t)
         {
@@ -1311,6 +1369,59 @@ void Chip::renderSweepTable (int n, double tEnd) noexcept
     }
     if (tEnd > t)
         v.u += slope * (tEnd - t);
+}
+
+void Chip::renderStepMoments (int n, std::int64_t c1, std::int64_t c2, double ta, double ua, double tb) noexcept
+{
+    // The steps into cells c1 .. c2 of the line (u = cell / 4096 in the line's own coordinates; ua at time ta, the
+    // stretch ending at tb) as one step at the stretch's centre T0 with the moments M_k = sum a_c (t_c - T0)^k
+    // in samples (RenderTables.h kStepMoments), from the prefix sums in the table's own index (ring: half a
+    // table further; split where the index wraps).
+    const RenderOsc& v = rs.osc[idx (n)];
+    const double slope = renderSlopeU (n);
+    const auto slot = static_cast<std::size_t> (render::tableSlot (static_cast<std::uint8_t> (wave::bits (ctl (n)) & 7u)));
+    const auto& prefix = rtab->steps[slot].momentPrefix;
+    constexpr int kk = render::kStepMoments;
+    const double t0 = 0.5 * (ta + tb);
+    const double u0 = ua + slope * (t0 - ta);
+    const std::int64_t off = v.ringFlip ? 2048 : 0;
+    std::array<double, kk + 1> sums {};
+    auto segment = [&] (std::int64_t ta0, std::int64_t tb0, double shift) {
+        // table cells ta0 .. tb0 are line cells shifted by `shift` periods: y = index / 4096 + shift
+        const double q = u0 - shift;
+        std::array<double, kk + 1> d {};
+        for (std::size_t j = 0; j <= static_cast<std::size_t> (kk); ++j)
+            d[j] = prefix[j][static_cast<std::size_t> (tb0 + 1)] - prefix[j][static_cast<std::size_t> (ta0)];
+        // sum over the cells of a (x - q)^k, x = index / 4096, by the binomial expansion
+        std::array<double, kk + 1> mq {}; // (-q)^m
+        mq[0] = 1.0;
+        for (std::size_t m = 1; m <= static_cast<std::size_t> (kk); ++m)
+            mq[m] = mq[m - 1] * -q;
+        constexpr double binom[kk + 1][kk + 1] { { 1, 0, 0, 0, 0 }, { 1, 1, 0, 0, 0 }, { 1, 2, 1, 0, 0 }, { 1, 3, 3, 1, 0 }, { 1, 4, 6, 4, 1 } };
+        for (std::size_t k = 0; k <= static_cast<std::size_t> (kk); ++k)
+            for (std::size_t j = 0; j <= k; ++j)
+                sums[k] += binom[k][j] * mq[k - j] * d[j];
+    };
+    const std::int64_t count = c2 - c1 + 1;
+    const std::int64_t first = (c1 + off) & 0xfff;
+    const double shift = static_cast<double> (c1 - first) / 4096.0;
+    if (first + count <= 4096)
+        segment (first, first + count - 1, shift);
+    else
+    {
+        segment (first, 4095, shift);
+        segment (0, first + count - 1 - 4096, shift + 1.0);
+    }
+    // to samples: t_c - T0 = (x_c - u0) / slope cycles
+    const double toSamples = 1.0 / (slope * rs.cps);
+    std::array<double, kk + 1> moments {};
+    double scale = 1.0;
+    for (std::size_t k = 0; k <= static_cast<std::size_t> (kk); ++k)
+    {
+        moments[k] = sums[k] * scale;
+        scale *= toSamples;
+    }
+    renderEmitMoments (n, t0, moments);
 }
 
 // ---- the three lines together: predicted sync resets, ring and sync sources' top-bit changes ----
@@ -1738,10 +1849,8 @@ void Chip::renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std
     const int tableLevel = converterTerms && v.mode == rmTable ? renderTableLevel (n, v.level) : v.level;
     if (tableLevel != v.level)
     {
-        ++rs.levelSwitches;
-        const double wl = renderValue (n, v.u);
+        ++rs.levelSwitches; // the waveform stays the same: only how its steps are emitted changes
         v.level = tableLevel;
-        renderEmit (n, rs.tEnd, renderValue (n, v.u) - wl, 0.0);
     }
     const double value = renderValue (n, v.u);
     const float level = rtab->envelope[env[idx (n)].counter];
@@ -1826,7 +1935,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         if ((v.mode == rmTri || v.mode == rmSaw) && ! rtab->dac.ideal && iminWithHysteresis (renderSlopeU (n) * rs.cps, v.imin) != v.imin)
             return 0; // the converter terms switch at the next sample end: the general path
         if (v.mode == rmTable && renderTableLevel (n, v.level) != v.level)
-            return 0; // likewise a combined waveform's coarse level
+            return 0; // likewise how a combined waveform's steps are emitted
     }
     if (budget == 0)
         return 0;

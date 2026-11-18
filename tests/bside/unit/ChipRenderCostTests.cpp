@@ -12,6 +12,7 @@
 #include <complex>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <vector>
 
 using namespace bs_render_test;
@@ -393,28 +394,38 @@ std::vector<double> lowpass (const std::vector<float>& x, double rate, double ba
 
 struct AboveResult
 {
-    double aliasDb = -300.0;     // worst non-harmonic component up to 20 kHz, dB re the fundamental (coarse levels)
-    double aliasFineDb = -300.0; // the same rendered cell by cell
-    double bandDiffDb = -300.0;  // the largest in-band (<= 20 kHz) difference between the two, dB re full scale
+    double aliasDb = -300.0;     // worst non-harmonic component up to 20 kHz, dB re the fundamental (step moments)
+    double aliasFineDb = -300.0; // the same with every step emitted on its own
+    double bandDiffDb = -300.0;  // the largest in-band (<= 20 kHz) difference between the two, dB re 1
 };
 
-/** One combined waveform (control c) at fundamental hz (Smooth, above the register's range) on a bin-centred
-    frequency: its aliasing with and without the coarse levels, and their difference in the audio band. */
-AboveResult measureAbove (Model m, std::uint8_t c, double hz, double rate)
+/** One combined waveform (control c, width pw; with `synced`, oscillator 2 synced by a 1.1 kHz saw on
+    oscillator 1) at fundamental hz (Smooth, above the register's range) on a bin-centred frequency: its
+    aliasing with and without the step moments, and their difference in the audio band. */
+AboveResult measureAbove (Model m, std::uint8_t c, double hz, double rate, float pw = 1024.0f, bool synced = false)
 {
     constexpr int n = 1 << 15;
     AboveResult r;
     std::vector<float> y[2];
-    for (int coarse = 0; coarse < 2; ++coarse)
+    for (int on = 0; on < 2; ++on)
     {
         Chip chip = makeChip (m, rate);
-        chip.renderCoarseLevelsEnabled (coarse == 1);
+        chip.renderStepMomentsEnabled (on == 1);
         const int bin = oddBin (hz, rate, n);
-        setOsc (chip, 0, binFrequency (chip, bin, n), 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
+        if (synced)
+        {
+            setOsc (chip, 0, 1100.0 * 16777216.0 / 985248.0, 2048.0f, ctrl::saw);
+            setOsc (chip, 1, binFrequency (chip, bin, n), pw, static_cast<std::uint8_t> (c | ctrl::sync | ctrl::gate));
+        }
+        else
+            setOsc (chip, 0, binFrequency (chip, bin, n), pw, static_cast<std::uint8_t> (c | ctrl::gate));
         renderSamples (chip, 4000);
-        y[coarse] = renderSamples (chip, n);
-        const auto a = aliasOf (y[coarse], rate, 20000.0, -1, bin); // (a Model A saw combination pulled at once repeats every half period)
-        (coarse == 1 ? r.aliasDb : r.aliasFineDb) = a.worstDb;
+        y[on] = renderSamples (chip, n);
+        if (! synced)
+        {
+            const auto a = aliasOf (y[on], rate, 20000.0, -1, bin); // (a Model A saw combination pulled at once repeats every half period)
+            (on == 1 ? r.aliasDb : r.aliasFineDb) = a.worstDb;
+        }
     }
     const auto l0 = lowpass (y[0], rate, 20000.0), l1 = lowpass (y[1], rate, 20000.0);
     double worst = 0.0;
@@ -423,83 +434,198 @@ AboveResult measureAbove (Model m, std::uint8_t c, double hz, double rate)
     r.bandDiffDb = 20.0 * std::log10 (worst + 1e-300);
     return r;
 }
+
+/** A run with writes at given cycles, rendered with and without the step moments (renderUntil to each write);
+    returns the in-band difference and the sample index of every write. */
+struct Run
+{
+    std::vector<double> diff;               // |in-band difference| per sample
+    std::vector<std::size_t> marks;         // the sample of each write
+    std::vector<bool> switched;             // whether that write switched how the steps are emitted
+};
+Run runWrites (Model m, double rate, const std::function<void (Chip&)>& setup, const std::vector<std::pair<std::uint64_t, std::function<void (Chip&)>>>& writes,
+               std::uint64_t total)
+{
+    Run r;
+    std::vector<float> y[2];
+    for (int on = 0; on < 2; ++on)
+    {
+        Chip c = makeChip (m, rate);
+        c.renderStepMomentsEnabled (on == 1);
+        setup (c);
+        std::vector<float> block (64);
+        std::size_t w = 0;
+        while (c.cycle() < total)
+        {
+            const std::uint64_t at = w < writes.size() ? writes[w].first : total;
+            while (c.cycle() < at)
+            {
+                std::fill (block.begin(), block.end(), 0.0f);
+                const int done = c.renderUntil (block.data(), 64, at);
+                y[on].insert (y[on].end(), block.begin(), block.begin() + done);
+            }
+            if (w < writes.size())
+            {
+                const auto before = c.renderMethodSwitches();
+                writes[w++].second (c);
+                if (on == 1)
+                {
+                    r.marks.push_back (y[on].size());
+                    r.switched.push_back (c.renderMethodSwitches() != before);
+                }
+            }
+        }
+    }
+    const auto a = lowpass (y[0], rate, 20000.0), b = lowpass (y[1], rate, 20000.0);
+    r.diff.resize (a.size());
+    for (std::size_t i = 0; i < a.size(); ++i)
+        r.diff[i] = std::abs (a[i] - b[i]);
+    return r;
+}
+
+double maxOver (const std::vector<double>& d, std::size_t from, std::size_t to)
+{
+    double m = 0.0;
+    for (std::size_t i = from; i < std::min (to, d.size()); ++i)
+        m = std::max (m, d[i]);
+    return m;
+}
+
+double hzToReg (double hz) { return hz * 16777216.0 / 985248.0; }
 } // namespace
 
-TEST_CASE ("render cost: combined waveforms above the register's range, coarse levels against cell by cell (report)", "[.render-above]")
+TEST_CASE ("render cost: combined waveforms above the register's range, step moments against one by one (report)", "[.render-above]")
 {
-    // The coarse levels (RenderTables.h, kCoarseLevels) above the register's highest frequency: aliasing up to
-    // 20 kHz, with and without them, and how far the audio band moves (Smooth reaches 12 kHz; no budget exists
-    // above 3.85 kHz, 8.18).
-    std::printf ("%-7s %-5s %9s %8s %12s %12s %14s\n", "model", "wave", "rate", "f (Hz)", "alias (dB)", "cell by cell", "band diff (dB)");
+    // The step moments (RenderTables.h kStepMoments) above the register's highest frequency: aliasing up to
+    // 20 kHz with and without them, and how far the audio band moves (Smooth reaches 12 kHz; no budget exists
+    // above 3.85 kHz, 8.18). The synced rows: oscillator 2 synced by a 1.1 kHz saw (no alias column).
+    std::printf ("%-7s %-5s %6s %9s %8s %12s %12s %14s\n", "model", "wave", "width", "rate", "f (Hz)", "alias (dB)", "one by one", "band diff (dB)");
     for (const Model m : { Model::A, Model::B })
         for (const std::uint8_t c : { std::uint8_t { 0x30 }, std::uint8_t { 0x50 }, std::uint8_t { 0x60 }, std::uint8_t { 0x70 } })
             for (const double rate : { 88200.0, 96000.0, 192000.0 })
                 for (const double hz : { 4000.0, 5000.0, 7000.0, 9000.0, 12000.0 })
-                {
-                    const auto r = measureAbove (m, c, hz, rate);
-                    std::printf ("%-7s %-5x %9.0f %8.0f %12.1f %12.1f %14.1f\n", m == Model::A ? "A" : "B", c, rate, hz, r.aliasDb, r.aliasFineDb, r.bandDiffDb);
-                }
+                    for (const bool synced : { false, true })
+                    {
+                        const auto r = measureAbove (m, c, hz, rate, 1024.0f, synced);
+                        std::printf ("%-7s %-5x %6s %9.0f %8.0f %12.1f %12.1f %14.1f\n", m == Model::A ? "A" : "B", c, synced ? "sync" : "1024", rate, hz, r.aliasDb,
+                                     r.aliasFineDb, r.bandDiffDb);
+                    }
 }
 
-TEST_CASE ("render cost: coarse levels only above the register's range, with hysteresis, and close to cell by cell in the band", "[render][levels]")
+TEST_CASE ("render cost: step moments only above the register's range, entered with hysteresis, close to one by one in the band", "[render][levels]")
 {
-    // At and below the register's highest frequency nothing changes (no level, output bit-identical with the
-    // levels off); above it a glide switches a few times, a vibrato across a level limit at most once; and the
-    // coarse rendering (switches included) stays close to the cell-by-cell one in the audio band.
+    // At and below the register's top nothing changes (output bit-identical with the moments off), also on a glide
+    // up to it and at 2 % above it when coming from below (the entry hysteresis); from 4 % above it the moments
+    // are used. Above, the audio band stays within -60 dB re 1 of the one-by-one rendering (every combination,
+    // both models, widths, a synced target, 88.2 and 96 kHz; measured about -78 dB at worst).
     for (const Model m : { Model::A, Model::B })
-        for (const std::uint8_t c : { std::uint8_t { 0x30 }, std::uint8_t { 0x60 }, std::uint8_t { 0x70 } })
+        for (const std::uint8_t c : { std::uint8_t { 0x30 }, std::uint8_t { 0x50 }, std::uint8_t { 0x60 }, std::uint8_t { 0x70 } })
         {
-            const double rate = 96000.0;
-            Chip a = makeChip (m, rate), b = makeChip (m, rate);
-            b.renderCoarseLevelsEnabled (false);
-            // a glide from 1 kHz to the register's top (65535), then on to 12 kHz, a write every 2000 cycles
-            const double top = 12000.0 * 16777216.0 / 985248.0;
-            std::vector<float> ya, yb;
-            std::vector<float> block (64);
-            for (int step = 0; step <= 400; ++step)
+            for (const double regValue : { 65000.0, 65535.0, 65535.0 * 1.02 })
             {
-                const double f = step <= 200 ? 1000.0 * 16777216.0 / 985248.0 + (65535.0 - 1000.0 * 16777216.0 / 985248.0) * step / 200.0
-                                             : 65535.0 + (top - 65535.0) * (step - 200) / 200.0;
-                const std::uint64_t at = 2000u * static_cast<std::uint64_t> (step + 1);
-                for (auto [chip, y] : { std::pair<Chip*, std::vector<float>*> { &a, &ya }, std::pair<Chip*, std::vector<float>*> { &b, &yb } })
+                Chip a = makeChip (m, 96000.0), b = makeChip (m, 96000.0);
+                b.renderStepMomentsEnabled (false);
+                for (Chip* x : { &a, &b })
                 {
-                    setOsc (*chip, 0, f, 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
-                    while (chip->cycle() < at)
-                    {
-                        std::fill (block.begin(), block.end(), 0.0f);
-                        const int done = chip->renderUntil (block.data(), 64, at);
-                        y->insert (y->end(), block.begin(), block.begin() + done);
-                    }
+                    setOsc (*x, 0, 60000.0, 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
+                    renderSamples (*x, 500);
+                    setOsc (*x, 0, regValue, 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
                 }
-                if (step == 200)
-                {
-                    INFO ((m == Model::A ? "Model A" : "Model B") << ", control " << int (c) << ": up to the register's top");
-                    CHECK (a.renderLevelSwitches() == 0);
-                    CHECK (std::memcmp (ya.data(), yb.data(), ya.size() * sizeof (float)) == 0);
-                }
+                const auto ya = renderSamples (a, 6000), yb = renderSamples (b, 6000);
+                INFO ((m == Model::A ? "Model A" : "Model B") << ", control " << int (c) << ", frequency register " << regValue);
+                CHECK (a.renderMethodSwitches() == 0);
+                CHECK (std::memcmp (ya.data(), yb.data(), ya.size() * sizeof (float)) == 0);
             }
-            INFO ((m == Model::A ? "Model A" : "Model B") << ", control " << int (c) << ": " << a.renderLevelSwitches() << " level switches on the glide");
-            CHECK (a.renderLevelSwitches() >= 2);
-            CHECK (a.renderLevelSwitches() <= 12);
-            const auto la = lowpass (ya, rate, 20000.0), lb = lowpass (yb, rate, 20000.0);
-            double worst = 0.0;
-            for (std::size_t i = 1000; i + 1000 < la.size(); ++i)
-                worst = std::max (worst, std::abs (la[i] - lb[i]));
-            UNSCOPED_INFO ((m == Model::A ? "Model A" : "Model B") << ", control " << int (c) << ": in-band difference on the glide " << 20.0 * std::log10 (worst + 1e-300) << " dB");
-            CHECK (worst < 0.05);
-            // a vibrato of +-1 % around 6 kHz: at most one switch
-            Chip v = makeChip (m, rate);
-            setOsc (v, 0, 6000.0 * 16777216.0 / 985248.0, 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
-            renderSamples (v, 2000);
-            const auto before = v.renderLevelSwitches();
-            for (int i = 0; i < 400; ++i)
             {
-                const double f = 6000.0 * (1.0 + 0.01 * std::sin (i * 0.3)) * 16777216.0 / 985248.0;
-                setOsc (v, 0, f, 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
-                renderSamples (v, 64);
+                Chip a = makeChip (m, 96000.0), b = makeChip (m, 96000.0);
+                b.renderStepMomentsEnabled (false);
+                for (Chip* x : { &a, &b })
+                    setOsc (*x, 0, 65535.0 * 1.04, 1024.0f, static_cast<std::uint8_t> (c | ctrl::gate));
+                const auto ya = renderSamples (a, 3000), yb = renderSamples (b, 3000);
+                INFO ((m == Model::A ? "Model A" : "Model B") << ", control " << int (c) << ": 4 % above the register's top");
+                CHECK (std::memcmp (ya.data(), yb.data(), ya.size() * sizeof (float)) != 0);
             }
-            CHECK (v.renderLevelSwitches() - before <= 1);
+            for (const double rate : { 88200.0, 96000.0 })
+                for (const double hz : { 4000.0, 6000.0, 9000.0, 12000.0 })
+                    for (const float pw : { 1024.0f, 3000.0f })
+                        for (const bool synced : { false, true })
+                        {
+                            const auto r = measureAbove (m, c, hz, rate, pw, synced);
+                            INFO ((m == Model::A ? "Model A" : "Model B") << ", control " << int (c) << ", " << rate << " Hz, " << hz << " Hz, width " << pw
+                                                                          << (synced ? ", synced" : "") << ": in-band difference " << r.bandDiffDb << " dB");
+                            CHECK (r.bandDiffDb < -60.0);
+                        }
         }
+}
+
+TEST_CASE ("render cost: switching to and from the step moments makes no click (single writes and glides across the limit)", "[render][levels]")
+{
+    // 8.18: the switch between the methods must not click. Near a switch (+-40 samples) the in-band difference
+    // from the one-by-one rendering may exceed the larger of the two sides' steady differences by at most 6 dB.
+    // Single writes across the limit in both directions, glides across it (a write every 2 000 cycles), both
+    // models, 88.2 and 96 kHz; a pulse combination, a Model A saw combination (pulled down every period), and a
+    // synced target (resets around the writes).
+    struct Setup
+    {
+        const char* name;
+        std::uint8_t control;
+        bool synced;
+    };
+    const Setup setups[] { { "triangle+saw", 0x31, false }, { "triangle+saw+pulse", 0x71, false }, { "saw+pulse, synced", 0x63, true } };
+    auto set = [] (Chip& c, const Setup& s, double hz) {
+        if (s.synced)
+            c.setOscillator (1, input (hzToReg (hz), 1800.0f, s.control, 0x00, 0xf0)); // (the gate opens below the half: a Model A saw combination never passes it)
+        else
+            c.setOscillator (0, input (hzToReg (hz), 1024.0f, s.control, 0x00, 0xf0));
+    };
+    for (const Model m : { Model::A, Model::B })
+        for (const double rate : { 88200.0, 96000.0 })
+            for (const auto& s : setups)
+            {
+                auto setup = [&] (Chip& c) {
+                    if (s.synced)
+                        setOsc (c, 0, hzToReg (1300.0), 2048.0f, ctrl::saw);
+                };
+                // single writes across the limit, both directions
+                for (const auto& pair : std::vector<std::pair<double, double>> { { 3800.0, 4200.0 }, { 4200.0, 3800.0 }, { 3700.0, 9000.0 }, { 12000.0, 3600.0 }, { 5900.0, 6100.0 } })
+                {
+                    const Run r = runWrites (
+                        m, rate, [&] (Chip& c) { setup (c); set (c, s, pair.first); }, { { 100000u, [&] (Chip& c) { set (c, s, pair.second); } } }, 200000);
+                    const std::size_t mk = r.marks[0];
+                    const double before = maxOver (r.diff, 3000, mk - 200), after = maxOver (r.diff, mk + 200, r.diff.size() - 3000);
+                    const double near = maxOver (r.diff, mk - 40, mk + 41);
+                    INFO ((m == Model::A ? "Model A " : "Model B ") << s.name << ", " << rate << " Hz, " << pair.first << " -> " << pair.second << " Hz: steady "
+                                                                    << 20.0 * std::log10 (before + 1e-300) << " / " << 20.0 * std::log10 (after + 1e-300)
+                                                                    << " dB, near the write " << 20.0 * std::log10 (near + 1e-300) << " dB");
+                    CHECK (near <= 2.0 * std::max ({ before, after, 1.0e-7 }));
+                }
+                // a glide across the limit and back: windows around switching writes against the others
+                std::vector<std::pair<std::uint64_t, std::function<void (Chip&)>>> writes;
+                for (int i = 0; i < 120; ++i)
+                {
+                    const double ph = i / 120.0;
+                    const double hz = 3600.0 + 1400.0 * (ph < 0.5 ? 2.0 * ph : 2.0 - 2.0 * ph);
+                    writes.push_back ({ 20000u + 2000u * static_cast<std::uint64_t> (i), [&s, &set, hz] (Chip& c) { set (c, s, hz); } });
+                }
+                const Run r = runWrites (m, rate, [&] (Chip& c) { setup (c); set (c, s, 3600.0); }, writes, 20000u + 2000u * 121u);
+                double atSwitch = 0.0, elsewhere = 0.0;
+                int switches = 0;
+                for (std::size_t w = 0; w < r.marks.size(); ++w)
+                {
+                    const double near = maxOver (r.diff, r.marks[w] - 40, r.marks[w] + 41);
+                    if (r.switched[w])
+                    {
+                        atSwitch = std::max (atSwitch, near);
+                        ++switches;
+                    }
+                    else if (w > 0 && w + 1 < r.marks.size() && ! r.switched[w - 1] && ! r.switched[w + 1])
+                        elsewhere = std::max (elsewhere, maxOver (r.diff, r.marks[w] - 40, r.marks[w] + 41));
+                }
+                INFO ((m == Model::A ? "Model A " : "Model B ") << s.name << ", " << rate << " Hz, glide: " << switches << " switches, near them "
+                                                                << 20.0 * std::log10 (atSwitch + 1e-300) << " dB, near other writes " << 20.0 * std::log10 (elsewhere + 1e-300) << " dB");
+                CHECK (switches >= 2);
+                CHECK (atSwitch <= 2.0 * std::max (elsewhere, 1.0e-7));
+            }
 }
 
 TEST_CASE ("chip: a Model A saw combination at frequency 0 or below one accumulator step, both halves (no division by a zero increment)", "[bside][chip][equivalence]")

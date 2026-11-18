@@ -374,15 +374,16 @@ public:
         (renderBatch: whole samples while nothing couples the lines to the digital core, the digital core
         advanced once). Both give bit-identical output and digital state; the tests compare them. On by default. */
     void renderBatchingEnabled (bool on) noexcept { renderBatching = on; }
-    /** Test aid: off renders combined waveforms cell by cell at every frequency (no coarse levels above the
-        register's highest frequency), the reference the tests measure the coarse levels against. On by default. */
-    void renderCoarseLevelsEnabled (bool on) noexcept { renderCoarse = on; }
+    /** Test aid: off emits a combined waveform's steps one by one at every frequency (no step moments above the
+        register's highest frequency, RenderTables.h kStepMoments), the reference the tests measure the moments
+        against. On by default. */
+    void renderStepMomentsEnabled (bool on) noexcept { renderMoments = on; }
     /** Times the set of Model A converter bits rendered as square waves changed with the frequency (each a
         small band-limited step; hysteresis keeps a vibrato around a limit from repeating it). */
     std::uint64_t renderConverterSwitches() const noexcept { return rs.converterSwitches; }
-    /** Times a combined waveform changed its coarse level above the register's highest frequency (each a
-        band-limited step at a sample end; hysteresis keeps a vibrato around a limit from repeating it). */
-    std::uint64_t renderLevelSwitches() const noexcept { return rs.levelSwitches; }
+    /** Times a combined waveform switched between its steps one by one and by their moments (above the
+        register's top; the waveform does not change, only how its steps are emitted). */
+    std::uint64_t renderMethodSwitches() const noexcept { return rs.levelSwitches; }
 
     DigitalState state() const noexcept;
     std::uint64_t cycle() const noexcept { return cycleCount; }
@@ -860,7 +861,7 @@ private:
         double offU = 0.0;       // rendered minus digital phase, periods (set by a sync reset)
         std::int64_t k = 0;      // boundaries passed: k x sigma <= u (triangle, saw; combined: the index cell)
         int imin = 11;           // lowest index bit rendered as its own square (sigma = 2^imin / 4096); 0 for combined
-        int level = 0;           // combined: the staircase's coarse level (RenderTables.h; 0: every cell)
+        int level = 0;           // combined: 1 = its steps by their moments (RenderTables.h kStepMoments), 0 = one by one
         std::uint8_t mode = rmOff;
         bool gate = true;        // pulse comparison as rendered
         double gateCheckU = -1.0; // after a phase jump: where the (one cycle late) comparison reads the new line
@@ -909,7 +910,7 @@ private:
         std::uint64_t largeCorrections = 0; // of those, the ones above 1e-4 of a period
         std::uint64_t stateMismatches = 0;  // renderCheckStates: gate or ring state unlike the chip's
         std::uint64_t converterSwitches = 0; // changes of the set of Model A converter bits rendered (diagnostic)
-        std::uint64_t levelSwitches = 0;     // changes of a combined waveform's coarse level (diagnostic)
+        std::uint64_t levelSwitches = 0;     // switches of how a combined waveform's steps are emitted (diagnostic)
     };
     struct PieceEvents; // ChipRender.cpp
 
@@ -936,9 +937,11 @@ private:
     void renderCheckSample() noexcept;
     bool renderCheck = false;
     bool renderBatching = true;
-    bool renderCoarse = true;
+    bool renderMoments = true;
     int renderTableLevel (int n, int current) const noexcept; // ChipRender.cpp
     void renderEmit (int n, double t, double dv, double ds) noexcept;
+    void renderEmitMoments (int n, double t0, const std::array<double, render::kStepMoments + 1>& moments) noexcept;
+    void renderStepMoments (int n, std::int64_t c1, std::int64_t c2, double ta, double ua, double tb) noexcept;
     void renderEmitWith (int n, double t, double dv, double ds, bool longKernel, bool cellStep = false) noexcept;
     double renderSlopeU (int n) const noexcept; // periods per cycle
     double renderDigitalU (int n, double t) const noexcept;
@@ -1211,9 +1214,10 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 //   combined        (two or more of triangle, saw, pulse; no noise) an exact band-limited staircase: every
 //                   change of d (shape (index)) between index cells is a BLEP; the pulse gate, the ring
 //                   fold (half a table further) and phase jumps are exact too. Above the register's highest
-//                   frequency (Smooth only, up to 12 kHz) the staircase of a coarse level (128 down to 8 cells
-//                   per period, its harmonics below half the cell count the fine one's; at most two cells per
-//                   sample, with hysteresis; a switch is a band-limited step at a sample end). Model A combinations with
+//                   frequency (Smooth only, up to 12 kHz) the same staircase, its steps within a stretch of
+//                   the line (at most a sample) emitted together by their time moments up to the fourth
+//                   (RenderTables.h kStepMoments; entered 3 % above the register's top; the waveform does not
+//                   change at a switch, only how its steps are emitted). Model A combinations with
 //                   the saw pull their top bit down (8.15.2 (c) step 4) in the first step whose landing
 //                   cell has output bit 11 clear: from a rise the line is pulled where it enters such a
 //                   cell (the gate as the chip compared it, at whole cycles); after a write or a correction

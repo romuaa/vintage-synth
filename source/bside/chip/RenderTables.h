@@ -85,27 +85,23 @@ struct Converter
     std::array<double, 13> triTail {};
 };
 
-/** Coarse levels of a combined waveform's staircase, rendered above the register's highest frequency
-    (render cost step, docs/decisions.md "B-Side render cost step"): level L (1 .. kCoarseLevels) has
-    4096 >> L cells per period whose harmonics below half that count are the fine staircase's (RenderTables.cpp);
-    at and below the register's highest frequency (3.85 kHz at 985 248 Hz) the staircase is always rendered
-    cell by cell. */
-constexpr int kCoarseLevels = 9;
-/** The finest coarse level built and used: 128 cells per period, at most 2 per sample above the register's range
-    at every internal rate up to 384 kHz (ChipRender.cpp clamps to it at higher rates). */
-constexpr int kFirstCoarseLevel = 5;
-/** Where level L (1 .. kCoarseLevels) starts in StepTable::coarseValue / coarseNext (4096 >> L entries). */
-constexpr std::size_t coarseOffset (int level) noexcept { return 4096u - (8192u >> level); }
+/** Above the register's highest frequency (Smooth only, up to 12 kHz) a combined waveform's cell steps inside
+    one stretch of its line (between two other events, at most a sample) are emitted together as one step with
+    their time moments (render cost review, docs/decisions.md "B-Side render cost step"): the band-limited
+    sum of the steps a_i at t_i is sum over k of (-1)^k M_k / k! times the k-th derivative of the band-limited
+    step at the stretch's centre T0, M_k = sum a_i (t_i - T0)^k, up to k = kStepMoments. Per cell the prefix
+    sums of the step into it times its position (StepTable::momentPrefix) give the moments of any range of
+    cells in a few operations. At and below the register's top every step is emitted on its own. */
+constexpr int kStepMoments = 4;
 
 /** One combined waveform: the converter output of every index cell (minus the centre) and, per cell c,
     the number of cells from c to the next cell whose value differs from c's (1 .. 4095; 0 for a constant
     shape). */
 struct StepTable
 {
-    /** The coarse levels (see kCoarseLevels): the mean value of each coarse cell, and the number of coarse
-        cells to the next one with another value (0 for a constant level), packed level after level. */
-    std::array<float, 4096> coarseValue {};
-    std::array<std::uint16_t, 4096> coarseNext {};
+    /** momentPrefix[j][c] = sum over the cells c' < c of a_c' (c' / 4096)^j, a_c' = value[c'] - value[c' - 1]
+        (the step into cell c', cyclic), j = 0 .. kStepMoments (see kStepMoments). */
+    std::array<std::array<double, 4097>, kStepMoments + 1> momentPrefix {};
     std::array<float, 4096> value {};
     std::array<std::uint16_t, 4096> shape {}; // the 12-bit shape itself (bit 11: the Model A pull-down)
     /** For a cell c of the upper half: the first cell >= c whose shape has bit 11 clear (4096: none); for a
@@ -151,6 +147,9 @@ struct KernelTables
     static constexpr std::size_t kFinePoints = static_cast<std::size_t> (kFineResolution + 1) * kKernelTaps;
     std::array<float, kPoints> shortStep {}, shortRamp {};
     std::array<double, kPoints> longStep {}, longRamp {}, longKernel {};
+    /** The long kernel's first, second and third derivatives at the same points (the step moments' terms,
+        kStepMoments), read linearly. */
+    std::array<double, kPoints> longKernelD1 {}, longKernelD2 {}, longKernelD3 {};
     std::array<double, kFinePoints> longStepFine {};
 };
 const KernelTables& kernelTables();
