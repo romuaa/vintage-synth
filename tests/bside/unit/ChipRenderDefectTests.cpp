@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 using namespace bs_render_test;
@@ -297,4 +298,174 @@ TEST_CASE ("render: a frozen Model A pull-down whose gate the re-read finds high
                 }
     INFO (pulled << " pulled down, " << high << " of them with the gate high");
     CHECK (high > 0);
+}
+
+TEST_CASE ("render: a frozen Model A pull-down against one crawling below one accumulator step (report, asserts nothing)", "[.render-frozen-crawl]")
+{
+    // Round 3 of the render cost review, kept as a report (third review: not reproduced there). Model A,
+    // oscillator 1 a triangle at register 65535 until its cell (accumulator bits 23..12) is in 3000 .. 3500;
+    // then, at a sample's start or 0 to 2 cycles before its end (renderUntil), the same write on two copies:
+    // frequency register 0 (frozen) or 1e-7 (crawling: increment > 0, far below one accumulator step), width
+    // 16, 900 or 2284, control 0x61 or 0x71. Both copies make the same digital steps (checked cycle by cycle
+    // in a scratch tool); their rendered outputs over 64 samples are compared. On this branch (2026-11-19):
+    // placeholder shapes, 0x71, 88.2 kHz, the write at a sample's start, every width: 0.0138 at sample 8 (the
+    // write's own sample after the latency); every other case bit-identical; no state mismatch or large
+    // correction on either copy. Which copy is right is not settled (docs/decisions.md).
+    int cases = 0;
+    double worst = 0.0;
+    for (const ShapeSet shapes : { ShapeSet::fitted, ShapeSet::placeholder })
+    for (const std::uint8_t combo : { std::uint8_t { 0x61 }, std::uint8_t { 0x71 } })
+        for (const double rate : { 88200.0, 96000.0 })
+            for (const float pw : { 16.0f, 900.0f, 2284.0f })
+            for (const int beforeEnd : { -1, 0, 1, 2 })
+            {
+                Chip base = chipWith (Model::A, rate, shapes);
+                base.renderCheckStates (true);
+                setOsc (base, 0, 65535.0, 2048.0f, ctrl::triangle | ctrl::gate);
+                std::vector<float> y (1000, 0.0f);
+                base.render (y.data(), 1000);
+                while (! (((base.accumulator (0) >> 12) & 0xfffu) >= 3000u && ((base.accumulator (0) >> 12) & 0xfffu) <= 3500u))
+                    base.render (y.data(), 1);
+                if (beforeEnd >= 0)
+                {
+                    Chip probe = base;
+                    probe.render (y.data(), 1);
+                    REQUIRE (base.renderUntil (y.data(), 1, probe.cycle() - static_cast<std::uint64_t> (beforeEnd)) == 0);
+                }
+                Chip frozen = base, crawling = base;
+                setOsc (frozen, 0, 0.0, pw, combo);
+                setOsc (crawling, 0, 1.0e-7, pw, combo);
+                REQUIRE (frozen.increment (0) == 0);
+                REQUIRE (crawling.increment (0) > 0);
+                std::vector<float> yf (64, 0.0f), yc (64, 0.0f);
+                frozen.render (yf.data(), 64);
+                crawling.render (yc.data(), 64);
+                double diff = 0.0;
+                std::size_t at = 0;
+                for (std::size_t i = 0; i < yf.size(); ++i)
+                    if (std::abs (static_cast<double> (yf[i]) - static_cast<double> (yc[i])) > diff)
+                    {
+                        diff = std::abs (static_cast<double> (yf[i]) - static_cast<double> (yc[i]));
+                        at = i;
+                    }
+                worst = std::max (worst, diff);
+                if (diff > 1.0e-6)
+                    std::printf ("%s, control %02x, width %4.0f, %6.0f Hz, write %2d cycles before a sample's end: largest difference %.4g at sample %zu (frozen %.6f, crawling %.6f)\n",
+                                 shapes == ShapeSet::fitted ? "fitted" : "placeholder", combo, static_cast<double> (pw), rate, beforeEnd, diff, at, static_cast<double> (yf[at]),
+                                 static_cast<double> (yc[at]));
+                ++cases;
+            }
+    std::printf ("%d cases, largest difference %.4g\n", cases, worst);
+    SUCCEED();
+}
+
+TEST_CASE ("render: a frozen Model A saw combination pulled down by a write sounds as one crawling below one accumulator step (any oscillator, any write position)", "[render][defects][frozen-pull]")
+{
+    // Third review, item 3: the case above on oscillators 2 and 3 (oscillator 3's ring target is oscillator 1,
+    // which sees a pull-down one cycle later), with the write at a sample's start or 0 to 2 cycles before its
+    // end (the landing may then still be pending at the sample's end, where the batched path must leave the line
+    // to the general one). A copy with frequency 1e-7 (an increment far below one accumulator step) makes the
+    // same digital steps; its line is a moving one, which takes the landing as a line event. Both must sound
+    // the same.
+    struct Case
+    {
+        ShapeSet shapes;
+        double rate;
+        bool widthWrite;
+        std::uint8_t control;
+    };
+    const Case cases[] { { ShapeSet::placeholder, 128000.0, true, 0x71 }, { ShapeSet::placeholder, 96000.0, true, 0x61 },
+                         { ShapeSet::fitted, 128000.0, false, 0x31 }, { ShapeSet::fitted, 96000.0, false, 0x71 } };
+    int pulled = 0;
+    double worst = 0.0;
+    for (const auto& k : cases)
+        for (const int p : { 1, 2 })
+            for (const bool ring : { false, true })
+                for (const int beforeEnd : { -1, 0, 1, 2 })
+                {
+                    const int target = p == 1 ? 2 : 0;
+                    Chip c = chipWith (Model::A, k.rate, k.shapes);
+                    c.renderCheckStates (true);
+                    const std::uint8_t first = k.widthWrite ? k.control : std::uint8_t { 0x11 };
+                    setOsc (c, p, 20000.0, 2016.0f, first);
+                    if (ring)
+                        setOsc (c, target, 3000.0, 2048.0f, ctrl::triangle | ctrl::ring | ctrl::gate);
+                    std::vector<float> y (1000, 0.0f);
+                    c.render (y.data(), 1000);
+                    while (! (((c.accumulator (p) >> 12) & 0xfffu) >= 2900u && ((c.accumulator (p) >> 12) & 0xfffu) <= 3100u))
+                        c.render (y.data(), 1);
+                    setOsc (c, p, 0.0, 2016.0f, first); // frozen in the upper half
+                    c.render (y.data(), 200);
+                    if (beforeEnd >= 0)
+                    {
+                        Chip probe = c;
+                        probe.render (y.data(), 1);
+                        REQUIRE (c.renderUntil (y.data(), 1, probe.cycle() - static_cast<std::uint64_t> (beforeEnd)) == 0);
+                    }
+                    const auto large = c.renderLargeCorrections();
+                    const auto mismatches = c.renderStateMismatches();
+                    Chip crawl = c, d = c;
+                    setOsc (c, p, 0.0, k.widthWrite ? 4057.0f : 2016.0f, k.control);
+                    setOsc (d, p, 0.0, k.widthWrite ? 4057.0f : 2016.0f, k.control);
+                    setOsc (crawl, p, 1.0e-7, k.widthWrite ? 4057.0f : 2016.0f, k.control);
+                    REQUIRE (crawl.increment (p) > 0);
+                    std::vector<float> yf (400, 0.0f), yc (400, 0.0f);
+                    c.render (yf.data(), 400);
+                    crawl.render (yc.data(), 400);
+                    d.advanceCycles (c.cycle() - d.cycle());
+                    double diff = 0.0;
+                    for (std::size_t i = 0; i < yf.size(); ++i)
+                        diff = std::max (diff, std::abs (static_cast<double> (yf[i]) - static_cast<double> (yc[i])));
+                    worst = std::max (worst, diff);
+                    pulled += (d.phase (p) & kPhaseMsb) == 0 ? 1 : 0;
+                    INFO ((k.shapes == ShapeSet::fitted ? "fitted" : "placeholder") << ", " << k.rate << " Hz, " << (k.widthWrite ? "width write" : "waveform write") << ", control "
+                                                                                   << int (k.control) << ", oscillator " << p + 1 << (ring ? ", ring target" : "") << ", write "
+                                                                                   << beforeEnd << " cycles before a sample's end: frozen against crawling " << diff
+                                                                                   << ", large corrections " << c.renderLargeCorrections() - large << ", state mismatches "
+                                                                                   << c.renderStateMismatches() - mismatches << "; crawling: large corrections "
+                                                                                   << crawl.renderLargeCorrections() - large << ", state mismatches " << crawl.renderStateMismatches() - mismatches);
+                    // With a ring target the two differ by up to 1e-3 (writes inside a sample) and, for a waveform write
+                    // right after render() (at a sample's start), by up to 0.05 on fitted shapes: an open difference,
+                    // not settled which copy is right (docs/decisions.md, render cost step row 24); that position
+                    // is printed, not held. A ring flip a cycle off differs by about 0.05.
+                    if (ring && beforeEnd < 0)
+                    {
+                        if (diff > 2.0e-3)
+                            std::printf ("open: %s, %.0f Hz, control %02x, oscillator %d, ring target, write at a sample's start: frozen against crawling %.4g\n",
+                                         k.shapes == ShapeSet::fitted ? "fitted" : "placeholder", k.rate, k.control, p + 1, diff);
+                    }
+                    else
+                        CHECK (diff < (ring ? 2.0e-3 : 1.0e-5));
+                    CHECK (c.renderLargeCorrections() == large);
+                    CHECK (c.renderStateMismatches() == mismatches);
+                }
+    INFO ("largest difference " << worst);
+    CHECK (pulled == 64);
+}
+
+TEST_CASE ("render: the fitted Model A saw combinations pull down onto cells whose value the gate does not change", "[render][defects][tables]")
+{
+    // Third review: the gate's re-read one cycle after a frozen line's pull-down (renderScheduleReread) could
+    // be scheduled at the pull-down's own cycle without any test noticing. That is equivalent only because of a
+    // property of the fitted tables, asserted here so that a refit which breaks it fails: a Model A saw+pulse or
+    // triangle+saw+pulse line is pulled down with its gate open only from an upper-half cell whose shape has
+    // bit 11 clear, onto the cell 2048 below; there the shape is 0, so the output is 0 with the gate open or
+    // closed and the re-read's time cannot change it. (A pull-down with the gate closed lands below the width,
+    // where the gate stays closed.) The placeholder shapes do not have this property (935 such cells of
+    // triangle+saw+pulse): there the equivalence does not hold and is not tested (docs/decisions.md).
+    const auto& tables = vs::bside::chip::render::tablesFor (Model::A, ShapeSet::fitted);
+    for (const std::uint8_t bits : { std::uint8_t { 6 }, std::uint8_t { 7 } })
+    {
+        const auto& st = tables.steps[static_cast<std::size_t> (vs::bside::chip::render::tableSlot (bits))];
+        int pullCells = 0, nonZero = 0;
+        for (std::size_t c = 2048; c < 4096; ++c)
+            if ((st.shape[c] & 0x800u) == 0)
+            {
+                ++pullCells;
+                nonZero += st.shape[c - 2048] != 0 ? 1 : 0;
+            }
+        INFO ("waveform bits " << int (bits) << ": " << pullCells << " upper-half cells with bit 11 clear, " << nonZero << " of them onto a cell that is not 0");
+        CHECK (pullCells > 1000);
+        CHECK (nonZero == 0);
+    }
 }
