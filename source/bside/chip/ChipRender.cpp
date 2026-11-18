@@ -18,8 +18,7 @@ constexpr double kTwo32 = 4294967296.0;
 constexpr double kTwo56 = 72057594037927936.0;
 constexpr double kInf = std::numeric_limits<double>::infinity();
 constexpr int kLatency = Chip::kLatencySamples; // the long kernel's: every step is delayed to it
-constexpr std::uint64_t kPieceCycles = 32; // digital cycles advanced per piece (bounds the event lists)
-constexpr int kEventCap = 80;             // per oscillator and piece (<= 32 resets + 32 pull-downs, ...)
+constexpr std::uint64_t kPieceCycles = 32; // digital cycles per piece at most (bounds the event lists)
 constexpr int kSweepGuard = 4096;         // events per oscillator and sweep (a backstop)
 
 double frac01 (double x) noexcept { return x - std::floor (x); }
@@ -73,64 +72,6 @@ int tableLevelWithHysteresis (double slope, double periodsPerSample, int current
     return 1;
 }
 } // namespace
-
-// ---- events of one piece (at most kPieceCycles digital cycles inside one sample) ----
-
-struct Chip::PieceEvents
-{
-    enum : std::uint8_t { kJumpSync, kJumpSyncPending, kJumpConfirm };
-    struct Raw // a digital sync reset
-    {
-        double t;   // the source's rendered crossing
-        double off; // the target's rendered minus digital phase after the reset
-        bool used;
-    };
-    struct Jump
-    {
-        double t, off;
-        std::uint8_t kind;
-    };
-    struct Held
-    {
-        double t;
-        std::uint16_t value;
-    };
-    struct Flip
-    {
-        double t;
-        bool top;
-    };
-    std::array<std::array<Raw, kEventCap>, 3> raw;
-    std::array<std::array<Jump, kEventCap>, 3> jumps;
-    std::array<std::array<Held, kEventCap>, 3> held;
-    std::array<std::array<Flip, kEventCap>, 3> flips; // top-bit changes of oscillator n (a ring or sync source)
-    std::array<int, 3> rawCount {}, jumpCount {}, heldCount {}, flipCount {};
-
-    void addRaw (int n, double t, double off) noexcept
-    {
-        auto& c = rawCount[static_cast<std::size_t> (n)];
-        if (c < kEventCap)
-            raw[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, off, false };
-    }
-    void addJump (int n, double t, double off, std::uint8_t kind) noexcept
-    {
-        auto& c = jumpCount[static_cast<std::size_t> (n)];
-        if (c < kEventCap)
-            jumps[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, off, kind };
-    }
-    void addHeld (int n, double t, std::uint16_t v) noexcept
-    {
-        auto& c = heldCount[static_cast<std::size_t> (n)];
-        if (c < kEventCap)
-            held[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, v };
-    }
-    void addFlip (int n, double t, bool top) noexcept
-    {
-        auto& c = flipCount[static_cast<std::size_t> (n)];
-        if (c < kEventCap)
-            flips[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, top };
-    }
-};
 
 namespace
 {
@@ -817,6 +758,8 @@ void Chip::renderBeforeChange() noexcept
 {
     if (! rs.inProgress)
         renderStartSample();
+    if (rs.pieceOpen)
+        renderPieceClose (false); // a write ends the piece at its cycle
     const double tw = static_cast<double> (cycleCount - rs.start);
     for (int n = 0; n < 3; ++n)
     {
@@ -1679,26 +1622,37 @@ void Chip::renderLines (PieceEvents& ev, double tEnd) noexcept
 
 // ---- one piece of digital time ----
 
-void Chip::renderPiece (std::uint64_t k, bool toSampleEnd) noexcept
-{
-    PieceEvents ev;
-    const double c0 = static_cast<double> (cycleCount - rs.start);
+// A piece starts at the sample's start or at a write and ends kPieceCycles later, at the sample's end or at the next
+// write, whichever comes first: never where renderUntil stops without a write (8.17: any block split gives the same
+// output). A stop inside a piece advances the digital core and keeps the piece's events; the lines are rendered
+// when the piece closes (render cost review: a stop had cut the sweep and the line simulation in two).
 
+void Chip::renderPieceOpen() noexcept
+{
+    PieceEvents& ev = rs.pieceEvents;
+    ev.rawCount = {};
+    ev.jumpCount = {};
+    ev.heldCount = {};
+    ev.flipCount = {};
+    rs.pieceStart = cycleCount;
+    rs.pieceEnd = std::min (rs.start + rs.cycles, cycleCount + kPieceCycles);
+    for (int n = 0; n < 3; ++n)
+    {
+        const auto ni = idx (n);
+        rs.pieceFadeAt[ni] = osc[ni].fadeTimer;
+        rs.pieceOutBefore[ni] = osc[ni].out;
+        rs.pieceLast[ni] = rs.osc[ni].held;
+    }
+    rs.pieceOpen = true;
+}
+
+void Chip::renderPieceAdvance (std::uint64_t k) noexcept
+{
+    PieceEvents& ev = rs.pieceEvents;
     bool stepEach = false;
     for (int n = 0; n < 3; ++n)
-    {
-        const RenderOsc& v = rs.osc[idx (n)];
-        if (v.mode == rmCycle)
+        if (rs.osc[idx (n)].mode == rmCycle)
             stepEach = true; // the output changes cycle by cycle
-    }
-
-    std::array<std::uint32_t, 3> fadeAt {};
-    std::array<std::uint16_t, 3> outBefore {};
-    for (int n = 0; n < 3; ++n)
-    {
-        fadeAt[idx (n)] = osc[idx (n)].fadeTimer;
-        outBefore[idx (n)] = osc[idx (n)].out;
-    }
 
     struct Ctx
     {
@@ -1730,16 +1684,11 @@ void Chip::renderPiece (std::uint64_t k, bool toSampleEnd) noexcept
         sink.self = &ctx;
         sink.onSync = onSync;
         sink.onNoise = onNoise;
-        std::array<std::uint16_t, 3> last {};
         // the top bit each per-cycle source shows to its ring target: the accumulator after the step, or, for
         // oscillator 1 reading oscillator 3, before oscillator 3's pull-down of that step
-        std::array<bool, 3> ringFeed {}, view {};
+        std::array<bool, 3> ringFeed {};
         for (int n = 0; n < 3; ++n)
-        {
-            last[idx (n)] = rs.osc[idx (n)].held;
             ringFeed[idx (n)] = rs.osc[idx (n)].mode == rmCycle && rs.osc[idx (detail::syncTarget (n))].ring;
-            view[idx (n)] = rs.osc[idx (n)].shownTop; // carried across pieces: a glitch can end in the next one
-        }
         for (std::uint64_t i = 0; i < k; ++i)
         {
             sink.pendingCount = 0;
@@ -1753,24 +1702,21 @@ void Chip::renderPiece (std::uint64_t k, bool toSampleEnd) noexcept
                     continue;
                 const bool after = (osc[ni].phase & kPhaseMsb) != 0;
                 const bool seen = after || (detail::syncTarget (n) == 0 && sink.pulled[ni]);
-                if (seen != view[ni])
+                if (seen != rs.osc[ni].shownTop) // carried across pieces: a glitch can end in the next one
                 {
-                    view[ni] = seen;
+                    rs.osc[ni].shownTop = seen;
                     ev.addFlip (n, eRel, seen);
                 }
             }
-            for (int n = 0; n < 3; ++n)
-                if (ringFeed[idx (n)])
-                    rs.osc[idx (n)].shownTop = view[idx (n)];
             for (int i2 = 0; i2 < sink.pendingCount; ++i2)
                 onSync (&ctx, sink.pending[static_cast<std::size_t> (i2)]);
             for (int n = 0; n < 3; ++n)
             {
                 const auto ni = idx (n);
-                if (rs.osc[ni].mode == rmCycle && osc[ni].out != last[ni])
+                if (rs.osc[ni].mode == rmCycle && osc[ni].out != rs.pieceLast[ni])
                 {
-                    last[ni] = osc[ni].out;
-                    ev.addHeld (n, eRel, last[ni]);
+                    rs.pieceLast[ni] = osc[ni].out;
+                    ev.addHeld (n, eRel, rs.pieceLast[ni]);
                 }
             }
         }
@@ -1785,19 +1731,24 @@ void Chip::renderPiece (std::uint64_t k, bool toSampleEnd) noexcept
         sink.onNoise = onNoise;
         advanceCycles (k, sink);
     }
+}
 
+void Chip::renderPieceClose (bool toSampleEnd) noexcept
+{
+    PieceEvents& ev = rs.pieceEvents;
+    rs.pieceOpen = false;
+    const std::uint64_t k = cycleCount - rs.pieceStart;
+    const double c0 = static_cast<double> (rs.pieceStart - rs.start);
     // a deselected output fades (8.15.2 (c)); at most one step per piece (the intervals are >= 1 400 cycles)
     for (int n = 0; n < 3; ++n)
     {
         const auto ni = idx (n);
-        if (rs.osc[ni].mode == rmOff && fadeAt[ni] != 0 && fadeAt[ni] <= k && osc[ni].out != outBefore[ni])
-            ev.addHeld (n, c0 + static_cast<double> (fadeAt[ni]), osc[ni].out);
+        if (rs.osc[ni].mode == rmOff && rs.pieceFadeAt[ni] != 0 && rs.pieceFadeAt[ni] <= k && osc[ni].out != rs.pieceOutBefore[ni])
+            ev.addHeld (n, c0 + static_cast<double> (rs.pieceFadeAt[ni]), osc[ni].out);
     }
-
-    // the last piece of a sample that is finished right away sweeps on to the sample's end (no digital
-    // events lie between its last cycle and the end)
+    // the last piece of a sample sweeps on to the sample's end (no digital events lie between its last cycle and
+    // the end)
     const double tb = toSampleEnd ? rs.tEnd : static_cast<double> (cycleCount - rs.start);
-
     renderLines (ev, tb);
     for (int n = 0; n < 3; ++n)
         renderSweep (n, tb, &ev);
@@ -1808,7 +1759,9 @@ void Chip::renderPiece (std::uint64_t k, bool toSampleEnd) noexcept
 
 float Chip::renderFinishSample() noexcept
 {
-    if (rs.sweepT < rs.tEnd)
+    if (rs.pieceOpen)
+        renderPieceClose (true);
+    else if (rs.sweepT < rs.tEnd)
     {
         PieceEvents ev; // no digital events after the sample's last whole cycle; ring flips still occur
         renderLines (ev, rs.tEnd);
@@ -2262,11 +2215,14 @@ int Chip::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noe
         const bool finishing = untilCycle > end;
         while (cycleCount < target)
         {
-            const std::uint64_t k = std::min (target - cycleCount, kPieceCycles);
-            renderPiece (k, finishing && cycleCount + k == end);
+            if (! rs.pieceOpen)
+                renderPieceOpen();
+            renderPieceAdvance (std::min (target, rs.pieceEnd) - cycleCount);
+            if (cycleCount == rs.pieceEnd && rs.pieceEnd < end)
+                renderPieceClose (false);
         }
-        if (untilCycle <= end)
-            break; // stop inside (or at the last cycle of) the sample: it stays in progress
+        if (! finishing)
+            break; // stop inside (or at the last cycle of) the sample: it stays in progress, its piece open
         out[done++] += renderFinishSample();
     }
     return done;

@@ -900,6 +900,63 @@ private:
         std::array<double, kRing> buf {}; // double: a nearly silent shape on a large offset keeps its detail
         std::array<float, kRing> env {};
     };
+    /** The digital events of one piece (renderPieceOpen .. renderPieceClose), per oscillator. */
+    static constexpr int kPieceEventCap = 80; // per oscillator and piece (<= 32 resets + 32 pull-downs, ...)
+    struct PieceEvents
+    {
+        enum : std::uint8_t { kJumpSync, kJumpSyncPending, kJumpConfirm };
+        struct Raw // a digital sync reset
+        {
+            double t;   // the source's rendered crossing
+            double off; // the target's rendered minus digital phase after the reset
+            bool used;
+        };
+        struct Jump
+        {
+            double t, off;
+            std::uint8_t kind;
+        };
+        struct Held
+        {
+            double t;
+            std::uint16_t value;
+        };
+        struct Flip
+        {
+            double t;
+            bool top;
+        };
+        std::array<std::array<Raw, kPieceEventCap>, 3> raw;
+        std::array<std::array<Jump, kPieceEventCap>, 3> jumps;
+        std::array<std::array<Held, kPieceEventCap>, 3> held;
+        std::array<std::array<Flip, kPieceEventCap>, 3> flips; // top-bit changes of oscillator n (a ring or sync source)
+        std::array<int, 3> rawCount {}, jumpCount {}, heldCount {}, flipCount {};
+
+        void addRaw (int n, double t, double off) noexcept
+        {
+            auto& c = rawCount[static_cast<std::size_t> (n)];
+            if (c < kPieceEventCap)
+                raw[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, off, false };
+        }
+        void addJump (int n, double t, double off, std::uint8_t kind) noexcept
+        {
+            auto& c = jumpCount[static_cast<std::size_t> (n)];
+            if (c < kPieceEventCap)
+                jumps[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, off, kind };
+        }
+        void addHeld (int n, double t, std::uint16_t v) noexcept
+        {
+            auto& c = heldCount[static_cast<std::size_t> (n)];
+            if (c < kPieceEventCap)
+                held[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, v };
+        }
+        void addFlip (int n, double t, bool top) noexcept
+        {
+            auto& c = flipCount[static_cast<std::size_t> (n)];
+            if (c < kPieceEventCap)
+                flips[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, top };
+        }
+    };
     struct RenderState
     {
         bool active = false;      // render has run since reset (writes then feed the renderer)
@@ -913,6 +970,11 @@ private:
         double samplesPerCycle = 1.0; // 1 / cps
         std::array<RenderOsc, 3> osc {};
         std::array<double, 3> leftValue {}, leftSlope {}, leftSlopeU {}; // captured before a write
+        bool pieceOpen = false;   // a piece has advanced the digital core and is not rendered yet
+        std::uint64_t pieceStart = 0, pieceEnd = 0; // its first cycle and its end (cycle() values)
+        std::array<std::uint32_t, 3> pieceFadeAt {};
+        std::array<std::uint16_t, 3> pieceOutBefore {}, pieceLast {};
+        PieceEvents pieceEvents {};
         std::uint64_t corrections = 0; // re-anchorings that moved a line (diagnostic)
         std::uint64_t largeCorrections = 0; // of those, the ones above 1e-4 of a period
         std::uint64_t stateMismatches = 0;  // renderCheckStates: gate or ring state unlike the chip's
@@ -920,11 +982,12 @@ private:
         std::uint64_t converterSwitches = 0; // changes of the set of Model A converter bits rendered (diagnostic)
         std::uint64_t levelSwitches = 0;     // switches of how a combined waveform's steps are emitted (diagnostic)
     };
-    struct PieceEvents; // ChipRender.cpp
 
     void renderActivate() noexcept;
     void renderStartSample() noexcept;
-    void renderPiece (std::uint64_t cycles, bool toSampleEnd) noexcept;
+    void renderPieceOpen() noexcept;
+    void renderPieceAdvance (std::uint64_t cycles) noexcept;
+    void renderPieceClose (bool toSampleEnd) noexcept;
     float renderFinishSample() noexcept;
     void renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std::uint64_t cyclesDone, std::uint64_t cycleNow, bool converterTerms) noexcept;
     float renderOutput() noexcept;

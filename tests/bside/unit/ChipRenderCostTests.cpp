@@ -11,6 +11,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <vector>
@@ -864,4 +865,229 @@ TEST_CASE ("render: the Model A converter bits rendered as square waves follow t
                 if (imin > 0)
                     CHECK (pps * std::ldexp (1.0, 13 - imin) >= 1.0);
             }
+}
+
+namespace
+{
+/** One write of a split test's schedule (kinds as in ChipRenderStreamTests' schedules). */
+struct SplitWrite
+{
+    std::uint64_t at = 0;
+    int kind = 0, n = 0;
+    double f = 0.0;
+    float pw = 0.0f;
+    std::uint8_t ct = 0, ad = 0, sr = 0, reg = 0, value = 0;
+};
+struct SplitCase
+{
+    Config cfg;
+    std::array<OscInput, 3> initial {};
+    std::vector<SplitWrite> writes;
+    std::uint64_t total = 120000;
+};
+
+/** A random patch and schedule: both models and shape sets, every internal rate, Authentic in a quarter, sync and
+    ring without chains (as the generator writes them), every write kind; in a fifth of the cases frequencies up
+    to 12 kHz (Smooth: above the register's top, the step moments). */
+SplitCase splitCase (std::uint64_t seed)
+{
+    bst::Rng rng (seed);
+    SplitCase s;
+    s.cfg.model = rng.chance (50) ? Model::A : Model::B;
+    s.cfg.shapes = rng.chance (33) ? ShapeSet::placeholder : ShapeSet::fitted;
+    s.cfg.internalRate = rateConfigs()[rng.below (7)].internalRate;
+    s.cfg.authentic = rng.chance (25);
+    const bool high = ! s.cfg.authentic && rng.chance (20);
+    const bool syncRing = rng.chance (60);
+    std::array<std::uint8_t, 3> ct {};
+    auto control = [&] (int n) {
+        auto c = static_cast<std::uint8_t> ((rng.below (16) << 4) | (syncRing && rng.chance (40) ? ctrl::sync : 0) | (syncRing && rng.chance (30) ? ctrl::ring : 0)
+                                            | (rng.chance (85) ? ctrl::gate : 0) | (rng.chance (3) ? ctrl::test : 0));
+        // no sync chain: a synced oscillator's source and target are not synced
+        const int src = vs::bside::chip::detail::syncSource (n), tgt = vs::bside::chip::detail::syncTarget (n);
+        if ((c & ctrl::sync) != 0 && ((ct[static_cast<std::size_t> (src)] & ctrl::sync) != 0 || (ct[static_cast<std::size_t> (tgt)] & ctrl::sync) != 0))
+            c = static_cast<std::uint8_t> (c & ~ctrl::sync);
+        return c;
+    };
+    auto freq = [&] {
+        if (high)
+            return 60000.0 + rng.below (150000);
+        const int r = rng.range (0, 4);
+        return r == 0 ? static_cast<double> (rng.below (65536)) : r == 1 ? 60000.0 + rng.below (5536) + 0.37 : r == 2 ? 2000.0 + rng.below (30000) * 1.0001
+               : r == 3 ? rng.below (2000) + 0.5 : 0.0;
+    };
+    std::array<double, 3> f {};
+    std::array<float, 3> pw {};
+    std::array<std::uint8_t, 3> ad {}, sr {};
+    for (int n = 0; n < 3; ++n)
+    {
+        const auto ni = static_cast<std::size_t> (n);
+        ct[ni] = control (n);
+        f[ni] = freq();
+        pw[ni] = static_cast<float> (rng.below (4096));
+        ad[ni] = static_cast<std::uint8_t> (rng.below (256));
+        sr[ni] = static_cast<std::uint8_t> (rng.below (256));
+        s.initial[ni] = input (f[ni], pw[ni], ct[ni], ad[ni], sr[ni]);
+    }
+    std::uint64_t at = 3000;
+    while (true)
+    {
+        at += static_cast<std::uint64_t> (rng.chance (33) ? rng.range (30, 600) : rng.range (300, 8000));
+        if (at + 2000 > s.total)
+            break;
+        SplitWrite w;
+        w.at = at;
+        w.n = static_cast<int> (rng.below (3));
+        const auto ni = static_cast<std::size_t> (w.n);
+        const unsigned r = rng.below (100);
+        w.kind = r < 20 ? 0 : r < 35 ? 1 : r < 50 ? 2 : r < 60 ? 3 : r < 85 ? 4 : r < 95 ? 6 : 5;
+        if (w.kind == 1)
+            f[ni] = rng.chance (20) ? freq() : rng.below (65536) + 0.25;
+        else if (w.kind == 2)
+            pw[ni] = static_cast<float> (rng.below (4096));
+        else if (w.kind == 3)
+        {
+            ad[ni] = static_cast<std::uint8_t> (rng.below (256));
+            sr[ni] = static_cast<std::uint8_t> (rng.below (256));
+        }
+        else if (w.kind == 0)
+            ct[ni] = control (w.n);
+        else if (w.kind == 4)
+        {
+            w.reg = static_cast<std::uint8_t> (rng.chance (85) ? 7 * w.n + static_cast<int> (rng.below (7)) : 0x15 + static_cast<int> (rng.below (4)));
+            w.value = static_cast<std::uint8_t> (rng.below (256));
+            if (w.reg % 7 == 4 && w.reg < 21)
+            {
+                // a raw control byte, without a sync chain
+                const int src = vs::bside::chip::detail::syncSource (w.n), tgt = vs::bside::chip::detail::syncTarget (w.n);
+                if ((w.value & ctrl::sync) != 0 && ((ct[static_cast<std::size_t> (src)] & ctrl::sync) != 0 || (ct[static_cast<std::size_t> (tgt)] & ctrl::sync) != 0))
+                    w.value = static_cast<std::uint8_t> (w.value & ~ctrl::sync);
+                ct[ni] = w.value;
+            }
+        }
+        w.f = f[ni];
+        w.pw = pw[ni];
+        w.ct = ct[ni];
+        w.ad = ad[ni];
+        w.sr = sr[ni];
+        s.writes.push_back (w);
+    }
+    return s;
+}
+
+void applySplitWrite (Chip& c, const SplitWrite& w)
+{
+    if (w.kind == 4)
+        c.write (w.reg, w.value);
+    else if (w.kind == 5)
+        c.powerOnKeepingTime();
+    else if (w.kind == 6)
+        c.clearEnvelopeCounters (w.n);
+    else
+        c.setOscillator (w.n, input (w.f, w.pw, w.ct, w.ad, w.sr));
+}
+
+/** Renders a case. splitSeed 0: render() up to just before each write and renderUntil to it; else, besides, stops of
+    renderUntil at random cycles that are not write cycles (1 to 3000 cycles ahead) and random block sizes. */
+std::vector<float> renderSplit (const SplitCase& s, std::uint64_t splitSeed, bool batching = true)
+{
+    Chip c;
+    c.prepare (s.cfg);
+    c.renderBatchingEnabled (batching);
+    for (int n = 0; n < 3; ++n)
+        c.setOscillator (n, s.initial[static_cast<std::size_t> (n)]);
+    bst::Rng rng (splitSeed + 1);
+    std::vector<float> y;
+    std::vector<float> block (512);
+    std::size_t w = 0;
+    const double cps = cyclesPerSample (c);
+    while (c.cycle() < s.total)
+    {
+        const std::uint64_t at = w < s.writes.size() ? s.writes[w].at : s.total;
+        while (c.cycle() < at)
+        {
+            std::fill (block.begin(), block.end(), 0.0f);
+            int done = 0;
+            if (splitSeed != 0 && rng.chance (60))
+            {
+                const std::uint64_t stop = std::min (at, c.cycle() + 1 + rng.below (3000));
+                done = c.renderUntil (block.data(), 1 + static_cast<int> (rng.below (512)), stop);
+            }
+            else
+            {
+                const int fit = static_cast<int> ((static_cast<double> (at - c.cycle()) - 2.0) / cps);
+                if (fit >= 1)
+                {
+                    done = std::min (fit, 256);
+                    c.render (block.data(), done);
+                }
+                else
+                    done = c.renderUntil (block.data(), 512, at);
+            }
+            y.insert (y.end(), block.begin(), block.begin() + done);
+        }
+        if (w < s.writes.size())
+            applySplitWrite (c, s.writes[w++]);
+    }
+    return y;
+}
+
+/** The first index where two renders differ (or the shorter length), -1 if equal. */
+long firstDifference (const std::vector<float>& a, const std::vector<float>& b)
+{
+    const std::size_t n = std::min (a.size(), b.size());
+    for (std::size_t i = 0; i < n; ++i)
+        if (std::memcmp (&a[i], &b[i], sizeof (float)) != 0)
+            return static_cast<long> (i);
+    return a.size() == b.size() ? -1 : static_cast<long> (n);
+}
+
+void checkSplits (std::uint64_t firstSeed, int count)
+{
+    int high = 0;
+    for (std::uint64_t seed = firstSeed; seed < firstSeed + static_cast<std::uint64_t> (count); ++seed)
+    {
+        const SplitCase s = splitCase (seed);
+        const auto plain = renderSplit (s, 0);
+        const auto split = renderSplit (s, seed * 31u + 7u);
+        const long at = firstDifference (plain, split);
+        INFO ("seed " << seed << ", " << (s.cfg.model == Model::A ? "Model A" : "Model B") << ", " << s.cfg.internalRate << " Hz, "
+                      << (s.cfg.shapes == ShapeSet::fitted ? "fitted" : "placeholder") << (s.cfg.authentic ? ", Authentic" : "") << ": first difference at sample "
+                      << at << " (of " << plain.size() << ")");
+        CHECK (at == -1);
+        high += s.initial[0].frequency > 65535.0 || s.initial[1].frequency > 65535.0 ? 1 : 0;
+    }
+    CHECK (high >= count / 10);
+}
+} // namespace
+
+TEST_CASE ("render: the output does not depend on where renderUntil stops without a write (random cases, below and above the register's top)", "[render][batch][split]")
+{
+    // 8.17: any block split gives the same output. A stop inside a sample that no write follows must change
+    // nothing (the program engine stops at every tick); render cost review, items 1 and 2.
+    checkSplits (1, 150);
+}
+
+TEST_CASE ("render: the output does not depend on where renderUntil stops without a write, long run", "[.render-split-long]")
+{
+    const char* e = std::getenv ("BS_SPLIT_SEEDS");
+    checkSplits (1000, e != nullptr ? std::atoi (e) : 4000);
+}
+
+TEST_CASE ("render: split cases the S2b-2 renderer got wrong (stops without a write)", "[render][batch][split]")
+{
+    // Cases of the generator above whose output changed with renderUntil stops at non-write cycles before the
+    // pieces were aligned to the sample start and to writes (render cost review, items 1 and 2): 1071 (Model A,
+    // placeholder shapes, a pulling triangle+saw), 6079 (Model B, a synced saw+pulse), 10475 (Model A, 384 kHz,
+    // Authentic, a synced triangle, a pulling triangle+saw+pulse) below the register's top; 27, 37, 131, 235 with
+    // the step moments above it.
+    for (const std::uint64_t seed : { 1071u, 6079u, 10475u, 27u, 37u, 131u, 235u })
+    {
+        const SplitCase s = splitCase (seed);
+        for (const std::uint64_t split : { seed * 31u + 7u, std::uint64_t { 99 }, std::uint64_t { 12345 } })
+        {
+            INFO ("seed " << seed << ", split " << split);
+            CHECK (firstDifference (renderSplit (s, 0), renderSplit (s, split)) == -1);
+        }
+    }
 }
