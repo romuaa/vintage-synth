@@ -5,6 +5,19 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side parameter step (2026-11-18)
+- Exitium B-Side now reports 202 host parameters (docs/architecture.md 8.7): the 75 shared ones, then
+  `lower.*` (63), `upper.*` (63) and `chip.clock`. Inert: nothing on the audio thread reads them yet
+  (the plugin still plays its test tone).
+- `source/bside/params/`: `PartParamList.h` (one X-macro list for both parts), `PartMappings.h` (pulse width,
+  macro offsets, envelope nominal times, exponential tick rate, vibrato and detune cents), `ParameterLayout.*`
+  (layout, display text and text parsing, `PartParamBinding`, `ChipClockBinding`).
+- Sessions and program files saved before this step still load, the new parameters at their defaults;
+  `stateVersion` stays 1.
+- Tests: `tests/bside/integration/ParamTests.cpp` (hand-written contract table, ranges, labels, display text,
+  text round trip, state and file round trips, old sessions, symmetry, binding); counts in `ShellTests.cpp`
+  and `HostSmoke.cpp` are now 202.
+
 ### Orchestrate skill trimmed (2026-11-16)
 - `.claude/skills/orchestrate/SKILL.md` now holds only what is specific to this repository (serial files,
   worktrees, local-first gates, budgets, model routing, commit rules). Removed: the finished Wave 0–4 plan

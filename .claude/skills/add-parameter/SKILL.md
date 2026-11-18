@@ -8,6 +8,15 @@ instrument's globals in `source/vintage/params/ParameterLayout.cpp`; effect and 
 `source/common/params/FxArpParams.cpp`; mappings in `source/common/params/Mappings.h` (shared) or
 `source/vintage/params/PartMappings.h` (voice).
 
+**B-Side (`source/bside/params/`):** the per-part parameters are one X-macro list, `PartParamList.h`
+(`BS_PART_PARAMS (F, C, I)`: float, choice and stepped-integer entries in the contract's order, 8.7);
+`lower.*` and `upper.*` are both generated from it. Mappings (value to unit, shared by display text and
+DSP) are in `PartMappings.h`; the layout, the display text and `PartParamBinding` (cached pointers,
+`read (PartParams&)`) are in `ParameterLayout.*`; globals are appended in `createParameterLayout()`.
+Append only (the contract fixes the order), then update `kPartParamCount` / `kParameterCount`,
+`tests/bside/integration/ParamTests.cpp` (its table is written by hand), the counts in `ShellTests.cpp`
+and `tests/host_smoke/HostSmoke.cpp` (`kBSide`). B-Side smoothing is not built yet.
+
 **Smoothing is not automatic for new continuous parameters.** Appending to the X-macro creates the
 parameter and its binding, but `PartModulator::next` (`vintage/engine/Modulation.cpp`) only smooths the
 parameters it lists. Add a new continuous parameter there (and to `ModBlock::Ctl` if voices need it

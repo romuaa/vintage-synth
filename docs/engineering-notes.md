@@ -3,6 +3,15 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side parameter step (2026-11-18)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The contract's order mixes float, integer and choice parameters, so Vintage's two lists (all floats, then all choices) would give another order. | Vintage's X-macro lists are split by type, which fixes the order to floats first. | One list with three entry macros (`BS_PART_PARAMS (F, C, I)`), written in the contract's order. Repeated blocks (`oscN.*`) are one nested macro, so the three oscillators cannot differ. |
+| `juce::String (float, 0)` is "default formatting", not "no decimals". | JUCE treats 0 decimal places as "as many as needed". | Build whole-number text from an `int` (`juce::roundToInt`); a signed zero ("-0.0") is shown without a sign. |
+| A float `==` against zero to detect "-0.0" would not build on GCC. | `-Wfloat-equal` is an error there. | Decide on the text (`containsAnyOf ("123456789")`), not on the float. |
+| The exponential 10 ... 400 Hz tick rate cannot be a plain `NormalisableRange (min, max)`. | The default range is linear. | A `NormalisableRange` with `convertFrom0to1` / `convertTo0to1` lambdas; the host value stays in Hz, so the binding, the preset files and the display text are all in Hz. |
+
 ## B-Side S2b-2: band-limited rendering (2026-11-15)
 
 | Problem | Cause | Fix / rule |
