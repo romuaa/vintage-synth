@@ -155,3 +155,36 @@ TEST_CASE ("render defect 3 (8.17): a large frequency drop on a sync source betw
                     CHECK (c.renderStateMismatches() == 0);
                 }
 }
+
+TEST_CASE ("render defect 1, sibling (render cost review): a frozen Model A pull-down takes the chip's gate one cycle later", "[render][defects]")
+{
+    // Oscillator 1 plays a triangle at the register's top until its cell is in the upper half, its frequency is
+    // written to 0, then a saw+pulse combination with a width above the cell: the chip pulls the top bit down at
+    // once and its comparison goes low. The re-read one cycle later was scheduled as a phase, which a frozen line
+    // never reaches: the rendered gate stayed open for good.
+    for (const std::uint8_t combo : { std::uint8_t { 0x61 }, std::uint8_t { 0x71 } })
+        for (const double rate : { 88200.0, 96000.0 })
+        {
+            Chip c = chipWith (Model::A, rate, ShapeSet::fitted);
+            c.renderCheckStates (true);
+            setOsc (c, 0, 65535.0, 2048.0f, ctrl::triangle | ctrl::gate);
+            std::vector<float> y (4000, 0.0f);
+            c.render (y.data(), 1000);
+            while (! (((c.accumulator (0) >> 12) & 0xfffu) >= 3000u && ((c.accumulator (0) >> 12) & 0xfffu) <= 3500u))
+                c.render (y.data(), 1);
+            Chip d = c;
+            for (Chip* x : { &c, &d })
+            {
+                x->write (0x00, 0x00);
+                x->write (0x01, 0x00);
+                setOsc (*x, 0, 0.0, 2284.0f, combo);
+            }
+            std::fill (y.begin(), y.end(), 0.0f);
+            c.render (y.data(), 4000);
+            d.advanceCycles (c.cycle() - d.cycle());
+            INFO ("control " << int (combo) << ", " << rate << " Hz: rendered " << y.back() << ", chip " << digitalOutput (d, Model::A, ShapeSet::fitted)
+                             << ", state mismatches " << c.renderStateMismatches());
+            CHECK (std::abs (static_cast<double> (y.back()) - digitalOutput (d, Model::A, ShapeSet::fitted)) < 1.0e-6);
+            CHECK (c.renderStateMismatches() == 0);
+        }
+}

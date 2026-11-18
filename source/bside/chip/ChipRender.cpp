@@ -193,6 +193,23 @@ int Chip::renderTableLevel (int n, int current) const noexcept
     return renderCoarse ? tableLevelWithHysteresis (slope, slope * rs.cps, current) : 0;
 }
 
+void Chip::renderScheduleReread (int n, double t) noexcept
+{
+    // The pulse comparison is one cycle late: one cycle after a phase jump at t the gate reads the new line. A
+    // moving line reaches that point as a phase (gateCheckU); a frozen one (frequency 0) never would, so its
+    // re-read is scheduled in time (frozenEdge; 8.17 defect 1 and its Model A pull-down sibling, render cost step)
+    RenderOsc& v = rs.osc[idx (n)];
+    const double slope = renderSlopeU (n);
+    if (slope > 0.0)
+        v.gateCheckU = v.u + slope;
+    else
+    {
+        v.frozenEdge = true;
+        v.frozenEdgeStart = rs.start;
+        v.frozenEdgeT = t + 1.0;
+    }
+}
+
 double Chip::renderSlopeU (int n) const noexcept
 {
     return (ctl (n) & ctrl::test) != 0 ? 0.0 : static_cast<double> (osc[idx (n)].inc) / kTwo56;
@@ -525,7 +542,7 @@ bool Chip::renderPullDown (int n, double t, bool atWrite, bool reread) noexcept
         // write, perhaps); the rendered one follows it, and re-reads the comparison one cycle on if the
         // chip's next comparison (on its first upper-half landing, with today's width) is low
         if (! v.gate && ! renderGateAfterRise (n, t))
-            v.gateCheckU = v.u + renderSlopeU (n);
+            renderScheduleReread (n, t);
         v.gate = true;
     }
     const bool high = (rtab->steps[static_cast<std::size_t> (slot)].shape[cell] & 0x800u) != 0 && open;
@@ -823,7 +840,7 @@ void Chip::renderAfterChange (int testSetMask) noexcept
         RenderOsc& v = rs.osc[idx (n)];
         renderLanding (n, tw);
         if (! v.landPull && renderPullDown (n, tw, true, false))
-            v.gateCheckU = v.u + renderSlopeU (n);
+            renderScheduleReread (n, tw);
     }
     // A predicted reset whose source's line has crossed but whose digital rise is still to come is dropped
     // when the write stops that rise: the source's test bit is set, the source is a Model A saw combination
@@ -852,7 +869,7 @@ void Chip::renderAfterChange (int testSetMask) noexcept
             renderSyncOsc (n);
             renderLanding (n, tw);
             if (! v.landPull && renderPullDown (n, tw, true, false))
-                v.gateCheckU = v.u + renderSlopeU (n);
+                renderScheduleReread (n, tw);
         }
     }
     for (int n = 0; n < 3; ++n) // after the sources' pull-downs at the write
@@ -908,7 +925,7 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
         {
             v.frozenEdge = false;
             const double wl = renderValue (n, v.u);
-            v.gate = false;
+            v.gate = gateAt (v.u, slope, osc[idx (n)].pwSmooth, test); // the comparison of the frozen accumulator
             renderEmit (n, tf, renderValue (n, v.u) - wl, 0.0);
         }
     }
@@ -965,10 +982,10 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
                 v.pendingPull = true;
                 v.pendingStart = rs.start;
                 v.pendingT = t;
-                v.gateCheckU = v.u + slope;
+                renderScheduleReread (n, t);
             }
             else if (renderPullDown (n, t, false, kind == 3))
-                v.gateCheckU = v.u + slope;
+                renderScheduleReread (n, t);
             const double wr = renderValue (n, v.u);
             const double sr = renderDerivative (n, v.u);
             renderEmit (n, t, wr - wl, (sr - sl) * rate);
@@ -1070,7 +1087,7 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
             v.frozenEdge = false;
             const double tf = static_cast<double> (v.frozenEdgeStart) - static_cast<double> (rs.start) + v.frozenEdgeT;
             const double fl = renderValue (n, v.u);
-            v.gate = false;
+            v.gate = gateAt (v.u, slope, osc[idx (n)].pwSmooth, test);
             renderEmit (n, tf, renderValue (n, v.u) - fl, 0.0);
         }
         if (lateEdge >= 0.0)
@@ -1285,10 +1302,10 @@ void Chip::renderSweepTable (int n, double tEnd) noexcept
             v.pendingPull = true;
             v.pendingStart = rs.start;
             v.pendingT = t;
-            v.gateCheckU = v.u + slope;
+            renderScheduleReread (n, t);
         }
         else if (pulling && renderPullDown (n, t, false, kind == 3))
-            v.gateCheckU = v.u + slope;
+            renderScheduleReread (n, t);
         // a cell step (kind 1) without a gate change reads the refined long table; pulse edges keep the Hermite read
         renderEmitWith (n, t, valueNow() - wl, 0.0 * rate, true, kind == 1);
     }
@@ -1801,7 +1818,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         // (a predicted pull-down, its landing and the gate's re-read are the line's own events and waits, which
         // the sweep and the finish handle here as in the general path; the digital core is then stepped per
         // sample, below)
-        if ((c & ctrl::sync) != 0 || v.ring || v.mode == rmNoise || v.mode == rmCycle || (v.pending && ! v.pendingPull) || v.glitchPending)
+        if ((c & ctrl::sync) != 0 || v.ring || v.mode == rmNoise || v.mode == rmCycle || (v.pending && ! v.pendingPull) || v.glitchPending || v.frozenEdge)
             return 0;
         budget = std::min (budget, envStableSteps (n));
         if (wave::bits (c) == 0 && osc[idx (n)].fadeTimer != 0)

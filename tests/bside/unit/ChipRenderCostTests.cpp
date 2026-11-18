@@ -501,3 +501,131 @@ TEST_CASE ("render cost: coarse levels only above the register's range, with hys
             CHECK (v.renderLevelSwitches() - before <= 1);
         }
 }
+
+TEST_CASE ("chip: a Model A saw combination at frequency 0 or below one accumulator step, both halves (no division by a zero increment)", "[bside][chip][equivalence]")
+{
+    // The closed form of the pull-down (pullRun) divided by the increment: frequency 0 (a control written
+    // before any frequency, a trace) crashed on x86-64. Every saw combination, with and without the pulse, the
+    // accumulator in either half, frequency 0 and Smooth increments below one accumulator step; the fast path
+    // against stepping, and rendering (the sanitizer build runs this too).
+    const std::uint8_t combos[] { 0x31, 0x61, 0x71 };
+    for (const ShapeSet set : { ShapeSet::fitted, ShapeSet::placeholder })
+        for (const std::uint8_t combo : combos)
+            for (const bool upper : { false, true })
+                for (const double f : { 0.0, 0.25, 0.999, 1.0e-6 })
+                {
+                    Config cfg;
+                    cfg.model = Model::A;
+                    cfg.shapes = set;
+                    Chip fast;
+                    fast.prepare (cfg);
+                    if (upper)
+                    {
+                        // a triangle until the accumulator is in its upper half, then the frequency
+                        fast.setOscillator (0, input (60000.0, 2048.0f, ctrl::triangle | ctrl::gate, 0x00, 0xf0));
+                        while ((fast.phase (0) & vs::bside::chip::kPhaseMsb) == 0 || ((fast.accumulator (0) >> 12) & 0x7ffu) < 300u)
+                            fast.stepCycle();
+                    }
+                    Chip ref = fast, rendered = fast;
+                    for (Chip* c : { &fast, &ref, &rendered })
+                    {
+                        if (f <= 0.0)
+                        {
+                            c->write (0x00, 0x00);
+                            c->write (0x01, 0x00);
+                            c->write (0x04, combo);
+                        }
+                        else
+                            c->setOscillator (0, input (f, 1000.0f, combo, 0x00, 0xf0));
+                    }
+                    for (const std::uint64_t gap : { 1u, 2u, 7u, 100u, 4096u, 5000u })
+                    {
+                        fast.advanceCycles (gap);
+                        for (std::uint64_t i = 0; i < gap; ++i)
+                            ref.stepCycle();
+                        INFO ((set == ShapeSet::fitted ? "fitted" : "placeholder") << ", control " << int (combo) << (upper ? ", upper half" : ", lower half")
+                                                                                   << ", frequency " << f << ", jump " << gap);
+                        REQUIRE (fast.state() == ref.state());
+                    }
+                    std::vector<float> y (2000, 0.0f);
+                    rendered.render (y.data(), 2000);
+                    rendered.advanceCycles (fast.cycle() > rendered.cycle() ? fast.cycle() - rendered.cycle() : 0);
+                    bool finite = true;
+                    for (const float v : y)
+                        finite = finite && std::isfinite (v);
+                    CHECK (finite);
+                }
+}
+
+TEST_CASE ("render: narrow pulses at small-denominator frequencies, rectangular DFT over whole periods (report)", "[.render-exact]")
+{
+    // A harness for the next step (render cost review, item 8; no assertion): the narrowest Model B pulses
+    // (width 4095 or 1) at fundamentals with a small-denominator ratio to the internal rate, where the edges
+    // fall on few sub-sample offsets. The signal is rendered over a whole number of its periods (p periods in q
+    // samples, f = rate x p / q) and measured with a rectangular DFT at every bin up to 20 kHz: the harmonics
+    // are exact bins, everything else is aliasing, relative to the fundamental. The S2b-2 renderer gives the
+    // same figures (-97.4 dB at 88200 x 3 / 73 Hz, width 4095).
+    struct Case
+    {
+        double rate;
+        int p, q;
+        float width;
+    };
+    std::vector<Case> cases;
+    for (const float w : { 4095.0f, 1.0f, 4094.0f, 2.0f })
+    {
+        for (const auto& pq : std::vector<std::pair<int, int>> { { 3, 73 }, { 3, 70 }, { 3, 71 }, { 2, 47 }, { 3, 69 }, { 1, 23 }, { 2, 45 } })
+            cases.push_back ({ 88200.0, pq.first, pq.second, w });
+        for (const auto& pq : std::vector<std::pair<int, int>> { { 2, 59 }, { 1, 25 }, { 3, 76 }, { 2, 51 } })
+            cases.push_back ({ 96000.0, pq.first, pq.second, w });
+    }
+    struct Row
+    {
+        double db, hz, f;
+        float width;
+        double rate;
+    };
+    std::vector<Row> rows;
+    constexpr double pi = 3.14159265358979323846;
+    for (const auto& k : cases)
+    {
+        const double f = k.rate * k.p / k.q;
+        Chip c = makeChip (Model::B, k.rate);
+        setOsc (c, 0, f * 16777216.0 / 985248.0, k.width, static_cast<std::uint8_t> (ctrl::pulse | ctrl::gate));
+        renderSamples (c, 3000);
+        const int periods = std::max (1, 24000 / k.q);
+        const int n = periods * k.q;
+        const auto y = renderSamples (c, n);
+        double mean = 0.0;
+        for (const float v : y)
+            mean += static_cast<double> (v);
+        mean /= n;
+        const int maxBin = static_cast<int> (20000.0 * n / k.rate);
+        std::vector<double> mag (static_cast<std::size_t> (maxBin + 1));
+        for (int b = 1; b <= maxBin; ++b)
+        {
+            std::complex<double> s = 0.0, ph = 1.0;
+            const std::complex<double> rot = std::polar (1.0, -2.0 * pi * b / n);
+            for (int i = 0; i < n; ++i)
+            {
+                s += (static_cast<double> (y[static_cast<std::size_t> (i)]) - mean) * ph;
+                ph *= rot;
+            }
+            mag[static_cast<std::size_t> (b)] = std::abs (s);
+        }
+        const int fundamental = periods * k.p; // the bin of the fundamental
+        double worst = 0.0;
+        int at = 0;
+        for (int b = 1; b <= maxBin; ++b)
+            if (b % fundamental != 0 && mag[static_cast<std::size_t> (b)] > worst)
+            {
+                worst = mag[static_cast<std::size_t> (b)];
+                at = b;
+            }
+        rows.push_back ({ 20.0 * std::log10 (worst / mag[static_cast<std::size_t> (fundamental)] + 1e-300), at * k.rate / n, f, k.width, k.rate });
+    }
+    std::sort (rows.begin(), rows.end(), [] (const Row& a, const Row& b) { return a.db > b.db; });
+    std::printf ("%10s %10s %8s %12s %10s\n", "rate", "f (Hz)", "width", "worst (dB)", "at (Hz)");
+    for (std::size_t i = 0; i < std::min<std::size_t> (rows.size(), 15); ++i)
+        std::printf ("%10.0f %10.2f %8.0f %12.2f %10.1f\n", rows[i].rate, rows[i].f, static_cast<double> (rows[i].width), rows[i].db, rows[i].hz);
+}

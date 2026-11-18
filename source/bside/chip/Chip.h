@@ -87,9 +87,11 @@
 #include <cstdint>
 
 /** Inlined into the fast path whatever the compiler's size budget (envAdvance, envSteps: skip calls them per
-    envelope for every jump; out of line they cost the digital core about 2 ns per call, render cost step). */
+    envelope for every jump; out of line they cost the digital core about 2 ns per call, render cost step).
+    MSVC: plain inline (__forceinline raises C4714 wherever it cannot inline, e.g. in a Debug build, and warnings
+    are errors). */
 #if defined(_MSC_VER)
-    #define BS_CHIP_INLINE __forceinline
+    #define BS_CHIP_INLINE inline
 #else
     #define BS_CHIP_INLINE inline __attribute__ ((always_inline))
 #endif
@@ -923,6 +925,7 @@ private:
     void renderSyncOsc (int n) noexcept;
     void renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept;
     void renderSweepLine (int n, double tEnd) noexcept;
+    void renderScheduleReread (int n, double t) noexcept;
     void renderSweepTable (int n, double tEnd) noexcept;
     void renderLines (PieceEvents& ev, double tEnd) noexcept;
     bool renderPullDown (int n, double t, bool atWrite, bool reread) noexcept;

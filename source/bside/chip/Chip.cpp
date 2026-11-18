@@ -266,6 +266,14 @@ Chip::PullRun Chip::pullRun (int n, std::uint64_t j) const noexcept
         std::uint64_t done = 0;
         while (done < steps)
         {
+            if (! top && inc == 0)
+            {
+                // frequency 0 (a control written before any frequency, a trace): a lower half that never moves
+                r.lastPre = lower;
+                r.rise = false;
+                gate = compare();
+                break;
+            }
             if (! top)
             {
                 const std::uint64_t d = (kPhaseMsb - lower + inc - 1) / inc; // the step with the carry (>= 1)
