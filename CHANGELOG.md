@@ -5,7 +5,16 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
-### B-Side render cost step, review fixes (2026-11-18)
+### B-Side render cost step, third review (2026-11-18)
+- Fixed: the output depended on where `renderUntil` stopped without a write (pieces now start at a sample's
+  start or a write and end at its end; random non-write stops are tested bit-identical, 150 seeds in the
+  suite, 4 000 in the hidden `[.render-split-long]`); a frozen Model A saw combination pulled down by a width
+  or waveform write (no prediction, a large correction, a ring target's old top bit).
+- Above the register's range the step moments' stretches end at two fixed points per sample: plain and ring
+  targets alias at most -106 dB re the strongest line (was -79.6), asserted at -80 dB; synced targets as
+  the one-by-one rendering (the chip's whole-cycle resets). `comb12k` 184 (Model A) and 162 ns (Model B) at 96 kHz, `chip_bench` alone (target 200).
+- Tests that kill the surviving mutations of the review, including an `envInert` counter-example (a write in a
+  sample's last cycle), which an earlier review had called equivalent.
 - Fixed: a division by a zero increment in the Model A pull-down's closed form (SIGFPE on x86-64 at frequency
   0); a frozen Model A pull-down kept its pulse gate (one-cycle re-reads are now scheduled in time on frozen
   lines); `BS_CHIP_INLINE` is plain `inline` on MSVC (C4714).
