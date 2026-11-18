@@ -111,11 +111,12 @@ TEST_CASE ("B-Side: identity, bus layout, and no editor-less surprises", "[bside
     CHECK (juce::String (JucePlugin_Vst3Category) == "Instrument|Synth");
 }
 
-TEST_CASE ("B-Side: the 75 shared parameters, in the contract's order, with Vintage's ranges", "[bside][shell]")
+TEST_CASE ("B-Side: the 75 shared parameters come first, in the contract's order, with Vintage's ranges", "[bside][shell]")
 {
     Rig rig (false);
     const auto& params = rig.proc.getParameters();
-    REQUIRE (params.size() == bs::kShellParameterCount);
+    REQUIRE (params.size() == bs::kParameterCount); // 75 shared + 2 x 63 per part + chip.clock (8.7; ParamTests.cpp)
+    REQUIRE (bs::kParameterCount == 202);
     REQUIRE (bs::kShellParameterCount == 75);
 
     juce::StringArray ids;
@@ -161,7 +162,7 @@ TEST_CASE ("B-Side: 64 programs, all Init, in an 8 x 8 bank with B-Side's own pr
     CHECK (schema.instrument().toneExtension == ".bstone");
     CHECK (schema.instrument().bankExtension == ".bsbank");
     CHECK (presets.positionName (63) == "H8");
-    CHECK (schema.numParams() == 75);
+    CHECK (schema.numParams() == 202);
     // Master volume and the limiter are session settings: not part of a program.
     CHECK (schema.isExcluded (schema.indexOf ("master.volume")));
     CHECK (schema.isExcluded (schema.indexOf ("master.limiter")));
