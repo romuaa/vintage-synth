@@ -746,7 +746,7 @@ private:
     void envAdvance (int n, std::uint64_t j) noexcept
     {
         Env& e = env[idx (n)];
-        if (envInert (n))
+        if (j >= 2 * (kRateMatch[0] + 1) && envInert (n)) // (no period is shorter)
         {
             const std::uint64_t period = (static_cast<std::uint64_t> (e.compare) + 1) * std::max<std::uint64_t> (e.dividerPeriod, 1);
             if (j >= 2 * period)
@@ -782,22 +782,26 @@ private:
         }
     }
 
-    /** Whether the fast path must step every cycle (8.15.2 (c) steps 4 and 6 act every cycle). */
+    /** Whether the fast path must step every cycle (8.15.2 (c) step 6, the write-back, acts every cycle). */
     bool mustStep() const noexcept
     {
         for (int n = 0; n < 3; ++n)
-        {
-            const std::uint8_t c = ctl (n);
-            if (wave::writesBack (c))
+            if (wave::writesBack (ctl (n)))
                 return true;
-            if (cfg.model == Model::A && (c & ctrl::saw) != 0 && wave::isCombined (wave::bits (c)))
-                return true;
-        }
         return false;
     }
 
+    /** Model A, a combination with the saw and without noise, not held by the test bit: the top bit is pulled
+        down in steps whose output has bit 11 clear (8.15.2 (c) step 4); skip follows it (pullRun). */
+    bool pulls (int n) const noexcept
+    {
+        const std::uint8_t c = ctl (n);
+        return cfg.model == Model::A && (c & ctrl::saw) != 0 && wave::isCombined (wave::bits (c)) && (c & (ctrl::noise | ctrl::test)) == 0;
+    }
+
     /** Cycles to the next step in which a top bit rises while its sync target has the sync bit set
-        (>= 1), at most kMaxSkip + 1. */
+        (>= 1), at most kMaxSkip + 1. For an oscillator that pulls its top bit down, the next carry into the
+        top bit (a rise unless that step pulls it, or the wrap of a top bit that stayed up): never later. */
     std::uint64_t nextSyncRise() const noexcept
     {
         std::uint64_t e = kMaxSkip + 1;
@@ -806,11 +810,87 @@ private:
             const Osc& o = osc[idx (n)];
             if ((ctl (n) & ctrl::test) != 0 || o.inc == 0 || (ctl (detail::syncTarget (n)) & ctrl::sync) == 0)
                 continue;
-            const std::uint64_t boundary = o.phase < kPhaseMsb ? kPhaseMsb : kPhaseMsb + (kPhaseMask + 1);
-            const std::uint64_t d = boundary - o.phase;
+            std::uint64_t d = 0;
+            if (pulls (n))
+                d = kPhaseMsb - (o.phase & (kPhaseMsb - 1));
+            else
+            {
+                const std::uint64_t boundary = o.phase < kPhaseMsb ? kPhaseMsb : kPhaseMsb + (kPhaseMask + 1);
+                d = boundary - o.phase;
+            }
             e = std::min (e, (d + o.inc - 1) / o.inc);
         }
         return e;
+    }
+
+    /** The phases of a pulling oscillator (pulls) over j >= 1 steps without a sync reset: after step j - 1,
+        and of step j before and after its pull-down; and whether step j's top bit rose and stayed (`rise`). */
+    struct PullRun
+    {
+        std::uint64_t prevPost = 0, lastPre = 0, lastPost = 0;
+        bool rise = false;
+    };
+    PullRun pullRun (int n, std::uint64_t j) const noexcept
+    {
+        // The lower 55 bits run on as without the pull-down; the top bit rises with a carry out of them and
+        // is cleared in a step whose output (the shape at the landing cell, through the pulse gate the step
+        // before compared) has bit 11 clear. Lower-half stretches are jumped to their carry; a top bit that
+        // stays up is followed step by step (at most j, <= kMaxSkip).
+        const Osc& o = osc[idx (n)];
+        const std::uint8_t c = ctl (n);
+        const auto& shape = shapes->wave[wave::bits (c) & 15u];
+        const bool pulse = (c & ctrl::pulse) != 0;
+        const std::uint64_t inc = o.inc, low = kPhaseMsb - 1;
+        bool top = (o.phase & kPhaseMsb) != 0;
+        std::uint64_t lower = o.phase & low;
+        bool gate = o.pulseHigh; // the comparison the next step uses
+        PullRun r;
+        auto compare = [&] { return ((((top ? kPhaseMsb : 0u) | lower) >> 44) & 0xfffu) >= o.pw; };
+        auto step = [&] {
+            const std::uint64_t full = ((top ? kPhaseMsb : 0u) + lower + inc) & kPhaseMask;
+            const bool upNow = (full & kPhaseMsb) != 0;
+            r.lastPre = full;
+            r.rise = ! top && upNow;
+            lower = full & low;
+            top = upNow;
+            if (upNow)
+            {
+                const std::uint16_t out = static_cast<std::uint16_t> (shape[(full >> 44) & 0xfffu] & (pulse && ! gate ? 0u : 0xfffu));
+                if ((out & 0x800u) == 0)
+                {
+                    top = false;
+                    r.rise = false;
+                }
+            }
+            gate = compare();
+        };
+        auto runTo = [&] (std::uint64_t steps) {
+            std::uint64_t done = 0;
+            while (done < steps)
+            {
+                if (! top)
+                {
+                    const std::uint64_t d = (kPhaseMsb - lower + inc - 1) / inc; // the step with the carry (>= 1)
+                    const std::uint64_t plain = std::min (d - 1, steps - done);
+                    if (plain > 0)
+                    {
+                        lower += plain * inc; // stays below 2^55
+                        done += plain;
+                        r.lastPre = lower;
+                        r.rise = false;
+                        gate = compare();
+                        continue;
+                    }
+                }
+                step();
+                ++done;
+            }
+        };
+        runTo (j - 1);
+        r.prevPost = (top ? kPhaseMsb : 0u) | lower;
+        step();
+        r.lastPost = (top ? kPhaseMsb : 0u) | lower;
+        return r;
     }
 
     /** j cycles (1 <= j <= kMaxSkip) with no sync reset and no cycle that mustStep() covers. */
@@ -876,13 +956,14 @@ private:
     void renderStartSample() noexcept;
     void renderPiece (std::uint64_t cycles, bool toSampleEnd) noexcept;
     float renderFinishSample() noexcept;
-    void renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std::uint64_t cyclesDone, std::uint64_t cycleNow) noexcept;
+    void renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std::uint64_t cyclesDone, std::uint64_t cycleNow, bool converterTerms) noexcept;
     float renderOutput() noexcept;
     int renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noexcept;
     void renderBeforeChange() noexcept;
     void renderAfterChange (int testSetMask) noexcept;
     void renderSyncOsc (int n) noexcept;
     void renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept;
+    void renderSweepLine (int n, double tEnd) noexcept;
     void renderLines (PieceEvents& ev, double tEnd) noexcept;
     bool renderPullDown (int n, double t, bool atWrite) noexcept;
     int renderPullCell (int n, int cell, double tCross) const noexcept;
@@ -945,7 +1026,9 @@ void Chip::skip (std::uint64_t j, Sink& sink) noexcept
 {
     const std::uint64_t start = cycleCount;
     OscStepEvent unused {};
-    std::uint64_t lastPhase[3] {}, prevPhase[3] {};
+    // after the last step (pulled down where it is), after the step before, and the last step's phase before
+    // its pull-down (its output's index; oscillator 1 reads oscillator 3's top bit before oscillator 3's step)
+    std::uint64_t lastPhase[3] {}, prevPhase[3] {}, prePhase[3] {};
 
     // (a), oscillator by oscillator
     for (int n = 0; n < 3; ++n)
@@ -966,7 +1049,7 @@ void Chip::skip (std::uint64_t j, Sink& sink) noexcept
                 o.fillTimer -= static_cast<std::uint32_t> (left);
             o.firstShift = true;
             o.rise = false;
-            prevPhase[n] = lastPhase[n] = o.phase;
+            prevPhase[n] = lastPhase[n] = prePhase[n] = o.phase;
             continue;
         }
         // Bit-19 rises: the phase crosses (2m + 1) x 2^51 for some m, i.e. phase + 2^51 crosses a multiple of 2^52.
@@ -993,8 +1076,19 @@ void Chip::skip (std::uint64_t j, Sink& sink) noexcept
             ++at;
             noisePipelineStep (n, start + at, sink, unused);
         }
+        if (pulls (n))
+        {
+            // the bits below the top bit (and so the bit-19 rises above) are those without the pull-down
+            const PullRun r = pullRun (n, j);
+            prevPhase[n] = r.prevPost;
+            prePhase[n] = r.lastPre;
+            lastPhase[n] = r.lastPost;
+            o.rise = r.rise;
+            continue;
+        }
         prevPhase[n] = (o.phase + (j - 1) * o.inc) & kPhaseMask;
         lastPhase[n] = end & kPhaseMask;
+        prePhase[n] = lastPhase[n];
         o.rise = (~prevPhase[n] & lastPhase[n] & kPhaseMsb) != 0;
     }
     for (int n = 0; n < 3; ++n)
@@ -1004,7 +1098,8 @@ void Chip::skip (std::uint64_t j, Sink& sink) noexcept
     for (int n = 0; n < 3; ++n)
         envAdvance (n, j);
 
-    // (c): the state after the last step depends only on the last two steps (no pull-down, no write-back here)
+    // (c): the state after the last step depends only on the last two steps (no write-back here; a pull-down
+    // is in the phases already: the output's index is the phase before it, the comparison the one after)
     for (int n = 0; n < 3; ++n)
     {
         Osc& o = osc[idx (n)];
@@ -1014,7 +1109,8 @@ void Chip::skip (std::uint64_t j, Sink& sink) noexcept
         {
             const int s = detail::syncSource (n);
             const bool pulsePrev = j >= 2 ? pulseCompare (n, static_cast<std::uint32_t> (prevPhase[n] >> kFractionBits)) : o.pulseHigh;
-            const OutParts p = outParts (n, lastAcc, static_cast<std::uint32_t> (lastPhase[s] >> kFractionBits), pulsePrev);
+            const std::uint64_t sourcePhase = n == 0 ? prePhase[s] : lastPhase[s];
+            const OutParts p = outParts (n, static_cast<std::uint32_t> (prePhase[n] >> kFractionBits), static_cast<std::uint32_t> (sourcePhase >> kFractionBits), pulsePrev);
             o.out = static_cast<std::uint16_t> (p.shape & p.pulseMask & p.noiseMask);
             if (cfg.model == Model::B && (c & (ctrl::triangle | ctrl::saw)) != 0)
             {

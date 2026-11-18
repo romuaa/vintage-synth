@@ -221,3 +221,84 @@ TEST_CASE ("chip: an envelope that cannot change skips its repeating states exac
                 REQUIRE (c.state() == d.state());
             }
 }
+
+TEST_CASE ("chip: the Model A pull-down in the fast path equals stepping (both shape sets, pulse gates, ring and sync around it)", "[bside][chip][equivalence]")
+{
+    // The fast path follows a pulling oscillator (8.15.2 (c) step 4) in closed form; here against per-cycle
+    // stepping with the placeholder shapes too (their top bit stays up for a quarter period), pulse widths
+    // around the half, ring and sync on the other oscillators, writes that leave the accumulator in the upper
+    // half, and every jump length.
+    const std::uint8_t sawCombos[] { 0x30, 0x60, 0x70 };
+    for (const ShapeSet set : { ShapeSet::fitted, ShapeSet::placeholder })
+        for (std::uint64_t seed = 1; seed <= 12; ++seed)
+        {
+            bst::Rng r (seed + (set == ShapeSet::fitted ? 0u : 100u));
+            Config cfg;
+            cfg.model = Model::A;
+            cfg.shapes = set;
+            cfg.authentic = r.chance (50);
+            Chip fast, ref;
+            fast.prepare (cfg);
+            ref.prepare (cfg);
+            for (int w = 0; w < 300; ++w)
+            {
+                const int n = static_cast<int> (r.below (3));
+                std::uint8_t c = r.chance (70) ? sawCombos[r.below (3)] : static_cast<std::uint8_t> (r.below (8) << 4);
+                c = static_cast<std::uint8_t> (c | ctrl::gate | (r.chance (25) ? ctrl::sync : 0) | (r.chance (25) ? ctrl::ring : 0) | (r.chance (3) ? ctrl::test : 0));
+                const double f = r.chance (20) ? static_cast<double> (r.below (300)) : r.chance (50) ? static_cast<double> (r.below (65536)) : 65535.0 + r.below (140000);
+                const float pw = r.chance (50) ? 2048.0f + static_cast<float> (r.range (-40, 40)) : static_cast<float> (r.below (4096));
+                const auto in = input (f, pw, c, 0x00, 0xf0);
+                if (r.chance (80))
+                {
+                    fast.setOscillator (n, in);
+                    ref.setOscillator (n, in);
+                }
+                else
+                {
+                    const auto reg = static_cast<std::uint8_t> (7 * n + static_cast<int> (r.below (5)));
+                    const auto value = static_cast<std::uint8_t> (r.below (256));
+                    fast.write (reg, value);
+                    ref.write (reg, value);
+                }
+                const std::uint64_t gap = r.chance (40) ? r.below (20) : r.chance (70) ? r.below (3000) : r.below (60000);
+                fast.advanceCycles (gap);
+                for (std::uint64_t i = 0; i < gap; ++i)
+                    ref.stepCycle();
+                INFO ((set == ShapeSet::fitted ? "fitted" : "placeholder") << " seed " << seed << ", write " << w);
+                REQUIRE (fast.state() == ref.state());
+            }
+        }
+}
+
+TEST_CASE ("chip: the fast path ends a jump on a pull-down as stepping does (oscillator 1 reads oscillator 3 before its pull)", "[bside][chip][equivalence]")
+{
+    // Short jumps of every length end on every step of a pulling oscillator 3's period: the outputs of the
+    // last step (oscillator 1's ring reads oscillator 3's top bit before oscillator 3's pull-down, 8.15.2
+    // (c) step 1), the comparison and the rise flag come out as stepping gives them.
+    for (const ShapeSet set : { ShapeSet::fitted, ShapeSet::placeholder })
+        for (const std::uint8_t combo : { std::uint8_t { 0x30 }, std::uint8_t { 0x60 }, std::uint8_t { 0x70 } })
+        {
+            Config cfg;
+            cfg.model = Model::A;
+            cfg.shapes = set;
+            Chip fast, ref;
+            fast.prepare (cfg);
+            ref.prepare (cfg);
+            for (Chip* c : { &fast, &ref })
+            {
+                c->setOscillator (0, input (9000.3, 2048.0f, ctrl::triangle | ctrl::ring | ctrl::gate, 0x00, 0xf0));
+                c->setOscillator (1, input (7000.0, 1900.0f, static_cast<std::uint8_t> (0x70 | ctrl::ring | ctrl::gate), 0x00, 0xf0));
+                c->setOscillator (2, input (65535.0 + 40000.0, 2040.0f, static_cast<std::uint8_t> (combo | ctrl::gate), 0x00, 0xf0));
+            }
+            bst::Rng r (combo);
+            for (int i = 0; i < 6000; ++i)
+            {
+                const std::uint64_t gap = 1 + r.below (i % 3 == 0 ? 200u : 9u);
+                fast.advanceCycles (gap);
+                for (std::uint64_t k = 0; k < gap; ++k)
+                    ref.stepCycle();
+                INFO ((set == ShapeSet::fitted ? "fitted" : "placeholder") << ", combination " << int (combo) << ", jump " << i);
+                REQUIRE (fast.state() == ref.state());
+            }
+        }
+}
