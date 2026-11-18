@@ -186,7 +186,7 @@ void build (Model model, ShapeSet set, RenderTables& t)
         buildSteps (t, shapes, combos[c], t.steps[c]);
 }
 
-/** Built in place (about 180 KiB: never a by-value copy), once per (model, shape set). */
+/** Built in place (about 320 KiB: never a by-value copy), once per (model, shape set). */
 template <Model M, ShapeSet S>
 const RenderTables& built()
 {

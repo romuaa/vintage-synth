@@ -86,6 +86,14 @@
 #include <cassert>
 #include <cstdint>
 
+/** Inlined into the fast path whatever the compiler's size budget (envAdvance, envSteps: skip calls them per
+    envelope for every jump; out of line they cost the digital core about 2 ns per call, render cost step). */
+#if defined(_MSC_VER)
+    #define BS_CHIP_INLINE __forceinline
+#else
+    #define BS_CHIP_INLINE inline __attribute__ ((always_inline))
+#endif
+
 namespace vs::bside::chip
 {
 /** One oscillator's digital state (8.15.1, 8.15.2). Integer fields only; operator== compares all. */
@@ -257,9 +265,10 @@ public:
     }
 
     /** Model, clock, internal rate and shape set; resets the chip. Allocates nothing (no member owns
-        memory): the combined-waveform tables, the renderer's tables (RenderTables.h, about 180 KiB per
-        model and shape set, a few milliseconds to build) and both BLEP tables are process-wide and built on
-        their first use, which this call (and the constructor) always makes, never a step or a render.
+        memory): the combined-waveform tables, the renderer's tables (RenderTables.h, about 320 KiB per
+        model and shape set, a few milliseconds to build; the kernel layout, about 510 KiB once) and both BLEP
+        tables are process-wide and built on their first use, which this call (and the constructor) always
+        makes, never a step or a render.
         Construct and prepare a Chip off the audio thread: the first one in a process builds the tables. */
     void prepare (const Config& c) noexcept;
     /** Power-on state at cycle 0 (8.15.1; the configuration is kept). */
@@ -751,25 +760,17 @@ private:
         counter is on its cycle: for a long j one such period is stepped, and if the state came back, whole
         repetitions are skipped (exact: the steps depend only on the state and the registers, which do not
         change during an advance). */
-    void envAdvance (int n, std::uint64_t j) noexcept
+    BS_CHIP_INLINE void envAdvance (int n, std::uint64_t j) noexcept
     {
-        Env& e = env[idx (n)];
-        if (j >= 2u * (static_cast<std::uint64_t> (kRateMatch[0]) + 1u) && envInert (n)) // (no period is shorter)
-        {
-            const std::uint64_t period = (static_cast<std::uint64_t> (e.compare) + 1) * std::max<std::uint64_t> (e.dividerPeriod, 1);
-            if (j >= 2 * period)
-            {
-                const Env before = e;
-                envSteps (n, period);
-                j -= period;
-                if (e == before)
-                    j %= period;
-            }
-        }
+        // (no period is shorter than compare + 1: a short advance never tries the skip)
+        if (j >= 2u * (static_cast<std::uint64_t> (env[idx (n)].compare) + 1u))
+            j = envSkipRepeats (n, j);
         envSteps (n, j);
     }
+    /** envAdvance's skip over whole repetitions of an inert envelope; returns the steps left (Chip.cpp). */
+    std::uint64_t envSkipRepeats (int n, std::uint64_t j) noexcept;
 
-    void envSteps (int n, std::uint64_t j) noexcept
+    BS_CHIP_INLINE void envSteps (int n, std::uint64_t j) noexcept
     {
         Env& e = env[idx (n)];
         while (j > 0)
@@ -838,68 +839,7 @@ private:
         std::uint64_t prevPost = 0, lastPre = 0, lastPost = 0;
         bool rise = false;
     };
-    PullRun pullRun (int n, std::uint64_t j) const noexcept
-    {
-        // The lower 55 bits run on as without the pull-down; the top bit rises with a carry out of them and
-        // is cleared in a step whose output (the shape at the landing cell, through the pulse gate the step
-        // before compared) has bit 11 clear. Lower-half stretches are jumped to their carry; a top bit that
-        // stays up is followed step by step (at most j, <= kMaxSkip).
-        const Osc& o = osc[idx (n)];
-        const std::uint8_t c = ctl (n);
-        const auto& shape = shapes->wave[wave::bits (c) & 15u];
-        const bool pulse = (c & ctrl::pulse) != 0;
-        const std::uint64_t inc = o.inc, low = kPhaseMsb - 1;
-        bool top = (o.phase & kPhaseMsb) != 0;
-        std::uint64_t lower = o.phase & low;
-        bool gate = o.pulseHigh; // the comparison the next step uses
-        PullRun r;
-        auto compare = [&] { return ((((top ? kPhaseMsb : 0u) | lower) >> 44) & 0xfffu) >= o.pw; };
-        auto step = [&] {
-            const std::uint64_t full = ((top ? kPhaseMsb : 0u) + lower + inc) & kPhaseMask;
-            const bool upNow = (full & kPhaseMsb) != 0;
-            r.lastPre = full;
-            r.rise = ! top && upNow;
-            lower = full & low;
-            top = upNow;
-            if (upNow)
-            {
-                const std::uint16_t out = static_cast<std::uint16_t> (shape[(full >> 44) & 0xfffu] & (pulse && ! gate ? 0u : 0xfffu));
-                if ((out & 0x800u) == 0)
-                {
-                    top = false;
-                    r.rise = false;
-                }
-            }
-            gate = compare();
-        };
-        auto runTo = [&] (std::uint64_t steps) {
-            std::uint64_t done = 0;
-            while (done < steps)
-            {
-                if (! top)
-                {
-                    const std::uint64_t d = (kPhaseMsb - lower + inc - 1) / inc; // the step with the carry (>= 1)
-                    const std::uint64_t plain = std::min (d - 1, steps - done);
-                    if (plain > 0)
-                    {
-                        lower += plain * inc; // stays below 2^55
-                        done += plain;
-                        r.lastPre = lower;
-                        r.rise = false;
-                        gate = compare();
-                        continue;
-                    }
-                }
-                step();
-                ++done;
-            }
-        };
-        runTo (j - 1);
-        r.prevPost = (top ? kPhaseMsb : 0u) | lower;
-        step();
-        r.lastPost = (top ? kPhaseMsb : 0u) | lower;
-        return r;
-    }
+    PullRun pullRun (int n, std::uint64_t j) const noexcept; // Chip.cpp (out of line: rarely taken, keeps skip small)
 
     /** j cycles (1 <= j <= kMaxSkip) with no sync reset and no cycle that mustStep() covers. */
     template <class Sink>
@@ -1237,11 +1177,25 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // (advanceCycles, or stepCycle in per-cycle mode) and reports its events; then each line is swept from the
 // previous position to the piece's end, stopping at every event in time order. At an event the waveform's
 // value and slope just before and after it give a step (BLEP) and a slope change (BLAMP) from the shared
-// BlepTable (pulses and combined waveforms: the stronger kernel, RenderTables.h), placed at the event's exact time (a sub-sample position; events up to one sample back are
-// allowed and corrected in the samples already written). The naive value is taken at the sample's end,
-// the output is the per-oscillator ring buffer kLatencySamples (8) samples later, times the envelope.
-// Steps on the short kernel are that kernel's own steps at their exact time, kLatencySamples late (tested
-// against an independent sum of its steps: a free-running saw, "[kernel]"; steps at writes, "[timing]").
+// BlepTable (pulses and combined waveforms: the stronger kernel, RenderTables.h), placed at the event's exact
+// time (a sub-sample position; events up to one sample back are allowed and corrected in the samples already
+// written). The naive value is taken at the sample's end, the output is the per-oscillator ring buffer
+// kLatencySamples (8) samples later, times the envelope. Steps on the short kernel are that kernel's own steps
+// at their exact time, kLatencySamples late (tested against an independent sum of its steps: a free-running
+// saw, "[kernel]"; steps at writes, "[timing]"). Both kernels are laid out per table point with the 16 taps
+// side by side (RenderTables.h KernelTables): a step reads two (short; a combined waveform's cell step: the
+// long kernel refined to 2048 points) or four rows (the long kernel's Hermite read) with one weight.
+// Sweeps without digital events take a written-out loop per mode (renderSweepLine for triangle and saw,
+// renderSweepTable for combined waveforms; the same arithmetic as the general loop of renderSweep).
+// THE BATCHED PATH (renderBatch, render cost step). Where nothing couples the lines to the digital core (no
+// sync bit, no ring, no noise or per-cycle mode, no unconfirmed reset, no write-back, every envelope counter
+// unable to change over the run: envStableSteps), whole samples are rendered with the same sweeps and the same
+// finish but without pieces, event lists and per-sample digital steps: the digital phase at a sample's end is
+// phase + increment x cycles (a Model A saw combination pulled at every landing: modulo 2^55), and the
+// digital core is advanced once over the run (one advanceCycles: equal to stepping). A pulling oscillator whose
+// top bit may stay up, and renderCheckStates, step the digital core per sample instead. A deselected oscillator
+// whose ring has settled adds a constant; a chip with nothing moving sums constants. Bit-identical to the
+// general path (tested: renderBatchingEnabled (false), random patches, writes, envelopes, landings).
 //
 // PER WAVEFORM (the mode follows the control register):
 //   triangle, saw   closed form: g x (the continuous 12-bit value) plus, for the Model A converter, every
@@ -1249,10 +1203,14 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 //                   (e_i x bit_i, edges placed exactly), the faster bits as their mean. Saw wraps and
 //                   triangle folds are BLEP/BLAMP events; the 12-bit staircase itself is not rendered.
 //   pulse           two converter levels; the comparison is one cycle late (8.15.2 (c)), so the edges lie
-//                   one cycle after the line crosses the width (or wraps); Smooth widths are continuous.
+//                   one cycle after the line crosses the width (or wraps); Smooth widths are continuous. A
+//                   frozen line (frequency 0) reset by sync takes its gate one cycle after the reset.
 //   combined        (two or more of triangle, saw, pulse; no noise) an exact band-limited staircase: every
 //                   change of d (shape (index)) between index cells is a BLEP; the pulse gate, the ring
-//                   fold (half a table further) and phase jumps are exact too. Model A combinations with
+//                   fold (half a table further) and phase jumps are exact too. Above the register's highest
+//                   frequency (Smooth only, up to 12 kHz) the staircase of a coarse level (128 down to 8 cells
+//                   per period, its harmonics below half the cell count the fine one's; at most two cells per
+//                   sample, with hysteresis; a switch is a band-limited step at a sample end). Model A combinations with
 //                   the saw pull their top bit down (8.15.2 (c) step 4) in the first step whose landing
 //                   cell has output bit 11 clear: from a rise the line is pulled where it enters such a
 //                   cell (the gate as the chip compared it, at whole cycles); after a write or a correction
@@ -1284,9 +1242,13 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // controls: a predicted pull-down ends (the line goes back to the digital phase), a reset whose sync bit
 // was cleared is dropped, pull-downs inside an upper half follow the chip's landings, and the ring state is
 // taken after the sources' pull-downs. A write right after render() (at a sample boundary) is placed at
-// its cycle too, with the values taken at the sample end (less than one cycle apart).
+// its cycle too, with the values taken at the sample end (less than one cycle apart); a prediction made in
+// that last part of the sample is dropped when the write puts the source's line below its top bit again
+// (a lower frequency), and predicted anew. A source whose rise found the pulse gate open only from a
+// comparison made before a width write, with the line's own gate closed, is pulled one cycle after the rise
+// where the chip's next comparison is low (its ring target's flip back included).
 // THE DIGITAL STATE is advanced only by advanceCycles / stepCycle, exactly as without rendering (tested
 // for random write sequences, both models, every block split and internal rate).
 // REAL TIME: no allocation, no locks, no exceptions; every loop is bounded (32 cycles per piece, 80
-// events per oscillator and piece, 4 096 events per sweep as a backstop).
+// events per oscillator and piece, 4 096 events per sweep as a backstop; a batch by its block).
 } // namespace vs::bside::chip
