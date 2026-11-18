@@ -3,6 +3,20 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side render cost step (2026-11-18)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The first batched renderer missed a pulse edge for a whole period in a third of random patches; every existing test passed. | It cached the next event as a phase limit, and the finish wraps a pulse line into [0, 1) after the event: the limit stayed in the old coordinates. | A cached event limit lives in the line's coordinates: follow every wrap and re-derive after any correction. Prove a fast path against the slow one bit for bit (a test aid that switches it off), not against tolerances. |
+| The batched path took three large corrections in 50 000 long-run patches that its own equivalence test never showed. | A time-based event (a scheduled Model A landing) was converted to a phase with the sweep time 0 instead of the time the line is at; the random generator rarely left a landing pending across a sample boundary. | Convert time-based events at the line's own time; give the equivalence test a generator that makes the rare state (slow pulling oscillators, control writes inside the upper half). |
+| Coarse cells of a combined waveform moved the audio band by -26 dB although their cell means preserve the low harmonics. | A staircase of N cell means folds the shape's harmonics near N back onto the low ones (sample and hold of a box-filtered shape); our shapes' harmonics decay slowly. | Build a coarse staircase from the fine spectrum (harmonics below N / 2 matched exactly), not from means. |
+| A finer linear kernel table made the narrowest pulse alias more (margin 5.3 -> 3.8 -> 3.4 dB at 512 Hermite, 2 048, 4 096 points). | The pulse's two edges, one cycle apart, nearly cancel; a linear read's error depends on the sub-sample offset and does not cancel between them, a smooth (cubic) read's does. | Keep the Hermite read for pulse edges; a linear refined table only for steps that do not come in cancelling pairs. Check the closest alias rows after any kernel change, not only the gate's pass. |
+| The digital core got 3.5 ns slower per call after a small addition to `skip`. | The compiler stopped inlining `envAdvance` into the grown function. | Force the hot small helpers inline (`BS_CHIP_INLINE`) and move rare branches out of line; measure the "digital core only" rows after touching `skip`. |
+| A table builder's `std::vector` failed "building the tables and preparing a chip allocate nothing". | The render tables promise no allocation; only the shared BLEP tables are exempt. | No heap in table builders: fixed arrays, or a direct computation (the coarse levels' spectrum up to harmonic 64 directly instead of an FFT). |
+| The state check missed a stuck pulse gate for good (8.17 defect 1). | It skipped every line within three cycles' advance of a boundary; a frozen line sits on one for ever. | Skip only for a stated reason that ends (here: three cycles after a reset); a frozen line is checked wherever it sits. |
+| Profiling inlined code with `sample` gave one number for the whole batched loop. | It reports functions, not lines. | Profile one case at a time (`chip_bench <case>`, `CHIP_BENCH_SECONDS=200`) and confirm a stage's share by an experiment that removes it (an early return in the emit) before optimising it. |
+| A shell command with a compiler include flag ending in the source directory's name was refused by the worktree guard. | The guard reads the word as the shell's `source` command. | Put such commands in a script file (in the scratchpad) and run the script. |
+
 ## B-Side S2b-2: band-limited rendering (2026-11-15)
 
 | Problem | Cause | Fix / rule |

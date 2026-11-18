@@ -5,6 +5,27 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side render cost step (2026-11-18)
+- `Chip::render` per internal sample per chip at 96 kHz (`chip_bench`, this Mac, back to back with the branch
+  point): silent 61 -> 1.9 ns, typical 57 -> 13, Model A typical 217 -> 36, three Model A saws 297 -> 44,
+  the new `s4gate` case (the S4 gate's patch) 265 -> 32, Model A combined 395 -> 90, three combined waveforms
+  at 12 kHz 5 104 -> 131 (Model A) and 4 272 -> 117 (Model B), worst 780 -> 316, noise 199 -> 164, noise+saw
+  source 332 -> 178, Model A landings 652 -> 193; every case faster at 48 and 192 kHz too.
+- How: a batched path that renders whole samples with the digital core advanced once, bit-identical to the
+  general path; envelopes that cannot change skip their repeating states; the Model A pull-down in closed
+  form in the digital core; envelopes after the oscillators in the write-back's per-cycle mode; both BLEP
+  kernels as tap-major tables (the long one by Hermite interpolation, refined for combined waveforms' cell
+  steps); the Model A converter terms as tables; written-out sweeps for triangle, saw and combined lines.
+- Above the register's range (Smooth, to 12 kHz) combined waveforms use coarse staircases whose in-band
+  harmonics are the fine one's (aliasing -101 dB at worst there, no budget); at and below it nothing changes.
+- Fixed the three defects 8.17 listed (a synced pulse at frequency 0, a ring target after a width write in the
+  step before its source's rise, a frequency drop between a sync source's rendered crossing and its rise),
+  each with a regression test that fails on the old renderer; the state check now checks frozen lines.
+- Not met (decisions "B-Side render cost step" rows 12, 13): Model A triangle and saw patches (36, 44, 32 ns
+  against 24) and Model A combined (90 against 60).
+- `chip_bench`: case names as arguments, `CHIP_BENCH_SECONDS`, the `s4gate` case. Tests: `[batch]`, `[levels]`,
+  `[defects]`, new equivalence cases, hidden `[.render-above]` report.
+
 ### Orchestrate skill trimmed (2026-11-16)
 - `.claude/skills/orchestrate/SKILL.md` now holds only what is specific to this repository (serial files,
   worktrees, local-first gates, budgets, model routing, commit rules). Removed: the finished Wave 0–4 plan
