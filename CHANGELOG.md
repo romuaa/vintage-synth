@@ -5,6 +5,17 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M8 release hardening (2026-11-19)
+- Release packaging (docs/architecture.md section 10): `scripts/package-release.sh` (`pack`, `verify`, `sums`,
+  `changelog`, `selftest`), texts under `resources/release/` (INSTALL per platform, SOURCE, THIRD-PARTY derived
+  from what the build compiles), one zip per platform with `SHA256SUMS.txt`; `verify` works from the zip alone
+  (layout, version, slices, B-Side strings, metadata entries, symlinks, macOS `codesign --verify`).
+- `build.yml`: input `release` (Vintage only, then the jobs `pack`, `zip-smoke` and `package`, which creates a draft
+  release); never run yet (CI is offline). The `mac` step of `scripts/preflight.sh` packs and verifies the zip.
+- Fixed: the macOS bundle's ad-hoc signature did not cover `moduleinfo.json` (JUCE writes it after the linker signs),
+  so `codesign --verify --deep --strict` failed on every build; the bundle is now signed again (ad hoc) as the last
+  build step.
+
 ### B-Side alias follow-up step (2026-11-19)
 - Fixed: Model B pulses of width 1 and 4095 missed the -100 dB alias budget by up to 2.7 dB at frequencies
   with a small-denominator ratio to the internal rate. The cause was the float conversion of the output (its

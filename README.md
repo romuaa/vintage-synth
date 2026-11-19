@@ -8,7 +8,8 @@ naming and design.
 > release: two 16-voice parts (Lower and Upper) with Whole, Dual and Split modes, arpeggiator and
 > 16-step sequencer, chorus, delay and reverb, 64 factory programs with banks, and its own editor
 > (pages Sound, Envelopes, LFO, Play with a playable keyboard, Arp + Seq, Effects, Browser; live
-> host automation). What remains is hardening, signing and installers (see [Roadmap](#roadmap)).
+> host automation). What remains is the first release itself (see [Roadmap](#roadmap)): it will be
+> one unsigned zip per platform, without installers.
 > Windows and Linux x86_64 builds are currently unverified (CI is offline).
 
 ## Features
@@ -51,6 +52,16 @@ tested, but are not connected to the plugin yet), and patch banks.
 | Linux | x86_64 and ARM64 in one bundle (glibc 2.35 or newer) | VST3 |
 
 There are no binary releases yet: build from source. Until v1.0 the parameter set may still change.
+
+The first release will be one zip per platform (macOS, Windows, Linux) that you unpack and copy into
+your VST3 folder; there are no installers and no code signing yet. Each zip carries an `INSTALL.txt`
+for its platform (folders, the unsigned-plugin warning, uninstall), the licence, a `SOURCE.txt` that
+names the exact commit, and `THIRD-PARTY.txt`. The Windows ARM64 and Linux ARM64 parts of the merged
+bundles are experimental: built and unit-tested, but not run through pluginval and not tuned.
+How the zips are made and checked: [docs/architecture.md](docs/architecture.md) section 10 and
+`scripts/package-release.sh` (`pack`, `verify`, `sums`, `selftest`); the release workflow is the
+`build` workflow started by hand with `-f targets=all -f release=true`, which builds Vintage only
+(`-DVS_BUILD_BSIDE=OFF`) and ends in a draft GitHub release that the owner publishes.
 
 ## Building
 
@@ -135,7 +146,8 @@ image into `~/Library/Caches/vs-preflight/`). It builds and tests both macOS uni
 pluginval and the VST3 validator on each bundle, the sanitizers, the Linux ARM64 container build, a
 security scan and repository checks (`VS_PREFLIGHT_PLUGINS=vintage` or `bside` limits pluginval and the
 validator to one plugin while iterating; the hand-over run always covers both). `scripts/preflight.sh --clean` removes what it cached. Windows and Linux
-x86_64 are confirmed by a manually started CI run.
+x86_64 are confirmed by a manually started CI run. The `mac` step also packs the macOS release zip
+from the Vintage bundle it just validated, verifies the zip and loads the unpacked bundle in a host.
 
 ## Testing
 
@@ -164,7 +176,9 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
 - `build` workflow: macOS universal, Windows x64, Windows ARM64 and Linux x86_64 builds with unit
   tests and the VST3 host smoke test; pluginval and the VST3 validator on macOS, Windows x64 and
   Linux; merged Windows bundle; a Linux job that runs the tests under AddressSanitizer and UBSan. Ninja and a compiler
-  cache keep it fast.
+  cache keep it fast. With the input `release=true` (and `targets=all`) it builds Vintage only, then
+  packs and verifies the release zips and creates a draft release; it is the only job that can write
+  to the repository's releases, and it never publishes.
 - `security` workflow: [Trivy](https://trivy.dev) scans the repository for vulnerable dependencies,
   committed secrets and misconfigurations on every push, pull request and weekly.
 - Dependabot keeps GitHub Actions (pinned by commit SHA) and the JUCE and Catch2 submodules up to date.
@@ -198,7 +212,7 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 | M5 | Chorus, delay and reverb | Done |
 | M6 | Presets, patch banks, 64 factory programs, golden-render regression tests | Done |
 | M7 | Custom UI | Done (M7a–M7f); final category colours and a top-bar redesign deferred |
-| M8 | Hardening, signing, installers, release | Not started |
+| M8 | Hardening, release (first release: unsigned zips, no installers; signing and installers later) | Packaging written, not yet run in CI; release not made |
 
 A second instrument is planned in this repository: **B-Side**, a polyphonic synth modelled on a classic 3-voice
 sound chip from early-1980s home computers, as its own plugin sharing the common engine code. Step S1a
