@@ -121,29 +121,29 @@ worktrees, gates, model routing, commit rules) and overrides it. If a session di
 repository's file, read it by hand before orchestrating. Checked 2026-11-16: `/orchestrate`
 loads the personal skill and reaches the repository's file through that instruction.
 
-**In flight (2026-11-19):** the B-Side render cost step, done on `bside/render-cost` and
-awaiting the owner's merge approval (see History). Until it merges, the first line of this
-section does not hold.
+**In flight (2026-11-19, owner: "continue", both in parallel):** B-Side **S3a** (filter and
+output stage as their own classes, contract 8.19.1; branch `bside/s3a-filter`) and the **alias
+follow-up step** (contract 8.20; branch `bside/alias-followup`), both based on
+`bside/contracts-s3a-alias` (the contract commit). Until they merge, the first line of this
+section does not hold. The render cost step is merged (PR #32).
 
 **Going public (owner, 2026-11-18):** the repository becomes public only once the release work is
 done, **B-Side's release work included** (so after S4 and M8 for both plugins). Until then CI
 stays offline; every Windows and Linux x86_64 check waits for that moment.
 
 **Next steps, in the order the owner was given:**
-1. **B-Side render cost step:** done, awaiting merge (architecture 8.18.1).
+1. **B-Side render cost step:** done and merged (PR #32, 2026-11-19; architecture 8.18.1).
 2. **B-Side parameter step:** done and merged (PR #31, 2026-11-18).
-3. **S3: filter and output path** (8.4.4; both models; the reference shows a nonlinearity after
-   the converters), then **S4** (polyphony 8.5, wiring into the plugin, decimator with the alias
-   gate after it, factory patches, owner audition).
-4. **Alias follow-up step** (opus; owner decision 2026-11-18: fix it, no exemption; may run in
-   parallel with S3 only if S3 stays out of `source/bside/chip/ChipRender.cpp`). Two defects the
-   gates did not see, both older than the cost step (8.18.1, known defects 1 and 2). Second: a
-   synced target at an exact integer ratio to its source shows a spurious line at half the source
-   rate (-43.8 dB on a Model B saw at 3 kHz); first settle which ratios are affected
-   (`[.render-sync-integer]`), then add exact ratios to the sync gate. First: Model B pulse widths 1 and 4095 miss the -100 dB budget by up to 2.6 dB at frequencies
-   with a small-denominator ratio to the internal rate (worst -97.42 dB at 88.2 kHz internal,
-   measured with a rectangular DFT over whole signal periods; the bin-centred tests show about
-   -116 dB and so do not see it). Older than the cost step.
+3. **S3a** (in flight; 8.19.1): `Filter` and `OutputStage` in new files, fitted to the committed
+   reference data, both models; stays out of the renderer. **Alias follow-up step** (in flight;
+   8.20; owner decision 2026-11-18: fix, no exemption): narrow Model B pulses by the exact
+   measurement, and synced targets at exact integer ratios.
+4. **S3b** (8.19.2; after the alias step has merged, it edits the renderer): two buses in
+   `Chip::render`, routing, topology, the remaining reference traces, filter sweeps for the
+   owner to hear. Then **S4** (polyphony 8.5, wiring into the plugin, decimator with the alias
+   gate after it, factory patches, owner audition). **Owner decision 2026-11-19:** the Model A
+   CPU budget (the S4 gate patch costs about 31 ns before the filter, the whole budget of 8.5)
+   is decided at S4 with real numbers, filter included.
    **Chip follow-ups, small:** the Model B read value in the first step after a waveform change
    (candidate rule in 8.15.2 (c) step 5); at the next reference regeneration a full-noise-fill
    trace and a noise-before-first-shift trace; an independent model for the program engine's
@@ -165,8 +165,7 @@ repository.
 
 ### History (newest facts first within each area)
 
-- **B-Side render cost step: done on `bside/render-cost`, awaiting the owner's merge approval**
-  (2026-11-19; contract as built: architecture 8.18.1; decisions "B-Side render cost step").
+- **B-Side render cost step is merged to `main`** (PR #32, owner approved 2026-11-19; contract as built: architecture 8.18.1; decisions "B-Side render cost step").
   `Chip::render` at 96 kHz, ns per chip per internal sample: silent 61 -> 2, typical Model B
   56 -> 13, Model A typical 217 -> 36, the S4 gate patch 265 -> 31, three combined waveforms at
   12 kHz about 5000 -> 183. **Model A is still above its target of 24** (every further saving
