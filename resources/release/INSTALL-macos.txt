@@ -1,0 +1,44 @@
+Exitium Vintage Synth @VERSION@ for macOS
+=========================================
+
+What is in this folder
+  Exitium Vintage Synth.vst3   the plugin (VST3 format; Apple silicon and Intel in one file)
+  LICENSE.txt                  the licence of this software (AGPLv3)
+  SOURCE.txt                   where to get the complete source code
+  THIRD-PARTY.txt              third-party components and their licences
+
+You need: macOS 11 or newer, and a host (DAW) that loads VST3 plugins.
+
+Install
+  1. Quit your host.
+  2. Copy "Exitium Vintage Synth.vst3" into one of these folders:
+       Only for you:      ~/Library/Audio/Plug-Ins/VST3
+       For every user:    /Library/Audio/Plug-Ins/VST3
+     "~" is your home folder. In Finder choose Go > Go to Folder... and paste the
+     path. Create the folder if it does not exist.
+  3. Remove the download mark (next section).
+  4. Start your host and rescan its plugins.
+
+This plugin is not signed with a developer certificate and not notarized by Apple.
+It carries only a local (ad-hoc) signature. A file downloaded from the internet is
+marked as quarantined, and macOS or your host will refuse to load a marked plugin
+of this kind. Remove the mark once, in Terminal, after copying (use the folder you
+chose in step 2):
+
+  xattr -dr com.apple.quarantine "$HOME/Library/Audio/Plug-Ins/VST3/Exitium Vintage Synth.vst3"
+
+For the system-wide folder:
+
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/Exitium Vintage Synth.vst3"
+
+If your host still lists the plugin as blocked, open System Settings > Privacy &
+Security, scroll to the message about the plugin and choose Open Anyway, then rescan.
+
+Uninstall
+  Delete "Exitium Vintage Synth.vst3" from the folder you copied it to. Sounds you
+  saved yourself stay in your Documents folder, under Exitium; delete that folder
+  too if you want them gone.
+
+Source code and licence
+  This software is free software under the GNU Affero General Public License,
+  version 3. See LICENSE.txt, SOURCE.txt and THIRD-PARTY.txt.

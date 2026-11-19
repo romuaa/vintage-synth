@@ -1,0 +1,42 @@
+Exitium Vintage Synth @VERSION@ for Linux
+=========================================
+
+What is in this folder
+  Exitium Vintage Synth.vst3   the plugin (VST3 format; a folder with x86_64 and
+                               aarch64 builds inside)
+  LICENSE.txt                  the licence of this software (AGPLv3)
+  SOURCE.txt                   where to get the complete source code
+  THIRD-PARTY.txt              third-party components and their licences
+
+You need: a 64-bit Linux with glibc 2.35 or newer (for example Ubuntu 22.04, Debian 12
+or newer releases of those), and a host (DAW) that loads VST3 plugins. The C++ runtime
+is built into the plugin. The usual desktop libraries that every plugin host already
+uses (X11, ALSA, FreeType, Fontconfig) must be installed.
+
+The ARM64 (aarch64) build is experimental: it is built and unit-tested, but it has
+not been run through the plugin validator or tuned for speed on small boards. The
+x86_64 build is the one that is fully checked.
+
+Install
+  1. Quit your host.
+  2. Copy the whole folder "Exitium Vintage Synth.vst3" into one of these folders:
+       Only for you:      ~/.vst3
+       For every user:    /usr/local/lib/vst3   (or /usr/lib/vst3)
+     For example, from the unpacked folder:
+       mkdir -p ~/.vst3 && cp -r "Exitium Vintage Synth.vst3" ~/.vst3/
+     The system-wide folders need administrator rights (sudo).
+  3. Start your host and rescan its plugins.
+
+If the host says that a library or a "GLIBC" version is missing, your system is older
+than the minimum above.
+
+There is no signing step on Linux; nothing else has to be unblocked.
+
+Uninstall
+  Delete the folder "Exitium Vintage Synth.vst3" from where you copied it. Sounds you
+  saved yourself stay in your Documents folder, under Exitium; delete that folder
+  too if you want them gone.
+
+Source code and licence
+  This software is free software under the GNU Affero General Public License,
+  version 3. See LICENSE.txt, SOURCE.txt and THIRD-PARTY.txt.

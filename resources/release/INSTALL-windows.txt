@@ -1,0 +1,47 @@
+Exitium Vintage Synth @VERSION@ for Windows
+===========================================
+
+What is in this folder
+  Exitium Vintage Synth.vst3   the plugin (VST3 format; a folder with 64-bit Intel/AMD
+                               and ARM64 builds inside)
+  LICENSE.txt                  the licence of this software (AGPLv3)
+  SOURCE.txt                   where to get the complete source code
+  THIRD-PARTY.txt              third-party components and their licences
+
+You need: Windows 10 or newer (64-bit), and a host (DAW) that loads VST3 plugins.
+The plugin needs no extra runtime to be installed.
+
+The ARM64 build (Windows on ARM) is experimental: it is built and unit-tested, but it
+has not been run through the plugin validator or tuned for speed. The 64-bit Intel/AMD
+build is the one that is fully checked.
+
+Install
+  1. Unblock the download first (next section), then unpack the zip.
+  2. Quit your host.
+  3. Copy the whole folder "Exitium Vintage Synth.vst3" into one of these folders:
+       Only for you:      %LOCALAPPDATA%\Programs\Common\VST3
+       For every user:    C:\Program Files\Common Files\VST3
+     Paste the first path into the Explorer address bar to open it. Create the
+     folders if they do not exist. The system-wide folder asks for administrator
+     permission when you copy.
+  4. Start your host and rescan its plugins.
+
+This plugin is not code-signed. Windows marks a downloaded zip file, and everything
+you unpack from it, as coming from the internet, and may block or warn about it.
+Before unpacking: right-click the zip file, choose Properties, tick "Unblock" at the
+bottom of the General tab, click OK, and then unpack it. If you already unpacked it,
+open PowerShell in the unpacked folder and run:
+
+  Get-ChildItem -Recurse | Unblock-File
+
+If a SmartScreen or antivirus message appears when your host loads the plugin, it is
+because the file has no signature; the source code is public (see SOURCE.txt).
+
+Uninstall
+  Delete the folder "Exitium Vintage Synth.vst3" from where you copied it. Sounds you
+  saved yourself stay in your Documents folder, under Exitium; delete that folder
+  too if you want them gone.
+
+Source code and licence
+  This software is free software under the GNU Affero General Public License,
+  version 3. See LICENSE.txt, SOURCE.txt and THIRD-PARTY.txt.

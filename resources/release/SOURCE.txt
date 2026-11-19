@@ -1,0 +1,14 @@
+Exitium Vintage Synth @VERSION@: source code
+============================================
+
+Exitium Vintage Synth is licensed under the GNU Affero General Public License,
+version 3 (LICENSE.txt). The complete corresponding source code of the binaries in
+this package is available at:
+
+  Repository:  @REPOSITORY_URL@
+  Release tag: @TAG@
+  Commit:      @COMMIT@
+
+Check out that commit (with its submodules: git clone --recurse-submodules, then
+git checkout @COMMIT@) and follow the build instructions in README.md. The
+third-party components in the submodules are listed in THIRD-PARTY.txt.
