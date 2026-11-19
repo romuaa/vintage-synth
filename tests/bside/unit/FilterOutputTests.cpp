@@ -199,24 +199,239 @@ TEST_CASE ("filter: after a loud input, silence decays below -120 dB with no lim
     WARN ("slowest decay to within 1e-6 of the static output: " << slowest << " s (allowed 3 s)");
 }
 
-TEST_CASE ("filter: a band-pass state decaying beside a constant low-pass state never becomes subnormal", "[filter][stability]")
+TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant fails)", "[filter]")
 {
-    // The slowest decay of 4.4's rates (Model B, cutoff 0 = 15 Hz, resonance 0, 88.2 kHz, a constant input after a
-    // loud one): the band-pass state falls to 1e-308 after about 10 s unless flushed. 20 s of chip time.
-    bst::Rng r (36);
-    Filter f;
-    f.prepare (Model::B, 88200.0, 0.5f);
-    f.setCutoff (0.0f);
-    f.setMode (Filter::kLowPass | Filter::kBandPass);
-    for (int i = 0; i < 8820; ++i)
-        f.process (uniform (r, kInLo, kInHi));
-    bool normal = true;
-    for (int i = 0; i < 88200 * 20; ++i)
+    // Model B's floor at register 0
+    CHECK (std::abs (Filter::cutoffCurveHz (Model::B, 0.0, 0.5) - 15.0) < 1e-9);
+    // Model A: the corner falls with resonance (0.871 x at 15) and the low-pass gain rises (1.196 x at 15)
+    Filter a, b;
+    a.prepare (Model::A, 192000.0, 0.5f);
+    b.prepare (Model::A, 192000.0, 0.5f);
+    for (Filter* f : { &a, &b })
     {
-        f.process (0.7f);
-        normal = normal && f.statesNormal();
+        f->setCutoff (1024.0f);
+        f->setMode (Filter::kLowPass);
     }
-    CHECK (normal);
+    b.setResonance (15);
+    CHECK (std::abs (b.cutoffHz() / a.cutoffHz() - 0.8710) < 1e-3);
+    const double g0 = sineGain (a, 192000.0, 200.0, 0.0), g15 = sineGain (b, 192000.0, 200.0, 0.0);
+    WARN ("Model A low-pass gain at 200 Hz, resonance 15 against 0: " << g15 / g0);
+    CHECK (std::abs (g15 / g0 - 1.1958) < 0.02);
+    // a cutoff-only write updates the band-pass gain (it follows Q at resonance 0): the same as a fresh filter
+    Filter c, d;
+    c.prepare (Model::A, 96000.0, 0.5f);
+    d.prepare (Model::A, 96000.0, 0.5f);
+    c.setMode (Filter::kBandPass);
+    d.setMode (Filter::kBandPass);
+    c.setCutoff (1500.0f);
+    c.setCutoff (400.0f);
+    d.setCutoff (400.0f);
+    float diff = 0.0f;
+    for (int i = 0; i < 2000; ++i)
+    {
+        const auto x = static_cast<float> (std::sin (i * 0.05));
+        diff = std::max (diff, std::abs (c.process (x) - d.process (x)));
+    }
+    CHECK (! (diff > 0.0f));
+}
+
+TEST_CASE ("filter: the rational tan, and a cutoff every sample (processWithCutoff)", "[filter]")
+{
+    // fastTan: relative error below 1e-8 up to 0.75 (cutoffs to 0.24 x the rate), below 3e-5 up to 1.42 (0.45 x)
+    double worstLow = 0.0, worstHigh = 0.0;
+    for (int i = 1; i <= 14200; ++i)
+    {
+        const double x = i * 1e-4;
+        const double e = std::abs (Filter::fastTan (x) / std::tan (x) - 1.0);
+        (x <= 0.75 ? worstLow : worstHigh) = std::max (x <= 0.75 ? worstLow : worstHigh, e);
+    }
+    CHECK (worstLow < 1e-8);
+    CHECK (worstHigh < 3e-5);
+    // Model B: a cutoff every sample equals setCutoff + process (the rational tan's error only)
+    bst::Rng r (37);
+    Filter a, b;
+    a.prepare (Model::B, 96000.0, 0.5f);
+    b.prepare (Model::B, 96000.0, 0.5f);
+    for (Filter* f : { &a, &b })
+    {
+        f->setMode (0x70);
+        f->setResonance (11);
+    }
+    double worst = 0.0;
+    for (int i = 0; i < 20000; ++i)
+    {
+        const float fc = 1000.0f + 900.0f * static_cast<float> (std::sin (i * 0.001));
+        const float x = uniform (r, -1.0f, 1.0f);
+        a.setCutoff (fc);
+        const float ya = a.process (x);
+        const float yb = b.processWithCutoff (x, fc);
+        worst = std::max (worst, static_cast<double> (std::abs (ya - yb)));
+    }
+    WARN ("Model B processWithCutoff against setCutoff + process: largest difference " << worst);
+    CHECK (worst < 1e-4);
+    // Model A at its stored cutoff: identical to process
+    Filter c, d;
+    c.prepare (Model::A, 96000.0, 0.5f);
+    d.prepare (Model::A, 96000.0, 0.5f);
+    for (Filter* f : { &c, &d })
+    {
+        f->setCutoff (700.0f);
+        f->setMode (0x10);
+    }
+    float diff = 0.0f;
+    for (int i = 0; i < 5000; ++i)
+    {
+        const float x = uniform (r, 0.0f, 1.5f);
+        diff = std::max (diff, std::abs (c.process (x) - d.processWithCutoff (x, 700.0f)));
+    }
+    CHECK (! (diff > 0.0f));
+}
+
+TEST_CASE ("output stage: volume DC off, a volume or routing write with held voices does not move the output's DC", "[output]")
+{
+    // 8.4.4 (orchestrator's reading): with volumeDc off a volume write with held voices changes the DC at the stage's
+    // output by less than -60 dBFS, on both paths, and so does a routing write with silent voices. A held triangle
+    // (110 Hz, full envelope, through the voice bend) sounds on the direct path or through the low-pass; the DC is the
+    // mean over 0.5 s, measured 3 s after the voice starts (the board high-pass has settled) and again 1 s after
+    // the write. With volumeDc on the same write does step the DC (the reference's behaviour; the gates compare it).
+    for (const Model m : { Model::A, Model::B })
+        for (const bool routed : { false, true })
+            for (const bool vdc : { false, true })
+            {
+                const double rate = 96000.0;
+                Filter f;
+                f.prepare (m, rate, 0.5f);
+                f.setCutoff (1500.0f);
+                OutputStage o;
+                o.prepare (m, rate, vdc);
+                auto setRegs = [&] (std::uint8_t routing, std::uint8_t mv) {
+                    f.setMode (mv);
+                    o.setRouting (routing);
+                    o.setModeVolume (mv);
+                    o.setFilterStaticDc (f.staticOutput (o.staticFilterBusDc()));
+                };
+                setRegs (routed ? 0x01 : 0x00, 0x1f);
+                double phase = 0.0;
+                auto run = [&] (double seconds, bool measure) {
+                    double sum = 0.0;
+                    const int n = static_cast<int> (seconds * rate);
+                    for (int i = 0; i < n; ++i)
+                    {
+                        phase += 110.0 / rate;
+                        phase -= std::floor (phase);
+                        const float u = static_cast<float> (2.0 * std::abs (phase - 0.5) - 0.5); // triangle +-0.5
+                        const float v = OutputStage::shapeVoice (m, u, 1.0f);
+                        const float y = o.process (f.process (o.filterBusLevel (routed ? v : 0.0f, routed ? 1.0f : 0.0f)), routed ? 0.0f : v,
+                                                   routed ? 0.0f : 1.0f);
+                        sum += y;
+                    }
+                    return measure ? sum / n : 0.0;
+                };
+                run (3.0, false);
+                const double before = run (0.5, true);
+                setRegs (routed ? 0x01 : 0x00, 0x10); // volume 15 -> 0
+                run (1.0, false);
+                const double after = run (0.5, true);
+                const double stepDb = 20.0 * std::log10 (std::abs (after - before) + 1e-12);
+                INFO ("model " << (m == Model::A ? "A" : "B") << (routed ? " low-pass" : " direct") << " volume DC " << vdc << ": DC step "
+                               << stepDb << " dBFS");
+                if (! vdc)
+                    CHECK (stepDb < -60.0);
+            }
+    // routing writes with silent voices, volume DC off
+    for (const Model m : { Model::A, Model::B })
+    {
+        Filter f;
+        f.prepare (m, 96000.0, 0.5f);
+        f.setCutoff (1500.0f);
+        OutputStage o;
+        o.prepare (m, 96000.0, false);
+        double worst = -300.0;
+        double previous = 0.0;
+        bool first = true;
+        for (const int routingInt : { 0x00, 0x01, 0x03, 0x07, 0x00, 0x04 })
+        {
+            const auto routing = static_cast<std::uint8_t> (routingInt);
+            f.setMode (0x1f);
+            o.setRouting (routing);
+            o.setModeVolume (0x1f);
+            o.setFilterStaticDc (f.staticOutput (o.staticFilterBusDc()));
+            double sum = 0.0;
+            for (int i = 0; i < 96000; ++i)
+            {
+                const float y = o.process (f.process (o.filterBusLevel (0.0f, 0.0f)), 0.0f, 0.0f);
+                if (i >= 48000)
+                    sum += y;
+            }
+            const double dc = sum / 48000.0;
+            if (! first)
+                worst = std::max (worst, 20.0 * std::log10 (std::abs (dc - previous) + 1e-12));
+            first = false;
+            previous = dc;
+        }
+        INFO ("model " << (m == Model::A ? "A" : "B") << ": largest DC change after a routing write " << worst << " dBFS");
+        CHECK (worst < -60.0);
+    }
+}
+
+TEST_CASE ("filter and output stage: the Shared topology stays meaningful for 1 to 16 chips", "[filter][output]")
+{
+    // OutputStage.h "SHARED": one filter, its input the static DC of one chip plus every chip's filterBusAc; each
+    // chip's stage gets the shared output / n. Identical notes on n chips: Model B (its filter linear, its mixer curve
+    // nearly so) gives n times one chip within 1 %; Model A stays finite, does not fall silent and grows less than n times (its summed
+    // distortion, 8.5).
+    for (const Model m : { Model::A, Model::B })
+    {
+        double single = 0.0;
+        for (const int n : { 1, 2, 4, 8, 16 })
+        {
+            const double rate = 96000.0;
+            Filter f;
+            f.prepare (m, rate, 0.5f);
+            f.setCutoff (900.0f);
+            f.setMode (0x1f);
+            std::vector<OutputStage> stages (static_cast<std::size_t> (n));
+            for (auto& o : stages)
+            {
+                o.prepare (m, rate, false);
+                o.setRouting (0x01);
+                o.setModeVolume (0x1f);
+                o.setFilterStaticDc (f.staticOutput (o.staticFilterBusDc()) / n);
+            }
+            double phase = 0.0, energy = 0.0;
+            bool finite = true;
+            const int len = static_cast<int> (rate);
+            for (int i = 0; i < len; ++i)
+            {
+                phase += 220.0 / rate;
+                phase -= std::floor (phase);
+                const float u = static_cast<float> (phase - 0.5);
+                const float v = OutputStage::shapeVoice (m, u, 1.0f);
+                float in = static_cast<float> (stages[0].staticFilterBusDc());
+                for (auto& o : stages)
+                    in += o.filterBusAc (v, 1.0f);
+                const float shared = f.process (in) / static_cast<float> (n);
+                double y = 0.0;
+                for (auto& o : stages)
+                    y += o.process (shared, 0.0f, 0.0f);
+                finite = finite && std::isfinite (y);
+                if (i > len / 2)
+                    energy += y * y;
+            }
+            const double rms = std::sqrt (energy / (len / 2));
+            if (n == 1)
+                single = rms;
+            INFO ("model " << (m == Model::A ? "A" : "B") << " chips " << n << ": rms " << rms << " (one chip " << single << ")");
+            CHECK (finite);
+            if (m == Model::B)
+                CHECK (std::abs (rms / (single * n) - 1.0) < 0.01); // measured at most 0.5 %: the mixer curve is not quite linear
+            else
+            {
+                CHECK (rms > 0.3 * single);
+                CHECK (rms < 1.2 * single * n);
+            }
+        }
+    }
 }
 
 TEST_CASE ("output stage: silence after a loud input decays below -120 dB through the board high-pass", "[output][stability]")

@@ -45,9 +45,10 @@ constexpr std::array<double, 16> kALowGain { 1.0000, 1.0087, 1.0170, 1.0263, 1.0
                                              1.0803, 1.0925, 1.1118, 1.1231, 1.1414, 1.1638, 1.1806, 1.1958 };
 // static output functions of the low-pass state v (render units): low-pass l1 v + ... + l5 v^5 (monotonic),
 // band-pass leak b1 v + b2 v^2 + b3 v^3, high-pass leak h1 v + h2 v^2
-constexpr double kAL1 = -1.012862, kAL2 = 0.360214, kAL3 = -0.237858, kAL4 = 0.090060, kAL5 = -0.011228;
-constexpr double kAB1 = 0.173416, kAB2 = -0.073527, kAB3 = 0.023741;
-constexpr double kAH1 = -0.014301, kAH2 = -0.007776;
+constexpr double kALowScale = 1.10;
+constexpr double kAL1 = -0.598556 * kALowScale, kAL2 = -0.127445 * kALowScale, kAL3 = -0.039509 * kALowScale, kAL4 = 0.043390 * kALowScale, kAL5 = -0.006265 * kALowScale;
+constexpr double kAB1 = 0.157448, kAB2 = -0.060120, kAB3 = 0.021538;
+constexpr double kAH1 = 0.014064, kAH2 = -0.012227;
 // the low-pass state is limited to about the range the fit saw (0 .. 3.7: three voices at full level) plus margin
 constexpr double kALpMin = -1.5, kALpMax = 4.5;
 // band-pass output k0 x bp x kABand x (1 + kABandRes (lowGain - 1)); high-pass kAHigh hp + kAHighBand k0 bp.
@@ -247,6 +248,29 @@ void Filter::updateOutputs() noexcept
     updateStateSpace();
     lpMin = kALpMin;
     lpMax = kALpMax;
+}
+
+float Filter::processWithCutoff (float in, float registerValue) noexcept
+{
+    const double v = std::isfinite (registerValue) ? std::clamp (static_cast<double> (registerValue), 0.0, 2047.0) : 0.0;
+    double hz = 0.0;
+    if (mdl == Model::B)
+        hz = std::max (kBMinHz, ((kBCubic[0] * v + kBCubic[1]) * v + kBCubic[2]) * v + kBCubic[3]) * kBFcRes[static_cast<std::size_t> (res)];
+    else
+        hz = modelAHz (modelACutoffConverter (v) + (static_cast<double> (variation) - 0.5) * 2.0 * kVariationShift) * kAFcRes[static_cast<std::size_t> (res)];
+    const double gg = fastTan (kPi / rate * std::min (hz, 0.45 * rate));
+    const double x = guard (in);
+    const double kg2 = k + gg;
+    const double hp = (x - kg2 * s1 - s2) / (1.0 + gg * kg2);
+    const double bp = gg * hp + s1;
+    const double lp = gg * bp + s2;
+    s1 = bp + gg * hp;
+    s2 = lp + gg * bp;
+    settle();
+    double out = cLp * lp + cBp * bp + cHp * hp;
+    if (mdl == Model::A)
+        out += shape (lp);
+    return static_cast<float> (out);
 }
 
 void Filter::process (float* inOut, int n) noexcept

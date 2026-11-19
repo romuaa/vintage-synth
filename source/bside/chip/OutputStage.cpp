@@ -1,6 +1,7 @@
 // The chip's output stage (OutputStage.h; docs/architecture.md 8.19.1; every constant: docs/decisions.md
-// "B-Side S3a"). All constants are our own fits to static levels generated with the reference adapter
-// (voices held by the test bit at every envelope level, every routing and mode, both models).
+// "B-Side S3a"). All constants are our own fits to data generated with the reference adapter on traces written
+// for fitting (never the committed gate traces): static levels of voices held by the test bit at every envelope
+// level, routing and mode; held tones and two tones through the low-pass at 2047 and direct (Model A).
 
 #include "bside/chip/OutputStage.h"
 
@@ -19,11 +20,12 @@ struct Constants
     std::array<double, 16> volume;
 };
 
-// Model A: fitted jointly to 310 static levels (rms error 0.0073 in reference units, levels up to 0.65; largest
-// 0.036) and to triangle waveforms through the low-pass and direct (decisions "B-Side S3a").
+// Model A: fitted jointly with the voice bend (OutputStage.h) and the filter's static functions (Filter.cpp) to
+// 310 static levels (rms 0.0073 reference units, levels up to 0.65; largest 0.039) and 28 held-tone and
+// two-tone spectra (harmonics 2..5 and the products, rms 0.83 dB, largest 3.4 dB) (decisions "B-Side S3a").
 constexpr Constants kA {
-    0.379230, 0.330737, 0.377305, 0.248828, -0.025620, 0.031319, 0.008292, -0.003899, 0.083492, 0.026451, 0.088033, 0.101799,
-    -0.3877, -2.775482, 3.761098,
+    0.387973, 0.386539, 0.403086, 0.179676, 0.074531, 0.049466, 0.001478, -0.003231, 0.131771, 0.049526, 0.072176, 0.078753,
+    -0.3877, -3.297366, 4.081098,
     { 0.0, 0.0783, 0.1545, 0.2292, 0.3018, 0.3729, 0.4423, 0.5101, 0.5765, 0.6414, 0.7048, 0.7668, 0.8272, 0.8862, 0.9438, 1.0 }
 };
 // Model B: rms error 0.00039, largest 0.0021.

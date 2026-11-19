@@ -21,6 +21,7 @@
 //   s3aB, s3aA         both together, as a chip uses them (filterBusLevel -> Filter -> OutputStage): the 7 ns
 //                      budget of 8.19.1 is s3aB at 96 kHz; Model A has no budget (S4 question) and is broken
 //                      down into filterA, outputA and s3aA
+//   cutB, cutA         s3aB and s3aA with a new cutoff every sample through Filter::processWithCutoff
 
 #include "bside/chip/Chip.h"
 #include "bside/chip/Filter.h"
@@ -104,7 +105,8 @@ double nsPerSample (Model m, double rate, Setup&& setup, Tick&& tick, bool digit
     return best;
 }
 
-/** ns per internal sample of the S3a stages (see the header): `which` 0 filter, 1 output stage, 2 both. */
+/** ns per internal sample of the S3a stages (see the header): `which` 0 filter, 1 output stage, 2 both, 3 both with
+    a new cutoff every sample (Filter::processWithCutoff). */
 double s3aNsPerSample (Model m, double rate, int which)
 {
     const auto samples = static_cast<std::size_t> (chipSeconds() * rate);
@@ -142,8 +144,10 @@ double s3aNsPerSample (Model m, double rate, int which)
                     acc += f.process (a);
                 else if (which == 1)
                     acc += o.process (a, a, e);
-                else
+                else if (which == 2)
                     acc += o.process (f.process (o.filterBusLevel (a, e)), a, e);
+                else
+                    acc += o.process (f.processWithCutoff (o.filterBusLevel (a, e), 600.0f + 0.37f * static_cast<float> ((done + j) % 2000)), a, e);
             }
         }
         const auto t1 = std::chrono::steady_clock::now();
@@ -336,7 +340,9 @@ int main (int argc, char** argv)
     const S3aCase s3a[] { { "filterB", Model::B, 0, "Filter alone, Model B" },       { "filterA", Model::A, 0, "Filter alone, Model A" },
                           { "outputB", Model::B, 1, "OutputStage alone, Model B" },  { "outputA", Model::A, 1, "OutputStage alone, Model A" },
                           { "s3aB", Model::B, 2, "filter + output stage, Model B (budget 7 ns at 96 kHz)" },
-                          { "s3aA", Model::A, 2, "filter + output stage, Model A (no budget: S4)" } };
+                          { "s3aA", Model::A, 2, "filter + output stage, Model A (no budget: S4)" },
+                          { "cutB", Model::B, 3, "s3aB with a cutoff every sample (processWithCutoff)" },
+                          { "cutA", Model::A, 3, "s3aA with a cutoff every sample (processWithCutoff)" } };
     for (const auto& c : s3a)
         if (want (c.name))
         {

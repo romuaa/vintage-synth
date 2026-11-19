@@ -27,6 +27,8 @@
 //   to 1.2 x at 15); the band-pass output is k0 x bp (k0 = 1 / Q at resonance 0) plus a static cubic of the
 //   low-pass state (a leak); the high-pass output carries some of the band-pass state and a little of the
 //   low-pass state.
+// INPUT GUARD. A non-finite or absurd input is replaced by 0 before it reaches the states (off the per-sample
+// dependency chain), so the states can never become non-finite.
 // THREAD AND COST. setCutoff / setResonance / setMode recompute the coefficients (one tan, a few table reads);
 // process() costs about a dozen multiplications (Model B) or two dozen (Model A) per sample.
 
@@ -71,12 +73,28 @@ public:
         // the trapezoidal state-variable filter written as its state-space form (identical arithmetic in exact
         // numbers, a shorter dependency chain per sample): hp = h (x - (k + g) s1 - s2), bp = g hp + s1,
         // lp = g bp + s2, s1' = 2 bp - s1, s2' = 2 lp - s2, every output a linear form in x, s1, s2
-        const double x = static_cast<double> (in);
+        const double x = guard (in);
         double out = ox * x + o1 * s1 + o2 * s2;
         if (mdl == Model::A)
             out += shape (lx * x + l1 * s1 + l2 * s2);
-        settle (a1x * x + a11 * s1 + a12 * s2, a2x * x + a21 * s1 + a22 * s2);
+        const double n1 = a1x * x + a11 * s1 + a12 * s2;
+        s2 = a2x * x + a21 * s1 + a22 * s2;
+        s1 = n1;
+        settle();
         return static_cast<float> (out);
+    }
+
+    /** One internal sample with a cutoff (register value) that may change every sample, without setCutoff's cost:
+        the cutoff curve and a rational tan in line (Model B: identical to setCutoff + process within the tan's
+        error; Model A also evaluates its converter and curve). The stored cutoff and Q are not changed. */
+    float processWithCutoff (float in, float registerValue) noexcept;
+
+    /** tan (x) for 0 <= x <= 1.42 (cutoffs up to 0.45 x the rate), rational ([5/4] Pade form): relative error
+        below 1e-8 up to 0.75 (0.24 x the rate) and below 3e-5 up to 1.42. */
+    static double fastTan (double x) noexcept
+    {
+        const double z = x * x;
+        return x * (945.0 - z * (105.0 - z)) / (945.0 - z * (420.0 - 15.0 * z));
     }
 
     /** In place over n samples (identical to n calls of process). */
@@ -93,31 +111,29 @@ public:
     float cutoff() const noexcept { return fcReg; }
     int resonance() const noexcept { return res; }
 
-    /** Test aid: no state is a subnormal number (each is 0 or normal). */
-    bool statesNormal() const noexcept { return std::fpclassify (s1) != FP_SUBNORMAL && std::fpclassify (s2) != FP_SUBNORMAL; }
-
     /** The Model A cutoff converter (11-bit ladder) value of a register value, 0..1 (tests). */
     static double modelACutoffConverter (double registerValue) noexcept;
     /** Cutoff in Hz at resonance 0 for a model, register value and variation (tests, diagnostics). */
     static double cutoffCurveHz (Model model, double registerValue, double variation) noexcept;
 
 private:
-    /** The new states, flushed: both to 0 once their sum is below 1e-15 (-300 dB; flushing one alone would
-        freeze the other, which decays only through it), and the band-pass state alone below 1e-30 (it decays to 0
-        beside a constant low-pass state when the input and that state cancel exactly; the low-pass state cannot
-        decay beside a large band-pass state, which is 0 in every steady state), so no state becomes subnormal. A non-finite or
-        absurd state (a NaN or infinite input) is reset too, so one bad sample cannot poison the filter. */
-    void settle (double a, double b) noexcept
+    /** A non-finite or absurd input (|x| >= 1e6) is taken as 0 before it reaches the states (off the per-sample
+        dependency chain); the states can then never become non-finite. */
+    static double guard (float in) noexcept
     {
-        const double m = std::abs (a) + std::abs (b);
-        if (m < 1e-15 || ! (m < 1e9))
+        const double x = static_cast<double> (in);
+        return std::abs (x) < 1e6 ? x : 0.0; // NaN fails the comparison too
+    }
+
+    /** States below 1e-15 together go to 0 (-300 dB; flushing one alone would freeze the other, which decays only
+        through it): no subnormal state, and zero input ends at exactly 0. */
+    void settle() noexcept
+    {
+        if (std::abs (s1) + std::abs (s2) < 1e-15)
         {
             s1 = 0.0;
             s2 = 0.0;
-            return;
         }
-        s1 = std::abs (a) < 1e-30 ? 0.0 : a;
-        s2 = b;
     }
 
     /** Model A: the static function of the (limited) low-pass state that the selected outputs carry. */
