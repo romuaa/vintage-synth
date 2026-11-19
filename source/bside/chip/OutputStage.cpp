@@ -57,6 +57,9 @@ void OutputStage::prepare (Model model, double internalRate, bool volumeDc) noex
     hpA = std::exp (-2.0 * kPi * kBoardHighPassHz / rate);
     const double gl = std::tan (kPi * std::min (kBoardLowPassHz, 0.45 * rate) / rate);
     lpG = gl / (1.0 + gl);
+    lpKeep = 1.0 - lpG;
+    lpIn = 2.0 * lpG;
+    lpNext = 1.0 - 2.0 * lpG;
     update();
 }
 
@@ -127,6 +130,7 @@ void OutputStage::update() noexcept
     n3 = c.n3;
     n4 = c.n4;
     n5 = c.n5;
+    quintic = mdl == Model::A;
     curveMin = c.curveMin;
     curveMax = c.curveMax;
     level = c.volume[static_cast<std::size_t> (modeVolume & 0x0f)] * c.scale;

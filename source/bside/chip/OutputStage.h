@@ -71,14 +71,14 @@ public:
     {
         const double s = static_cast<double> (filterOut) + static_cast<double> (directAudio)
                          + envDc * static_cast<double> (directEnvelopeSum) + staticDirect;
-        const double mix = offset + level * (curve (gain * s) - curveDc);
-        // board filters: one-pole high-pass, then the trapezoidal one-pole low-pass
-        const double hp = hpA * (hpY + mix - hpX);
-        hpX = mix;
-        hpY = flush (hp);
-        const double v = (hpY - lpS) * lpG;
-        const double y = v + lpS;
-        lpS = flush (y + v);
+        const double mix = offset + level * (curve (gain * s) - curveDc); // a NaN here is stopped by flush
+        // board filters: one-pole high-pass hp' = a (hp + x - x_prev), then the trapezoidal one-pole low-pass in
+        // its state-space form (y = c hp + (1 - c) s, s' = 2 c hp + (1 - 2 c) s; one multiply-add per state)
+        const double in = std::abs (mix) < 1e9 ? mix : 0.0; // a NaN or absurd input does not enter the filters
+        hpY = flush (hpA * hpY + hpA * (in - hpX));
+        hpX = in;
+        const double y = lpG * hpY + lpKeep * lpS;
+        lpS = flush (lpIn * hpY + lpNext * lpS);
         return static_cast<float> (y);
     }
 
@@ -98,10 +98,13 @@ public:
     static double envelopeDc (Model m) noexcept;
 
 private:
+    /** A board-filter state: 0 below 1e-15 (no subnormal numbers). */
     static double flush (double v) noexcept { return std::abs (v) < 1e-15 ? 0.0 : v; }
     double curve (double x) const noexcept
     {
-        const double c = x < curveMin ? curveMin : (x > curveMax ? curveMax : x);
+        const double c = x < curveMin ? curveMin : (x > curveMax ? curveMax : x); // NaN passes through (flush stops it)
+        if (! quintic)
+            return ((n3 * c + n2) * c + 1.0) * c;
         return ((((n5 * c + n4) * c + n3) * c + n2) * c + 1.0) * c;
     }
     void update() noexcept;
@@ -115,8 +118,9 @@ private:
     int nFilter = 0, nDirect = 3;
     double envDc = 0.0, filterBusDc = 0.0, staticDirect = 0.0;
     double gain = 1.0, level = 0.0, offset = 0.0, curveDc = 0.0;
+    bool quintic = false;
     double n2 = 0.0, n3 = 0.0, n4 = 0.0, n5 = 0.0, curveMin = -8.0, curveMax = 8.0;
-    double hpA = 1.0, lpG = 0.5;
+    double hpA = 1.0, lpG = 0.5, lpKeep = 0.5, lpIn = 1.0, lpNext = 0.0;
     double hpX = 0.0, hpY = 0.0, lpS = 0.0;
 };
 } // namespace vs::bside::chip

@@ -13,6 +13,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 using namespace vs::bside::chip;
@@ -241,6 +242,33 @@ TEST_CASE ("output stage: silence after a loud input decays below -120 dB throug
                 INFO ("model " << (m == Model::A ? "A" : "B") << " volume DC " << vdc << " rate " << rate);
                 CHECK (std::abs (last) < 1e-6f);
             }
+}
+
+TEST_CASE ("filter and output stage: a NaN or infinite input does not poison the state", "[filter][output][stability]")
+{
+    for (const Model m : { Model::A, Model::B })
+        for (const float bad : { std::nanf (""), std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), 1e30f })
+        {
+            Filter f;
+            f.prepare (m, 96000.0, 0.5f);
+            f.setCutoff (1000.0f);
+            f.setMode (0x70);
+            OutputStage o;
+            o.prepare (m, 96000.0, true);
+            o.setModeVolume (0x7f);
+            for (int i = 0; i < 100; ++i)
+                o.process (f.process (0.3f), 0.1f, 1.0f);
+            (void) o.process (f.process (bad), bad, 1.0f);
+            float y = 0.0f, z = 0.0f;
+            for (int i = 0; i < 1000; ++i)
+            {
+                z = f.process (0.3f);
+                y = o.process (z, 0.1f, 1.0f);
+            }
+            INFO ("model " << (m == Model::A ? "A" : "B") << " input " << bad);
+            CHECK (std::isfinite (z));
+            CHECK (std::isfinite (y));
+        }
 }
 
 TEST_CASE ("filter and output stage: bit-identical for any block split", "[filter][output][split]")

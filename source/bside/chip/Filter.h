@@ -103,18 +103,21 @@ public:
 
 private:
     /** The new states, flushed: both to 0 once their sum is below 1e-15 (-300 dB; flushing one alone would
-        freeze the other, which decays only through it), and each alone below 1e-30 (a band-pass state decaying
-        to 0 beside a constant low-pass state), so no state ever becomes a subnormal number. */
+        freeze the other, which decays only through it), and the band-pass state alone below 1e-30 (it decays to 0
+        beside a constant low-pass state when the input and that state cancel exactly; the low-pass state cannot
+        decay beside a large band-pass state, which is 0 in every steady state), so no state becomes subnormal. A non-finite or
+        absurd state (a NaN or infinite input) is reset too, so one bad sample cannot poison the filter. */
     void settle (double a, double b) noexcept
     {
-        if (std::abs (a) + std::abs (b) < 1e-15)
+        const double m = std::abs (a) + std::abs (b);
+        if (m < 1e-15 || ! (m < 1e9))
         {
             s1 = 0.0;
             s2 = 0.0;
             return;
         }
         s1 = std::abs (a) < 1e-30 ? 0.0 : a;
-        s2 = std::abs (b) < 1e-30 ? 0.0 : b;
+        s2 = b;
     }
 
     /** Model A: the static function of the (limited) low-pass state that the selected outputs carry. */
