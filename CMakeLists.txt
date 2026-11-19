@@ -140,6 +140,16 @@ function(vs_configure_plugin target factory_data)
         target_link_libraries(${target}_VST3 PRIVATE juce::juce_recommended_lto_flags)
     endif()
 
+    # macOS: JUCE writes Contents/Resources/moduleinfo.json after the linker's ad-hoc signature, so
+    # the bundle's seal does not cover it and `codesign --verify --deep --strict` fails. Sign again
+    # (ad hoc, no identity, nothing secret) as the last build step: the bundle that is validated and
+    # packed (scripts/package-release.sh) then has a valid seal. Runs after JUCE's own post-build step.
+    if(APPLE AND TARGET ${target}_VST3)
+        add_custom_command(TARGET ${target}_VST3 POST_BUILD
+            COMMAND codesign --force --sign - "$<GENEX_EVAL:$<TARGET_PROPERTY:${target}_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>"
+            VERBATIM)
+    endif()
+
     set_target_properties(${target} PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
     # Linux: link the C++ runtime statically into the shipped plugin, so it depends only on glibc and
