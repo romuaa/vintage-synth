@@ -172,8 +172,8 @@ TEST_CASE ("Parameter layout: 172 parameters, the M2 parameters appended with th
 TEST_CASE ("VST3 parameter IDs: hashes of the string IDs, all distinct (order-independent)", "[processor][state]")
 {
     // JUCE's VST3 wrapper (JUCE_FORCE_USE_LEGACY_PARAM_IDS off) gives each parameter the VST3
-    // ParamID String::hashCode() of its string ID, masked to 31 bits (Studio One compatible,
-    // the default). Hosts key automation on that ParamID, so it must not collide; it does not
+    // ParamID String::hashCode() of its string ID, masked to 31 bits (the ID scheme hosts expect
+    // from JUCE's VST3 wrapper). Hosts key automation on that ParamID, so it must not collide; it does not
     // depend on the order of the parameters.
     JuceEnv env;
     vs::VintageSynthProcessor proc;

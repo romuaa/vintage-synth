@@ -13,7 +13,9 @@ void addMasterVolume (juce::AudioProcessorValueTreeState::ParameterLayout& layou
         "Master Volume",
         juce::NormalisableRange<float> { -60.0f, 6.0f, 0.1f },
         -6.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("dB")));
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("dB")
+            .withValueFromStringFunction ([] (const juce::String& t) { return finiteFloatFromText (t, -6.0f); })));
 }
 
 void addKeyMixParameters (juce::AudioProcessorValueTreeState::ParameterLayout& layout)
@@ -49,6 +51,6 @@ void addLimiterParameters (juce::AudioProcessorValueTreeState::ParameterLayout& 
                 const float shown = std::round (v * 10.0f) / 10.0f;
                 return juce::String (std::abs (shown) < 0.05f ? 0.0f : shown, 1); // never "-0.0"
             })
-            .withValueFromStringFunction ([] (const juce::String& t) { return t.getFloatValue(); })));
+            .withValueFromStringFunction ([] (const juce::String& t) { return finiteFloatFromText (t, kDefaultLimiterCeilingDb); })));
 }
 } // namespace vs

@@ -83,6 +83,16 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   possible (its own alias budgets, 8.4.5, approved). **Reference emulator approved as a developer
   tool only:** built outside the repository (`~/Library/Caches/bside-oracle/`), never linked or
   shipped, never named in the repository; only generated reference data is committed.
+- **Vintage first release (owner, 2026-11-19):** the repository becomes public at the start of
+  the release work (the owner flips visibility, after a pre-public audit of the whole history),
+  so CI is free. **No code signing and no installers** for now (no Apple Developer membership,
+  no Windows certificate): a release is one zip of plain plugin binaries per platform that the
+  user copies into the plugin folder, with `LICENSE`, the font licence and install notes.
+  **Platforms:** macOS universal, Windows x64 and Linux x86_64; Windows ARM64 and Linux ARM64
+  ship marked "experimental" (no pluginval build exists for them). **CI stays manual-only, also
+  when public:** no workflow may gain an automatic trigger except the cheap `security` one; the
+  local gate checks this. B-Side is not in the release (`VS_BUILD_BSIDE=OFF`). **Version: 0.9.0, a
+  public beta** (parameter IDs and the state format are not frozen until 1.0.0).
 - **M7 editor (owner, 2026-11-14; `docs/architecture.md` 9.8):** round-3 wireframes approved;
   fixed aspect, 75–200 % (1360×784 at 100 %); embedded font Inter (SIL OFL 1.1, its licence file
   kept in the repository); dark theme only; static graphs with live markers; delay/reverb on/off
@@ -155,25 +165,28 @@ agent is running.
   trace and a noise-before-first-shift trace; an independent model for the program engine's
   goldens; defects 3 and 4 of 8.18.1.
 
-**Going public:** the owner's decision of 2026-11-18 (public only after both plugins' release
-work) is superseded by "Vintage first"; **when** the repository becomes public within the
-Vintage release work is the owner's call and not yet made (ask). Until then CI stays offline
-(the `security` check on every PR "fails" in 2 seconds because Actions has no minutes: the job
-never starts; not a finding).
+**Going public (owner, 2026-11-19):** at the start of the Vintage release work, after the
+pre-public audit (see "Decisions", "Vintage first release"). Until the owner has flipped
+visibility CI stays offline (the `security` check on every PR "fails" in 2 seconds because
+Actions has no minutes: the job never starts; not a finding).
 
 **Next steps:**
-1. **Vintage, M8** (skill `release`): hardening, signing, installers, release. Not started.
-   Known inputs: the owner's studio check of the factory sounds and of MIDI Program Change
-   timing; the first Windows and Linux x86_64 runs ever (the list "Merged without ...
-   verification" below; needs CI, so Actions minutes or a public repository); signing
-   identities (Apple Developer ID, Windows Authenticode) from the owner; version is still
-   0.1.0; no installer exists; no real screen-reader pass; small: the shared text parser
-   (`common/params/ParamFactory.cpp`) turns typed "nan" into NaN. B-Side must not ship in the
-   Vintage release (`VS_BUILD_BSIDE`).
+1. **Vintage, M8** (skill `release`): **started 2026-11-19.** Order: (a) pre-public audit of the
+   whole history, the workflow-trigger check in the local gate, the "nan" fix of the shared text
+   parser (`common/params/ParamFactory.cpp`) and the tip cleanup after the audit **(done, PR
+   pending)**; (b) the owner makes the repository public;
+   (c) the first Windows and Linux x86_64 runs ever (one dispatched `all` run; the list "Merged
+   without ... verification" below) and their fixes; (d) packaging: version (still 0.1.0), one
+   zip per platform, licences and install notes inside, a manual release workflow, B-Side
+   excluded (`VS_BUILD_BSIDE=OFF`); (e) tag and publish on the owner's word.
+   **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
+   keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
+   arpeggiator are fine. Not done: a real screen-reader pass.
 2. **B-Side:** resume from the parked state above.
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
-equal width, playing from the computer keyboard, a "Clean" Cross Mod switch. **Not done anywhere:**
+equal width, playing from the computer keyboard, a "Clean" Cross Mod switch, **a go-through of the factory
+preset set (2026-11-19: some presets sound exactly the same)**. **Not done anywhere:**
 a real screen-reader pass; any Windows or Linux x86_64 run.
 
 **How work is run:** skill `orchestrate` (brief → implementer → independent reviewer → fixes →
@@ -370,6 +383,9 @@ repository.
   18. Alias follow-up step: `render::OutputRounding` (an expression one compiler may contract
       into fused multiply-adds and another not: low output bits can differ; the new exact and
       rounding tests have never run on MSVC or x86_64) (2026-11-19).
+  19. M8 hardening: the typed-text guard of the shared parameter parsers (`std::isfinite`; a test
+      that builds a string with an embedded NUL), the trigger-policy and home-path checks of
+      `docs-check.sh` (ruby and `git grep -a` have never run on a runner) (2026-11-19).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
