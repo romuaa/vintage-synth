@@ -222,10 +222,10 @@ TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant f
     c.prepare (Model::A, 96000.0, 0.5f);
     d.prepare (Model::A, 96000.0, 0.5f);
     c.setMode (Filter::kBandPass);
-    d.setMode (Filter::kBandPass);
     c.setCutoff (1500.0f);
     c.setCutoff (400.0f);
     d.setCutoff (400.0f);
+    d.setMode (Filter::kBandPass); // d's outputs are computed at 400; c's must have followed its cutoff writes
     float diff = 0.0f;
     for (int i = 0; i < 2000; ++i)
     {
@@ -292,8 +292,7 @@ TEST_CASE ("output stage: volume DC off, a volume or routing write with held voi
     // 8.4.4 (orchestrator's reading): with volumeDc off a volume write with held voices changes the DC at the stage's
     // output by less than -60 dBFS, on both paths, and so does a routing write with silent voices. A held triangle
     // (110 Hz, full envelope, through the voice bend) sounds on the direct path or through the low-pass; the DC is the
-    // mean over 0.5 s, measured 3 s after the voice starts (the board high-pass has settled) and again 1 s after
-    // the write. With volumeDc on the same write does step the DC (the reference's behaviour; the gates compare it).
+    // mean over ten periods, 3 s after the voice starts (the board high-pass has settled) and right after the write. With volumeDc on the same write does step the DC (the reference's behaviour; the gates compare it).
     for (const Model m : { Model::A, Model::B })
         for (const bool routed : { false, true })
             for (const bool vdc : { false, true })
@@ -327,11 +326,11 @@ TEST_CASE ("output stage: volume DC off, a volume or routing write with held voi
                     }
                     return measure ? sum / n : 0.0;
                 };
+                // windows of exactly ten periods (90.9 ms): the triangle's own mean is 0 there, so what is left is DC
                 run (3.0, false);
-                const double before = run (0.5, true);
+                const double before = run (10.0 / 110.0, true);
                 setRegs (routed ? 0x01 : 0x00, 0x10); // volume 15 -> 0
-                run (1.0, false);
-                const double after = run (0.5, true);
+                const double after = run (10.0 / 110.0, true); // right after the write: a DC step would show here
                 const double stepDb = 20.0 * std::log10 (std::abs (after - before) + 1e-12);
                 INFO ("model " << (m == Model::A ? "A" : "B") << (routed ? " low-pass" : " direct") << " volume DC " << vdc << ": DC step "
                                << stepDb << " dBFS");
