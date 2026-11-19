@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M8 release hardening (2026-11-19)
+- Changed: the local gate (`scripts/preflight/docs-check.sh`) now enforces the Actions trigger policy over every
+  file in `.github/workflows/`: `workflow_dispatch` only, except `security.yml` (push to `main`, pull_request,
+  one cron at most weekly, workflow_dispatch). `pull_request_target` and `workflow_run` always fail.
+- Added: `scripts/preflight/test-workflow-triggers.sh`, the policy itself plus a self-test on fixture workflows
+  (run on every docs check) that proves each violation is caught.
+
 ### B-Side alias follow-up step (2026-11-19)
 - Fixed: Model B pulses of width 1 and 4095 missed the -100 dB alias budget by up to 2.7 dB at frequencies
   with a small-denominator ratio to the internal rate. The cause was the float conversion of the output (its

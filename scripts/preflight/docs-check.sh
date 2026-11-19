@@ -5,7 +5,8 @@
 #   1. No third-party brand names (project rule in CLAUDE.md), using the deny-list file
 #      scripts/preflight/names.sha256, a list of hashes: the names are not stored in the repository.
 #   2. No "Claude-Session:" trailer in the commit messages of the current branch (relative to main).
-#   3. Every workflow YAML parses; the JSON row strings inside build.yml are valid JSON; and the
+#   3. Every workflow YAML parses; trigger policy over every workflow (workflow_dispatch only, plus
+#      the security.yml allow-list; self-tested by test-workflow-triggers.sh); the JSON row strings inside build.yml are valid JSON; and the
 #      "plan" step of build.yml, run for every `targets` value, selects exactly the documented
 #      rows and jobs (the table below), so the `if:` conditions and the docs cannot drift apart.
 #   4. Source layout: source/common includes nothing from an instrument directory; the JUCE-free
@@ -55,13 +56,27 @@ fi
 if ! command -v ruby >/dev/null 2>&1; then
   echo "docs-check: skip: ruby not found (needed to parse the workflow YAML)"
 else
-  for wf in .github/workflows/*.yml; do
+  for wf in .github/workflows/*.yml .github/workflows/*.yaml; do
+    [[ -f $wf ]] || continue
     if ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$wf" 2>"$tmp/err"; then
       ok "$wf parses as YAML"
     else
       fail "$wf does not parse: $(head -n 1 "$tmp/err")"
     fi
   done
+  # Trigger policy over every workflow: workflow_dispatch only, except the allow-list for
+  # security.yml (see test-workflow-triggers.sh). The self-test proves the check can fail.
+  while IFS= read -r line; do
+    case $line in
+      ok\ *) ok "trigger policy: ${line#ok }" ;;
+      fail\ *) fail "trigger policy: ${line#fail }" ;;
+    esac
+  done < <(scripts/preflight/test-workflow-triggers.sh check .github/workflows 2>&1)
+  if scripts/preflight/test-workflow-triggers.sh >"$tmp/selftest" 2>&1; then
+    ok "trigger policy self-test passes"
+  else
+    fail "trigger policy self-test: $(grep FAIL "$tmp/selftest" | head -n 2 | tr '\n' ' ')"
+  fi
   # JSON row strings: every '{...}' single-quoted shell literal that starts with {"name" in build.yml.
   n=0
   while IFS= read -r row; do
@@ -102,10 +117,6 @@ no-macos|windows-x64,windows-arm64,linux-x64,linux-arm64|true true true true
 all|macos-universal,windows-x64,windows-arm64,linux-x64,linux-arm64|true true true true
 TABLE
     # The flag order above is: distros sanitizers windows_bundle linux_bundle (order of the echo lines).
-    # The workflow must not trigger on anything but a manual dispatch (policy: nothing automatic).
-    trig=$(ruby -ryaml -e 'y = YAML.load_file(".github/workflows/build.yml"); puts((y["on"] || y[true]).keys.join(","))')
-    [[ $trig == workflow_dispatch ]] && ok "build.yml triggers: workflow_dispatch only" \
-      || fail "build.yml triggers are '$trig' (policy: workflow_dispatch only)"
   fi
 fi
 
