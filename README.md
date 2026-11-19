@@ -216,7 +216,7 @@ repository) is committed in `tests/bside/reference/`.
 | S2a | Chip digital core, exact against the reference per cycle | Done |
 | S2b | Own combined-waveform tables (fitted, never copied); band-limited waveform rendering | Done |
 | S2c | Patch program engine | Done |
-| S2 rest | Render cost step, parameters | Done; Model A rendering still above its cost target; an alias follow-up step is open |
+| S2 rest | Render cost step, parameters | Done; Model A rendering still above its cost target; alias follow-up step done (narrow pulses, exact sync ratios) |
 | S3 | Filter and output path | Not started |
 | S4 | Polyphony, wiring into the plugin, factory patches | Not started |
 
