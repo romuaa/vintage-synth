@@ -9,6 +9,11 @@ Signing secrets live in CI secrets or the user's keychain. Never ask for them in
 write them to files. Ask the user to configure them, under "What I need from you".
 Publishing a release is outward-facing: **confirm with the user before tagging or uploading.**
 
+**First release (owner decision 2026-11-19, `CLAUDE.md` "Vintage first release"): no signing and
+no installers.** Steps 3 and 4 below apply only once the owner has signing identities; until
+then a release is one zip per platform (plain `.vst3` bundle, `LICENSE`, the font licence,
+install notes that explain the unsigned-plugin warnings of macOS and Windows).
+
 ## Steps
 
 1. **Version:** bump `project(VERSION x.y.z)` in `CMakeLists.txt` and update `CHANGELOG.md`.
