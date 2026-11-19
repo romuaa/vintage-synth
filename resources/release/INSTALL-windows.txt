@@ -2,17 +2,17 @@ Exitium Vintage Synth @VERSION@ for Windows
 ---------------------------------------
 
 What is in this folder
-  Exitium Vintage Synth.vst3   the plugin (VST3 format; a folder with 64-bit Intel/AMD
-                               and ARM64 builds inside)
+  Exitium Vintage Synth.vst3   the plugin (VST3 format; a folder with x64 and
+                               ARM64 builds inside)
   LICENSE.txt                  the licence of this software (AGPLv3)
   SOURCE.txt                   where to get the complete source code
   THIRD-PARTY.txt              third-party components and their licences
 
-You need: Windows 10 or newer (64-bit), and a host (DAW) that loads VST3 plugins.
+You need: Windows 10 or newer (x64, or ARM64 which is experimental), and a host (DAW) that loads VST3 plugins.
 The plugin needs no extra runtime to be installed.
 
 The ARM64 build (Windows on ARM) is experimental: it is built and unit-tested, but it
-has not been run through the plugin validator or tuned for speed. The 64-bit Intel/AMD
+has not been run through the plugin validator or tuned for speed. The x64
 build is the one that is fully checked.
 
 Install

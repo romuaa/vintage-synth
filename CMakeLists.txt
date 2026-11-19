@@ -144,6 +144,8 @@ function(vs_configure_plugin target factory_data)
     # the bundle's seal does not cover it and `codesign --verify --deep --strict` fails. Sign again
     # (ad hoc, no identity, nothing secret) as the last build step: the bundle that is validated and
     # packed (scripts/package-release.sh) then has a valid seal. Runs after JUCE's own post-build step.
+    # This must stay the LAST post-build step: a copy step (COPY_PLUGIN_AFTER_BUILD, currently FALSE) that
+    # ran before it would install an unsealed copy, so enabling it needs this command moved after it.
     if(APPLE AND TARGET ${target}_VST3)
         add_custom_command(TARGET ${target}_VST3 POST_BUILD
             COMMAND codesign --force --sign - "$<GENEX_EVAL:$<TARGET_PROPERTY:${target}_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>"

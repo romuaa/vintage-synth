@@ -44,8 +44,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # A release run is never cancelled by a later dispatch on the same ref (it ends in a draft release).
+  # Release runs share ONE group for the whole repository, whatever their ref: two releases never run at
+  # once (a second one waits; it never cancels the first, because cancel-in-progress is false for it), and
+  # a normal run is in another group, so it can neither cancel nor be cancelled by a release run.
+  # (cancel-in-progress is read from the NEW run: it decides whether that run cancels one already running
+  # in its group.)
+  group: ${{ inputs.release && 'release' || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ !inputs.release }}
 
 env:
@@ -132,6 +136,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: inputs.release
         with:
+          persist-credentials: false
           sparse-checkout: |
             CMakeLists.txt
             CHANGELOG.md
@@ -155,6 +160,8 @@ jobs:
           # (it is replaced by the package job). Drafts may be invisible to this read-only token.
           published=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"v$version\" and (.draft | not)) | .html_url")
           [[ -z "$published" ]] || { echo "v$version is already published: $published" >&2; exit 1; }
+          # An existing tag v<version> must point at this commit (the draft is created for it).
+          bash scripts/package-release.sh tag-check "$version" "$GITHUB_SHA"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "- release run for version \`$version\` (Vintage only; draft release v$version)" >> "$GITHUB_STEP_SUMMARY"
 
@@ -172,6 +179,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
@@ -458,6 +466,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: scripts/linux-check
+          persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -589,6 +598,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Install build dependencies
         run: |
@@ -647,6 +657,8 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: vst3-vintage-macos-universal, path: "in/macos/Exitium Vintage Synth.vst3" }
@@ -668,7 +680,7 @@ jobs:
       - name: Verify every zip, self-test the verifier, write the checksums
         run: |
           set -euo pipefail
-          for z in release/*.zip; do bash scripts/package-release.sh verify "$z"; done
+          for z in release/*.zip; do bash scripts/package-release.sh verify --license LICENSE "$z"; done
           bash scripts/package-release.sh selftest "release/Exitium-Vintage-Synth-$VERSION-macOS.zip"
           bash scripts/package-release.sh sums release
           bash scripts/package-release.sh sums release --check
@@ -735,16 +747,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle="unpacked/Exitium Vintage Synth $VERSION/Exitium Vintage Synth.vst3"
+          # Absolute native paths on every platform (pwd -W gives C:/... in Git Bash).
+          if [[ "$RUNNER_OS" == Windows ]]; then root=$(pwd -W); else root=$(pwd); fi
+          bundle="$root/unpacked/Exitium Vintage Synth $VERSION/Exitium Vintage Synth.vst3"
           test -d "$bundle"
           if [[ "$RUNNER_OS" == Windows ]]; then
-            ./smoke/host_smoke.exe --profile vintage "$bundle"
+            "$root/smoke/host_smoke.exe" --profile vintage "$bundle"
           else
-            chmod +x smoke/host_smoke
+            chmod +x "$root/smoke/host_smoke"
             if [[ "$RUNNER_OS" == Linux ]]; then
-              xvfb-run -a ./smoke/host_smoke --profile vintage "$bundle"
+              xvfb-run -a "$root/smoke/host_smoke" --profile vintage "$bundle"
             else
-              ./smoke/host_smoke --profile vintage "$bundle"
+              "$root/smoke/host_smoke" --profile vintage "$bundle"
             fi
           fi
 
@@ -764,6 +778,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: "release-${{ needs.plan.outputs.version }}", path: release }
@@ -774,9 +790,14 @@ jobs:
           tag="v$VERSION"
           # The files must be the ones the pack job verified.
           bash scripts/package-release.sh sums release --check
-          bash scripts/package-release.sh changelog "$VERSION" CHANGELOG.md > release-notes.md
-          # Existing releases with this tag: a published one stops the run; a draft is replaced
-          # (deleted and created again, so its assets and target are exactly this run's).
+          # SOURCE.txt promises a reachable source: no draft for a private repository. The tag must be absent
+          # or point at this commit.
+          bash scripts/package-release.sh repo-public
+          bash scripts/package-release.sh tag-check "$VERSION" "$GITHUB_SHA"
+          # The release text: a fixed header (unsigned, experimental ARM64 builds) and the CHANGELOG section.
+          { cat resources/release/RELEASE-NOTES-HEADER.md; bash scripts/package-release.sh changelog "$VERSION" CHANGELOG.md; } > release-notes.md
+          # Existing releases with this tag: a published one stops the run; a draft is replaced (deleted and
+          # created again, so its assets and target are exactly this run's).
           gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
             --jq ".[] | select(.tag_name == \"$tag\") | \"\(.id) \(.draft)\"" > existing.txt
           while read -r id draft; do
@@ -785,6 +806,9 @@ jobs:
           done < existing.txt
           while read -r id draft; do
             [[ -n "$id" ]] || continue
+            # Read the state again right before deleting: a draft published in the meantime is never deleted.
+            now=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id" --jq .draft)
+            [[ "$now" == true ]] || { echo "release $id of $tag is no longer a draft; refusing to delete it" >&2; exit 1; }
             echo "replacing the draft $id of $tag"
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
           done < existing.txt

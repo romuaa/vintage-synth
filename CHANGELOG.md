@@ -12,6 +12,7 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   (layout, version, slices, B-Side strings, metadata entries, symlinks, macOS `codesign --verify`).
 - `build.yml`: input `release` (Vintage only, then the jobs `pack`, `zip-smoke` and `package`, which creates a draft
   release); never run yet (CI is offline). The `mac` step of `scripts/preflight.sh` packs and verifies the zip.
+- `verify` hardened after review (no symlinks, duplicate/case-colliding entries, exact file and mode lists, UTF-16 B-Side scan, platform-specific install text, licence comparison); release runs share one concurrency group, check the tag and that the repository is public, and the draft text carries an experimental-ARM64 header.
 - Fixed: the macOS bundle's ad-hoc signature did not cover `moduleinfo.json` (JUCE writes it after the linker signs),
   so `codesign --verify --deep --strict` failed on every build; the bundle is now signed again (ad hoc) as the last
   build step.

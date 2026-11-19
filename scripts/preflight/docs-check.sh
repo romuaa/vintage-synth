@@ -109,14 +109,29 @@ TABLE
   fi
 fi
 
-# Only the `package` job of build.yml may hold write access (contract 10.2: it creates the draft release).
+# Permissions of build.yml (contract 10.2): the workflow default is `contents: read` and nothing else; only
+# the `package` job may write, and then exactly `contents: write` (no other scope, no write-all).
 if command -v ruby >/dev/null 2>&1; then
-  writers=$(ruby -ryaml -e 'y = YAML.load_file(".github/workflows/build.yml"); puts y["jobs"].select { |_, j| ((j["permissions"] || {})["contents"]) == "write" }.keys.join(",")' 2>/dev/null)
-  top=$(ruby -ryaml -e 'y = YAML.load_file(".github/workflows/build.yml"); puts((y["permissions"] || {})["contents"])' 2>/dev/null)
-  if [[ $writers == package && $top == read ]]; then
-    ok "build.yml: only the package job has contents: write (workflow default: read)"
+  perm_report=$(ruby -ryaml -e '
+    y = YAML.load_file(".github/workflows/build.yml")
+    bad = []
+    top = y["permissions"]
+    bad << "workflow default is #{top.inspect}, expected {contents: read}" unless top == { "contents" => "read" }
+    y["jobs"].each do |name, j|
+      p = j["permissions"]
+      next if p.nil?
+      if name == "package"
+        bad << "package has #{p.inspect}, expected exactly {contents: write}" unless p == { "contents" => "write" }
+      else
+        bad << "job #{name} sets permissions #{p.inspect}" if p.is_a?(String) || p.values.include?("write")
+      end
+    end
+    bad << "package job has no permissions block" unless (y["jobs"]["package"] || {})["permissions"]
+    puts bad' 2>&1)
+  if [[ -z $perm_report ]]; then
+    ok "build.yml permissions: default read; only the package job has contents: write and nothing more"
   else
-    fail "build.yml: jobs with contents: write are '$writers', workflow default '$top' (policy: only 'package', default read)"
+    fail "build.yml permissions: $perm_report"
   fi
 fi
 

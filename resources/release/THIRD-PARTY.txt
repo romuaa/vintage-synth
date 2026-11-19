@@ -884,6 +884,24 @@ SOFTWARE.
 //---------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
+Plug-in extension headers for VST3  [LicenseRef-Public-Domain, per JUCE.spdx.json]
+Part of: juce_audio_processors_headless (the plugin wrapper)
+Source: modules/juce_audio_processors_headless/format_types/pslextensions/,
+included by modules/juce_audio_processors_headless/format_types/juce_VST3Headers.h
+(line 146). Version: none (JUCE.spdx.json: "NOASSERTION").
+Licence statement: the header files carry it themselves, reproduced here from
+ipslviewembedding.h:
+-------------------------------------------------------------------------------
+
+// PreSonus Plug-In Extensions
+// Written and placed in the PUBLIC DOMAIN by PreSonus Software Ltd.
+
+	DISCLAIMER:
+	The PreSonus Plug-In Extensions are host-specific extensions of existing proprietary technologies,
+	provided to the community on an AS IS basis. They are not part of any official 3rd party SDK and
+	PreSonus is not affiliated with the owner of the underlying technology in any way.
+
+-------------------------------------------------------------------------------
 Notice required by the licence of jpeglib (above):
 This software is based in part on the work of the Independent JPEG Group.
 -------------------------------------------------------------------------------

@@ -261,7 +261,7 @@ step_mac_package() {
   zipf=$("$here/package-release.sh" pack --platform macos --bundle "$bundle" --version "$ver" \
     --commit "$(git rev-parse HEAD)" --out "$zdir") || return 1
   echo "zip: $zipf"; unzip -Z1 "$zipf" || return 1
-  "$here/package-release.sh" verify "$zipf" || return 1
+  "$here/package-release.sh" verify --license "$repo/LICENSE" "$zipf" || return 1
   "$here/package-release.sh" selftest "$zipf" || return 1
   "$here/package-release.sh" sums "$zdir" && "$here/package-release.sh" sums "$zdir" --check || return 1
   # The same check CI runs on every platform: host_smoke against the bundle taken from the zip.
