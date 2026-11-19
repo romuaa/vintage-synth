@@ -22,6 +22,10 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   suite and full scans in the hidden `[.render-exact]` and `[.render-sync-integer]` (which now assert).
 - Output differs from the render cost step by at most 4.8e-7 (-126 dB re 1, the rounding) in patches without
   sync; `chip_bench` unchanged within its scatter.
+- Review round 1: the rounding is a class of its own (`render::OutputRounding`, `RenderTables.h`) measured
+  directly (in-band suppression at every rate, 4.75 float steps, settle count, cleared state); the exact gate
+  also runs on the general path. Recorded: the cost of re-rounding into a non-zero buffer (-96.5 dB) and of two
+  chips in one float buffer (0.86 dB margin), which bind S3b and S4.
 
 ### B-Side render cost step, fourth review (2026-11-19)
 - Tests and records only. The step moments' alias test now measures synced targets at a non-integer ratio
