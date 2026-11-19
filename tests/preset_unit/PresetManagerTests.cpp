@@ -532,8 +532,12 @@ TEST_CASE ("User file locations: nothing is created until the first save, and on
     CHECK (def.root.getFullPathName().endsWith ("Exitium" + juce::File::getSeparatorString() + "Vintage Synth"));
     CHECK (def.root.isAChildOf (juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)));
 
-    // A save into an unwritable place fails with a message instead of throwing or crashing.
-    CHECK (pm.saveProgramFile (juce::File ("/proc/definitely/not/here/x.vsprog")).isNotEmpty());
+    // A save into an unwritable place fails with a message instead of throwing or crashing. The place
+    // is a path below a regular file, which no system can create (an absolute path such as "/proc/..."
+    // is an ordinary, writable folder on the current drive on Windows).
+    const auto plainFile = rig.temp.dir.getChildFile ("plain.txt");
+    REQUIRE (plainFile.replaceWithText ("not a folder"));
+    CHECK (pm.saveProgramFile (plainFile.getChildFile ("not").getChildFile ("here").getChildFile ("x.vsprog")).isNotEmpty());
 }
 
 // =================================================================================================

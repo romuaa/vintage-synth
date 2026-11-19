@@ -168,7 +168,7 @@ TEST_CASE ("B-Side: 64 programs, all Init, in an 8 x 8 bank with B-Side's own pr
     CHECK (schema.isExcluded (schema.indexOf ("master.limiter")));
     CHECK (schema.isExcluded (schema.indexOf ("master.limiter.ceiling")));
     CHECK_FALSE (schema.isExcluded (schema.indexOf ("fx.reverb.level")));
-    CHECK (presets.getLocations().root.getFullPathName().endsWith ("Exitium/B-Side"));
+    CHECK (presets.getLocations().root.getFullPathName().endsWith ("Exitium" + juce::File::getSeparatorString() + "B-Side"));
 
     juce::StringArray errors;
     const auto bank = bs::makeBSideFactoryBank (schema, &errors);
