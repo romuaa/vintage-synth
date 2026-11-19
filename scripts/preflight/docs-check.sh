@@ -10,7 +10,9 @@
 #      "plan" step of build.yml, run for every `targets` value, selects exactly the documented
 #      rows and jobs (the table below), so the `if:` conditions and the docs cannot drift apart.
 #   4. Source layout: source/common includes nothing from an instrument directory; the JUCE-free
-#      directories include no JUCE header; no two files differ only by case.
+#      directories include no JUCE header; no two files differ only by case; no Python bytecode
+#      (`__pycache__/`, `*.pyc`, `*.pyo`) is tracked; no tracked file, text or binary, contains an
+#      absolute home path (macOS, Windows or Linux user directory followed by a user name).
 #   5. Shell scripts pass `bash -n` (and shellcheck at error severity, when it is installed).
 set -uo pipefail
 
@@ -155,6 +157,25 @@ if [[ -n $dups ]]; then
   fail "file names that differ only by case: $(echo "$dups" | tr '\n' ' ')"
 else
   ok "no two files differ only by case"
+fi
+# No Python bytecode under version control (it embeds the developer's absolute paths). The owner
+# keeps `__pycache__/` in the git-ignore file; this is the gate behind it.
+bad=$(git ls-files | grep -E '(^|/)__pycache__/|\.py[co]$' || true)
+if [[ -n $bad ]]; then
+  fail "Python bytecode is tracked:"; echo "$bad" >&2
+else
+  ok "no tracked Python bytecode (__pycache__, .pyc, .pyo)"
+fi
+# No absolute home path in any tracked file. One `git grep -a` pass covers text and binary files;
+# LC_ALL=C keeps it byte-wise (in a UTF-8 locale git grep skips files with invalid sequences).
+# External submodules are not searched (git grep does not descend into them). No exceptions are
+# needed: no legitimate documentation placeholder uses such a path. The first letter of each
+# directory name is a bracket class so that this script does not match its own pattern.
+bad=$(LC_ALL=C git grep -a -l -E '/[U]sers/[^/[:space:]]+/|C:\\[U]sers\\[^\\[:space:]]+\\|/[h]ome/[^/[:space:]]+/' -- . || true)
+if [[ -n $bad ]]; then
+  fail "absolute home path in tracked files (a developer's machine path):"; echo "$bad" >&2
+else
+  ok "no absolute home paths (macOS, Windows, Linux user directories) in tracked files"
 fi
 
 # 5. Shell scripts -----------------------------------------------------------------------------

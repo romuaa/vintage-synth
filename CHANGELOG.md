@@ -11,6 +11,11 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   one cron at most weekly, workflow_dispatch). `pull_request_target` and `workflow_run` always fail.
 - Added: `scripts/preflight/test-workflow-triggers.sh`, the policy itself plus a self-test on fixture workflows
   (run on every docs check) that proves each violation is caught.
+- Removed: a tracked Python bytecode file (`tests/bside/golden/tools/__pycache__/model.cpython-315.pyc`, which
+  embedded a developer's home path). The docs check now fails on any tracked `__pycache__/`, `.pyc` or `.pyo`
+  file and on any absolute home path (macOS, Windows or Linux user directory) in a tracked text or binary file.
+- Changed: a test comment no longer names a third-party product; the hashed brand deny-list gained one more
+  entry (a filter integrated-circuit part number found in old history).
 
 ### B-Side alias follow-up step (2026-11-19)
 - Fixed: Model B pulses of width 1 and 4095 missed the -100 dB alias budget by up to 2.7 dB at frequencies
