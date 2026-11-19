@@ -5,6 +5,25 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S3a: filter and output stage (2026-11-19)
+- `source/bside/chip/Filter.*`: the chip's 2-pole state-variable filter for both models (low-, band- and
+  high-pass summed by the mode bits, inverted as the reference; continuous cutoff 0 .. 2047, 16 resonance
+  steps). Model B close to linear in the register; Model A with its own cutoff converter (11-bit ladder, the
+  steps at bit boundaries), a fitted cutoff curve, Q against the cutoff, `variation`, and its distortion as
+  static functions of the low-pass state. Clock-independent, no allocation, can be shared by several chips.
+- `source/bside/chip/OutputStage.*`: voice DC (per voice and envelope), mixer (a static curve after a gain
+  that falls with the inputs connected), 4-bit volume, `volumeDc` off, board filters and the reference's
+  output scale. All constants are our own fits to generated data (`docs/decisions.md` "B-Side S3a").
+- Gates against the committed analog data (`bside_trace`): filter corners at 16 cutoffs (worst 3.9 % Model A,
+  1.8 % Model B; allowed 5 %), resonance peaks 0 .. 15 (0.22 / 0.06 dB; allowed 1), Model A distortion
+  harmonics 2 .. 5 at three drives (within 2.3 dB; allowed 3), Model A voice DC steps (0.3 dB; allowed 1), the
+  modes within the scripted tolerance (Model A 4.47 % outliers, mean 0.94 dB; Model B 2.48 %, 0.57 dB).
+  `a_routing_*` stays skipped until the renderer has two buses (S3b).
+- Unit tests: stability at every setting and internal rate (full-scale noise, writes every sample, decay to
+  -120 dB with no limit cycle or subnormal state), any block split bit-identical, no allocation.
+- `chip_bench`: new cases `filterB`, `filterA`, `outputB`, `outputA`, `s3aB`, `s3aA` (filter + output stage:
+  6.5 ns Model B, 7.6 ns Model A per internal sample at 96 kHz on this Mac, indicative).
+
 ### B-Side render cost step, fourth review (2026-11-19)
 - Tests and records only. The step moments' alias test now measures synced targets at a non-integer ratio
   (2.71) against the same -80 dB as plain and ring targets, and the strongest line outside DC's main lobe:

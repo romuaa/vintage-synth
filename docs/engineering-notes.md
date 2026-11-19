@@ -3,6 +3,19 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S3a: filter and output stage (2026-11-19)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Levels read from the reference's output drifted by 0.005 per group of segments. | The reference's board high-pass has a dead band; integrating an inverse of the high-pass over seconds accumulates its residue. | Measure every level against a baseline next to it (gate on, gate off, both sides of each edge), never by chaining jumps over a long run. |
+| A two-pole fit per setting put Model A's corners up to 37 % off what the gate measures, and the first cutoff curve failed the corner gate by 30 to 49 %. | The fit weighted a high-frequency floor and a shallow skirt that no two-pole has; the gate measures a -3 dB point against a plateau, a different quantity. | Fit what the gate measures, with the gate's own estimator (`AnalogMeasure` on `.bsspec` segments of the gate's length), on data of your own; keep a model's free shape parameters (Q) for the other gates. |
+| A static fit with a 0.6 % rms error still missed the distortion gate by 9 dB at low drive. | A second harmonic at -28 dB is a 4 % curvature over the swing: below the fit's error budget when the fit weights levels, not curvature. | Fit distortion on waveforms or harmonics directly (in log), with the static levels as a second set of residuals. |
+| One model of the mixer met every filtered-path gate but put the direct path's second harmonic 12 dB low with two voices. | Model A's distortion depends on the operating point but shows almost no intermodulation: no static function of the sum can do both. | Run an intermodulation test (two tones, f2 +- f1 against 2 f1) before choosing where a nonlinearity lives; record what the chosen place cannot reproduce. |
+| The scripted comparison failed on 6 % of its cells although every response at 1, 3 and 10 kHz agreed within 1 dB. | The failing cells were 25-80 dB below the signal: the decaying DC step after each mode write (board high-pass, 1.2 Hz) and the high-pass's leak at low frequencies. | Print the failing cells per band and frame before tuning; low-level cells follow DC steps and leaks, which a response comparison does not see. |
+| Flushing small filter states left the low-pass state frozen at about 5e-13 for ever. | The low-pass state decays only through the band-pass state; flushing the band-pass state alone below 1e-15 cut the path. | Flush coupled states together (their sum below the threshold) and each alone only far below it (1e-30), and test that zero input ends at exactly zero. |
+| Catch2 ran no test for a test name with a comma ("... on a volume write, off it does not"). | A comma separates test specs on Catch2's command line. | Select such tests by tag (or escape the comma) in scripts. |
+| A per-sample filter cost 8.8 ns where its arithmetic is about a dozen operations. | The trapezoidal form's update is a chain of dependent multiply-adds; a loop of one filter waits on it. | Write the per-sample update as its state-space form (next states and outputs as linear forms of the old states and the input, coefficients precomputed at a change): 6.5 ns. |
+
 ## B-Side render cost step (2026-11-18)
 
 | Problem | Cause | Fix / rule |
