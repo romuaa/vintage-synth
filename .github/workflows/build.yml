@@ -20,6 +20,13 @@ name: build
 #    default branch for the dispatch to be offered; run it from the branch you want to confirm.
 #  - Every job has a timeout, so a hung test can't burn hours. The security workflow (cheap,
 #    Linux only) is separate and keeps its own triggers.
+#  - Release (docs/architecture.md section 10): `-f release=true -f targets=all` runs everything above
+#    with Vintage only (-DVS_BUILD_BSIDE=OFF: B-Side is not built, validated, uploaded or merged),
+#    then the jobs pack (three zips + SHA256SUMS.txt, scripts/package-release.sh), zip-smoke
+#    (host_smoke against the bundle unpacked from each zip) and package (a DRAFT GitHub release
+#    v<version>; the only job with contents: write). Nothing is published and no tag is created:
+#    the owner publishes the draft by hand. It refuses a version that already has a published
+#    release and a CHANGELOG.md without a section for the version.
 on:
   workflow_dispatch:
     inputs:
@@ -28,13 +35,18 @@ on:
         type: choice
         options: [no-macos, windows, linux-x64, linux, all]
         default: no-macos
+      release:
+        description: "Release run: Vintage only, then pack the zips and create a DRAFT release (needs targets=all)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A release run is never cancelled by a later dispatch on the same ref (it ends in a draft release).
+  cancel-in-progress: ${{ !inputs.release }}
 
 env:
   # pluginval release and the SHA-256 of each downloaded asset. Bump the version and all three
@@ -47,6 +59,8 @@ env:
   # the VST3 validator, the architecture and dependency checks, the artifact and the bundle merge run per plugin.
   BUNDLE_VINTAGE: Exitium Vintage Synth.vst3
   BUNDLE_BSIDE: Exitium B-Side.vst3
+  # "true" in a release run: Vintage only (every per-plugin step below skips B-Side).
+  RELEASE_BUILD: ${{ inputs.release && 'true' || 'false' }}
   # Steinberg VST3 SDK, built only for its `validator` tool (MIT; not linked into the plugin).
   # Pinned by commit SHA; the tag is for humans. Bump both together, deliberately.
   VST3_SDK_TAG: v3.8.1_build_84
@@ -66,6 +80,8 @@ jobs:
       sanitizers: ${{ steps.plan.outputs.sanitizers }}
       windows_bundle: ${{ steps.plan.outputs.windows_bundle }}
       linux_bundle: ${{ steps.plan.outputs.linux_bundle }}
+      release: ${{ inputs.release && 'true' || 'false' }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - name: Select rows
         id: plan
@@ -111,6 +127,36 @@ jobs:
             echo "- build rows: $(echo "$matrix" | jq -r 'map(.name) | join(", ")')"
             echo "- distribution tests: $distros, sanitizers: $sanitizers, Windows bundle: $windows_bundle, Linux bundle: $linux_bundle"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Release runs only: the checks that must hold before anything is built (contract 10.2).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: inputs.release
+        with:
+          sparse-checkout: |
+            CMakeLists.txt
+            CHANGELOG.md
+            scripts/package-release.sh
+
+      - name: Release preconditions
+        id: release
+        if: inputs.release
+        env:
+          TARGETS: ${{ inputs.targets }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGETS" == all ]] || { echo "a release run needs targets=all (got '$TARGETS')" >&2; exit 1; }
+          # The version is written once, in CMakeLists.txt.
+          version=$(sed -n 's/^project(VintageSynth VERSION \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' CMakeLists.txt)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "cannot read the version from CMakeLists.txt" >&2; exit 1; }
+          # A section for this version must exist in CHANGELOG.md (it becomes the release text).
+          bash scripts/package-release.sh changelog "$version" CHANGELOG.md > /dev/null
+          # A version that already has a PUBLISHED release is never released again. A draft is fine
+          # (it is replaced by the package job). Drafts may be invisible to this read-only token.
+          published=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"v$version\" and (.draft | not)) | .html_url")
+          [[ -z "$published" ]] || { echo "v$version is already published: $published" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "- release run for version \`$version\` (Vintage only; draft release v$version)" >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: ${{ matrix.name }}
@@ -222,6 +268,7 @@ jobs:
           -DCMAKE_C_COMPILER_LAUNCHER=${{ matrix.cache }}
           -DCMAKE_CXX_COMPILER_LAUNCHER=${{ matrix.cache }}
           ${{ runner.os == 'Windows' && '-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl' || '' }}
+          ${{ inputs.release && '-DVS_BUILD_BSIDE=OFF' || '' }}
           ${VS_VST3_VALIDATOR:+-DVS_VST3_VALIDATOR="$VS_VST3_VALIDATOR"}
 
       - name: Build
@@ -249,7 +296,9 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          for pair in "VintageSynth|Exitium Vintage Synth" "BSide|Exitium B-Side"; do
+          pairs=("VintageSynth|Exitium Vintage Synth")
+          [[ "$RELEASE_BUILD" == true ]] || pairs+=("BSide|Exitium B-Side")
+          for pair in "${pairs[@]}"; do
             target=${pair%%|*}; name=${pair#*|}
             archs=$(lipo -archs "build/${target}_artefacts/Release/VST3/$name.vst3/Contents/MacOS/$name")
             echo "$name: $archs"
@@ -264,7 +313,9 @@ jobs:
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
           echo "$PLUGINVAL_SHA256_MACOS  pv.zip" | shasum -a 256 -c -
           unzip -q pv.zip
-          for pair in "VintageSynth|$BUNDLE_VINTAGE" "BSide|$BUNDLE_BSIDE"; do
+          pairs=("VintageSynth|$BUNDLE_VINTAGE")
+          [[ "$RELEASE_BUILD" == true ]] || pairs+=("BSide|$BUNDLE_BSIDE")
+          for pair in "${pairs[@]}"; do
             pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
               --skip-gui-tests "build/${pair%%|*}_artefacts/Release/VST3/${pair#*|}"
           done
@@ -277,7 +328,9 @@ jobs:
           curl -fsSL -o pv.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
           echo "$PLUGINVAL_SHA256_WINDOWS  pv.zip" | sha256sum -c -
           unzip -q pv.zip
-          for pair in "VintageSynth|$BUNDLE_VINTAGE" "BSide|$BUNDLE_BSIDE"; do
+          pairs=("VintageSynth|$BUNDLE_VINTAGE")
+          [[ "$RELEASE_BUILD" == true ]] || pairs+=("BSide|$BUNDLE_BSIDE")
+          for pair in "${pairs[@]}"; do
             ./pluginval.exe --strictness-level 10 --validate-in-process \
               --skip-gui-tests "build/${pair%%|*}_artefacts/Release/VST3/${pair#*|}"
           done
@@ -289,7 +342,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for pair in "VintageSynth|$BUNDLE_VINTAGE" "BSide|$BUNDLE_BSIDE"; do
+          pairs=("VintageSynth|$BUNDLE_VINTAGE")
+          [[ "$RELEASE_BUILD" == true ]] || pairs+=("BSide|$BUNDLE_BSIDE")
+          for pair in "${pairs[@]}"; do
             dir="build/${pair%%|*}_artefacts/Release/VST3/${pair#*|}/Contents/${{ matrix.arch_dir }}"
             echo "=== ${pair#*|}"
             so=$(ls "$dir"/*.so | head -n 1)
@@ -314,7 +369,9 @@ jobs:
           echo "$PLUGINVAL_SHA256_LINUX  pv.zip" | sha256sum -c -
           unzip -q pv.zip
           chmod +x pluginval
-          for pair in "VintageSynth|$BUNDLE_VINTAGE" "BSide|$BUNDLE_BSIDE"; do
+          pairs=("VintageSynth|$BUNDLE_VINTAGE")
+          [[ "$RELEASE_BUILD" == true ]] || pairs+=("BSide|$BUNDLE_BSIDE")
+          for pair in "${pairs[@]}"; do
             xvfb-run -a ./pluginval --strictness-level 10 --validate-in-process \
               --skip-gui-tests "build/${pair%%|*}_artefacts/Release/VST3/${pair#*|}"
           done
@@ -326,10 +383,21 @@ jobs:
           path: build/VintageSynth_artefacts/Release/VST3/${{ env.BUNDLE_VINTAGE }}
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.RELEASE_BUILD != 'true'
         with:
           name: vst3-bside-${{ matrix.name }}
           retention-days: 7
           path: build/BSide_artefacts/Release/VST3/${{ env.BUNDLE_BSIDE }}
+
+      # Release runs: the host_smoke program of the three rows whose zips are loaded in a host
+      # (the zip-smoke job runs it against the bundle unpacked from the zip, contract 10.4).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.RELEASE_BUILD == 'true' && contains(fromJSON('["macos-universal","windows-x64","linux-x64"]'), matrix.name)
+        with:
+          name: host-smoke-${{ matrix.name }}
+          retention-days: 7
+          path: build/tests/host_smoke_artefacts/Release/host_smoke*
+          if-no-files-found: error
 
   # The bundles built by the linux-x64 row (one per plugin) must load on other distributions than the image
   # they were built on. Each entry runs pluginval (strictness 10) inside a container of that
@@ -397,6 +465,7 @@ jobs:
           path: ${{ env.BUNDLE_VINTAGE }}
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.RELEASE_BUILD != 'true'
         with:
           name: vst3-bside-linux-x64
           path: ${{ env.BUNDLE_BSIDE }}
@@ -413,9 +482,11 @@ jobs:
           start=$(date +%s)
           docker pull -q "${{ matrix.image }}" >/dev/null
           rc=0
+          bundles=("/w/$BUNDLE_VINTAGE")
+          [[ "$RELEASE_BUILD" == true ]] || bundles+=("/w/$BUNDLE_BSIDE")
           docker run --rm -v "$PWD":/w -w /w "${{ matrix.image }}" \
             sh /w/scripts/linux-check/distro-check.sh "${{ matrix.pm }}" "${{ matrix.expect }}" "${{ matrix.pkgs }}" \
-            "/w/$BUNDLE_VINTAGE" "/w/$BUNDLE_BSIDE" || rc=$?
+            "${bundles[@]}" || rc=$?
           echo "distribution ${{ matrix.name }}: exit $rc after $(( $(date +%s) - start ))s"
           exit $rc
 
@@ -432,12 +503,16 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: vst3-vintage-windows-arm64, path: vintage-arm64 }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.RELEASE_BUILD != 'true'
         with: { name: vst3-bside-windows-x64, path: bside-x64 }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.RELEASE_BUILD != 'true'
         with: { name: vst3-bside-windows-arm64, path: bside-arm64 }
       - name: Merge
         run: |
-          for pair in "vintage|$BUNDLE_VINTAGE" "bside|$BUNDLE_BSIDE"; do
+          pairs=("vintage|$BUNDLE_VINTAGE")
+          [[ "$RELEASE_BUILD" == true ]] || pairs+=("bside|$BUNDLE_BSIDE")
+          for pair in "${pairs[@]}"; do
             plugin=${pair%%|*}; bundle=${pair#*|}
             mkdir -p "merged-$plugin/$bundle"
             cp -R "$plugin-x64/." "merged-$plugin/$bundle/"
@@ -451,6 +526,7 @@ jobs:
           retention-days: 7
           path: merged-vintage
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.RELEASE_BUILD != 'true'
         with:
           name: vst3-bside-windows-universal
           retention-days: 7
@@ -469,12 +545,16 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: vst3-vintage-linux-arm64, path: vintage-arm64 }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.RELEASE_BUILD != 'true'
         with: { name: vst3-bside-linux-x64, path: bside-x64 }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.RELEASE_BUILD != 'true'
         with: { name: vst3-bside-linux-arm64, path: bside-arm64 }
       - name: Merge
         run: |
-          for pair in "vintage|$BUNDLE_VINTAGE" "bside|$BUNDLE_BSIDE"; do
+          pairs=("vintage|$BUNDLE_VINTAGE")
+          [[ "$RELEASE_BUILD" == true ]] || pairs+=("bside|$BUNDLE_BSIDE")
+          for pair in "${pairs[@]}"; do
             plugin=${pair%%|*}; bundle=${pair#*|}
             mkdir -p "merged-$plugin/$bundle"
             cp -R "$plugin-x64/." "merged-$plugin/$bundle/"
@@ -488,6 +568,7 @@ jobs:
           retention-days: 7
           path: merged-vintage
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.RELEASE_BUILD != 'true'
         with:
           name: vst3-bside-linux-universal
           retention-days: 7
@@ -551,3 +632,162 @@ jobs:
 
       - name: Tests (ASan + UBSan)
         run: xvfb-run -a ctest --test-dir build --output-on-failure -E '^(host_smoke|host_smoke_bside)$'
+
+  # ---- Release (docs/architecture.md section 10): only when the run was dispatched with release=true ----
+
+  # Pack the three zips from the validated bundles and verify each zip from the zip alone. Runs on macOS
+  # because the macOS zip needs ditto, lipo and codesign; the Windows and Linux zips need only `zip`.
+  pack:
+    name: pack release zips
+    needs: [plan, build, windows-bundle, linux-bundle, linux-distros, linux-sanitizers]
+    if: ${{ needs.plan.outputs.release == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: vst3-vintage-macos-universal, path: "in/macos/Exitium Vintage Synth.vst3" }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: vst3-vintage-windows-universal, path: in/windows }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: vst3-vintage-linux-universal, path: in/linux }
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          for plat in macos windows linux; do
+            bash scripts/package-release.sh pack --platform "$plat" --bundle "in/$plat/$BUNDLE_VINTAGE" \
+              --version "$VERSION" --commit "$GITHUB_SHA" --out release \
+              --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          done
+          ls -l release
+
+      - name: Verify every zip, self-test the verifier, write the checksums
+        run: |
+          set -euo pipefail
+          for z in release/*.zip; do bash scripts/package-release.sh verify "$z"; done
+          bash scripts/package-release.sh selftest "release/Exitium-Vintage-Synth-$VERSION-macOS.zip"
+          bash scripts/package-release.sh sums release
+          bash scripts/package-release.sh sums release --check
+          {
+            echo "### Release zips for \`$VERSION\` (commit \`$GITHUB_SHA\`)"
+            echo '```'
+            cat release/SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ needs.plan.outputs.version }}
+          retention-days: 14
+          path: release
+
+  # The unpacked zips load in a host (host_smoke against the bundle taken from the zip), on the three
+  # platforms with a validated host: macOS, Windows x64 and Linux x86_64.
+  zip-smoke:
+    name: zip smoke (${{ matrix.zip }})
+    needs: [plan, pack]
+    if: ${{ needs.plan.outputs.release == 'true' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-26, zip: macOS, row: macos-universal }
+          - { os: windows-2025, zip: Windows, row: windows-x64 }
+          - { os: ubuntu-22.04, zip: Linux, row: linux-x64 }
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      ZIP: ${{ matrix.zip }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: "release-${{ needs.plan.outputs.version }}", path: release }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: "host-smoke-${{ matrix.row }}", path: smoke }
+
+      - name: Runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2 libfreetype6 libfontconfig1 libx11-6 libxext6 \
+            libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 xvfb xauth
+
+      - name: Unpack the zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Expand-Archive -Path "release/Exitium-Vintage-Synth-$env:VERSION-$env:ZIP.zip" -DestinationPath unpacked
+
+      - name: Unpack the zip (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            ditto -x -k "release/Exitium-Vintage-Synth-$VERSION-$ZIP.zip" unpacked
+          else
+            unzip -q "release/Exitium-Vintage-Synth-$VERSION-$ZIP.zip" -d unpacked
+          fi
+
+      - name: host_smoke against the unpacked bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="unpacked/Exitium Vintage Synth $VERSION/Exitium Vintage Synth.vst3"
+          test -d "$bundle"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            ./smoke/host_smoke.exe --profile vintage "$bundle"
+          else
+            chmod +x smoke/host_smoke
+            if [[ "$RUNNER_OS" == Linux ]]; then
+              xvfb-run -a ./smoke/host_smoke --profile vintage "$bundle"
+            else
+              ./smoke/host_smoke --profile vintage "$bundle"
+            fi
+          fi
+
+  # The ONLY job with write access. Creates (or replaces) the DRAFT release v<version> with the zips,
+  # the checksums and the CHANGELOG section as its text. Nothing is published and no tag is created
+  # until the owner publishes the draft. Refuses a version that already has a published release.
+  package:
+    name: package (draft release)
+    needs: [plan, pack, zip-smoke]
+    if: ${{ needs.plan.outputs.release == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: "release-${{ needs.plan.outputs.version }}", path: release }
+
+      - name: Draft release
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          # The files must be the ones the pack job verified.
+          bash scripts/package-release.sh sums release --check
+          bash scripts/package-release.sh changelog "$VERSION" CHANGELOG.md > release-notes.md
+          # Existing releases with this tag: a published one stops the run; a draft is replaced
+          # (deleted and created again, so its assets and target are exactly this run's).
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$tag\") | \"\(.id) \(.draft)\"" > existing.txt
+          while read -r id draft; do
+            [[ -n "$id" ]] || continue
+            [[ "$draft" == true ]] || { echo "release $tag is already published; refusing to touch it" >&2; exit 1; }
+          done < existing.txt
+          while read -r id draft; do
+            [[ -n "$id" ]] || continue
+            echo "replacing the draft $id of $tag"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done < existing.txt
+          gh release create "$tag" release/*.zip release/SHA256SUMS.txt \
+            --draft --target "$GITHUB_SHA" --title "Exitium Vintage Synth $VERSION" --notes-file release-notes.md
+          echo "Draft release $tag created for commit $GITHUB_SHA. Publish it by hand when the owner gate is passed." >> "$GITHUB_STEP_SUMMARY"

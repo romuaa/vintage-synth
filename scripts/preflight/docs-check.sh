@@ -109,6 +109,17 @@ TABLE
   fi
 fi
 
+# Only the `package` job of build.yml may hold write access (contract 10.2: it creates the draft release).
+if command -v ruby >/dev/null 2>&1; then
+  writers=$(ruby -ryaml -e 'y = YAML.load_file(".github/workflows/build.yml"); puts y["jobs"].select { |_, j| ((j["permissions"] || {})["contents"]) == "write" }.keys.join(",")' 2>/dev/null)
+  top=$(ruby -ryaml -e 'y = YAML.load_file(".github/workflows/build.yml"); puts((y["permissions"] || {})["contents"])' 2>/dev/null)
+  if [[ $writers == package && $top == read ]]; then
+    ok "build.yml: only the package job has contents: write (workflow default: read)"
+  else
+    fail "build.yml: jobs with contents: write are '$writers', workflow default '$top' (policy: only 'package', default read)"
+  fi
+fi
+
 # 4. Source layout -----------------------------------------------------------------------------
 # source/common/ is shared by every instrument and must not depend on one: no include of
 # "vintage/...", "bside/..." (or any other instrument directory) from it. The pathspec covers every
