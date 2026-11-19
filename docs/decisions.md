@@ -3,6 +3,32 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Pre-public audit (2026-11-19, owner decisions)
+
+An independent audit read the whole history (436 commits, every branch and pull-request ref, the
+pull-request texts, the Actions logs that still existed) before the repository becomes public.
+No secret or credential was found. The owner decided:
+
+- **Commit author e-mail stays as it is** (confirmed again; no history rewrite).
+- **Two history-only findings are accepted, no history rewrite:** a filter integrated-circuit part
+  number in one code comment of the first engine commit (reworded the same day; the name is on the
+  hashed deny-list now), and a session link in the message of the first merge commit on `main`
+  (it opens only for the account owner).
+- **The wireframe picture of the Browser page is removed** (`docs/ui/wireframes/07-browser.png`
+  showed two invented program names, one of them a nickname of a third-party instrument). The
+  real page is shown in `docs/screenshots.md`. The name check reads text only, never pictures:
+  look at every picture before it is committed.
+- **B-Side material is published as it is.** The chip can be identified from technical facts
+  (clock rates, register map, the pinned commit of the reference emulator), which an emulation
+  cannot hide; the hashed deny-list can be guessed back and is a guard against slips, not a
+  secret. The two reference-data manifests state provenance and licence. Open for B-Side's own
+  release: check the reference emulator's licence against how its outputs and source were used.
+- **The 71 build artifacts of 2026-11-12 were deleted** before the repository becomes public.
+- **Fixed at the tip:** a tracked Python bytecode file that embedded a home path (removed; the
+  local gate now refuses bytecode and home paths), a product name in a test comment.
+- **Screenshots of the editor** live in `docs/images/` (owner's own, 2026-11-19); the README
+  shows the Sound page and links to `docs/screenshots.md`.
+
 ## M8 release hardening: typed parameter text (2026-11-19, review)
 
 - **Typed text never gives a non-finite value; text that names NaN or infinity gives the parameter's default (review).**

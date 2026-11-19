@@ -11,6 +11,9 @@ CMakeUserPresets.json
 xcuserdata/
 .vs/
 
+# Language and cache
+__pycache__/
+
 # Secrets & signing — never commit
 .env
 *.p12
@@ -19,3 +22,6 @@ cmake/signing.local.cmake
 
 # Claude Code per-user settings
 .claude/settings.local.json
+
+# Misc
+.tmp_local/

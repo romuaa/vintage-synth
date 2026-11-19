@@ -16,6 +16,9 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   file and on any absolute home path (macOS, Windows or Linux user directory) in a tracked text or binary file.
 - Changed: a test comment no longer names a third-party product; the hashed brand deny-list gained one more
   entry (a filter integrated-circuit part number found in old history).
+- Added: screenshots of every editor page (`docs/images/`, `docs/screenshots.md`; the README shows the Sound
+  page). Removed: the Browser wireframe picture. The B-Side reference-data manifests state provenance and licence.
+  Pre-public audit decisions: `docs/decisions.md`.
 - Fixed: typed parameter text such as "nan" gave NaN to 70 float parameters; text naming NaN or infinity, or a
   result that is not finite, now gives the parameter's default (as in B-Side). Test over all 172 parameters.
 
