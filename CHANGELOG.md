@@ -5,6 +5,20 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side S3a round 2 (2026-11-20)
+- Model A's held-tone distortion is per voice: `OutputStage::shapeVoice` bends each voice before its envelope (the
+  renderer applies it per voice in S3b); the output stage and the filter's output functions refitted with it. Held tones
+  through the low-pass and direct at drives never fitted: within 2.2 dB.
+- Volume DC off: the volume follows the board high-pass; volume and routing writes with held or silent voices no longer
+  move the output's DC (below -60 dBFS, tested).
+- Input guards off the dependency chain, Model B `s3aB` 4.9 ns at 96 kHz; `Filter::processWithCutoff` for a cutoff every
+  sample (3.5 ns extra on Model B); the Shared topology defined and tested for 1 to 16 chips.
+- Test harness renders each voice alone (no sync or ring), so `a_routing_*` is compared; new committed gate traces
+  `a_s3a_*` (13 files, generator `tests/bside/tools/gen_s3a_traces.py`).
+- **Open (reported, not gated):** Model A's cutoff and Q do not follow the routed DC, the level or the resonance as the
+  reference does (corners up to 75 % off on `a_s3a_level_a`); modes at cutoff 200; Model A routing; the resonance-write
+  DC step; band-pass and two-tone distortion; the internal-rate dependence (decisions "B-Side S3a round 2").
+
 ### B-Side S3a: filter and output stage (2026-11-19)
 - `source/bside/chip/Filter.*`: the chip's 2-pole state-variable filter for both models (low-, band- and
   high-pass summed by the mode bits, inverted as the reference; continuous cutoff 0 .. 2047, 16 resonance
