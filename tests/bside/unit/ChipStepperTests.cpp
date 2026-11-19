@@ -16,6 +16,7 @@
 // The long run is hidden: `bside_unit "[.stepper-long]"` runs 10^8 cycles per model.
 // Triage: BSIDE_STEPPER_IGNORE = comma list of field names to skip in the comparison.
 
+#include "../../support/Env.h"
 #include "bside/chip/Chip.h"
 #include "bside/chip/ChipTypes.h"
 #include "bside/chip/CombinedWaveforms.h"
@@ -611,8 +612,8 @@ std::string diffAll (const Chip& c, const NaiveChip& n, const std::string& ignor
 
 std::string ignoreList()
 {
-    const char* ev = std::getenv ("BSIDE_STEPPER_IGNORE");
-    return ev ? std::string (",") + ev + "," : std::string (",");
+    const auto ev = testenv::get ("BSIDE_STEPPER_IGNORE");
+    return ev ? std::string (",") + *ev + "," : std::string (",");
 }
 
 std::string opsToString (const std::vector<Op>& ops)

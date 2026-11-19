@@ -5,6 +5,7 @@
 // The long run is hidden: `bside_unit "[.chip-long]"` repeats the equivalence for 10^8 cycles per
 // model (BS_CHIP_CYCLES overrides the count).
 
+#include "../../support/Env.h"
 #include "FuzzSupport.h"
 
 #include "bside/chip/Chip.h"
@@ -271,8 +272,8 @@ std::uint64_t runEquivalence (Model model, bool smooth, std::uint64_t cycles, st
 
 std::uint64_t longCycles()
 {
-    if (const char* e = std::getenv ("BS_CHIP_CYCLES"))
-        return std::strtoull (e, nullptr, 10);
+    if (const auto e = testenv::get ("BS_CHIP_CYCLES"))
+        return std::strtoull (e->c_str(), nullptr, 10);
     return 100000000ull;
 }
 } // namespace

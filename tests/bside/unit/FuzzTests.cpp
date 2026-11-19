@@ -8,6 +8,7 @@
 // The normal run is short. The long run is hidden: `bside_unit "[.fuzz-long]"`; the number of
 // table cases is BS_FUZZ_CASES (default 1,000,000), the other formats get a tenth of it each.
 
+#include "../../support/Env.h"
 #include "FuzzSupport.h"
 #include "RowsPerTick.h"
 #include "TableTestUtil.h"
@@ -511,8 +512,8 @@ void timedFuzz (const char* what, F&& f)
 
 std::uint64_t casesFromEnv (std::uint64_t fallback)
 {
-    if (const char* e = std::getenv ("BS_FUZZ_CASES"))
-        if (const auto v = std::strtoull (e, nullptr, 10); v > 0)
+    if (const auto e = testenv::get ("BS_FUZZ_CASES"))
+        if (const auto v = std::strtoull (e->c_str(), nullptr, 10); v > 0)
             return v;
     return fallback;
 }

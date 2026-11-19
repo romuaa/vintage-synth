@@ -172,7 +172,9 @@ jobs:
     name: ${{ matrix.name }}
     needs: plan
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # 60 min: the first run (cold compiler cache) needed about 15 to 20 min to build plus about 14 min of unit tests
+    # on the Windows and Linux x86_64 rows, before pluginval; 30 min was sized for a warm cache and cancelled it.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
