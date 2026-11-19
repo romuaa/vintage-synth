@@ -1,5 +1,5 @@
 Exitium Vintage Synth @VERSION@ for macOS
-=========================================
+-------------------------------------
 
 What is in this folder
   Exitium Vintage Synth.vst3   the plugin (VST3 format; Apple silicon and Intel in one file)
@@ -21,8 +21,8 @@ Install
 
 This plugin is not signed with a developer certificate and not notarized by Apple.
 It carries only a local (ad-hoc) signature. A file downloaded from the internet is
-marked as quarantined, and macOS or your host will refuse to load a marked plugin
-of this kind. Remove the mark once, in Terminal, after copying (use the folder you
+marked as quarantined, and macOS or your host may refuse to load a marked plugin of
+this kind. Remove the mark once, in Terminal, after copying (use the folder you
 chose in step 2):
 
   xattr -dr com.apple.quarantine "$HOME/Library/Audio/Plug-Ins/VST3/Exitium Vintage Synth.vst3"

@@ -1,5 +1,5 @@
 Exitium Vintage Synth @VERSION@ for Linux
-=========================================
+-------------------------------------
 
 What is in this folder
   Exitium Vintage Synth.vst3   the plugin (VST3 format; a folder with x86_64 and

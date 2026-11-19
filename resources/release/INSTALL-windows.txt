@@ -1,5 +1,5 @@
 Exitium Vintage Synth @VERSION@ for Windows
-===========================================
+---------------------------------------
 
 What is in this folder
   Exitium Vintage Synth.vst3   the plugin (VST3 format; a folder with 64-bit Intel/AMD
@@ -35,7 +35,7 @@ open PowerShell in the unpacked folder and run:
   Get-ChildItem -Recurse | Unblock-File
 
 If a SmartScreen or antivirus message appears when your host loads the plugin, it is
-because the file has no signature; the source code is public (see SOURCE.txt).
+because the file has no signature (see SOURCE.txt for the source code).
 
 Uninstall
   Delete the folder "Exitium Vintage Synth.vst3" from where you copied it. Sounds you
