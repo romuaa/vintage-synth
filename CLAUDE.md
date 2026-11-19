@@ -91,7 +91,8 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   **Platforms:** macOS universal, Windows x64 and Linux x86_64; Windows ARM64 and Linux ARM64
   ship marked "experimental" (no pluginval build exists for them). **CI stays manual-only, also
   when public:** no workflow may gain an automatic trigger except the cheap `security` one; the
-  local gate checks this. B-Side is not in the release (`VS_BUILD_BSIDE=OFF`).
+  local gate checks this. B-Side is not in the release (`VS_BUILD_BSIDE=OFF`). **Version: 0.9.0, a
+  public beta** (parameter IDs and the state format are not frozen until 1.0.0).
 - **M7 editor (owner, 2026-11-14; `docs/architecture.md` 9.8):** round-3 wireframes approved;
   fixed aspect, 75–200 % (1360×784 at 100 %); embedded font Inter (SIL OFL 1.1, its licence file
   kept in the repository); dark theme only; static graphs with live markers; delay/reverb on/off
@@ -172,7 +173,8 @@ Actions has no minutes: the job never starts; not a finding).
 **Next steps:**
 1. **Vintage, M8** (skill `release`): **started 2026-11-19.** Order: (a) pre-public audit of the
    whole history, the workflow-trigger check in the local gate, the "nan" fix of the shared text
-   parser (`common/params/ParamFactory.cpp`); (b) the owner makes the repository public;
+   parser (`common/params/ParamFactory.cpp`) and the tip cleanup after the audit **(done, PR
+   pending)**; (b) the owner makes the repository public;
    (c) the first Windows and Linux x86_64 runs ever (one dispatched `all` run; the list "Merged
    without ... verification" below) and their fixes; (d) packaging: version (still 0.1.0), one
    zip per platform, licences and install notes inside, a manual release workflow, B-Side
@@ -381,6 +383,9 @@ repository.
   18. Alias follow-up step: `render::OutputRounding` (an expression one compiler may contract
       into fused multiply-adds and another not: low output bits can differ; the new exact and
       rounding tests have never run on MSVC or x86_64) (2026-11-19).
+  19. M8 hardening: the typed-text guard of the shared parameter parsers (`std::isfinite`; a test
+      that builds a string with an embedded NUL), the trigger-policy and home-path checks of
+      `docs-check.sh` (ruby and `git grep -a` have never run on a runner) (2026-11-19).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
