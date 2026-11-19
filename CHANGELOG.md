@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M8 release hardening (2026-11-19)
+- Fixed: typed parameter text such as "nan" gave NaN to 70 float parameters; text naming NaN or infinity, or a
+  result that is not finite, now gives the parameter's default (as in B-Side). Test over all 172 parameters.
+
 ### B-Side alias follow-up step (2026-11-19)
 - Fixed: Model B pulses of width 1 and 4095 missed the -100 dB alias budget by up to 2.7 dB at frequencies
   with a small-denominator ratio to the internal rate. The cause was the float conversion of the output (its
