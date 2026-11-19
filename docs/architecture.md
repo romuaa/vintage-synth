@@ -2614,3 +2614,88 @@ M7 code starts only after **S1a has merged** (both touch the editor and the proc
 | U5 | Delay and reverb on/off | (a) power switch that sets the level to 0 and back (no new parameters, 9.3.6); (b) new parameters `fx.delay.on`, `fx.reverb.on` (174 parameters; programs without them load as On) | **(a)**: the engine already treats level 0 as off; no state or program change |
 | U6 | Value display of 0–10 panel parameters | (a) as the host shows them today, 0.0–10.0; (b) percent (changes the parameters' text in hosts too) | **(a)**: one text everywhere |
 | U7 | Help bubbles | (a) on, after 600 ms hover, plus the help line; (b) help line only; (c) a switch | **(a)** for now; add a switch if it gets in the way |
+
+## 10. M8 — first release of Exitium Vintage Synth: packaging (owner decisions, 2026-11-19)
+
+The first release has **no code signing and no installers**. A release is one zip per platform
+that the user unpacks and copies into the VST3 folder. B-Side is not part of it.
+
+### 10.1 Release assets
+
+| Asset | Bundle inside | Marked |
+|---|---|---|
+| `Exitium-Vintage-Synth-<version>-macOS.zip` | universal (`arm64` + `x86_64`), min macOS 11 | |
+| `Exitium-Vintage-Synth-<version>-Windows.zip` | `Contents/x86_64-win` + `Contents/arm64-win` | ARM64 experimental |
+| `Exitium-Vintage-Synth-<version>-Linux.zip` | `Contents/x86_64-linux` + `Contents/aarch64-linux` | ARM64 experimental |
+| `SHA256SUMS.txt` | one line per zip, `shasum -a 256` format | |
+
+`<version>` is `project(VERSION)` of `CMakeLists.txt`, the only place a version number is
+written by hand. Every zip has one top-level folder `Exitium Vintage Synth <version>/` with:
+
+- `Exitium Vintage Synth.vst3/` — the bundle exactly as built and validated (the macOS bundle
+  keeps its ad-hoc signature: it is packed with a tool that preserves it, never re-created);
+- `INSTALL.txt` — for this platform only: where to copy the bundle (per-user and system-wide
+  folder), how to get past the unsigned-plugin warning (macOS: the download quarantine; Windows:
+  the downloaded-file block), how to uninstall, the minimum system (macOS 11; Windows 10;
+  glibc 2.35), and that the ARM64 build of Windows and Linux is experimental (built and
+  unit-tested, not validated by pluginval, not performance-tuned);
+- `LICENSE.txt` — the project's licence (AGPLv3), a copy of `LICENSE`;
+- `SOURCE.txt` — where the complete corresponding source is: the repository URL, the release
+  tag and the full commit hash the binaries were built from (AGPLv3 section 6);
+- `THIRD-PARTY.txt` — every third-party component that is linked into or embedded in the
+  binary, with its licence name and where its licence text is; the font licence
+  `resources/fonts/inter/OFL.txt` is included in full (the OFL requires it to accompany the
+  font). Derived from what the build really links, not from memory.
+
+Text files in the Windows zip use CRLF line endings; the others LF. No file in a zip names a
+third-party brand beyond the components credited in `THIRD-PARTY.txt` and the operating systems.
+
+### 10.2 The release build
+
+- Configured with `-DVS_BUILD_BSIDE=OFF`: no B-Side target is built, uploaded or packed. With
+  that option the Vintage plugin binary must be byte-identical in behaviour to the default
+  build (same sources, same flags); the packer fails if a bundle contains the string of the
+  B-Side plugin code or bundle identifier.
+- Built by `build.yml` only, from a manual dispatch with the input `release: true` (default
+  false) and `targets: all`. No other trigger exists (CLAUDE.md, "CI stays manual-only").
+  With `release: true` every validation step of a normal run still runs and must pass before
+  anything is packed.
+- A final job `package` (needs every build, bundle-merge, distro and sanitizer job) packs the
+  three zips and the checksum file with `scripts/package-release.sh`, verifies each zip with
+  the script's `--verify` mode, uploads them as one workflow artifact `release-<version>`, and
+  creates a **draft** GitHub release `v<version>` targeting the built commit with the four
+  assets and the matching `CHANGELOG.md` section as its text. It is the only job with
+  `contents: write`. Nothing is published and no tag exists until the owner publishes the
+  draft. A second run for the same version replaces the draft's assets; it must refuse to
+  touch a release that is already published.
+- The workflow refuses `release: true` on a ref whose `CMakeLists.txt` version already has a
+  published release, and when `CHANGELOG.md` has no section for that version.
+
+### 10.3 `scripts/package-release.sh`
+
+One script, used by CI and by the local gate, bash 3.2 compatible, no dependencies beyond the
+base system of each runner (the Windows job runs it in Git Bash).
+
+- `package-release.sh pack --platform macos|windows|linux --bundle <path to .vst3> --version <v>
+  --commit <sha> --out <dir>` writes the zip and prints its path. It checks before packing: the
+  bundle's `moduleinfo.json` reports the same version; the expected architecture slices are
+  present (`lipo` on macOS; the `Contents/<arch>-<os>` folders with one binary each elsewhere);
+  the B-Side check of 10.2; every text file of 10.1 was produced.
+- `package-release.sh verify <zip>` unpacks into a temporary folder and repeats the checks from
+  the zip alone (layout, files, version, slices, on macOS `codesign --verify` of the unpacked
+  bundle), and that the zip holds no symlink pointing outside the folder and no macOS metadata
+  files.
+- `package-release.sh sums <dir>` writes `SHA256SUMS.txt`.
+- The text files come from templates under `resources/release/` with the placeholders
+  `@VERSION@`, `@COMMIT@`, `@TAG@`, `@REPOSITORY_URL@`; an unreplaced placeholder is an error.
+
+### 10.4 Gates
+
+- Local gate: the `mac` step of `scripts/preflight.sh` packs the bundle it just validated and
+  verifies the zip (so the packer runs on every full gate); a self-test proves `verify` fails
+  for a zip with a missing file, a wrong version, a missing slice and a B-Side string.
+- CI: a dispatched `release: true` run is green on all five targets, and the unpacked zips
+  load in a host (`host_smoke` against the bundle taken from the zip, on macOS, Windows x64
+  and Linux x86_64).
+- Owner gate: the owner installs from the zips on the machines they have, following only
+  `INSTALL.txt`, before publishing the draft.
