@@ -5,6 +5,28 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side alias follow-up step (2026-11-19)
+- Fixed: Model B pulses of width 1 and 4095 missed the -100 dB alias budget by up to 2.7 dB at frequencies
+  with a small-denominator ratio to the internal rate. The cause was the float conversion of the output (its
+  rounding errors repeat with the signal and gather on a few lines), not the rendering. The conversion's
+  rounding error is now noise-shaped (at least 8 dB lower in 0 .. 20 kHz; plain rounding once the output has
+  stood still for 128 samples, so a silent output stays constant). Exact measurement over 6 760 rows at every
+  internal rate: worst -113.4 dB (was -97.3).
+- Fixed: a synced target at an exact integer or half-integer frequency ratio lost the step (saw) or slope
+  change (triangle, combined waveforms) of every second reset, where the reset fell on the same instant as the
+  target's own wrap, fold or cell change: a line at half the source's rate, up to 0 dB re the strongest line
+  for Model A combined waveforms. The values before an event now come from the line's own state. Exact
+  ratios 1 to 8, 1/4 to 7/2: worst -108.4 dB re the strongest line (budget -100). Ratios 2 and 4 were affected
+  for combined waveforms only.
+- New gates: the exact measurement of narrow pulses and synced targets at exact ratios, a fast subset in the
+  suite and full scans in the hidden `[.render-exact]` and `[.render-sync-integer]` (which now assert).
+- Output differs from the render cost step by at most 4.8e-7 (-126 dB re 1, the rounding) in patches without
+  sync; `chip_bench` unchanged within its scatter.
+- Review round 1: the rounding is a class of its own (`render::OutputRounding`, `RenderTables.h`) measured
+  directly (in-band suppression at every rate, 4.75 float steps, settle count, cleared state); the exact gate
+  also runs on the general path. Recorded: the cost of re-rounding into a non-zero buffer (-96.5 dB) and of two
+  chips in one float buffer (0.86 dB margin), which bind S3b and S4.
+
 ### B-Side render cost step, fourth review (2026-11-19)
 - Tests and records only. The step moments' alias test now measures synced targets at a non-integer ratio
   (2.71) against the same -80 dB as plain and ring targets, and the strongest line outside DC's main lobe:

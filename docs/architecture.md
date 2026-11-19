@@ -1842,6 +1842,119 @@ three times.
 - **Sanitizers are part of this code's gate:** the frequency-0 division of the first round
   passed every Release test on arm64 and would have crashed x86-64 hosts.
 
+### 8.19 S3 in two parts (contract, 2026-11-19; refines the S3 row of 8.10)
+S3 is split so that its first part can run beside the alias follow-up step (8.20), which owns the
+renderer. 8.4.4, 8.9.4 and 8.15.7 stay the specification; this section says who builds what.
+
+#### 8.19.1 S3a: filter and output stage as their own classes (new files only)
+- **Files:** new `source/bside/chip/Filter.*` and `source/bside/chip/OutputStage.*` (JUCE-free,
+  allocation only in `prepare`), their tests, new `chip_bench` cases, the source lists. **Not
+  touched:** `ChipRender.cpp`, `RenderTables.*`, `Chip.h`, `Chip.cpp`, `ChipClock.h`,
+  `tests/bside/unit/IndependentModel.h`, the existing renderer tests.
+- **`Filter`** (one class, both models; 8.4.4): 2-pole state-variable, low-, band- and high-pass
+  outputs summed by the mode bits; cutoff as a continuous register value 0 ... 2047, resonance
+  0 ... 15; Model A with its non-linear integrators, its non-linear cutoff curve and
+  `variation`; Model B clean and close to linear in the register. Clock-independent (8.15.7).
+  Input: the sum of the oscillators routed to it, in the units `Chip::render` produces.
+  Sample by sample at the internal rate; a `Part` can own it and lend it to several chips (8.5).
+- **`OutputStage`** (per chip): filter output + direct sum → mixer with the voice DC → volume
+  (4 bits; `volumeDc` off removes the voice DC before the volume) → board filters (8.15.7) →
+  the reference's output scale (8.15.7). The nonlinearity after the converters (a second
+  harmonic on the triangle at -34 / -40 dB, decisions "B-Side S2b-2" row 5) is located and
+  modelled here or in the filter input, wherever the reference data puts it.
+- **All constants are our own fits to generated data** (Q5, 8.15.8). The built adapter may be
+  run on new traces for fitting, with outputs outside the repository; the emulator's source and
+  tables are never opened. Committed reference data is not regenerated in this part: a trace
+  that a gate still needs is proposed in the report.
+- **Until S3b** the renderer gives one sum of the three oscillators, so the tests of this part
+  drive the chain from that sum for traces whose sounding oscillators share one routing, and
+  take register writes 0x15-0x18 from the trace. The traces that need separate buses
+  (`a_routing_*`, any scripted trace with mixed routing) stay skipped and are listed.
+- **Gates:** the analog rows of 8.9.4 for both models (corner at 16 cutoffs ±5 %, resonance peak
+  ±1 dB at 0 ... 15, Model A harmonics 2-5 at three drive levels ±3 dB, voice DC step ±1 dB),
+  measured with `AnalogMeasure.h` only, against the committed `a_*` data; the three modes and
+  their sums (`a_modes_*`) within the scripted-trace tolerance; **stability:** every cutoff,
+  resonance, mode and `variation` at every internal rate of 4.4, with full-scale noise, a cutoff
+  or mode write every sample, and silence after a loud input: finite, bounded output and decay
+  to below -120 dB with no input (no limit cycle, no denormal cost); block-size independent
+  (bit-identical for any split); no allocation; sanitizers; the full `scripts/preflight.sh`.
+- **Cost** (`chip_bench`, as 8.18): filter and output stage together **at most 7 ns per internal
+  sample at 96 kHz on Model B**; Model A is reported with a per-stage breakdown (the Model A
+  budget is the owner's question at S4, decided with these numbers).
+- **Review:** independent (opus) with its own measurement of the same reference data and the
+  skill `realtime-review`.
+
+#### 8.19.2 S3b: the renderer's two buses and the whole chain (after 8.20 has merged)
+`Chip::render` gets the meaning of 8.4.7, with its two buses in double precision (8.20.1): each
+oscillator goes to the filter bus or the direct bus by its routing bit (oscillator 3 off as 8.4.3 row 14), a routing or volume write lands at
+its cycle and meets the write-discontinuity budget of 8.4.5; "no waveform selected" fades as
+8.4.4; the filter topology of 8.5; the remaining traces of 8.9.4 (routing, scripted traces);
+the triangle segment of `a_dac_*`; filter sweeps of both models rendered for the owner (8.10).
+
+### 8.20 Alias follow-up step (contract, 2026-11-19; owner decision 2026-11-18: fix, no exemption)
+Fixes known defects 1 and 2 of 8.18.1 in the renderer. Runs beside S3a.
+
+- **Files:** `source/bside/chip/` except the new `Filter.*` and `OutputStage.*`; the renderer
+  tests; `chip_bench`. Not `tests/bside/unit/IndependentModel.h`.
+- **Narrow pulses (defect 1):** Model B pulses of every width, 1 and 4095 included, meet -100 dB
+  (8.4.5) at every internal rate **by the exact measurement** (a rectangular transform over
+  whole signal periods), at frequencies with a small-denominator ratio to the internal rate as
+  well as at bin-centred ones. `[.render-exact]` becomes a gate: a fast subset in the normal
+  run, the full scan hidden. Aim for the 3 dB margin of 8.17; the margin reached is reported.
+- **Integer-ratio sync (defect 2):** first settle, by a measurement stated in the report, which
+  source-to-target ratios are affected (the two earlier findings disagree on ratios 2 and 4)
+  and what the chip itself puts there (its per-cycle output through an ideal band limit).
+  Then: a synced target at exact integer and small-rational ratios meets the sync budgets of
+  8.4.5, measured not bin-centred; a line the chip's own output carries may stay at the chip's
+  level + 1 dB. Exact ratios join the sync gate (`[.render-sync-integer]` becomes a gate).
+- **Unchanged (gates):** everything 8.18 lists as unchanged and what 8.18.1 added (any split
+  bit-identical, the -80 dB limit above 3.85 kHz, sanitizers). No threshold relaxed, no test
+  removed or weakened. **Cost:** no `chip_bench` case more than 5 % above its figure in 8.18.1;
+  every target met there stays met.
+- **Output may change** where the two fixes need it; the largest difference against `main`
+  over the random patches is reported, separately for patches without sync and without pulses
+  (expected: none).
+- **Optional, if the same code is open anyway:** defects 3 and 4 of 8.18.1. Otherwise they stay
+  recorded.
+
+#### 8.20.1 As built (2026-11-19; these win over 8.17 and 8.18.1 where they differ)
+Full record: `docs/decisions.md` "B-Side alias follow-up step" (rows 1-13). Reviewed independently
+(its own exact transform and sync model; no contract defect, three test gaps closed).
+- **Narrow pulses (defect 1):** the cause was the conversion of the output to float, not the
+  rendering. A narrow pulse sits half a converter range off zero; for a signal periodic in q
+  samples the rounding errors repeat and gather on a few lines (the sum in double aliases at
+  -115.6 dB at worst). `render` sums in double and converts through `render::OutputRounding`
+  (`RenderTables.h`): the rounding error is noise-shaped, NTF (1 - 1.75 z^-1 + z^-2)
+  (1 - 0.5 z^-1 + z^-2), at least 8.16 dB lower in 0-20 kHz at every internal rate and up to
+  19.4 dB higher above the band (the decimator's range); the output stays within 4.75 float
+  steps of the sum. After 128 equal values the conversion is plain and its state cleared, so a
+  held or silent output is constant. Exact measurement, 6760 rows: worst -113.4 dB (96 kHz), a
+  margin of at least 13.4 dB at every rate.
+- **The shaping survives no later float addition (binding for S3b and S4).** Rendering into a
+  non-zero float buffer or summing chips in float rounds again, unshaped: measured -96.5 dB
+  into a buffer holding -0.75, and 0.86 dB of margin for two chips summed in float. So the
+  buses of 8.19.2 are delivered in double precision, everything up to and including the sum
+  of a part's chips stays in double, and the one conversion to float after that sum is shaped
+  the same way. S4's alias gate after the decimator includes the exact measurement of narrow
+  pulses on that whole path, with 1 and with 16 chips.
+- **Exact ratios (defect 2):** the value and slope before a digital event at the sweep position
+  come from the line's tracked cell. A reset on the same instant as the target's own wrap, fold
+  or cell change used to lose its step every second source period: a saw at odd ratios, a
+  triangle at odd and half-integer ratios, combined waveforms at every integer ratio (this
+  settles the two earlier findings: both were right for the waveforms they measured). Exact
+  ratios 1-8 and 1/4-7/2, all rates, 11 970 rows: worst -108.4 dB against -100 dB; no line
+  needs the allowance for the chip's own level.
+- **Gates:** `[render][alias][exact]` (also on the general sample path), `[render][alias]
+  [sync-exact]` and `[render][rounding]` in the normal run; the hidden `[.render-exact]` and
+  `[.render-sync-integer]` now assert.
+- **Output and cost:** at most 4.8e-7 (-126 dB re 1) from the 8.18.1 renderer where no exact
+  ratio is involved (the shaped rounding; no patch is bit-identical). Cost: 8.18.1's figures
+  within 5 %; the conversion costs about 1 ns per sample on a moving output.
+- **Compilers:** the shaping expression may be contracted into fused multiply-adds by one
+  compiler and not another, so low output bits can differ between builds; no test compares
+  output bits across builds.
+- **Still open:** defects 3 and 4 of 8.18.1.
+
 ## 9. M7 — custom editor
 
 The custom editor of Exitium Vintage Synth, replacing the preset bar + generic editor. Built on a

@@ -686,14 +686,15 @@ TEST_CASE ("chip: a Model A saw combination at frequency 0 or below one accumula
                 }
 }
 
-TEST_CASE ("render: narrow pulses at small-denominator frequencies, rectangular DFT over whole periods (report)", "[.render-exact]")
+TEST_CASE ("render: narrow pulses at small-denominator frequencies, rectangular DFT over whole periods (report and assertion)", "[.render-exact]")
 {
-    // A harness for the next step (render cost review, item 8; no assertion): the narrowest Model B pulses
-    // (width 4095 or 1) at fundamentals with a small-denominator ratio to the internal rate, where the edges
-    // fall on few sub-sample offsets. The signal is rendered over a whole number of its periods (p periods in q
-    // samples, f = rate x p / q) and measured with a rectangular DFT at every bin up to 20 kHz: the harmonics
-    // are exact bins, everything else is aliasing, relative to the fundamental. The S2b-2 renderer gives the
-    // same figures (-97.4 dB at 88200 x 3 / 73 Hz, width 4095).
+    // The render cost review's harness (item 8), held since the alias follow-up step (8.20) to -100 dB with
+    // 3 dB to spare: the narrowest Model B pulses (width 4095 or 1) at fundamentals with a small-denominator
+    // ratio to the internal rate, where the edges fall on few sub-sample offsets. The signal is rendered over a
+    // whole number of its periods (p periods in q samples, f = rate x p / q) and measured with a rectangular DFT
+    // at every bin up to 20 kHz: the harmonics are exact bins, everything else is aliasing, relative to the
+    // fundamental. The S2b-2 and render cost renderers gave -97.4 dB at 88200 x 3 / 73 Hz, width 4095 (the
+    // output's float rounding; ChipRenderExactTests.cpp has the full scan).
     struct Case
     {
         double rate;
@@ -757,6 +758,11 @@ TEST_CASE ("render: narrow pulses at small-denominator frequencies, rectangular 
     std::printf ("%10s %10s %8s %12s %10s\n", "rate", "f (Hz)", "width", "worst (dB)", "at (Hz)");
     for (std::size_t i = 0; i < std::min<std::size_t> (rows.size(), 15); ++i)
         std::printf ("%10.0f %10.2f %8.0f %12.2f %10.1f\n", rows[i].rate, rows[i].f, static_cast<double> (rows[i].width), rows[i].db, rows[i].hz);
+    for (const auto& r : rows)
+    {
+        INFO ("width " << r.width << " at " << r.f << " Hz, " << r.rate << " Hz internal: " << r.db << " dB at " << r.hz << " Hz");
+        CHECK (r.db <= -103.0); // -100 dB (8.4.5) with the 3 dB margin of 8.17
+    }
 }
 
 TEST_CASE ("chip: an envelope whose counter step is still pending is not inert (a sustain write in the one-cycle window)", "[bside][chip][equivalence]")
@@ -1300,14 +1306,16 @@ TEST_CASE ("render: a pulling Model A saw combination above the register's top k
     CHECK (cases == 48);
 }
 
-TEST_CASE ("render: synced targets at exact integer frequency ratios (report of an open artefact, asserts nothing)", "[.render-sync-integer]")
+TEST_CASE ("render: synced targets at exact integer frequency ratios (report and assertion)", "[.render-sync-integer]")
 {
-    // Third review: at an exact integer ratio between a sync source and its target, the rendering alternates
-    // between source periods (a line at half the source's rate); the chip's own per-cycle output is 25 to 46 dB
-    // cleaner. Older than the render cost step (the same on main), at and below the register's top too; left to
-    // the alias follow-up step (docs/decisions.md). Oscillator 1 a saw with its gate off at the target's
-    // register / ratio, oscillator 2 synced, width 2048; ratio 3.0001 and the 2.71 of the asserting test as
-    // controls. Prints the worst rows.
+    // Third review of the render cost step: at an exact integer ratio between a sync source and its target, the
+    // rendering alternated between source periods (a line at half the source's rate), at and below the
+    // register's top too. Fixed by the alias follow-up step (8.20; the reset met the target's own wrap on the
+    // same instant and every other reset lost its step, docs/decisions.md); held since then: the sync budgets of
+    // 8.4.5 with 3 dB to spare up to 3.85 kHz, the -80 dB of 8.18.1 above it (strongest line above -50 dB re 1).
+    // Oscillator 1 a saw with its gate off at the target's register / ratio, oscillator 2 synced, width 2048;
+    // ratio 3.0001 and the 2.71 of the asserting test as controls. Prints the worst rows. The full scan of exact
+    // ratios is in ChipRenderExactTests.cpp.
     struct Row
     {
         double db;
@@ -1323,6 +1331,15 @@ TEST_CASE ("render: synced targets at exact integer frequency ratios (report of 
                         const auto a = aboveAlias (m, c, 2048.0f, 1, hz, rate, true, ratio);
                         if (a.strongestDb < -60.0)
                             continue;
+                        INFO ((m == Model::A ? "Model A" : "Model B") << " control " << int (c) << " ratio " << ratio << ", " << rate << " Hz internal, " << hz << " Hz: " << a.aliasDb << " dB re the strongest line ("
+                                                                      << a.strongestDb << " dB re 1) at " << a.hz << " Hz");
+                        if (hz > 3850.0)
+                        {
+                            if (a.strongestDb >= kAboveAliasAssertedDb)
+                                CHECK (a.aliasDb <= -80.0);
+                        }
+                        else
+                            CHECK (a.aliasDb <= (m == Model::B && c == 0x20 ? -100.0 : hz <= 2000.0 ? -96.0 : -80.0) - 3.0);
                         Row r {};
                         r.db = a.aliasDb;
                         std::snprintf (r.text, sizeof r.text, "%c %02x ratio %-6g %6.0f Hz %5.0f Hz: strongest %6.1f dB re 1, alias %6.1f dB re it at %6.0f Hz",

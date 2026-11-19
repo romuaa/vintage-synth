@@ -992,10 +992,17 @@ void Chip::renderSweep (int n, double tEnd, const PieceEvents* ev) noexcept
         const double te = std::fmax (tn, t);
         v.u += slope * (te - t);
         t = te;
-        // values at the event's own time (an event can lie up to two cycles before the sweep position)
+        // values at the event's own time (an event can lie up to two cycles before the sweep position). At the
+        // sweep position the line's own state holds them: the cell it is in says whether a boundary of the line
+        // falling on the same instant has been taken (alias follow-up step, defect 2 of 8.18.1). Re-deriving the
+        // cell from the phase there took the cell after the boundary when the phase had rounded onto it while
+        // the boundary's own event (rounded a little later) was still to come: at an exact integer frequency
+        // ratio a sync reset meets the target's wrap or fold on the same instant, and every other reset lost
+        // its step (saw) or its slope change (triangle).
         const double back = slope * (t - tn);
-        const double wl = renderValueAt (n, v.u - back);
-        const double sl = renderDerivativeAt (n, v.u - back);
+        const bool atPosition = ! (tn < t);
+        const double wl = atPosition ? renderValue (n, v.u) : renderValueAt (n, v.u - back);
+        const double sl = atPosition ? renderDerivative (n, v.u) : renderDerivativeAt (n, v.u - back);
         double uAfter = v.u - back;
         double lateEdge = -1.0; // a falling pulse edge one cycle after a reset that this sweep reaches late
         if (td <= th && td <= tr)
@@ -1834,7 +1841,7 @@ void Chip::renderPieceClose (bool toSampleEnd) noexcept
 
 // ---- the end of a sample ----
 
-float Chip::renderFinishSample() noexcept
+double Chip::renderFinishSample() noexcept
 {
     if (rs.pieceOpen)
         renderPieceClose (true);
@@ -2032,25 +2039,40 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         double sum = 0.0;
         for (const auto& l : line)
             sum += l.contribution;
-        const auto y = static_cast<float> (sum);
+        const auto plain = static_cast<float> (sum);
+        bool settled = rs.rounding.settledOn (sum);
         std::uint64_t cum = 0, lastStart = c0, lastCycles = 0;
         std::uint32_t lastFraction = 0;
         int done = 0;
-        while (done < maxSamples)
-        {
+        auto take = [&] () noexcept { // the next sample's cycles, if the run may take it
             const std::uint32_t f = clock.fraction();
             const std::uint64_t cyc = clock.nextSample();
             if (cum + cyc > budget || c0 + cum + cyc >= untilCycle)
             {
                 clock.rewind (f);
-                break;
+                return false;
             }
             lastStart = c0 + cum;
             lastCycles = cyc;
             lastFraction = f;
             cum += cyc;
-            out[done++] += y;
+            return true;
+        };
+        // the rounding shapes the sum until it has stood still for its settle count; from then on it is
+        // rounded plainly (a silent chip's loop)
+        bool stopped = false;
+        while (! settled && done < maxSamples)
+        {
+            if (! take())
+            {
+                stopped = true;
+                break;
+            }
+            out[done++] += rs.rounding.next (sum);
+            settled = rs.rounding.settled();
         }
+        while (! stopped && done < maxSamples && take())
+            out[done++] += plain;
         if (done == 0)
             return 0;
         rs.sample += static_cast<std::uint64_t> (done);
@@ -2177,7 +2199,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         }
         ++rs.sample;
         rs.inProgress = false;
-        out[done++] += static_cast<float> (y);
+        out[done++] += rs.rounding.next (y);
         cum = end;
     }
     if (cum == 0)
@@ -2205,7 +2227,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
     return done;
 }
 
-float Chip::renderOutput() noexcept
+double Chip::renderOutput() noexcept
 {
     const auto outSlot = static_cast<std::size_t> ((rs.sample + static_cast<std::uint64_t> (kRing - kLatency - 1)) % static_cast<std::uint64_t> (kRing));
     double y = 0.0;
@@ -2217,7 +2239,7 @@ float Chip::renderOutput() noexcept
     }
     ++rs.sample;
     rs.inProgress = false;
-    return static_cast<float> (y);
+    return y;
 }
 
 // ---- a white-box check of the rendered states (tests only, renderCheckStates) ----
@@ -2301,7 +2323,7 @@ int Chip::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noe
         }
         if (! finishing)
             break; // stop inside (or at the last cycle of) the sample: it stays in progress, its piece open
-        out[done++] += renderFinishSample();
+        out[done++] += rs.rounding.next (renderFinishSample()); // RenderTables.h OutputRounding
     }
     return done;
 }
