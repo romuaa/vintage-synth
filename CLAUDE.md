@@ -95,10 +95,10 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
-### Where the project is (2026-11-16) — read this first when resuming
+### Where the project is (2026-11-19) — read this first when resuming
 
-**Everything below is merged to `main`; no branch, agent or build is in flight.** Verified by the
-local gate only (Windows and Linux x86_64: the list "Merged without ... verification" below).
+**Everything below is merged to `main` except B-Side S3a (parked, see below); no agent or build
+is in flight.** Verified by the local gate only (Windows and Linux x86_64: the list "Merged without ... verification" below).
 
 - **Exitium Vintage Synth is feature-complete up to M7:** engine, effects, arp/seq, presets and
   64 factory programs, the custom editor with all pages (M7a–M7f). The owner has tried and
@@ -121,37 +121,56 @@ worktrees, gates, model routing, commit rules) and overrides it. If a session di
 repository's file, read it by hand before orchestrating. Checked 2026-11-16: `/orchestrate`
 loads the personal skill and reaches the repository's file through that instruction.
 
-**In flight (2026-11-19):** B-Side **S3a** (filter and output stage as their own classes,
-contract 8.19.1; branch `bside/s3a-filter`, based on `bside/contracts-s3a-alias`): Model B is
-accepted by the first review apart from cost; **Model A is being reworked** (resonance away from
-the fitted cutoffs, cutoff moving with the input level, distortion and intermodulation, the Shared
-topology, volume clicks with `chip.volume_dc` off). The **alias follow-up step** is done and
-awaits the owner's merge approval (see History). Until both merge, the first line of this
-section does not hold.
+**Owner decision 2026-11-19: Vintage is released first; B-Side is parked.** B-Side work stops
+where it is and continues only after the Vintage release is complete. Nothing is in flight; no
+agent is running.
 
-**Going public (owner, 2026-11-18):** the repository becomes public only once the release work is
-done, **B-Side's release work included** (so after S4 and M8 for both plugins). Until then CI
-stays offline; every Windows and Linux x86_64 check waits for that moment.
+**B-Side, parked state (resume here after the Vintage release):**
+- Merged: everything up to and including the render cost step (PR #32) and the alias follow-up
+  step (PR #33, 2026-11-19; see History).
+- **S3a is unfinished and unmerged** on the pushed branch `bside/s3a-filter` (contract 8.19.1;
+  two rounds of work, one independent review). Model B and the output stage are close (first
+  review: corners within 3.1 %, peaks within 0.1 dB; cost after round 2 about 4.9 ns against 7,
+  measured on a busy machine; round 2 not yet reviewed). **The Model A filter fails its gates:**
+  in the reference its cutoff and resonance move with the level and DC routed into the filter;
+  four level-dependent structures were tried and none came within tolerance (decisions on that
+  branch, "B-Side S3a round 2", rows R1, R2, R12: corners up to 75 % off on the gate traces).
+  The author failed the same gate twice, so the next step is the escalation of the skill
+  `orchestrate`: a diagnostic test that isolates the level-dependent cutoff, then a stronger
+  model. Also open there: the internal-rate dependence of the filter response (row R11, up to
+  2.0 dB at 88.2 kHz), band-pass and two-tone distortion, the resonance-write DC step. Round 2
+  found that Model A bends each voice before its envelope (`OutputStage::shapeVoice`, row R3):
+  S3b must apply it per voice in the renderer. If the escalated attempt fails too, ask the
+  owner: accept a documented Model A deviation, or spend more; Model B could merge separately.
+- Developer-only material outside the repository, under `~/Library/Caches/bside-oracle/`:
+  `s3a-park/` (the author's round 2 report, the reviewer's harness), `s3a/` (the author's
+  fitting data), `s3a-review/` (the reviewer's held-out traces: an author must not read them).
+- Then: **S3b** (8.19.2: two buses in double precision in `Chip::render`, 8.20.1; routing,
+  topology, the remaining traces, filter sweeps for the owner), **S4** (polyphony 8.5, wiring
+  into the plugin, decimator with the alias gate after it and the exact measurement on the
+  summed path, factory patches, owner audition; **owner decision 2026-11-19:** the Model A CPU
+  budget is decided at S4 with real numbers, filter and per-voice bend included), then B-Side's
+  own release work. **Chip follow-ups, small:** the Model B read value in the first step after a
+  waveform change (8.15.2 (c) step 5); at the next reference regeneration a full-noise-fill
+  trace and a noise-before-first-shift trace; an independent model for the program engine's
+  goldens; defects 3 and 4 of 8.18.1.
 
-**Next steps, in the order the owner was given:**
-1. **B-Side render cost step:** done and merged (PR #32, 2026-11-19; architecture 8.18.1).
-2. **B-Side parameter step:** done and merged (PR #31, 2026-11-18).
-3. **S3a** (in flight; 8.19.1): `Filter` and `OutputStage` in new files, fitted to reference
-   data, both models; stays out of the renderer. **Alias follow-up step:** done, awaiting merge
-   (8.20.1).
-4. **S3b** (8.19.2; after the alias step and S3a have merged, it edits the renderer): two buses
-   in double precision in `Chip::render` (8.20.1: no float addition before the part's sum),
-   routing, topology, the remaining reference traces, filter sweeps for the
-   owner to hear. Then **S4** (polyphony 8.5, wiring into the plugin, decimator with the alias
-   gate after it, factory patches, owner audition). **Owner decision 2026-11-19:** the Model A
-   CPU budget (the S4 gate patch costs about 31 ns before the filter, the whole budget of 8.5)
-   is decided at S4 with real numbers, filter included.
-   **Chip follow-ups, small:** the Model B read value in the first step after a waveform change
-   (candidate rule in 8.15.2 (c) step 5); at the next reference regeneration a full-noise-fill
-   trace and a noise-before-first-shift trace; an independent model for the program engine's
-   goldens (today derived by the engine author's own model).
-5. **Vintage, M8:** hardening, signing, installers, release (skill `release`); before it the
-   owner's studio check of the factory sounds and MIDI Program Change timing.
+**Going public:** the owner's decision of 2026-11-18 (public only after both plugins' release
+work) is superseded by "Vintage first"; **when** the repository becomes public within the
+Vintage release work is the owner's call and not yet made (ask). Until then CI stays offline
+(the `security` check on every PR "fails" in 2 seconds because Actions has no minutes: the job
+never starts; not a finding).
+
+**Next steps:**
+1. **Vintage, M8** (skill `release`): hardening, signing, installers, release. Not started.
+   Known inputs: the owner's studio check of the factory sounds and of MIDI Program Change
+   timing; the first Windows and Linux x86_64 runs ever (the list "Merged without ...
+   verification" below; needs CI, so Actions minutes or a public repository); signing
+   identities (Apple Developer ID, Windows Authenticode) from the owner; version is still
+   0.1.0; no installer exists; no real screen-reader pass; small: the shared text parser
+   (`common/params/ParamFactory.cpp`) turns typed "nan" into NaN. B-Side must not ship in the
+   Vintage release (`VS_BUILD_BSIDE`).
+2. **B-Side:** resume from the parked state above.
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
 equal width, playing from the computer keyboard, a "Clean" Cross Mod switch. **Not done anywhere:**
@@ -167,8 +186,7 @@ repository.
 
 ### History (newest facts first within each area)
 
-- **B-Side alias follow-up step: done on `bside/alias-followup`, awaiting the owner's merge
-  approval** (2026-11-19; contract as built: architecture 8.20.1; decisions "B-Side alias
+- **B-Side alias follow-up step is merged to `main`** (PR #33, owner approved 2026-11-19; contract as built: architecture 8.20.1; decisions "B-Side alias
   follow-up step"). Narrow Model B pulses: the cause was the float conversion of the output (its
   rounding errors gather on a few lines for a periodic signal), fixed by a noise-shaped
   conversion; exact measurement now at least 13.4 dB inside -100 dB at every rate (was up to
