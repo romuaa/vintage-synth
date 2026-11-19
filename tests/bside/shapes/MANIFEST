@@ -16,6 +16,9 @@
 #   prints the fit errors. After a refit: re-pin the table hashes (bside_unit, CombinedWaveformTests.cpp)
 #   and bless tests/bside/trace/exemption-budget.txt (BS_BLESS_EXEMPTION_BUDGET=<that path> bside_trace).
 # emulator-commit / adapter-commit: as in each reference's header.
+# Provenance and licence: generated data. The traces were written for this project; the reference
+# values are outputs measured from the reference emulator, run as an external developer tool. No
+# third-party code or table is contained here. Distributed under this repository's licence (LICENSE).
 emulator-commit 5393471a02a505ff43aa710148b2d35289b72c31
 adapter-commit d7c10fa981c5dbd11f2ebfa5bfbf122a3b98b06f
 # file <sha256> <name>

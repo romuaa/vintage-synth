@@ -3,6 +3,45 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Pre-public audit (2026-11-19, owner decisions)
+
+An independent audit read the whole history (436 commits, every branch and pull-request ref, the
+pull-request texts, the Actions logs that still existed) before the repository becomes public.
+No secret or credential was found. The owner decided:
+
+- **Commit author e-mail stays as it is** (confirmed again; no history rewrite).
+- **Two history-only findings are accepted, no history rewrite:** a filter integrated-circuit part
+  number in one code comment of the first engine commit (reworded the same day; the name is on the
+  hashed deny-list now), and a session link in the message of the first merge commit on `main`
+  (it opens only for the account owner).
+- **The wireframe picture of the Browser page is removed** (`docs/ui/wireframes/07-browser.png`
+  showed two invented program names, one of them a nickname of a third-party instrument). The
+  real page is shown in `docs/screenshots.md`. The name check reads text only, never pictures:
+  look at every picture before it is committed.
+- **B-Side material is published as it is.** The chip can be identified from technical facts
+  (clock rates, register map, the pinned commit of the reference emulator), which an emulation
+  cannot hide; the hashed deny-list can be guessed back and is a guard against slips, not a
+  secret. The two reference-data manifests state provenance and licence. Open for B-Side's own
+  release: check the reference emulator's licence against how its outputs and source were used.
+- **The 71 build artifacts of 2026-11-12 were deleted** before the repository becomes public.
+- **Fixed at the tip:** a tracked Python bytecode file that embedded a home path (removed; the
+  local gate now refuses bytecode and home paths), a product name in a test comment.
+- **Screenshots of the editor** live in `docs/images/` (owner's own, 2026-11-19); the README
+  shows the Sound page and links to `docs/screenshots.md`.
+
+## M8 release hardening: typed parameter text (2026-11-19, review)
+
+- **Typed text never gives a non-finite value; text that names NaN or infinity gives the parameter's default (review).**
+  Before, `juce::String::getFloatValue` turned "nan" into NaN, and `juce::jlimit` passes NaN through, so 70 Vintage
+  float parameters (every `makeFloat` one plus `master.volume`) returned NaN from `getValueForText`. Now text
+  containing "nan" or "inf" (any case, any position: "-nan", "nan(0x1)", "Infinity") and any result that is not
+  finite ("1e999", a huge digit string) gives the default, then finite values clamp to the range as before.
+  Same choice as B-Side's parsers (`finiteOr`, "no usable value gives the default"): JUCE hands a parser only the
+  text, so "keep the current value" is not available. Consequence: "inf" and "1e999" no longer clamp to the maximum
+  (they used to for most parameters). Display text and ordinary input are unchanged. Shared helpers:
+  `textIsNotFinite`, `finiteFloatFromText` (`ParamFactory.h`). Choice and integer parameters were checked and are
+  already safe (JUCE's choice parser and `getIntValue` cannot leave the range); B-Side was not changed.
+
 ## B-Side alias follow-up step (2026-11-19, all review)
 
 Contract: `docs/architecture.md` 8.20 (defects 1 and 2 of 8.18.1; owner decision 2026-11-18: fix, no exemption).

@@ -4,6 +4,10 @@ A bi-timbral, analog-style polyphonic synthesizer instrument in VST3 format, by 
 It's a two-oscillator subtractive synth in the style of the classic 80s flagship polys, with our own
 naming and design.
 
+![The Sound page of Exitium Vintage Synth: two oscillators, the filter curve and the signal path](docs/images/sound.png)
+
+More pictures of every editor page: [docs/screenshots.md](docs/screenshots.md).
+
 > **Status: in development (pre-release).** The instrument is feature-complete for a first
 > release: two 16-voice parts (Lower and Upper) with Whole, Dual and Split modes, arpeggiator and
 > 16-step sequencer, chorus, delay and reverb, 64 factory programs with banks, and its own editor

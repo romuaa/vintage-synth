@@ -2,6 +2,8 @@
 
 #include "common/params/Mappings.h"
 
+#include <cmath>
+
 namespace vs
 {
 namespace
@@ -59,6 +61,20 @@ float parseScaled (const juce::String& text, const char* kiloUnit, float kiloFac
 }
 
 } // namespace
+
+bool textIsNotFinite (const juce::String& t)
+{
+    // "nan", "-nan", "nan(0x1)", "inf", "-Infinity": the C parsers behind getFloatValue read these.
+    return t.containsIgnoreCase ("nan") || t.containsIgnoreCase ("inf");
+}
+
+float finiteFloatFromText (const juce::String& t, float def)
+{
+    if (textIsNotFinite (t))
+        return def;
+    const float v = t.getFloatValue();
+    return std::isfinite (v) ? v : def; // "1e999"
+}
 
 juce::String toText (Display d, float v)
 {
@@ -124,8 +140,11 @@ std::unique_ptr<juce::AudioParameterFloat> makeFloat (const juce::String& id, co
 {
     auto attrs = juce::AudioParameterFloatAttributes()
                      .withStringFromValueFunction ([d] (float v, int) { return toText (d, v); })
-                     .withValueFromStringFunction ([d, min, max] (const juce::String& t) {
-                         return juce::jlimit (min, max, fromText (d, t));
+                     .withValueFromStringFunction ([d, min, max, def] (const juce::String& t) {
+                         if (textIsNotFinite (t))
+                             return def;
+                         const float v = fromText (d, t);
+                         return std::isfinite (v) ? juce::jlimit (min, max, v) : def;
                      });
 
     return std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id, kParamVersionHint }, name,

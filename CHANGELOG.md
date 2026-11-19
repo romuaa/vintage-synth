@@ -5,6 +5,23 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### M8 release hardening (2026-11-19)
+- Changed: the local gate (`scripts/preflight/docs-check.sh`) now enforces the Actions trigger policy over every
+  file in `.github/workflows/`: `workflow_dispatch` only, except `security.yml` (push to `main`, pull_request,
+  one cron at most weekly, workflow_dispatch). `pull_request_target` and `workflow_run` always fail.
+- Added: `scripts/preflight/test-workflow-triggers.sh`, the policy itself plus a self-test on fixture workflows
+  (run on every docs check) that proves each violation is caught.
+- Removed: a tracked Python bytecode file (`tests/bside/golden/tools/__pycache__/model.cpython-315.pyc`, which
+  embedded a developer's home path). The docs check now fails on any tracked `__pycache__/`, `.pyc` or `.pyo`
+  file and on any absolute home path (macOS, Windows or Linux user directory) in a tracked text or binary file.
+- Changed: a test comment no longer names a third-party product; the hashed brand deny-list gained one more
+  entry (a filter integrated-circuit part number found in old history).
+- Added: screenshots of every editor page (`docs/images/`, `docs/screenshots.md`; the README shows the Sound
+  page). Removed: the Browser wireframe picture. The B-Side reference-data manifests state provenance and licence.
+  Pre-public audit decisions: `docs/decisions.md`.
+- Fixed: typed parameter text such as "nan" gave NaN to 70 float parameters; text naming NaN or infinity, or a
+  result that is not finite, now gives the parameter's default (as in B-Side). Test over all 172 parameters.
+
 ### B-Side alias follow-up step (2026-11-19)
 - Fixed: Model B pulses of width 1 and 4095 missed the -100 dB alias budget by up to 2.7 dB at frequencies
   with a small-denominator ratio to the internal rate. The cause was the float conversion of the output (its
