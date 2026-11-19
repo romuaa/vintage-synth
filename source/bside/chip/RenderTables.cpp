@@ -2,6 +2,7 @@
 
 #include "bside/chip/CombinedWaveforms.h"
 #include "bside/chip/Waveforms.h"
+#include "common/dsp/BlepTable.h"
 
 #include <algorithm>
 #include <cmath>
@@ -30,6 +31,29 @@ Converter makeConverter (const LadderWeights& w, bool ideal)
         c.excludedTri[static_cast<std::size_t> (imin)] = t;
     }
     c.center = 0.5; // d (0) = 0 and d (4095) = 1 by normalisation
+    for (unsigned v = 0; v < 4096; ++v)
+    {
+        double s = 0.0;
+        for (std::size_t i = 0; i < 12; ++i)
+            if (((v >> i) & 1u) != 0)
+                s += c.e[i];
+        c.devSaw[v] = s;
+    }
+    for (unsigned v = 0; v < 2048; ++v)
+    {
+        double s = 0.0;
+        for (std::size_t i = 0; i < 11; ++i)
+            if (((v >> i) & 1u) != 0)
+                s += c.e[i + 1];
+        c.devTri[v] = s;
+    }
+    for (int imin = 0; imin <= 12; ++imin)
+    {
+        double s = 0.0;
+        for (int i = imin; i < 11; ++i)
+            s += c.e[static_cast<std::size_t> (i + 1)];
+        c.triTail[static_cast<std::size_t> (imin)] = s;
+    }
     return c;
 }
 
@@ -58,6 +82,13 @@ void buildSteps (const RenderTables& t, const combined::ShapeTables& shapes, std
     }
     for (unsigned c = 0; c < 2048; ++c)
         st.firstClear[c] = st.firstClear[2048];
+    st.firstSetUpper = 4096;
+    for (unsigned c = 2048; c < 4096; ++c)
+        if ((st.shape[c] & 0x800u) != 0)
+        {
+            st.firstSetUpper = static_cast<std::uint16_t> (c);
+            break;
+        }
     for (unsigned c = 0; c < 4096; ++c)
     {
         std::uint16_t d = 0;
@@ -72,6 +103,20 @@ void buildSteps (const RenderTables& t, const combined::ShapeTables& shapes, std
             }
         }
         st.nextChange[c] = d;
+    }
+    // the step moments' prefix sums (kStepMoments)
+    for (auto& p : st.momentPrefix)
+        p[0] = 0.0;
+    for (std::size_t c = 0; c < 4096; ++c)
+    {
+        const double a = static_cast<double> (st.value[c]) - static_cast<double> (st.value[(c + 4095u) & 0xfffu]);
+        const double x = static_cast<double> (c) / 4096.0;
+        double power = 1.0;
+        for (std::size_t j = 0; j <= static_cast<std::size_t> (kStepMoments); ++j)
+        {
+            st.momentPrefix[j][c + 1] = st.momentPrefix[j][c] + a * power;
+            power *= x;
+        }
     }
 }
 
@@ -92,7 +137,7 @@ void build (Model model, ShapeSet set, RenderTables& t)
         buildSteps (t, shapes, combos[c], t.steps[c]);
 }
 
-/** Built in place (about 180 KiB: never a by-value copy), once per (model, shape set). */
+/** Built in place (about 320 KiB: never a by-value copy), once per (model, shape set). */
 template <Model M, ShapeSet S>
 const RenderTables& built()
 {
@@ -136,6 +181,93 @@ LadderWeights ladderWeights (int bits, double ratio, bool terminated) noexcept
     for (std::size_t i = 0; i < n; ++i)
         w[i] /= sum;
     return w;
+}
+
+const KernelTables& kernelTables()
+{
+    static const KernelTables& t = [] () -> const KernelTables& {
+        static KernelTables storage;
+        using Short = vs::dsp::BlepTable;
+        using Long = vs::dsp::BasicBlepTable<kLongZeroCrossings, kLongBetaTenths, double>;
+        static_assert (Short::kZeroCrossings == kLongZeroCrossings && Short::kResolution == kKernelResolution && Long::kResolution == kKernelResolution,
+                       "both kernels share the taps and points of the renderer's layout");
+        static_assert (Long::kKernelResolution % kKernelResolution == 0, "the long kernel's points lie on its kernel table");
+        const Short& s = Short::get();
+        const Long& l = Long::get();
+        for (int k = 0; k <= kKernelResolution; ++k)
+            for (int jj = 0; jj < kKernelTaps; ++jj)
+            {
+                const int j = jj - kLongZeroCrossings;
+                const auto at = static_cast<std::size_t> (k * kKernelTaps + jj);
+                // a whole point: step (j, d) interpolates nothing there (d = 1 reads the cell's last point)
+                const double d = static_cast<double> (k) / kKernelResolution;
+                const bool first = k == 0;
+                storage.shortStep[at] = first ? s.step (j, 0.0f) : s.step (j, static_cast<float> (d));
+                storage.shortRamp[at] = first ? s.ramp (j, 0.0f) : s.ramp (j, static_cast<float> (d));
+                storage.longStep[at] = first ? l.step (j, 0.0) : l.step (j, d);
+                storage.longRamp[at] = first ? l.ramp (j, 0.0) : l.ramp (j, d);
+                storage.longKernel[at] = l.kernelAt (static_cast<double> (j) + d);
+            }
+        // The long kernel's derivatives (the step moments, kStepMoments): its windowed sinc (as BasicBlepTable
+        // defines it: cutoff 0.45, Kaiser window, kLongZeroCrossings) differentiated by five-point differences,
+        // normalised as kernelAt (its value at 0 against ours). Accurate to about 1e-5 of each derivative's size;
+        // they weigh corrections of at most a few per cent of a step.
+        {
+            constexpr double pi = 3.14159265358979323846, cutoff = 0.45, beta = kLongBetaTenths / 10.0;
+            constexpr double zc = kLongZeroCrossings;
+            auto i0 = [] (double x) {
+                double sum = 1.0, term = 1.0;
+                for (int k = 1; k < 50; ++k)
+                {
+                    term *= (x / (2.0 * k)) * (x / (2.0 * k));
+                    sum += term;
+                }
+                return sum;
+            };
+            const double i0beta = i0 (beta);
+            auto raw = [&] (double at) {
+                const double r = at / zc;
+                if (std::abs (r) >= 1.0)
+                    return 0.0;
+                const double x = 2.0 * cutoff * at;
+                const double sinc = std::abs (x) < 1.0e-12 ? 1.0 : std::sin (pi * x) / (pi * x);
+                return 2.0 * cutoff * sinc * i0 (beta * std::sqrt (1.0 - r * r)) / i0beta;
+            };
+            const double scale = l.kernelAt (0.0) / raw (0.0);
+            constexpr double e = 1.0 / 512.0;
+            for (int k = 0; k <= kKernelResolution; ++k)
+                for (int jj = 0; jj < kKernelTaps; ++jj)
+                {
+                    const double tau = static_cast<double> (jj - kLongZeroCrossings) + static_cast<double> (k) / kKernelResolution;
+                    const double m2 = raw (tau - 2.0 * e), m1 = raw (tau - e), z0 = raw (tau), p1 = raw (tau + e), p2 = raw (tau + 2.0 * e);
+                    const auto at = static_cast<std::size_t> (k * kKernelTaps + jj);
+                    storage.longKernelD1[at] = scale * (-p2 + 8.0 * p1 - 8.0 * m1 + m2) / (12.0 * e);
+                    storage.longKernelD2[at] = scale * (-p2 + 16.0 * p1 - 30.0 * z0 + 16.0 * m1 - m2) / (12.0 * e * e);
+                    storage.longKernelD3[at] = scale * (p2 - 2.0 * p1 + 2.0 * m1 - m2) / (2.0 * e * e * e);
+                }
+        }
+        // the long kernel's step at kFineResolution points: cubic Hermite between its own points with the exact
+        // derivatives (h = 1 / 512: step' = kernel)
+        constexpr int refine = kFineResolution / kKernelResolution;
+        static_assert (kFineResolution % kKernelResolution == 0, "the long kernel's own points lie on the refined ones");
+        for (int k = 0; k < kKernelResolution; ++k)
+            for (int r = 0; r <= refine; ++r)
+            {
+                if (r == refine && k + 1 < kKernelResolution)
+                    continue; // the next cell's first point
+                const double x = static_cast<double> (r) / refine, x2 = x * x, x3 = x2 * x;
+                const double h00 = 2.0 * x3 - 3.0 * x2 + 1.0, h01 = 3.0 * x2 - 2.0 * x3;
+                const double h10 = (x3 - 2.0 * x2 + x) / kKernelResolution, h11 = (x3 - x2) / kKernelResolution;
+                for (int jj = 0; jj < kKernelTaps; ++jj)
+                {
+                    const auto p0 = static_cast<std::size_t> (k * kKernelTaps + jj), p1 = p0 + kKernelTaps;
+                    const auto at = static_cast<std::size_t> ((k * refine + r) * kKernelTaps + jj);
+                    storage.longStepFine[at] = h00 * storage.longStep[p0] + h01 * storage.longStep[p1] + h10 * storage.longKernel[p0] + h11 * storage.longKernel[p1];
+                }
+            }
+        return storage;
+    }();
+    return t;
 }
 
 const RenderTables& tablesFor (Model m, ShapeSet s)

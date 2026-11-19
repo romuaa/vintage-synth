@@ -214,9 +214,9 @@ repository) is committed in `tests/bside/reference/`.
 |---|---|---|
 | S1 | Plugin shell, patch tables, trace formats, tables in presets | Done |
 | S2a | Chip digital core, exact against the reference per cycle | Done |
-| S2b | Own combined-waveform tables (fitted, never copied); band-limited waveform rendering | Done; render cost still far above budget |
+| S2b | Own combined-waveform tables (fitted, never copied); band-limited waveform rendering | Done |
 | S2c | Patch program engine | Done |
-| S2 rest | Render cost step, parameters | Parameters done (202 host parameters, inert until S4); render cost step in progress |
+| S2 rest | Render cost step, parameters | Done; Model A rendering still above its cost target; an alias follow-up step is open |
 | S3 | Filter and output path | Not started |
 | S4 | Polyphony, wiring into the plugin, factory patches | Not started |
 

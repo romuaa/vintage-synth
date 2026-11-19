@@ -76,18 +76,40 @@ struct Converter
         bit j, so index bits 0..imin-1 carry e_1..e_imin; triangle bit 0 is always 0). */
     std::array<double, 13> excludedSaw {}, excludedTri {};
     double center = 0.5;                    // (d (0) + d (4095)) / 2: the renderer outputs d (v) - center
+    /** The converter terms as tables (render cost step): devSaw[v] = sum of e_i over the set bits i of v
+        (0..11), devTri[v] = sum of e_(i+1) over the set bits i of v (0..10; the triangle's bit i+1 follows
+        index bit i), triTail[imin] = sum of e_(i+1) for i = imin..10. The renderer's index bits below imin
+        are 0, so devSaw and devTri give the sums over the bits from imin on in one read. */
+    std::array<double, 4096> devSaw {};
+    std::array<double, 2048> devTri {};
+    std::array<double, 13> triTail {};
 };
+
+/** Above the register's highest frequency (Smooth only, up to 12 kHz) a combined waveform's cell steps inside
+    one stretch of its line (between two other events, at most a sample) are emitted together as one step with
+    their time moments (render cost review, docs/decisions.md "B-Side render cost step"): the band-limited
+    sum of the steps a_i at t_i is sum over k of (-1)^k M_k / k! times the k-th derivative of the band-limited
+    step at the stretch's centre T0, M_k = sum a_i (t_i - T0)^k, up to k = kStepMoments. Per cell the prefix
+    sums of the step into it times its position (StepTable::momentPrefix) give the moments of any range of
+    cells in a few operations. At and below the register's top every step is emitted on its own. */
+constexpr int kStepMoments = 4;
 
 /** One combined waveform: the converter output of every index cell (minus the centre) and, per cell c,
     the number of cells from c to the next cell whose value differs from c's (1 .. 4095; 0 for a constant
     shape). */
 struct StepTable
 {
+    /** momentPrefix[j][c] = sum over the cells c' < c of a_c' (c' / 4096)^j, a_c' = value[c'] - value[c' - 1]
+        (the step into cell c', cyclic), j = 0 .. kStepMoments (see kStepMoments). */
+    std::array<std::array<double, 4097>, kStepMoments + 1> momentPrefix {};
     std::array<float, 4096> value {};
     std::array<std::uint16_t, 4096> shape {}; // the 12-bit shape itself (bit 11: the Model A pull-down)
     /** For a cell c of the upper half: the first cell >= c whose shape has bit 11 clear (4096: none); for a
         cell of the lower half, the value of 0x800. Where a Model A saw combination is pulled down. */
     std::array<std::uint16_t, 4096> firstClear {};
+    /** The first cell of the upper half whose shape has bit 11 set (4096: none): a Model A saw combination
+        landing below it is pulled down at once whatever its pulse gate (render cost step, renderBatch). */
+    std::uint16_t firstSetUpper = 4096;
     std::array<std::uint16_t, 4096> nextChange {};
 };
 
@@ -101,5 +123,35 @@ struct RenderTables
 
 /** The tables of a chip model with a shape set (built once per process on first use, thread-safe). */
 const RenderTables& tablesFor (Model m, ShapeSet s);
+
+/** Both BLEP kernels laid out for the renderer (render cost step, docs/decisions.md "B-Side render cost
+    step"): per table point k (0 .. kKernelResolution, kKernelResolution + 1 points over one sample), the
+    values of all kKernelTaps cells j = -8 .. 7 side by side, so one discontinuity reads two contiguous rows
+    and every tap shares one interpolation weight (the taps' sub-sample offsets are equal).
+    The short kernel (`common/dsp/BlepTable.h` 8 / 8.0, float) keeps its own points and its linear
+    interpolation. The long kernel (8 zero crossings, Kaiser beta 12, double) is read by cubic Hermite
+    interpolation between its own points with the exact derivatives (step' = the kernel, ramp' = step; the
+    second-order correction of S2b-2 without its three kernel reads per tap), and for the cell steps of a
+    combined waveform from its step refined that way to kFineResolution points and read linearly (two rows
+    instead of four; an error of about 7e-8 of a step, which the nearly cancelling edge pairs of the narrowest
+    pulses would show, so pulse edges keep the Hermite read). Built from the BLEP tables' own points
+    (BasicBlepTable::step, ramp at whole points, kernelAt at multiples of 1 / 4096), on first use. */
+constexpr int kKernelTaps = 2 * kLongZeroCrossings;
+constexpr int kKernelResolution = 512;
+/** The long kernel's step for the cell steps of a combined waveform, read linearly: its own 512 points refined
+    by their cubic Hermite interpolation (error about 1e-12 of a step) to kFineResolution points per sample. */
+constexpr int kFineResolution = 2048;
+struct KernelTables
+{
+    static constexpr std::size_t kPoints = static_cast<std::size_t> (kKernelResolution + 1) * kKernelTaps;
+    static constexpr std::size_t kFinePoints = static_cast<std::size_t> (kFineResolution + 1) * kKernelTaps;
+    std::array<float, kPoints> shortStep {}, shortRamp {};
+    std::array<double, kPoints> longStep {}, longRamp {}, longKernel {};
+    /** The long kernel's first, second and third derivatives at the same points (the step moments' terms,
+        kStepMoments), read linearly. */
+    std::array<double, kPoints> longKernelD1 {}, longKernelD2 {}, longKernelD3 {};
+    std::array<double, kFinePoints> longStepFine {};
+};
+const KernelTables& kernelTables();
 
 } // namespace vs::bside::chip::render

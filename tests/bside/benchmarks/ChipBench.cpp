@@ -10,14 +10,18 @@
 //   noisesrc, landA: the second review's cases (a noise+saw source in per-cycle mode syncing one target and
 //            ringing another; Model A saw combinations at 3 kHz with a control write every tick, which
 //            re-decides their pull-downs at the chip's landings)
+//   s4gate   the patch of the S4 CPU gate (8.5, 8.18): Model A, pulse (a width write every tick), saw and
+//            the triangle+saw combined waveform, about A3..A4, sustaining envelopes
 // Each case renders 4 s of chip time in blocks of 64 samples with its writes at their exact cycles
-// (renderUntil); the best of 5 runs is reported.
+// (renderUntil); the best of 5 runs is reported. Arguments: case names to run only those (default: all).
 
 #include "bside/chip/Chip.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
 
 using namespace vs::bside::chip;
@@ -25,6 +29,14 @@ using namespace vs::bside::chip;
 namespace
 {
 constexpr std::uint64_t kTick = 19656;
+
+/** Chip time per run: 4 s, or the environment variable CHIP_BENCH_SECONDS (longer runs for a profiler). */
+double chipSeconds()
+{
+    const char* s = std::getenv ("CHIP_BENCH_SECONDS");
+    const double v = s != nullptr ? std::atof (s) : 0.0;
+    return v > 0.0 ? v : 4.0;
+}
 
 void setOsc (Chip& c, int n, double f, float pw, std::uint8_t control)
 {
@@ -50,7 +62,7 @@ double nsPerSample (Model m, double rate, Setup&& setup, Tick&& tick, bool digit
         c.prepare (cfg);
         setup (c);
         std::vector<float> out (64, 0.0f);
-        const auto samples = static_cast<std::uint64_t> (4.0 * rate);
+        const auto samples = static_cast<std::uint64_t> (chipSeconds() * rate);
         std::uint64_t done = 0, ticks = 1;
         const auto t0 = std::chrono::steady_clock::now();
         while (done < samples && digitalOnly)
@@ -83,8 +95,17 @@ double nsPerSample (Model m, double rate, Setup&& setup, Tick&& tick, bool digit
 }
 } // namespace
 
-int main()
+int main (int argc, char** argv)
 {
+    // the cases named on the command line (all when none is)
+    auto want = [argc, argv] (const char* name) {
+        if (argc < 2)
+            return true;
+        for (int i = 1; i < argc; ++i)
+            if (std::strcmp (argv[i], name) == 0)
+                return true;
+        return false;
+    };
     std::printf ("chip_bench: ns per internal sample per chip (best of 5, 4 s of chip time each)\n");
     std::printf ("%-8s %10s %10s %10s\n", "case", "48 kHz", "96 kHz", "192 kHz");
     const double rates[] { 48000.0, 96000.0, 192000.0 };
@@ -122,62 +143,98 @@ int main()
     };
 
     double r[3];
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::B, rates[i], typicalSetup, typicalTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f\n", "typical", r[0], r[1], r[2]);
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::B, rates[i], typicalSetup, typicalTick, true);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (digital core only, no audio)\n", "typical", r[0], r[1], r[2]);
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::A, rates[i], worstSetup, worstTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f\n", "worst", r[0], r[1], r[2]);
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::A, rates[i], worstSetup, worstTick, true);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (digital core only, no audio)\n", "worst", r[0], r[1], r[2]);
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::A, rates[i], combinedSetup, noTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (Model A combined waveforms: long kernel)\n", "combined", r[0], r[1], r[2]);
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::B, rates[i], noiseSetup, noTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f\n", "noise", r[0], r[1], r[2]);
+    if (want ("typical"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::B, rates[i], typicalSetup, typicalTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f\n", "typical", r[0], r[1], r[2]);
+    }
+    if (want ("typical"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::B, rates[i], typicalSetup, typicalTick, true);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (digital core only, no audio)\n", "typical", r[0], r[1], r[2]);
+    }
+    if (want ("worst"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::A, rates[i], worstSetup, worstTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f\n", "worst", r[0], r[1], r[2]);
+    }
+    if (want ("worst"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::A, rates[i], worstSetup, worstTick, true);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (digital core only, no audio)\n", "worst", r[0], r[1], r[2]);
+    }
+    if (want ("combined"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::A, rates[i], combinedSetup, noTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (Model A combined waveforms: long kernel)\n", "combined", r[0], r[1], r[2]);
+    }
+    if (want ("noise"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::B, rates[i], noiseSetup, noTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f\n", "noise", r[0], r[1], r[2]);
+    }
 
     // the review's cases (S2b-2): what typical and worst understate
     auto silentSetup = [] (Chip&) {};
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::B, rates[i], silentSetup, noTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (silent chip: power-on state, nothing selected)\n", "silent", r[0], r[1], r[2]);
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::A, rates[i], typicalSetup, typicalTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (the typical patch on Model A)\n", "typicalA", r[0], r[1], r[2]);
+    if (want ("silent"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::B, rates[i], silentSetup, noTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (silent chip: power-on state, nothing selected)\n", "silent", r[0], r[1], r[2]);
+    }
+    if (want ("typicalA"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::A, rates[i], typicalSetup, typicalTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (the typical patch on Model A)\n", "typicalA", r[0], r[1], r[2]);
+    }
     auto sawsSetup = [] (Chip& c) {
         setOsc (c, 0, 7480.0, 2048.0f, ctrl::saw | ctrl::gate);
         setOsc (c, 1, 3740.0, 2048.0f, ctrl::saw | ctrl::gate);
         setOsc (c, 2, 11220.0, 2048.0f, ctrl::saw | ctrl::gate);
     };
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::A, rates[i], sawsSetup, noTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (Model A, three saws)\n", "sawsA", r[0], r[1], r[2]);
+    if (want ("sawsA"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::A, rates[i], sawsSetup, noTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (Model A, three saws)\n", "sawsA", r[0], r[1], r[2]);
+    }
     auto combined12k = [] (Chip& c) {
         const double f = 12000.0 * 16777216.0 / 985248.0; // Smooth allows 12 kHz (8.4.6)
         setOsc (c, 0, f, 1024.0f, ctrl::triangle | ctrl::saw | ctrl::gate);
         setOsc (c, 1, f * 0.98, 1024.0f, ctrl::saw | ctrl::pulse | ctrl::gate);
         setOsc (c, 2, f * 0.96, 2048.0f, ctrl::triangle | ctrl::pulse | ctrl::gate);
     };
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::A, rates[i], combined12k, noTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (three combined waveforms at 12 kHz, Model A)\n", "comb12kA", r[0], r[1], r[2]);
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::B, rates[i], combined12k, noTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (three combined waveforms at 12 kHz, Model B)\n", "comb12kB", r[0], r[1], r[2]);
+    if (want ("comb12kA"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::A, rates[i], combined12k, noTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (three combined waveforms at 12 kHz, Model A)\n", "comb12kA", r[0], r[1], r[2]);
+    }
+    if (want ("comb12kB"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::B, rates[i], combined12k, noTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (three combined waveforms at 12 kHz, Model B)\n", "comb12kB", r[0], r[1], r[2]);
+    }
     // the second review's cases
     auto noiseSrcSetup = [] (Chip& c) {
         setOsc (c, 0, 3000.0, 2048.0f, ctrl::noise | ctrl::saw | ctrl::gate);           // per-cycle source
         setOsc (c, 1, 7480.0, 2048.0f, ctrl::saw | ctrl::sync | ctrl::gate);            // synced by it
         setOsc (c, 2, 5000.0, 2048.0f, ctrl::triangle | ctrl::ring | ctrl::gate);       // ring from oscillator 2
     };
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::A, rates[i], noiseSrcSetup, noTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (noise+saw source syncing and ringing, Model A)\n", "noisesrc", r[0], r[1], r[2]);
+    if (want ("noisesrc"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::A, rates[i], noiseSrcSetup, noTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (noise+saw source syncing and ringing, Model A)\n", "noisesrc", r[0], r[1], r[2]);
+    }
     auto landSetup = [] (Chip& c) {
         const double f = 3000.0 * 16777216.0 / 985248.0;
         setOsc (c, 0, f, 1024.0f, ctrl::triangle | ctrl::saw | ctrl::gate);
@@ -189,8 +246,23 @@ int main()
         for (int n = 0; n < 3; ++n)
             c.write (static_cast<std::uint8_t> (7 * n + 4), static_cast<std::uint8_t> (waves[(t + static_cast<std::uint64_t> (n)) % 3] | ctrl::gate));
     };
-    for (int i = 0; i < 3; ++i)
-        r[i] = nsPerSample (Model::A, rates[i], landSetup, landTick);
-    std::printf ("%-8s %10.1f %10.1f %10.1f   (Model A saw combinations at 3 kHz, a control write every tick)\n", "landA", r[0], r[1], r[2]);
+    if (want ("landA"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::A, rates[i], landSetup, landTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (Model A saw combinations at 3 kHz, a control write every tick)\n", "landA", r[0], r[1], r[2]);
+    }
+    // the S4 gate's patch (8.5, 8.18)
+    auto s4Setup = [] (Chip& c) {
+        setOsc (c, 0, 3740.0, 2048.0f, ctrl::pulse | ctrl::gate);                   // about 220 Hz
+        setOsc (c, 1, 7480.0, 0.0f, ctrl::saw | ctrl::gate);                        // about 440 Hz
+        setOsc (c, 2, 5600.0, 2048.0f, ctrl::triangle | ctrl::saw | ctrl::gate);    // about 330 Hz
+    };
+    if (want ("s4gate"))
+    {
+        for (int i = 0; i < 3; ++i)
+            r[i] = nsPerSample (Model::A, rates[i], s4Setup, typicalTick);
+        std::printf ("%-8s %10.1f %10.1f %10.1f   (the S4 gate's patch: Model A pulse, saw, triangle+saw)\n", "s4gate", r[0], r[1], r[2]);
+    }
     return 0;
 }

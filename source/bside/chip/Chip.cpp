@@ -13,8 +13,7 @@ void Chip::prepare (const Config& c) noexcept
     clock.prepare (cfg.clockHz, cfg.internalRate);
     shapes = &combined::tablesFor (cfg.model, cfg.shapes);
     rtab = &render::tablesFor (cfg.model, cfg.shapes);
-    blep = &ShortBlep::get(); // the first use builds the tables: here, never in a render
-    blepLong = &LongBlep::get();
+    ktab = &render::kernelTables(); // the first use builds the tables (and both BLEP tables): here, never in a render
     reset();
 }
 
@@ -213,6 +212,91 @@ std::uint8_t Chip::read (std::uint8_t address) const noexcept
         case reg::env3Output: return env[2].readSample;
         default: return 0;
     }
+}
+
+std::uint64_t Chip::envSkipRepeats (int n, std::uint64_t j) noexcept
+{
+    Env& e = env[idx (n)];
+    if (! envInert (n))
+        return j;
+    const std::uint64_t period = (static_cast<std::uint64_t> (e.compare) + 1) * std::max<std::uint64_t> (e.dividerPeriod, 1);
+    if (j < 2 * period)
+        return j;
+    const Env before = e;
+    envSteps (n, period);
+    j -= period;
+    return e == before ? j % period : j;
+}
+
+Chip::PullRun Chip::pullRun (int n, std::uint64_t j) const noexcept
+{
+    // The lower 55 bits run on as without the pull-down; the top bit rises with a carry out of them and
+    // is cleared in a step whose output (the shape at the landing cell, through the pulse gate the step
+    // before compared) has bit 11 clear. Lower-half stretches are jumped to their carry; a top bit that
+    // stays up is followed step by step (at most j, <= kMaxSkip).
+    const Osc& o = osc[idx (n)];
+    const std::uint8_t c = ctl (n);
+    const auto& shape = shapes->wave[wave::bits (c) & 15u];
+    const bool pulse = (c & ctrl::pulse) != 0;
+    const std::uint64_t inc = o.inc, low = kPhaseMsb - 1;
+    bool top = (o.phase & kPhaseMsb) != 0;
+    std::uint64_t lower = o.phase & low;
+    bool gate = o.pulseHigh; // the comparison the next step uses
+    PullRun r;
+    auto compare = [&] { return ((((top ? kPhaseMsb : 0u) | lower) >> 44) & 0xfffu) >= o.pw; };
+    auto step = [&] {
+        const std::uint64_t full = ((top ? kPhaseMsb : 0u) + lower + inc) & kPhaseMask;
+        const bool upNow = (full & kPhaseMsb) != 0;
+        r.lastPre = full;
+        r.rise = ! top && upNow;
+        lower = full & low;
+        top = upNow;
+        if (upNow)
+        {
+            const std::uint16_t out = static_cast<std::uint16_t> (shape[(full >> 44) & 0xfffu] & (pulse && ! gate ? 0u : 0xfffu));
+            if ((out & 0x800u) == 0)
+            {
+                top = false;
+                r.rise = false;
+            }
+        }
+        gate = compare();
+    };
+    auto runTo = [&] (std::uint64_t steps) {
+        std::uint64_t done = 0;
+        while (done < steps)
+        {
+            if (! top && inc == 0)
+            {
+                // frequency 0 (a control written before any frequency, a trace): a lower half that never moves
+                r.lastPre = lower;
+                r.rise = false;
+                gate = compare();
+                break;
+            }
+            if (! top)
+            {
+                const std::uint64_t d = (kPhaseMsb - lower + inc - 1) / inc; // the step with the carry (>= 1)
+                const std::uint64_t plain = std::min (d - 1, steps - done);
+                if (plain > 0)
+                {
+                    lower += plain * inc; // stays below 2^55
+                    done += plain;
+                    r.lastPre = lower;
+                    r.rise = false;
+                    gate = compare();
+                    continue;
+                }
+            }
+            step();
+            ++done;
+        }
+    };
+    runTo (j - 1);
+    r.prevPost = (top ? kPhaseMsb : 0u) | lower;
+    step();
+    r.lastPost = (top ? kPhaseMsb : 0u) | lower;
+    return r;
 }
 
 DigitalState Chip::state() const noexcept

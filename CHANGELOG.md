@@ -5,6 +5,65 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### B-Side render cost step, fourth review (2026-11-19)
+- Tests and records only. The step moments' alias test now measures synced targets at a non-integer ratio
+  (2.71) against the same -80 dB as plain and ring targets, and the strongest line outside DC's main lobe:
+  at most -81.5 dB re the strongest line where it is above -50 dB re 1; quieter shapes (-60 to -50 dB) are
+  printed and recorded (worst -76.1 dB, about -136 dB re 1). The earlier claim that synced targets cannot
+  meet -80 dB was wrong.
+- Recorded as open, older than this step: synced targets at an exact integer frequency ratio (hidden report
+  `[.render-sync-integer]`); a width write that changes the rendered gate two cycles before the chip; a few
+  cases where a frozen line and one crawling below one accumulator step render differently (hidden report
+  `[.render-frozen-crawl]`).
+- Tests that kill two more mutations (a frozen landing left pending to the batched path, a frozen source's
+  ring flip without oscillator 1's delay) and an assertion on the fitted tables that the gate re-read's
+  timing after a pull-down cannot change the output.
+
+### B-Side render cost step, third review (2026-11-18)
+- Fixed: the output depended on where `renderUntil` stopped without a write (pieces now start at a sample's
+  start or a write and end at its end; random non-write stops are tested bit-identical, 150 seeds in the
+  suite, 4 000 in the hidden `[.render-split-long]`); a frozen Model A saw combination pulled down by a width
+  or waveform write (no prediction, a large correction, a ring target's old top bit).
+- Above the register's range the step moments' stretches end at two fixed points per sample: plain and ring
+  targets alias at most -106 dB re the strongest line (was -79.6), asserted at -80 dB.
+  `comb12k` 184 (Model A) and 162 ns (Model B) at 96 kHz, `chip_bench` alone (target 200).
+- Tests that kill the surviving mutations of the review, including an `envInert` counter-example (a write in a
+  sample's last cycle), which an earlier review had called equivalent.
+
+### B-Side render cost step, review fixes (2026-11-18)
+- Fixed: a division by a zero increment in the Model A pull-down's closed form (SIGFPE on x86-64 at frequency
+  0); a frozen Model A pull-down kept its pulse gate (one-cycle re-reads are now scheduled in time on frozen
+  lines); `BS_CHIP_INLINE` is plain `inline` on MSVC (C4714).
+- Above the register's range combined waveforms keep their staircase and emit a stretch's steps by their time
+  moments (no switch click; the audio band within about -78 dB re 1 of one-by-one steps, against -18 dB of the
+  coarse levels it replaces); `comb12k` 132 / 103 ns at 96 kHz.
+- Tests: the sanitizer build passes every `bside` and `trace` test; regression tests for frequency 0, the frozen
+  pull-down, switches without clicks, the entry hysteresis, frozen lines in the state check, the converter
+  bits against the frequency, a pending envelope step; hidden `[.render-exact]` report.
+- Measured and not adopted: dropping a free saw's converter bit at half a toggle per sample (-62 dB in the
+  band around phase resets and waveform switches).
+
+### B-Side render cost step (2026-11-18)
+- `Chip::render` per internal sample per chip at 96 kHz (`chip_bench`, this Mac, back to back with the branch
+  point): silent 61 -> 1.9 ns, typical 57 -> 13, Model A typical 217 -> 36, three Model A saws 297 -> 44,
+  the new `s4gate` case (the S4 gate's patch) 265 -> 32, Model A combined 395 -> 90, three combined waveforms
+  at 12 kHz 5 104 -> 131 (Model A) and 4 272 -> 117 (Model B), worst 780 -> 316, noise 199 -> 164, noise+saw
+  source 332 -> 178, Model A landings 652 -> 193; every case faster at 48 and 192 kHz too.
+- How: a batched path that renders whole samples with the digital core advanced once, bit-identical to the
+  general path; envelopes that cannot change skip their repeating states; the Model A pull-down in closed
+  form in the digital core; envelopes after the oscillators in the write-back's per-cycle mode; both BLEP
+  kernels as tap-major tables (the long one by Hermite interpolation, refined for combined waveforms' cell
+  steps); the Model A converter terms as tables; written-out sweeps for triangle, saw and combined lines.
+- Above the register's range (Smooth, to 12 kHz) combined waveforms use coarse staircases whose in-band
+  harmonics are the fine one's (aliasing -101 dB at worst there, no budget); at and below it nothing changes.
+- Fixed the three defects 8.17 listed (a synced pulse at frequency 0, a ring target after a width write in the
+  step before its source's rise, a frequency drop between a sync source's rendered crossing and its rise),
+  each with a regression test that fails on the old renderer; the state check now checks frozen lines.
+- Not met (decisions "B-Side render cost step" rows 12, 13): Model A triangle and saw patches (36, 44, 32 ns
+  against 24) and Model A combined (90 against 60).
+- `chip_bench`: case names as arguments, `CHIP_BENCH_SECONDS`, the `s4gate` case. Tests: `[batch]`, `[levels]`,
+  `[defects]`, new equivalence cases, hidden `[.render-above]` report.
+
 ### B-Side parameter step, review fixes (2026-11-18)
 - Typed text: every B-Side text -> value path is finite and in range (NaN, inf, 1e999 give the default);
   `parseFirstNumber` reads sign and exponent; choices accept any case and a bare number naming one label.
