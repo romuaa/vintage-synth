@@ -1,0 +1,9 @@
+# What the Vintage plugin is, as `scripts/package-release.sh` checks it in every bundle it packs or verifies:
+# the VST3 class IDs written to Contents/Resources/moduleinfo.json (JUCE builds them from the manufacturer
+# code "Exit" and the plugin code "Vsy1": 4578697456737931) and, on macOS, the bundle identifier.
+# The B-Side plugin has other class IDs (plugin code "Bsy1": ...42737931) and a bundle identifier of its own.
+# scripts/preflight/docs-check.sh checks that this file still agrees with CMakeLists.txt; the `mac` step of
+# scripts/preflight.sh packs the freshly built bundle, which compares the real build against this file.
+bundle-id=com.exitium.vintagesynth
+cid=ABCDEF019182FAEB4578697456737931
+cid=ABCDEF011234ABCD4578697456737931

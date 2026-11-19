@@ -135,6 +135,20 @@ if command -v ruby >/dev/null 2>&1; then
   fi
 fi
 
+# resources/release/IDENTITY.txt (what the release packer expects of a bundle) must agree with CMakeLists.txt:
+# the bundle identifier, and the manufacturer and plugin code that JUCE turns into the class IDs' last 8 bytes.
+mcode=$(sed -n 's/^[[:space:]]*PLUGIN_MANUFACTURER_CODE[[:space:]]*\([A-Za-z0-9]*\).*/\1/p' CMakeLists.txt | head -n 1)
+pcode=$(sed -n 's/^[[:space:]]*PLUGIN_CODE[[:space:]]*\([A-Za-z0-9]*\).*/\1/p' CMakeLists.txt | head -n 1)
+bid=$(sed -n 's/^[[:space:]]*BUNDLE_ID[[:space:]]*"\([^"]*\)".*/\1/p' CMakeLists.txt | head -n 1)
+hex=$(printf '%s%s' "$mcode" "$pcode" | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F')
+id_ok=1
+[[ -n $hex && $(sed -n 's/^bundle-id=//p' resources/release/IDENTITY.txt) == "$bid" ]] || id_ok=0
+cid_n=0
+while IFS= read -r c; do cid_n=$((cid_n + 1)); [[ ${c: -16} == "$hex" ]] || id_ok=0; done < <(sed -n 's/^cid=//p' resources/release/IDENTITY.txt)
+[[ $cid_n -eq 2 ]] || id_ok=0
+if [[ $id_ok -eq 1 ]]; then ok "resources/release/IDENTITY.txt agrees with CMakeLists.txt (bundle id $bid, plugin code $mcode$pcode)"
+else fail "resources/release/IDENTITY.txt disagrees with CMakeLists.txt (bundle id '$bid', codes '$mcode$pcode' = $hex)"; fi
+
 # 4. Source layout -----------------------------------------------------------------------------
 # source/common/ is shared by every instrument and must not depend on one: no include of
 # "vintage/...", "bside/..." (or any other instrument directory) from it. The pathspec covers every
@@ -177,7 +191,8 @@ sh_n=0
 while IFS= read -r -d '' f; do
   case $f in *.sh) ;; *) continue ;; esac
   sh_n=$((sh_n + 1))
-  head -n 1 "$f" | grep -q 'bash' && sh_cmd=bash || sh_cmd=sh
+  first_line=$(head -n 1 "$f")
+  case $first_line in *bash*) sh_cmd=bash ;; *) sh_cmd="sh" ;; esac
   "$sh_cmd" -n "$f" 2>"$tmp/err" || fail "$sh_cmd -n $f: $(head -n 1 "$tmp/err")"
   if command -v shellcheck >/dev/null 2>&1; then
     shellcheck -S error "$f" >"$tmp/err" 2>&1 || fail "shellcheck $f: $(head -n 3 "$tmp/err" | tr '\n' ' ')"

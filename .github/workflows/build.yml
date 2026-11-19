@@ -48,7 +48,8 @@ concurrency:
   # once (a second one waits; it never cancels the first, because cancel-in-progress is false for it), and
   # a normal run is in another group, so it can neither cancel nor be cancelled by a release run.
   # (cancel-in-progress is read from the NEW run: it decides whether that run cancels one already running
-  # in its group.)
+  # in its group.) GitHub keeps at most one PENDING run per group, so a third release dispatch replaces an
+  # older pending one (the running release is not touched).
   group: ${{ inputs.release && 'release' || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ !inputs.release }}
 
@@ -156,6 +157,8 @@ jobs:
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "cannot read the version from CMakeLists.txt" >&2; exit 1; }
           # A section for this version must exist in CHANGELOG.md (it becomes the release text).
           bash scripts/package-release.sh changelog "$version" CHANGELOG.md > /dev/null
+          # SOURCE.txt promises a reachable source: stop a release of a private repository before any build.
+          bash scripts/package-release.sh repo-public
           # A version that already has a PUBLISHED release is never released again. A draft is fine
           # (it is replaced by the package job). Drafts may be invisible to this read-only token.
           published=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"v$version\" and (.draft | not)) | .html_url")
@@ -360,8 +363,13 @@ jobs:
             file "$so"
             ldd "$so"
             objdump -p "$so" | grep -E "NEEDED|SONAME"
-            ! ldd "$so" | grep -q "not found"
-            ! ldd "$so" | grep -q "libstdc++"
+            # Captured, then tested with an explicit exit: `! cmd | grep -q` can never fail a step under
+            # `set -e` (the `!` exempts the pipeline), and a `grep -q` after a pipe dies of SIGPIPE.
+            ldd_out=$(ldd "$so")
+            if [[ "$ldd_out" == *"not found"* ]]; then echo "ERROR: ldd reports a missing library" >&2; exit 1; fi
+            if [[ "$ldd_out" == *"libstdc++"* || "$ldd_out" == *"libgcc_s"* ]]; then
+              echo "ERROR: the plugin depends on a shared libstdc++ or libgcc (they must be linked statically)" >&2; exit 1
+            fi
             echo "Highest required glibc symbol version:"
             objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1
             echo "Highest required GLIBCXX symbol version (should be none, runtime is static):"
@@ -417,7 +425,7 @@ jobs:
     name: distro ${{ matrix.name }}
     needs: [plan, build]
     # Runs when the linux-x64 row was selected, even if another row failed (fail-fast is off).
-    if: ${{ !cancelled() && needs.plan.outputs.distros == 'true' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.distros == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:

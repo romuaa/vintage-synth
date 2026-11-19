@@ -1,5 +1,5 @@
 Exitium Vintage Synth @VERSION@ for Linux
--------------------------------------
+@UL@
 
 What is in this folder
   Exitium Vintage Synth.vst3   the plugin (VST3 format; a folder with x86_64 and
@@ -13,9 +13,9 @@ or newer releases of those), and a host (DAW) that loads VST3 plugins. The C++ r
 is built into the plugin. The usual desktop libraries that every plugin host already
 uses (X11, ALSA, FreeType, Fontconfig) must be installed.
 
-The ARM64 (aarch64) build is experimental: it is built and unit-tested, but it has
-not been run through the plugin validator or tuned for speed on small boards. The
-x86_64 build is the one that is fully checked.
+The ARM64 (aarch64) build is experimental: it is built, unit-tested and run through the
+VST3 validator, but not through pluginval, and it is not tuned for speed on small
+boards. The x86_64 build is the one that is fully checked.
 
 Install
   1. Quit your host.

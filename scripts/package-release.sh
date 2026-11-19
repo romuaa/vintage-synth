@@ -25,6 +25,9 @@
 # packed on any host. No signing identity is used: the macOS bundle keeps the ad-hoc signature
 # the build gave it (it is copied with ditto and packed with ditto, never re-signed).
 set -euo pipefail
+# One locale for every tool: sort order, character classes and case folding are plain ASCII, and a name
+# with a non-ASCII byte is refused before anything is unpacked (nothing here depends on another locale).
+export LC_ALL=C
 
 here=$(cd -P "$(dirname "$0")" && pwd)
 repo=$(cd -P "$here/.." && pwd)
@@ -34,7 +37,13 @@ PLUGIN="Exitium Vintage Synth"
 BUNDLE="$PLUGIN.vst3"
 DEFAULT_REPO_URL="https://github.com/romuaa/vintage-synth"
 # What must never be in a Vintage release: the B-Side plugin code and bundle identifier (and name).
+# The plugin code "Bsy1" is only looked for in names and text files: in a binary a 4-character code matches
+# random bytes (about 2 % of the time in an 18 MB binary), so a binary is judged by the class IDs of
+# moduleinfo.json and the bundle identifier instead (resources/release/IDENTITY.txt). The two long identifiers
+# are searched in all bytes: 14+ characters never match by chance (about 1e-23 per binary).
 BSIDE_STRINGS=("Bsy1" "com.exitium.bside" "Exitium B-Side")
+BSIDE_LONG=("com.exitium.bside" "Exitium B-Side")
+IDENTITY=$tpl/IDENTITY.txt
 MAC_MIN_OS="11.0"
 
 die() { echo "package-release: $*" >&2; exit 2; }
@@ -53,6 +62,13 @@ problem() { echo "verify: FAIL: $*" >&2; problems=$((problems + 1)); }
 # for every class); a release needs exactly one, equal to the release version.
 moduleinfo_version() {
   sed -n 's/^[[:space:]]*"Version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+
+# identity_values <key>: the values of a key of resources/release/IDENTITY.txt, one per line.
+identity_values() { sed -n "s/^$1=//p" "$IDENTITY"; }
+# The distinct class IDs of a moduleinfo.json, sorted, on one line.
+moduleinfo_cids() {
+  sed -n 's/^[[:space:]]*"CID"[[:space:]]*:[[:space:]]*"\([0-9A-Za-z]*\)".*/\1/p' "$1" | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 
 # Machine type of a PE file (Windows): x64 or arm64. Prints "" when unknown.
@@ -106,6 +122,14 @@ check_bundle() {
   else
     v=$(moduleinfo_version "$info")
     [[ $v == "$ver" ]] || problem "version mismatch: moduleinfo.json says '${v:-none}', the release is '$ver'"
+    # The plugin's identity: exactly Vintage's class IDs (a B-Side build has other ones).
+    v=$(moduleinfo_cids "$info"); n=$(identity_values cid | sort | tr '\n' ' ' | sed 's/ $//')
+    [[ $v == "$n" ]] || problem "class IDs in moduleinfo.json are '${v:-none}', expected '$n' (Vintage)"
+  fi
+  if [[ $plat == macos && -f $b/Contents/Info.plist ]]; then
+    v=$(awk '/<key>CFBundleIdentifier<\/key>/ { getline; gsub(/<[^>]*>|[ \t]/, ""); print; exit }' "$b/Contents/Info.plist")
+    n=$(identity_values bundle-id)
+    [[ $v == "$n" ]] || problem "the bundle identifier in Info.plist is '${v:-none}', expected '$n'"
   fi
 
   # Release bundles hold no symlinks, and exactly the files of the platform (no stray DLL).
@@ -185,7 +209,7 @@ check_bundle() {
   while IFS= read -r -d '' f; do
     if [[ ! -r $f ]]; then problem "cannot read ${f#"$b/"} (B-Side scan)"; continue; fi
     if ! LC_ALL=C tr -d '\0' < "$f" > "$cw/stripped" 2>/dev/null; then problem "cannot read ${f#"$b/"} (B-Side scan)"; continue; fi
-    for a in "${BSIDE_STRINGS[@]}"; do
+    for a in "${BSIDE_LONG[@]}"; do
       rc=0; LC_ALL=C grep -aiqF -e "$a" "$cw/stripped" 2>/dev/null || rc=$?
       case $rc in
         0) problem "B-Side string '$a' found in: ${f#"$b/"}" ;;
@@ -218,6 +242,10 @@ render_text() {
   awk -v f="${SUBMODULES_FILE:-/dev/null}" '$0 == "@SUBMODULES@" { while ((getline l < f) > 0) print l; close(f); next } { print }' "$src" > "$out.sub"
   sed -e "s|@VERSION@|$ver|g" -e "s|@COMMIT@|$commit|g" -e "s|@TAG@|$tag|g" -e "s|@REPOSITORY_URL@|$url|g" "$out.sub" > "$out.tmp"
   rm -f "$out.sub"
+  # A line holding only @UL@ becomes a row of dashes as long as the line above it (a heading's underline),
+  # measured after the version is in.
+  awk '$0 == "@UL@" { u = ""; for (i = 0; i < length(prev); i++) u = u "-"; print u; next } { prev = $0; print }' "$out.tmp" > "$out.ul"
+  mv "$out.ul" "$out.tmp"
   left=$(grep -o '@[A-Z_][A-Z_]*@' "$out.tmp" | sort -u | tr '\n' ' ' || true)
   [[ -z $left ]] || die "unreplaced placeholder(s) in $src: $left"
   convert_eol "$out.tmp" "$out" "$plat"
@@ -346,6 +374,25 @@ cmd_pack() {
   echo "$zipf"
 }
 
+# zip_entries <platform> <folder> required|optional: the entries (folders with a trailing slash) a release zip
+# holds: the top folder, the four texts, the bundle and its files with all their folders.
+zip_entries() {
+  local plat=$1 folder=$2 kind=$3 t
+  if [[ $kind == required ]]; then
+    printf '%s/\n' "$folder"
+    for t in INSTALL.txt LICENSE.txt SOURCE.txt THIRD-PARTY.txt; do printf '%s/%s\n' "$folder" "$t"; done
+    printf '%s/%s/\n' "$folder" "$BUNDLE"
+    expected_files "$plat"
+  else
+    optional_files "$plat"
+  fi | awk -v top="$folder" -v kind="$kind" -v bundle="$BUNDLE" '
+    kind == "optional" { print top "/" bundle "/" $0; next }
+    index($0, top "/") == 1 && length($0) > 0 && ($0 == top "/" || $0 ~ /\.txt$/) { print; next }
+    $0 == top "/" bundle "/" { print; next }
+    { f = top "/" bundle "/" $0; print f; n = split($0, a, "/"); p = top "/" bundle "/"
+      for (i = 1; i < n; i++) { p = p a[i] "/"; print p } }' | sort -u
+}
+
 # ---- verify ------------------------------------------------------------------------------------------
 # The most the unpacked zip may hold (bytes). The real zips unpack to under 100 MB.
 MAX_UNPACKED=${VS_PACKAGE_MAX_BYTES:-209715200}
@@ -360,7 +407,7 @@ cmd_verify() {
     esac
   done
   [[ $# -eq 1 ]] || die "usage: verify [--license <LICENSE file>] <zip>"
-  local zipf=$1 name plat label ver folder tmp top n f t unsafe=0
+  local zipf=$1 name plat label ver folder tmp top n f t a rc unsafe=0
   [[ -f $zipf ]] || die "no such file: $zipf"
   zipf=$(cd -P "$(dirname "$zipf")" && pwd)/$(basename "$zipf")
   name=$(basename "$zipf")
@@ -382,27 +429,44 @@ cmd_verify() {
 
   # ---- the zip's directory (nothing is unpacked before it is safe) ----
   unzip -Z1 "$zipf" > "$tmp/list" 2>"$tmp/err" || die "cannot read the zip: $(head -n 1 "$tmp/err")"
-  unzip -tq "$zipf" >/dev/null 2>"$tmp/err" || problem "the zip is damaged: $(head -n 1 "$tmp/err")"
-  # perms|os|name of every entry, as recorded by the packer
+  if ! unzip -tq "$zipf" >/dev/null 2>"$tmp/err"; then problem "the zip is damaged: $(head -n 1 "$tmp/err")"; unsafe=1; fi
+  # perms|host|name of every entry, as recorded by the packer
   unzip -Z "$zipf" 2>/dev/null | awk '$2 ~ /^[0-9]+\.[0-9]+$/ && NF >= 9 { n = $0; sub(/^([^ ]+ +){8}/, "", n); print $1 "\t" $3 "\t" n }' > "$tmp/modes" || true
   if [[ ! -s $tmp/list ]]; then problem "the zip is empty"; unsafe=1; fi
+  # Every entry must have been parsed: an entry the parser drops (another host system, an odd line) would
+  # skip the symlink, host and mode checks.
+  n=$(grep -c '' "$tmp/list" || true); t=$(grep -c '' "$tmp/modes" || true)
+  if [[ $n -ne $t ]]; then problem "the zip lists $n names but $t entries could be read with their modes"; unsafe=1; fi
+  # Only Unix-made entries: their modes and symlink bits are what is checked.
+  n=$(awk -F'\t' '$2 != "unx" { print $3 " (" $2 ")" }' "$tmp/modes" | head -n 3 | tr '\n' '|')
+  if [[ -n $n ]]; then problem "entries not made on a Unix host (modes and symlinks cannot be checked): $n"; unsafe=1; fi
 
-  # Total size before unpacking.
+  # Total size, from the headers (cheap) and from the real streams (the headers can lie): reading stops
+  # one byte after the limit.
   n=$(unzip -Z -t "$zipf" 2>/dev/null | awk '/bytes uncompressed/ { for (i = 1; i <= NF; i++) if ($i == "bytes") { print $(i - 1); exit } }')
   if [[ -z $n ]]; then problem "cannot read the total size of the zip"; unsafe=1
   elif [[ $n -gt $MAX_UNPACKED ]]; then problem "the zip unpacks to $n bytes, above the limit of $MAX_UNPACKED"; unsafe=1; fi
+  if [[ $unsafe -eq 0 ]]; then
+    n=$( (unzip -p "$zipf" 2>/dev/null | head -c $((MAX_UNPACKED + 1)) | wc -c | tr -d ' ') || true)
+    if [[ -z $n || $n -gt $MAX_UNPACKED ]]; then problem "the zip's real content is above the limit of $MAX_UNPACKED bytes (or unreadable)"; unsafe=1; fi
+  fi
 
-  n=$(grep -c -E '(^|/)(__MACOSX|\.DS_Store|\._[^/]*)(/|$)' "$tmp/list" || true)
-  [[ $n -eq 0 ]] || problem "the zip holds $n macOS metadata entries (__MACOSX, .DS_Store, ._*): $(grep -E '(^|/)(__MACOSX|\.DS_Store|\._[^/]*)(/|$)' "$tmp/list" | head -n 3 | tr '\n' ' ')"
-  n=$(grep -c -E '(^/|(^|/)\.\.(/|$))' "$tmp/list" || true)
-  if [[ $n -ne 0 ]]; then problem "the zip holds $n entries with an absolute or '..' path"; unsafe=1; fi
+  # Names: printable ASCII only (no control character, no non-ASCII byte), no backslash, no "//", no "." or ".."
+  # component, no component ending in a dot or a space (Windows drops those), no macOS metadata.
+  local bad_re
+  for bad_re in '[^ -~]' '\\' '//' '(^|/)\.{1,2}(/|$)' '[. ](/|$)'; do
+    n=$(grep -E -e "$bad_re" "$tmp/list" | head -n 3 | tr '\n' '|' || true)
+    if [[ -n $n ]]; then problem "entries with a forbidden name (pattern '$bad_re'): $n"; unsafe=1; fi
+  done
+  n=$(grep -E '(^|/)(__MACOSX|\.DS_Store|\._[^/]*)(/|$)' "$tmp/list" | head -n 3 | tr '\n' ' ' || true)
+  [[ -z $n ]] || problem "the zip holds macOS metadata entries (__MACOSX, .DS_Store, ._*): $n"
   top=$(sed 's|/.*||' "$tmp/list" | sort -u)
   [[ $top == "$folder" ]] || problem "the zip must have the one top-level folder '$folder' (found: $(echo "$top" | tr '\n' '|'))"
 
   # Duplicate entries, also ones that differ only by case (they collide on macOS and Windows).
-  sed 's|/$||' "$tmp/list" | LC_ALL=C sort | uniq -d > "$tmp/dups"
+  sed 's|/$||' "$tmp/list" | sort | uniq -d > "$tmp/dups"
   if [[ -s $tmp/dups ]]; then problem "duplicate entries in the zip: $(head -n 3 "$tmp/dups" | tr '\n' '|')"; unsafe=1; fi
-  sed 's|/$||' "$tmp/list" | tr '[:upper:]' '[:lower:]' | LC_ALL=C sort | uniq -d > "$tmp/dups"
+  sed 's|/$||' "$tmp/list" | tr '[:upper:]' '[:lower:]' | sort | uniq -d > "$tmp/dups"
   if [[ -s $tmp/dups ]]; then problem "entries that differ only by letter case: $(head -n 3 "$tmp/dups" | tr '\n' '|')"; unsafe=1; fi
 
   # No symlink at all: a release holds none (the macOS bundle was checked: it has none).
@@ -411,14 +475,22 @@ cmd_verify() {
   n=$(awk -F'\t' '$1 !~ /^[-d][-rwxsStT]+$/ { print $3 }' "$tmp/modes" | head -n 3 | tr '\n' '|')
   if [[ -n $n ]]; then problem "entries that are neither files nor folders: $n"; unsafe=1; fi
 
+  # The complete entry list, folders included, against the expected one of the platform.
+  zip_entries "$plat" "$folder" required | sort > "$tmp/req"
+  { zip_entries "$plat" "$folder" required; zip_entries "$plat" "$folder" optional; } | sort > "$tmp/allowed"
+  sort "$tmp/list" > "$tmp/have"
+  n=$(comm -13 "$tmp/allowed" "$tmp/have" | head -n 5 | tr '\n' '|')
+  if [[ -n $n ]]; then problem "unexpected entries in the zip: $n"; unsafe=1; fi
+  n=$(comm -23 "$tmp/req" "$tmp/have" | head -n 5 | tr '\n' '|')
+  [[ -z $n ]] || problem "missing entries in the zip: $n"
+
   if [[ $unsafe -ne 0 ]]; then return_summary; fi
 
   # ---- the modes recorded in the zip: 755 for folders and binaries, 644 for the rest ----
   local want bin_list NL=$'\n'
   bin_list=$(binary_files "$plat" | sed "s|^|$folder/$BUNDLE/|")
-  while IFS=$'\t' read -r perms os ename; do
+  while IFS=$'\t' read -r perms _host ename; do
     [[ -n $ename ]] || continue
-    if [[ $os != unx ]]; then problem "no Unix permissions recorded for $ename (made on '$os')"; continue; fi
     case $perms in
       d*) want=drwxr-xr-x ;;
       *) case "$NL$bin_list$NL" in *"$NL$ename$NL"*) want=-rwxr-xr-x ;; *) want=-rw-r--r-- ;; esac ;;
@@ -483,6 +555,14 @@ cmd_verify() {
     tr -d '\r' < "$license" > "$tmp/lic.expected"; tr -d '\r' < "$root/LICENSE.txt" > "$tmp/lic.actual"
     cmp -s "$tmp/lic.expected" "$tmp/lic.actual" || problem "LICENSE.txt differs from $license"
   fi
+  # The B-Side identifiers must not be in the texts either (any letter case).
+  for t in INSTALL.txt LICENSE.txt SOURCE.txt THIRD-PARTY.txt; do
+    [[ -f $root/$t ]] || continue
+    for a in "${BSIDE_STRINGS[@]}"; do
+      rc=0; grep -aiqF -e "$a" "$root/$t" 2>/dev/null || rc=$?
+      case $rc in 0) problem "B-Side string '$a' found in: $t" ;; 1) ;; *) problem "the B-Side scan of $t failed (grep exit $rc)" ;; esac
+    done
+  done
   # Nothing else at the top level.
   n=$(find "$root" -mindepth 1 -maxdepth 1 ! -name "$BUNDLE" ! -name INSTALL.txt ! -name LICENSE.txt ! -name SOURCE.txt ! -name THIRD-PARTY.txt -exec basename {} \; | tr '\n' ' ')
   [[ -z $n ]] || problem "unexpected top-level entries in the folder: $n"
@@ -655,6 +735,12 @@ STUB
       bad "$1 was not rejected as expected (exit $rc, wanted '$3')"; sed 's/^/    /' "$tmp/out"
     fi
   }
+  # expect_pack_reject <case name> <bundle dir> <message>: the packer's own check of a bundle refuses it
+  expect_pack_reject() {
+    rc=0; "$0" pack --platform "$plat" --bundle "$2" --version "$ver" --commit "$(printf '%040d' 1)" --out "$tmp/pack-rej" >"$tmp/out" 2>&1 </dev/null || rc=$?
+    if [[ $rc -ne 0 ]] && grep -qF -- "$3" "$tmp/out"; then ok "$1 rejected by pack ($(grep -m1 -F -- "$3" "$tmp/out" | sed 's/^verify: FAIL: //' | cut -c1-100))"
+    else bad "$1 was not rejected by pack as expected (exit $rc, wanted '$3')"; sed 's/^/    /' "$tmp/out"; fi
+  }
   # mutate_tree <case>: unpack the good zip into $tmp/<case>/ and echo that tree's folder
   mutate_tree() { rm -rf "${tmp:?}/${1:?}"; mkdir -p "$tmp/$1"; unzip_to "$plat" "$good" "$tmp/$1"; echo "$tmp/$1/$folder"; }
   rezip() { zip_folder "$plat" "$tmp/$1" "$folder" "$tmp/$1/$name"; echo "$tmp/$1/$name"; }
@@ -684,19 +770,34 @@ STUB
   expect_reject "missing slice" "$(rezip missing-slice)" 'missing slice'
 
   d=$(mutate_tree bside)
-  printf 'plugin code Bsy1\n' > "$d/$BUNDLE/Contents/Resources/extra.txt"
-  expect_reject "B-Side string" "$(rezip bside)" "B-Side string 'Bsy1'"
+  printf '\ncom.exitium.bside\n' >> "$d/$BUNDLE/Contents/Resources/moduleinfo.json"
+  expect_reject "B-Side bundle identifier in a file" "$(rezip bside)" "B-Side string 'com.exitium.bside'"
+
+  # The plugin code is judged by the class IDs of moduleinfo.json (never by a 4-character search in binaries).
+  d=$(mutate_tree bside-cid)
+  sed -i.bak 's/56737931/42737931/g' "$d/$BUNDLE/Contents/Resources/moduleinfo.json"; rm -f "${d:?}/$BUNDLE/Contents/Resources/moduleinfo.json.bak"
+  expect_reject "B-Side class IDs in moduleinfo.json" "$(rezip bside-cid)" "class IDs in moduleinfo.json"
+  if [[ $plat == macos ]]; then
+    d=$(mutate_tree bside-bundle-id)
+    sed -i.bak 's/com.exitium.vintagesynth/com.exitium.other/' "$d/$BUNDLE/Contents/Info.plist"; rm -f "${d:?}/$BUNDLE/Contents/Info.plist.bak"
+    expect_reject "wrong bundle identifier in Info.plist" "$(rezip bside-bundle-id)" "bundle identifier in Info.plist"
+  fi
+  d=$(mutate_tree bside-text); printf 'see also Exitium B-Side\n' >> "$d/INSTALL.txt"
+  expect_reject "B-Side name in a text file" "$(rezip bside-text)" "B-Side string 'Exitium B-Side' found in: INSTALL.txt"
 
   # The same identifiers in UTF-16LE and in other letter case, inside a binary-looking file.
   d=$(mutate_tree bside-utf16)
-  { head -c 64 /dev/zero; printf 'c\0o\0m\0.\0e\0x\0i\0t\0i\0u\0m\0.\0b\0s\0i\0d\0e\0'; } > "$d/$BUNDLE/Contents/Resources/blob.bin"
+  { head -c 64 /dev/zero; printf 'c\0o\0m\0.\0e\0x\0i\0t\0i\0u\0m\0.\0b\0s\0i\0d\0e\0'; } >> "$d/$BUNDLE/Contents/Resources/moduleinfo.json"
   expect_reject "B-Side string in UTF-16LE" "$(rezip bside-utf16)" "B-Side string 'com.exitium.bside'"
   d=$(mutate_tree bside-case)
-  printf 'EXITIUM B-SIDE\n' > "$d/$BUNDLE/Contents/Resources/Notes.txt"
+  printf '\nEXITIUM B-SIDE\n' >> "$d/$BUNDLE/Contents/Resources/moduleinfo.json"
   expect_reject "B-Side string in capitals" "$(rezip bside-case)" "B-Side string 'Exitium B-Side'"
+  # Names and stray files: the zip's entry list refuses them before unpacking, and the packer's bundle check
+  # (what pack runs on the build output) names them too.
   d=$(mutate_tree bside-name)
   printf 'x\n' > "$d/$BUNDLE/Contents/Resources/exitium b-side.txt"
-  expect_reject "B-Side name in a file name" "$(rezip bside-name)" "B-Side name"
+  expect_reject "B-Side name in a file name (zip)" "$(rezip bside-name)" "unexpected entries in the zip"
+  expect_pack_reject "B-Side name in a file name (bundle)" "$d/$BUNDLE" "B-Side name 'Exitium B-Side' in a file name"
 
   d=$(mutate_tree metadata); mkdir -p "$d/../__MACOSX"; echo x > "$d/../__MACOSX/._junk"
   rm -f "${tmp:?}/metadata/$name"; (cd "$tmp/metadata" && zip -q -r -y -X "$tmp/metadata/$name" "$folder" __MACOSX)
@@ -715,7 +816,8 @@ STUB
 
   # Extra file in the bundle (a stray DLL), wrong text content, wrong platform text, modified licence.
   d=$(mutate_tree stray); printf 'MZ' > "$d/$BUNDLE/Contents/Resources/evil.dll"
-  expect_reject "stray file in the bundle" "$(rezip stray)" 'unexpected file(s) in the bundle'
+  expect_reject "stray file in the bundle (zip)" "$(rezip stray)" "unexpected entries in the zip"
+  expect_pack_reject "stray file in the bundle (bundle)" "$d/$BUNDLE" 'unexpected file(s) in the bundle'
   d=$(mutate_tree short-install); printf '%s\n' "$ver" > "$d/INSTALL.txt"
   expect_reject "INSTALL.txt with almost no content" "$(rezip short-install)" 'INSTALL.txt'
   d=$(mutate_tree other-install)
@@ -750,7 +852,7 @@ STUB
 
   # Crafted zips (need python3): duplicate entries, case-colliding entries, an unreadable (mode 000) file with B-Side inside.
   if command -v python3 >/dev/null 2>&1; then
-    for want in dup casedup unreadable; do
+    for want in dup casedup unreadable vms dotslash dblslash backslash nonascii trailingdot emptydir lie flip; do
       mkdir -p "$tmp/py-$want"
       python3 -I - "$good" "$tmp/py-$want/$name" "$want" <<'PY'
 import sys, zipfile, warnings
@@ -760,7 +862,10 @@ zin = zipfile.ZipFile(good)
 zo = zipfile.ZipFile(out, 'w')
 top = zin.infolist()[0].filename.split('/')[0]
 for i in zin.infolist():
-    zo.writestr(i, zin.read(i.filename))
+    data = zin.read(i.filename)
+    if case == 'unreadable' and i.filename.endswith('moduleinfo.json'):
+        data += b'\nExitium B-Side\n'; i.external_attr = 0o100000 << 16   # mode 000
+    zo.writestr(i, data)
 def info(n, mode):
     zi = zipfile.ZipInfo(n, date_time=(2026, 1, 1, 0, 0, 0)); zi.create_system = 3
     zi.external_attr = (mode & 0xFFFF) << 16; return zi
@@ -768,14 +873,46 @@ if case == 'dup':
     zo.writestr(info(top + '/INSTALL.txt', 0o100644), b'second copy\n')
 elif case == 'casedup':
     zo.writestr(info(top + '/install.txt', 0o100644), b'other case\n')
-else:
-    zo.writestr(info(top + '/Exitium Vintage Synth.vst3/Contents/Resources/hidden.txt', 0o100000), b'Bsy1')
+elif case == 'vms':
+    zi = info(top + '/vms-entry', 0o100644); zi.create_system = 2; zo.writestr(zi, b'x')
+elif case == 'dotslash':
+    zo.writestr(info(top + '/./INSTALL.txt', 0o100644), b'x')
+elif case == 'dblslash':
+    zo.writestr(info(top + '//INSTALL.txt', 0o100644), b'x')
+elif case == 'backslash':
+    zo.writestr(info(top + '/Exitium Vintage Synth.vst3\\Contents\\x', 0o100644), b'x')
+elif case == 'nonascii':
+    zo.writestr(info(top + '/caf\u00e9.txt', 0o100644), b'x')
+elif case == 'trailingdot':
+    zo.writestr(info(top + '/INSTALL.txt.', 0o100644), b'x')
+elif case == 'emptydir':
+    zo.writestr(info(top + '/Exitium Vintage Synth.vst3/Contents/empty/', 0o40755), b'')
 zo.close()
+if case == 'lie':
+    # a 3 MB entry whose header sizes say 100 bytes
+    import struct
+    zo = zipfile.ZipFile(out, 'w'); zo.writestr(info(top + '/big.bin', 0o100644), b'\0' * 3000000); zo.close()
+    b = bytearray(open(out, 'rb').read())
+    pos = b.find(b'PK\x01\x02'); struct.pack_into('<I', b, pos + 24, 100)
+    struct.pack_into('<I', b, 22, 100)
+    open(out, 'wb').write(b)
+elif case == 'flip':
+    b = bytearray(open(out, 'rb').read()); b[len(b) // 2] ^= 0xFF; open(out, 'wb').write(b)
 PY
     done
+    expect_reject "an entry of a non-Unix host (the parser must not skip it)" "$tmp/py-vms/$name" 'not made on a Unix host'
+    expect_reject "an entry ./INSTALL.txt" "$tmp/py-dotslash/$name" 'forbidden name'
+    expect_reject "an entry with //" "$tmp/py-dblslash/$name" 'forbidden name'
+    expect_reject "a backslash in a name" "$tmp/py-backslash/$name" 'forbidden name'
+    expect_reject "a non-ASCII name" "$tmp/py-nonascii/$name" 'unexpected entries'
+    expect_reject "a name ending in a dot" "$tmp/py-trailingdot/$name" 'forbidden name'
+    expect_reject "an empty folder in the bundle" "$tmp/py-emptydir/$name" 'unexpected entries'
+    expect_reject "a damaged zip (stops before unpacking)" "$tmp/py-flip/$name" 'the zip is damaged'
+    rc=0; VS_PACKAGE_MAX_BYTES=1000000 "$0" verify "$tmp/py-lie/$name" >"$tmp/out" 2>&1 </dev/null || rc=$?
+    if [[ $rc -ne 0 ]] && grep -qE "real content is above the limit|the zip is damaged" "$tmp/out"; then ok "a zip whose headers understate its size is refused before unpacking ($(grep -m1 -oE 'real content is above the limit|the zip is damaged' "$tmp/out"))"; else bad "the lying size headers were not caught"; sed 's/^/    /' "$tmp/out"; fi
     expect_reject "duplicate entries" "$tmp/py-dup/$name" 'duplicate entries'
     expect_reject "entries differing only by case" "$tmp/py-casedup/$name" 'differ only by letter case'
-    expect_reject "B-Side string in a file of mode 000" "$tmp/py-unreadable/$name" "B-Side string 'Bsy1'"
+    expect_reject "B-Side string in a file of mode 000" "$tmp/py-unreadable/$name" "B-Side string 'Exitium B-Side'"
   else
     echo "selftest: skip: duplicate, case-colliding and mode-000 entries (python3 not found)"
   fi

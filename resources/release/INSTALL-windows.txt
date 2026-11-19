@@ -1,5 +1,5 @@
 Exitium Vintage Synth @VERSION@ for Windows
----------------------------------------
+@UL@
 
 What is in this folder
   Exitium Vintage Synth.vst3   the plugin (VST3 format; a folder with x64 and
@@ -11,9 +11,9 @@ What is in this folder
 You need: Windows 10 or newer (x64, or ARM64 which is experimental), and a host (DAW) that loads VST3 plugins.
 The plugin needs no extra runtime to be installed.
 
-The ARM64 build (Windows on ARM) is experimental: it is built and unit-tested, but it
-has not been run through the plugin validator or tuned for speed. The x64
-build is the one that is fully checked.
+The ARM64 build (Windows on ARM) is experimental: it is built, unit-tested and loaded by
+the host smoke test, but it has not been run through pluginval or the VST3 validator,
+and it is not tuned for speed. The x64 build is the one that is fully checked.
 
 Install
   1. Unblock the download first (next section), then unpack the zip.
@@ -26,8 +26,9 @@ Install
      permission when you copy.
   4. Start your host and rescan its plugins.
 
-This plugin is not code-signed. Windows marks a downloaded zip file, and everything
-you unpack from it, as coming from the internet, and may block or warn about it.
+This plugin is not signed with a developer certificate. Windows marks a downloaded zip
+file, and everything you unpack from it, as coming from the internet, and may block or
+warn about it.
 Before unpacking: right-click the zip file, choose Properties, tick "Unblock" at the
 bottom of the General tab, click OK, and then unpack it. If you already unpacked it,
 open PowerShell in the unpacked folder and run:

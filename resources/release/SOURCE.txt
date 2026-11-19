@@ -1,5 +1,5 @@
 Exitium Vintage Synth @VERSION@: source code
---------------------------------------------
+@UL@
 
 Exitium Vintage Synth is licensed under the GNU Affero General Public License,
 version 3 (LICENSE.txt). The complete corresponding source code of the binaries in
