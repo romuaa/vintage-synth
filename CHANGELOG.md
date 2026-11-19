@@ -14,6 +14,7 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   release); never run yet (CI is offline). The `mac` step of `scripts/preflight.sh` packs and verifies the zip.
 - `verify` hardened after review (no symlinks, duplicate/case-colliding entries, exact file and mode lists, UTF-16 B-Side scan, platform-specific install text, licence comparison); release runs share one concurrency group, check the tag and that the repository is public, and the draft text carries an experimental-ARM64 header.
 - Second review round: B-Side is recognised by class IDs and bundle identifier (`resources/release/IDENTITY.txt`) instead of a 4-character binary search; `verify` checks the full entry list and unsafe names; `build.yml`: `repo-public` in `plan`, `linux-distros` needs a successful `plan`, and the Linux dependency check (`! ldd | grep -q`, which could never fail) is rewritten.
+- Fixed: the `ldd` checks in `build.yml` and `scripts/linux-check/inner.sh` (`! ldd | grep -q`) could never fail; they now capture the output and fail on a missing library or a shared libstdc++/libgcc.
 - Fixed: the macOS bundle's ad-hoc signature did not cover `moduleinfo.json` (JUCE writes it after the linker signs),
   so `codesign --verify --deep --strict` failed on every build; the bundle is now signed again (ad hoc) as the last
   build step.
