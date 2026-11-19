@@ -23,6 +23,7 @@
 #include "bside/chip/CombinedWaveforms.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <array>
 #include <bit>
 #include <cstdio>
@@ -105,10 +106,13 @@ chip::combined::Evaluation evalOne (const NetworkParams& p, const Target& t, std
     return chip::combined::evaluate (p, t.wave, input);
 }
 
-long cost (const Vec& x, const Target& t, long limit)
+/** "No limit" for cost(); the value needs 64 bits (long is 32 bits on Windows). */
+constexpr std::int64_t kNoLimit = std::int64_t { 1 } << 40;
+
+std::int64_t cost (const Vec& x, const Target& t, std::int64_t limit)
 {
     const NetworkParams p = toParams (x);
-    long c = 0;
+    std::int64_t c = 0;
     for (const auto& o : t.obs)
     {
         if (c >= limit)
@@ -139,7 +143,7 @@ std::uint64_t splitmix (std::uint64_t& s)
 double uniform (std::uint64_t& s) { return static_cast<double> (splitmix (s) >> 11) * (1.0 / 9007199254740992.0); }
 
 /** Pattern search, then random joint moves; strict improvements only. */
-long polish (Vec& x, const Target& t, long c, std::uint64_t& rng)
+std::int64_t polish (Vec& x, const Target& t, std::int64_t c, std::uint64_t& rng)
 {
     for (int round = 0; round < 3; ++round)
     {
@@ -155,7 +159,7 @@ long polish (Vec& x, const Target& t, long c, std::uint64_t& rng)
                 {
                     Vec y = x;
                     y[static_cast<std::size_t> (k)] += sign * step * scaleOf (k);
-                    const long cy = cost (y, t, c);
+                    const std::int64_t cy = cost (y, t, c);
                     if (cy < c)
                     {
                         c = cy;
@@ -173,7 +177,7 @@ long polish (Vec& x, const Target& t, long c, std::uint64_t& rng)
             for (int k = 0; k < kParams; ++k)
                 if (active (k, t))
                     y[static_cast<std::size_t> (k)] += (uniform (rng) - 0.5) * 0.2 * scaleOf (k);
-            const long cy = cost (y, t, c);
+            const std::int64_t cy = cost (y, t, c);
             if (cy < c)
             {
                 c = cy;
@@ -186,14 +190,14 @@ long polish (Vec& x, const Target& t, long c, std::uint64_t& rng)
 
 /** One round from `start`. Returns `start` itself unless something strictly better was found (or its
     margin is too small, which a nudge of the threshold at equal cost repairs). */
-Vec fitRound (const Target& t, const Vec& start, std::uint64_t seed, long& best)
+Vec fitRound (const Target& t, const Vec& start, std::uint64_t seed, std::int64_t& best)
 {
     std::uint64_t rng = seed;
-    best = cost (start, t, 1L << 40);
+    best = cost (start, t, kNoLimit);
     Vec bx = start;
     struct Cand
     {
-        long c;
+        std::int64_t c;
         Vec x;
     };
     std::vector<Cand> pool;
@@ -211,13 +215,13 @@ Vec fitRound (const Target& t, const Vec& start, std::uint64_t seed, long& best)
         for (int k = 0; k < kParams; ++k)
             if (! active (k, t))
                 x[static_cast<std::size_t> (k)] = 0.0;
-        pool.push_back ({ cost (x, t, 1L << 40), x });
+        pool.push_back ({ cost (x, t, kNoLimit), x });
     }
     std::stable_sort (pool.begin(), pool.end(), [] (const Cand& a, const Cand& b) { return a.c < b.c; });
     for (std::size_t i = 0; i < 16 && i < pool.size(); ++i)
     {
         Vec x = pool[i].x;
-        const long c = polish (x, t, pool[i].c, rng);
+        const std::int64_t c = polish (x, t, pool[i].c, rng);
         if (c < best)
         {
             best = c;
@@ -254,7 +258,7 @@ std::uint16_t fitConstant (const std::vector<shapes::Sample>& samples)
     unsigned v = 0;
     for (int b = 0; b < 8; ++b)
     {
-        long ones = 0, zeros = 0;
+        std::int64_t ones = 0, zeros = 0;
         for (const auto& s : samples)
             if (s.pulseHigh && ((s.observed() >> b) & 1u) != 0)
                 (((s.value >> b) & 1u) != 0 ? ones : zeros) += 1;
@@ -328,7 +332,7 @@ bool loadOk (const std::vector<shapes::LoadedPlan>& plans)
 }
 
 /** One round for every target in parallel. */
-void roundAll (const std::vector<Target>& ts, std::vector<Vec>& x, std::vector<long>& costs)
+void roundAll (const std::vector<Target>& ts, std::vector<Vec>& x, std::vector<std::int64_t>& costs)
 {
     std::vector<std::thread> threads;
     std::vector<Vec> out (ts.size());
@@ -368,7 +372,7 @@ int report (const fs::path& dir)
     return 0;
 }
 
-std::string source (const std::vector<Target>& ts, const std::vector<Vec>& x, const std::vector<long>& costs,
+std::string source (const std::vector<Target>& ts, const std::vector<Vec>& x, const std::vector<std::int64_t>& costs,
                     const std::vector<shapes::LoadedPlan>& plans)
 {
     std::string src;
@@ -415,7 +419,7 @@ int fit (const fs::path& dir, const fs::path& outFile, bool verifyOnly)
         return 1;
     const auto ts = targets (plans);
     std::vector<Vec> x (ts.size());
-    std::vector<long> costs (ts.size());
+    std::vector<std::int64_t> costs (ts.size());
     for (std::size_t i = 0; i < ts.size(); ++i)
         x[i] = fromParams (committed (ts[i]));
     for (int round = 1;; ++round)
@@ -427,8 +431,8 @@ int fit (const fs::path& dir, const fs::path& outFile, bool verifyOnly)
         {
             const bool c = std::memcmp (before[i].data(), x[i].data(), sizeof (Vec)) != 0;
             changed = changed || c;
-            std::fprintf (stderr, "round %d model %s waveform %x: %ld observed bits differ%s\n", round, ts[i].model == chip::Model::A ? "A" : "B",
-                          ts[i].wave, costs[i], c ? " (changed)" : "");
+            std::fprintf (stderr, "round %d model %s waveform %x: %lld observed bits differ%s\n", round, ts[i].model == chip::Model::A ? "A" : "B",
+                          ts[i].wave, static_cast<long long> (costs[i]), c ? " (changed)" : "");
         }
         if (verifyOnly)
         {
