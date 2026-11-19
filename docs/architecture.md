@@ -2660,16 +2660,31 @@ third-party brand beyond the components credited in `THIRD-PARTY.txt` and the op
   false) and `targets: all`. No other trigger exists (CLAUDE.md, "CI stays manual-only").
   With `release: true` every validation step of a normal run still runs and must pass before
   anything is packed.
-- A final job `package` (needs every build, bundle-merge, distro and sanitizer job) packs the
-  three zips and the checksum file with `scripts/package-release.sh`, verifies each zip with
-  the script's `--verify` mode, uploads them as one workflow artifact `release-<version>`, and
-  creates a **draft** GitHub release `v<version>` targeting the built commit with the four
-  assets and the matching `CHANGELOG.md` section as its text. It is the only job with
-  `contents: write`. Nothing is published and no tag exists until the owner publishes the
-  draft. A second run for the same version replaces the draft's assets; it must refuse to
-  touch a release that is already published.
-- The workflow refuses `release: true` on a ref whose `CMakeLists.txt` version already has a
-  published release, and when `CHANGELOG.md` has no section for that version.
+- Three final jobs, as built (the first draft of this contract had one):
+  - `pack` (macOS runner, read-only; needs every build, bundle-merge, distro and sanitizer job)
+    packs the three zips and the checksum file with `scripts/package-release.sh`, verifies each
+    zip with `verify`, runs the script's self-test and uploads one workflow artifact
+    `release-<version>`. All three zips are packed on macOS: the macOS zip needs `ditto`,
+    `lipo` and `codesign`, and one packer run gives one set of checksums.
+  - `zip-smoke` (macOS, Windows x64, Linux x86_64) unpacks the platform's zip and loads the
+    bundle from it with `host_smoke`.
+  - `package` (needs `pack` and `zip-smoke`; **the only job with `contents: write`**, a rule
+    `docs-check.sh` enforces) creates a **draft** GitHub release `v<version>` targeting the
+    built commit with the four assets. Its text is `resources/release/RELEASE-NOTES-HEADER.md`
+    (not signed with a developer certificate, ARM64 builds experimental) followed by the
+    matching `CHANGELOG.md` section. Nothing is published and no tag exists until the owner
+    publishes the draft. A second run for the same version replaces the draft's assets; it
+    refuses to touch a release that is already published and re-reads the draft state right
+    before deleting it.
+- A release run stops in `plan`, before any build minute is spent, when: `targets` is not `all`;
+  `CHANGELOG.md` has no section for the version; a release of that version is already
+  published; a tag `v<version>` exists and does not point at the built commit; the repository
+  is not public (`SOURCE.txt` promises a reachable source). `package` repeats the tag, public
+  and published checks.
+- All release runs share one concurrency group and never cancel each other: a second one waits,
+  a third replaces the waiting one. A normal run is in another group.
+- File modes do not survive the artifact store: `pack` sets them (755 for folders and binaries,
+  644 for the rest) and `verify` checks the modes recorded in the zip.
 
 ### 10.3 `scripts/package-release.sh`
 
@@ -2680,12 +2695,26 @@ base system of each runner (the Windows job runs it in Git Bash).
   --commit <sha> --out <dir>` writes the zip and prints its path. It checks before packing: the
   bundle's `moduleinfo.json` reports the same version; the expected architecture slices are
   present (`lipo` on macOS; the `Contents/<arch>-<os>` folders with one binary each elsewhere);
-  the B-Side check of 10.2; every text file of 10.1 was produced.
+  the B-Side check (below); every text file of 10.1 was produced.
 - `package-release.sh verify <zip>` unpacks into a temporary folder and repeats the checks from
   the zip alone (layout, files, version, slices, on macOS `codesign --verify` of the unpacked
   bundle), and that the zip holds no symlink pointing outside the folder and no macOS metadata
   files.
 - `package-release.sh sums <dir>` writes `SHA256SUMS.txt`.
+- **Identity and the B-Side check, as built:** `resources/release/IDENTITY.txt` holds the class
+  IDs and the bundle identifier of Exitium Vintage Synth (`docs-check.sh` holds it against
+  `CMakeLists.txt`, the `mac` step against the built bundle). `pack` and `verify` require
+  exactly those class IDs in `moduleinfo.json` and, on macOS, that bundle identifier in
+  `Info.plist`, and they search every file and the four texts for B-Side's bundle identifier
+  and product name (any letter case, also as UTF-16). The four-character plugin code is not
+  searched in binaries: a pattern that short matches by chance.
+- **`verify` refuses before unpacking:** any symlink, any entry not written by a Unix host, a
+  name that is not plain ASCII or contains a backslash, `//`, a `.` or `..` component or a
+  component ending in a dot or space, duplicate names (also by letter case), a damaged zip, and
+  more than 200 MB of real content. The entry list, folders included, must equal the expected
+  list of the platform.
+- `package-release.sh changelog <version>`, `tag-check <version> <sha>` and `repo-public` are
+  the workflow's precondition checks; `selftest <zip>` proves each refusal.
 - The text files come from templates under `resources/release/` with the placeholders
   `@VERSION@`, `@COMMIT@`, `@TAG@`, `@REPOSITORY_URL@`; an unreplaced placeholder is an error.
 
