@@ -212,6 +212,7 @@ render_text() {
   local src=$1 out=$2 plat=$3 ver=$4 commit=$5 tag=$6 url=$7 left
   [[ -f $src ]] || die "template missing: $src"
   # '|' is the sed delimiter: none of the values may contain it or a backslash/ampersand.
+  # shellcheck disable=SC1003  # the backslash is meant literally
   case "$ver$commit$tag$url" in *'|'*|*'\'*|*'&'*) die "a placeholder value contains | \\ or &" ;; esac
   # A line holding only @SUBMODULES@ becomes the contents of $SUBMODULES_FILE (set by pack).
   awk -v f="${SUBMODULES_FILE:-/dev/null}" '$0 == "@SUBMODULES@" { while ((getline l < f) > 0) print l; close(f); next } { print }' "$src" > "$out.sub"
@@ -401,7 +402,7 @@ cmd_verify() {
   # Duplicate entries, also ones that differ only by case (they collide on macOS and Windows).
   sed 's|/$||' "$tmp/list" | LC_ALL=C sort | uniq -d > "$tmp/dups"
   if [[ -s $tmp/dups ]]; then problem "duplicate entries in the zip: $(head -n 3 "$tmp/dups" | tr '\n' '|')"; unsafe=1; fi
-  sed 's|/$||' "$tmp/list" | tr 'A-Z' 'a-z' | LC_ALL=C sort | uniq -d > "$tmp/dups"
+  sed 's|/$||' "$tmp/list" | tr '[:upper:]' '[:lower:]' | LC_ALL=C sort | uniq -d > "$tmp/dups"
   if [[ -s $tmp/dups ]]; then problem "entries that differ only by letter case: $(head -n 3 "$tmp/dups" | tr '\n' '|')"; unsafe=1; fi
 
   # No symlink at all: a release holds none (the macOS bundle was checked: it has none).
@@ -520,7 +521,7 @@ cmd_sums() {
       h=${line%% *}; n=${line#*  }
       listed=$((listed + 1))
       [[ -f $dir/$n ]] || { echo "sums: $n is listed but missing" >&2; bad=1; continue; }
-      [[ $(sha256_of "$dir/$n") == "$h" ]] && echo "$n: OK" || { echo "sums: $n: checksum mismatch" >&2; bad=1; }
+      if [[ $(sha256_of "$dir/$n") == "$h" ]]; then echo "$n: OK"; else echo "sums: $n: checksum mismatch" >&2; bad=1; fi
     done < "$dir/SHA256SUMS.txt"
     for z in "$dir"/*.zip; do
       [[ -e $z ]] || continue
