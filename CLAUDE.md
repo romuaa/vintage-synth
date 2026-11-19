@@ -121,11 +121,13 @@ worktrees, gates, model routing, commit rules) and overrides it. If a session di
 repository's file, read it by hand before orchestrating. Checked 2026-11-16: `/orchestrate`
 loads the personal skill and reaches the repository's file through that instruction.
 
-**In flight (2026-11-19, owner: "continue", both in parallel):** B-Side **S3a** (filter and
-output stage as their own classes, contract 8.19.1; branch `bside/s3a-filter`) and the **alias
-follow-up step** (contract 8.20; branch `bside/alias-followup`), both based on
-`bside/contracts-s3a-alias` (the contract commit). Until they merge, the first line of this
-section does not hold. The render cost step is merged (PR #32).
+**In flight (2026-11-19):** B-Side **S3a** (filter and output stage as their own classes,
+contract 8.19.1; branch `bside/s3a-filter`, based on `bside/contracts-s3a-alias`): Model B is
+accepted by the first review apart from cost; **Model A is being reworked** (resonance away from
+the fitted cutoffs, cutoff moving with the input level, distortion and intermodulation, the Shared
+topology, volume clicks with `chip.volume_dc` off). The **alias follow-up step** is done and
+awaits the owner's merge approval (see History). Until both merge, the first line of this
+section does not hold.
 
 **Going public (owner, 2026-11-18):** the repository becomes public only once the release work is
 done, **B-Side's release work included** (so after S4 and M8 for both plugins). Until then CI
@@ -134,12 +136,12 @@ stays offline; every Windows and Linux x86_64 check waits for that moment.
 **Next steps, in the order the owner was given:**
 1. **B-Side render cost step:** done and merged (PR #32, 2026-11-19; architecture 8.18.1).
 2. **B-Side parameter step:** done and merged (PR #31, 2026-11-18).
-3. **S3a** (in flight; 8.19.1): `Filter` and `OutputStage` in new files, fitted to the committed
-   reference data, both models; stays out of the renderer. **Alias follow-up step** (in flight;
-   8.20; owner decision 2026-11-18: fix, no exemption): narrow Model B pulses by the exact
-   measurement, and synced targets at exact integer ratios.
-4. **S3b** (8.19.2; after the alias step has merged, it edits the renderer): two buses in
-   `Chip::render`, routing, topology, the remaining reference traces, filter sweeps for the
+3. **S3a** (in flight; 8.19.1): `Filter` and `OutputStage` in new files, fitted to reference
+   data, both models; stays out of the renderer. **Alias follow-up step:** done, awaiting merge
+   (8.20.1).
+4. **S3b** (8.19.2; after the alias step and S3a have merged, it edits the renderer): two buses
+   in double precision in `Chip::render` (8.20.1: no float addition before the part's sum),
+   routing, topology, the remaining reference traces, filter sweeps for the
    owner to hear. Then **S4** (polyphony 8.5, wiring into the plugin, decimator with the alias
    gate after it, factory patches, owner audition). **Owner decision 2026-11-19:** the Model A
    CPU budget (the S4 gate patch costs about 31 ns before the filter, the whole budget of 8.5)
@@ -164,6 +166,17 @@ listening files) live under `~/Library/Caches/bside-oracle/`; nothing there is n
 repository.
 
 ### History (newest facts first within each area)
+
+- **B-Side alias follow-up step: done on `bside/alias-followup`, awaiting the owner's merge
+  approval** (2026-11-19; contract as built: architecture 8.20.1; decisions "B-Side alias
+  follow-up step"). Narrow Model B pulses: the cause was the float conversion of the output (its
+  rounding errors gather on a few lines for a periodic signal), fixed by a noise-shaped
+  conversion; exact measurement now at least 13.4 dB inside -100 dB at every rate (was up to
+  2.7 dB outside). Synced targets at exact ratios: a reset that met the target's own wrap lost
+  its step every second period; now at least 8.4 dB inside the budget over 11 970 rows.
+  Reviewed independently (no contract defect; test gaps closed). **Binding for S3b and S4:**
+  any later float addition undoes the shaping, so the buses and the part's sum stay in double
+  and S4 gates the summed path by the exact measurement. Open: defects 3 and 4 of 8.18.1.
 
 - **B-Side render cost step is merged to `main`** (PR #32, owner approved 2026-11-19; contract as built: architecture 8.18.1; decisions "B-Side render cost step").
   `Chip::render` at 96 kHz, ns per chip per internal sample: silent 61 -> 2, typical Model B
@@ -336,6 +349,9 @@ repository.
   17. Render cost step: the reworked renderer and digital fast path (`std::bit_cast`, the
       inline macro's MSVC branch, a closed form that divided by zero on x86-64 before its fix:
       no x86-64 run has ever executed this code), kernel tables (2026-11-19).
+  18. Alias follow-up step: `render::OutputRounding` (an expression one compiler may contract
+      into fused multiply-adds and another not: low output bits can differ; the new exact and
+      rounding tests have never run on MSVC or x86_64) (2026-11-19).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
