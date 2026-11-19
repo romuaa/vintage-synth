@@ -3,6 +3,19 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## M8 release hardening: typed parameter text (2026-11-19, review)
+
+- **Typed text never gives a non-finite value; text that names NaN or infinity gives the parameter's default (review).**
+  Before, `juce::String::getFloatValue` turned "nan" into NaN, and `juce::jlimit` passes NaN through, so 70 Vintage
+  float parameters (every `makeFloat` one plus `master.volume`) returned NaN from `getValueForText`. Now text
+  containing "nan" or "inf" (any case, any position: "-nan", "nan(0x1)", "Infinity") and any result that is not
+  finite ("1e999", a huge digit string) gives the default, then finite values clamp to the range as before.
+  Same choice as B-Side's parsers (`finiteOr`, "no usable value gives the default"): JUCE hands a parser only the
+  text, so "keep the current value" is not available. Consequence: "inf" and "1e999" no longer clamp to the maximum
+  (they used to for most parameters). Display text and ordinary input are unchanged. Shared helpers:
+  `textIsNotFinite`, `finiteFloatFromText` (`ParamFactory.h`). Choice and integer parameters were checked and are
+  already safe (JUCE's choice parser and `getIntValue` cannot leave the range); B-Side was not changed.
+
 ## B-Side alias follow-up step (2026-11-19, all review)
 
 Contract: `docs/architecture.md` 8.20 (defects 1 and 2 of 8.18.1; owner decision 2026-11-18: fix, no exemption).

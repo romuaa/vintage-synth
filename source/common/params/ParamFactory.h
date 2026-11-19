@@ -55,6 +55,15 @@ enum class Display
 juce::String toText (Display d, float v);
 float fromText (Display d, const juce::String& t);
 
+/** True when the text names NaN or infinity (case-insensitive "nan" / "inf" anywhere). Typed text must never
+    put a non-finite number into a parameter: parsers installed on parameters answer such text with the
+    parameter's default (as B-Side's parsers do). */
+bool textIsNotFinite (const juce::String& t);
+
+/** A plain number from text (juce::String::getFloatValue) that is finite, else `def`. For parameters that
+    parse a bare number; the caller (or the host's range) limits it. */
+float finiteFloatFromText (const juce::String& t, float def);
+
 std::unique_ptr<juce::AudioParameterFloat> makeFloat (const juce::String& id, const juce::String& name,
                                                       float min, float max, float def, Display d);
 

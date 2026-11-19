@@ -16,6 +16,8 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   file and on any absolute home path (macOS, Windows or Linux user directory) in a tracked text or binary file.
 - Changed: a test comment no longer names a third-party product; the hashed brand deny-list gained one more
   entry (a filter integrated-circuit part number found in old history).
+- Fixed: typed parameter text such as "nan" gave NaN to 70 float parameters; text naming NaN or infinity, or a
+  result that is not finite, now gives the parameter's default (as in B-Side). Test over all 172 parameters.
 
 ### B-Side alias follow-up step (2026-11-19)
 - Fixed: Model B pulses of width 1 and 4095 missed the -100 dB alias budget by up to 2.7 dB at frequencies
