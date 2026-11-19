@@ -5,6 +5,22 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### First Windows and Linux x86_64 CI run (2026-11-20)
+
+The first GitHub Actions run on Windows (MSVC) and Linux x86_64 (run 44627905615) found these; fixed here.
+
+- Windows x64 and ARM64: the build failed in B-Side test, tool and benchmark sources only (the plugins, the
+  Vintage tests, `host_smoke`, `BSideTests` and `bside_independent` compiled and linked; no test had run yet).
+- `getenv` is deprecated on MSVC (C4996, an error in the B-Side targets): one header-only test helper,
+  `tests/support/Env.h` (`testenv::get`, `_dupenv_s` on Windows), now serves every call site in `tests/`.
+  `source/` has no `getenv`.
+- `tests/bside/tools/ShapeFit.cpp`: `1L << 40` is undefined on Windows (`long` has 32 bits); the fit costs are
+  now `std::int64_t` (a real bug there, not only a warning; identical on macOS and Linux).
+- Signed/unsigned comparison in `ChipReplayTests.cpp` (C4389), a shadowed `now` in `PresetTestHelpers.h` (C4458)
+  and a double-to-float range construction in `ReverbTests.cpp` (C4244) cleaned up; no test expectation changed.
+- `build.yml`: the `build` job's timeout is 60 minutes (was 30, sized for a warm cache: the Linux x86_64 row
+  hit it during pluginval on a cold cache).
+
 ## [0.9.0]
 
 First public release of Exitium Vintage Synth, a public beta.
