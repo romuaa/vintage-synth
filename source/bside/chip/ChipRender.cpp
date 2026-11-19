@@ -20,7 +20,6 @@ constexpr double kInf = std::numeric_limits<double>::infinity();
 constexpr int kLatency = Chip::kLatencySamples; // the long kernel's: every step is delayed to it
 constexpr std::uint64_t kPieceCycles = 32; // digital cycles per piece at most (bounds the event lists)
 constexpr int kSweepGuard = 4096;         // events per oscillator and sweep (a backstop)
-constexpr int kRoundSettle = 128;        // conversions a value must stand still before it is rounded plainly (renderRound)
 
 double frac01 (double x) noexcept { return x - std::floor (x); }
 
@@ -2041,7 +2040,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         for (const auto& l : line)
             sum += l.contribution;
         const auto plain = static_cast<float> (sum);
-        bool settled = rs.roundSame >= kRoundSettle && sameBits (sum, rs.roundLast);
+        bool settled = rs.rounding.settledOn (sum);
         std::uint64_t cum = 0, lastStart = c0, lastCycles = 0;
         std::uint32_t lastFraction = 0;
         int done = 0;
@@ -2059,7 +2058,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
             cum += cyc;
             return true;
         };
-        // renderRound shapes the sum until it has stood still for kRoundSettle conversions; from then on it is
+        // the rounding shapes the sum until it has stood still for its settle count; from then on it is
         // rounded plainly (a silent chip's loop)
         bool stopped = false;
         while (! settled && done < maxSamples)
@@ -2069,8 +2068,8 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
                 stopped = true;
                 break;
             }
-            out[done++] += renderRound (sum);
-            settled = rs.roundSame >= kRoundSettle;
+            out[done++] += rs.rounding.next (sum);
+            settled = rs.rounding.settled();
         }
         while (! stopped && done < maxSamples && take())
             out[done++] += plain;
@@ -2200,7 +2199,7 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         }
         ++rs.sample;
         rs.inProgress = false;
-        out[done++] += renderRound (y);
+        out[done++] += rs.rounding.next (y);
         cum = end;
     }
     if (cum == 0)
@@ -2241,49 +2240,6 @@ double Chip::renderOutput() noexcept
     ++rs.sample;
     rs.inProgress = false;
     return y;
-}
-
-// The output's conversion to float, noise-shaped (alias follow-up step, defect 1 of 8.18.1). A plain rounding
-// errs by up to half a float step of the output's value: 2^-26 where a narrow pulse sits half a converter range
-// below zero. For a signal periodic in q samples (a fundamental at a small-denominator ratio to the internal
-// rate) those errors repeat every q samples and gather on the lines at multiples of rate / q instead of
-// spreading over the spectrum: up to -97 dB re a width-4095 pulse's fundamental (about -66 dB re 1), where the
-// rendering itself (in double) aliases at -115 dB. Here the rounding error is fed back through a fixed FIR, so
-// the error reaching the output is shaped by NTF (z) = (1 - 1.75 z^-1 + z^-2) (1 - 0.5 z^-1 + z^-2): zeros at
-// 0.505 and 1.318 rad, at most -8.2 dB from 0 to 20 kHz at every internal rate of 4.4 (the band is widest at
-// 88.2 kHz: 0 .. 1.425 rad), up to +19.4 dB above it (removed by the decimator). An FIR in the error is stable
-// for any input: the output stays within 4.75 float steps of the double value (the sum of the coefficients'
-// magnitudes, 9.5, times half a step). A constant input would make the loop cycle (idle tones of a few float
-// steps where the output stood still and was exact before): once the value to convert has stood still for
-// kRoundSettle (128) conversions, it is rounded plainly and the error state is cleared, so a silent or held
-// output is constant again. (With 32, the flat stretches between a 1.9 kHz pulse's edges at 96 kHz, about 33
-// samples, were rounded plainly and the exact measurement kept only 4 dB of margin; with 128 the exact scans
-// give the figures of a loop that never settles, also below 700 Hz, where stretches are longer than 128.)
-// Bit-identical for any block split (the state is the render state's). It shapes the chip's own output, which
-// render adds to the caller's buffer; what that float addition rounds (a sum with other content) is the
-// caller's (S4: sum the chips in double and convert once, or shape the sum the same way).
-float Chip::renderRound (double y) noexcept
-{
-    auto& e = rs.roundError;
-    if (sameBits (y, rs.roundLast))
-        rs.roundSame = std::min (rs.roundSame + 1, kRoundSettle);
-    else
-    {
-        rs.roundLast = y;
-        rs.roundSame = 0;
-    }
-    if (rs.roundSame >= kRoundSettle)
-    {
-        e = {};
-        return static_cast<float> (y);
-    }
-    const double v = y - (2.25 * e[0] - 2.875 * e[1] + 2.25 * e[2] - e[3]);
-    const auto q = static_cast<float> (v);
-    e[3] = e[2];
-    e[2] = e[1];
-    e[1] = e[0];
-    e[0] = static_cast<double> (q) - v;
-    return q;
 }
 
 // ---- a white-box check of the rendered states (tests only, renderCheckStates) ----
@@ -2367,7 +2323,7 @@ int Chip::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noe
         }
         if (! finishing)
             break; // stop inside (or at the last cycle of) the sample: it stays in progress, its piece open
-        out[done++] += renderRound (renderFinishSample());
+        out[done++] += rs.rounding.next (renderFinishSample()); // RenderTables.h OutputRounding
     }
     return done;
 }

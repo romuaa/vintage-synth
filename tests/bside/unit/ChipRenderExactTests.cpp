@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstdio>
@@ -64,15 +65,29 @@ struct ExactResult
     double worstHz = 0.0;
 };
 
+/** How a pulse row reaches the renderer: the batched sample loop (a lone pulse), or the general path (pieces,
+    renderFinishSample), by the test aid that switches batching off or, as in a patch, by a sync bit whose source
+    is frozen and silent (frequency 0, no waveform, gate off: it never rises, so nothing is reset). Review round 1
+    of the alias follow-up step: a general path that rounded plainly passed gates that measured only the batched
+    loop. */
+enum class PulsePath { batched, unbatched, frozenSync };
+
 /** A narrow pulse (or any width) on oscillator 1 at f = rate x p / q, rendered over a whole number of its
     periods (p periods in every q samples; about 24 000 samples) and measured with a rectangular DFT at every
     bin up to the band: the harmonics are exact bins, everything else is aliasing (8.20, "the exact
     measurement"). The warm-up lets the kernel's window and the output's rounding settle. */
-ExactResult pulseExact (Model m, double rate, double band, int p, int q, float width)
+ExactResult pulseExact (Model m, double rate, double band, int p, int q, float width, PulsePath path = PulsePath::batched)
 {
     const double f = rate * p / q;
     Chip c = makeChip (m, rate);
-    setOsc (c, 0, f * 16777216.0 / 985248.0, width, static_cast<std::uint8_t> (ctrl::pulse | ctrl::gate));
+    if (path == PulsePath::frozenSync)
+    {
+        setOsc (c, 0, 0.0, 2048.0f, 0x00); // oscillator 2's sync source: frozen, silent
+        setOsc (c, 1, f * 16777216.0 / 985248.0, width, static_cast<std::uint8_t> (ctrl::pulse | ctrl::sync | ctrl::gate));
+    }
+    else
+        setOsc (c, 0, f * 16777216.0 / 985248.0, width, static_cast<std::uint8_t> (ctrl::pulse | ctrl::gate));
+    c.renderBatchingEnabled (path == PulsePath::batched);
     renderSamples (c, 3000);
     const int periods = std::max (1, 24000 / q);
     const int n = periods * q;
@@ -165,6 +180,131 @@ TEST_CASE ("render: narrow pulses meet -100 dB by the exact measurement at small
         }
     UNSCOPED_INFO ("worst " << w.db << " dB (width " << w.width << ", " << w.f << " Hz at " << w.rate << " Hz internal)");
     CHECK (w.rows == static_cast<int> (cases.size()) * 2);
+}
+
+TEST_CASE ("render: narrow pulses meet -100 dB by the exact measurement on the general path too", "[render][alias][exact]")
+{
+    // The rows above reach the renderer through the batched sample loop. Here the same measurement on the
+    // general path (pieces and renderFinishSample): batching switched off, and a pulse whose sync bit is set
+    // with a frozen, silent source, a state a patch can reach. A general path that rounds plainly measures
+    // -97.3 dB at 88200 x 3 / 73 Hz, width 4095 (review round 1).
+    const std::vector<ExactCase> cases { { 88200.0, 20000.0, 3, 73 }, { 88200.0, 20000.0, 1, 31 }, { 96000.0, 20000.0, 2, 59 }, { 96000.0, 20000.0, 1, 26 } };
+    int rows = 0;
+    for (const auto path : { PulsePath::unbatched, PulsePath::frozenSync })
+        for (const auto& k : cases)
+            for (const float width : { 1.0f, 4095.0f })
+            {
+                const auto r = pulseExact (Model::B, k.rate, k.band, k.p, k.q, width, path);
+                INFO ((path == PulsePath::unbatched ? "batching off" : "frozen sync source") << ", width " << width << " at " << k.rate << " x " << k.p << " / " << k.q << " Hz: worst "
+                                                                                              << r.worstDb << " dB at " << r.worstHz << " Hz");
+                CHECK (r.worstDb <= -100.0);
+                CHECK (r.worstDb <= -103.0);
+                ++rows;
+            }
+    CHECK (rows == 16);
+}
+
+namespace
+{
+/** A deterministic stand-in for a signal in one binade: values in [0.25, 0.375) (one float step, 2^-25). */
+std::vector<double> roundingInput (std::size_t n, std::uint64_t seed = 0x9e3779b97f4a7c15ull)
+{
+    std::vector<double> y (n);
+    std::uint64_t s = seed;
+    for (auto& v : y)
+    {
+        s = s * 6364136223846793005ull + 1442695040888963407ull;
+        v = 0.25 + 0.125 * static_cast<double> (s >> 11) / 9007199254740992.0;
+    }
+    return y;
+}
+
+bool sameFloat (float a, float b) { return std::bit_cast<std::uint32_t> (a) == std::bit_cast<std::uint32_t> (b); }
+} // namespace
+
+TEST_CASE ("render: the output's rounding is shaped out of the band and stays within 4.75 float steps", "[render][rounding]")
+{
+    // render::OutputRounding measured directly (review round 1: nothing pinned the shaping). The rounding error of
+    // a random input in one binade, shaped and plain, as averaged spectra (1 024 Hann-windowed segments of 1 024
+    // samples): the shaped error's density over the plain one's, the largest in 0 .. band at every rate
+    // configuration of 4.4, must be at most the NTF's own in-band maximum (-8.16 dB with the band 0 .. 20 kHz at
+    // 88.2 and 96 kHz, -8.52 dB at the others) plus 0.7 dB of measurement scatter. A first coefficient of 2.0
+    // instead of 2.25 gives -4.1 dB. And the output never strays more than 4.75 float steps from the value.
+    constexpr std::size_t seg = 1024, segments = 1024;
+    const auto y = roundingInput (seg * segments);
+    vs::bside::chip::render::OutputRounding r;
+    std::vector<double> shaped (y.size()), plain (y.size());
+    const double step = std::ldexp (1.0, -25);
+    double worstSteps = 0.0;
+    for (std::size_t i = 0; i < y.size(); ++i)
+    {
+        const double q = static_cast<double> (r.next (y[i]));
+        shaped[i] = q - y[i];
+        plain[i] = static_cast<double> (static_cast<float> (y[i])) - y[i];
+        worstSteps = std::max (worstSteps, std::abs (shaped[i]) / step);
+    }
+    INFO ("largest distance from the value: " << worstSteps << " float steps");
+    CHECK (worstSteps <= 4.75);
+    CHECK (worstSteps > 0.5); // it is shaped, not plain
+    auto density = [&] (const std::vector<double>& e) {
+        std::vector<double> d (seg / 2 + 1, 0.0);
+        std::vector<std::complex<double>> a (seg);
+        for (std::size_t g = 0; g < segments; ++g)
+        {
+            for (std::size_t i = 0; i < seg; ++i)
+                a[i] = e[g * seg + i] * (0.5 - 0.5 * std::cos (2.0 * kPi * static_cast<double> (i) / static_cast<double> (seg)));
+            fft (a);
+            for (std::size_t b = 0; b < d.size(); ++b)
+                d[b] += std::norm (a[b]);
+        }
+        return d;
+    };
+    const auto ds = density (shaped), dp = density (plain);
+    for (const auto& rc : rateConfigs())
+    {
+        const double claim = rc.band / rc.internalRate > 0.2 ? -8.16 : -8.52; // the NTF's in-band maximum (exact)
+        double worst = -300.0;
+        for (std::size_t b = 1; static_cast<double> (b) <= rc.band / rc.internalRate * static_cast<double> (seg); ++b)
+            worst = std::max (worst, 10.0 * std::log10 (ds[b] / dp[b]));
+        INFO (rc.internalRate << " Hz internal, band " << rc.band << " Hz: shaped error density at most " << worst << " dB re plain rounding's (NTF " << claim << " dB)");
+        CHECK (worst <= claim + 0.7);
+    }
+}
+
+TEST_CASE ("render: the output's rounding settles after 128 equal values and starts again from a cleared state", "[render][rounding]")
+{
+    // The two behaviours of the settle rule the renderer relies on (review round 1: both mutations survived):
+    // a value that has stood still is rounded plainly from its 129th conversion on, not earlier (with 32, the
+    // flat stretches of a 1.9 kHz pulse at 96 kHz were rounded plainly: 4 dB of exact-measurement margin
+    // instead of 13, docs/decisions.md), and settling clears the error state, so what follows does not depend
+    // on what came before the stillness (the batched path's silent loop skips the conversions it settles).
+    using vs::bside::chip::render::OutputRounding;
+    constexpr int kExpected = 128; // the settle count chosen by the exact scan (written out: the class's own constant would follow a change)
+    const auto noise = roundingInput (1000);
+    const double c = 0.3 + 1.0e-9; // not exact in float
+    OutputRounding a;
+    for (const double v : noise)
+        a.next (v);
+    REQUIRE_FALSE (a.clear());
+    for (int k = 1; k <= kExpected + 1; ++k)
+    {
+        const float q = a.next (c);
+        INFO ("conversion " << k << " of the constant");
+        CHECK (a.settled() == (k == kExpected + 1));
+        if (k == kExpected + 1)
+        {
+            CHECK (sameFloat (q, static_cast<float> (c)));
+            CHECK (a.clear());
+        }
+    }
+    OutputRounding b; // no history before the stillness
+    for (int k = 1; k <= kExpected + 1; ++k)
+        b.next (c);
+    int differing = 0;
+    for (const double v : roundingInput (500, 7))
+        if (! sameFloat (a.next (v), b.next (v)))
+            ++differing;
+    CHECK (differing == 0);
 }
 
 TEST_CASE ("render: narrow pulses by the exact measurement, every internal rate, full scan (report and assertion)", "[.render-exact]")

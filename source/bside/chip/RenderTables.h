@@ -29,6 +29,8 @@
 #include "bside/chip/ChipTypes.h"
 
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstdint>
 
 namespace vs::bside::chip::render
@@ -153,5 +155,69 @@ struct KernelTables
     std::array<double, kFinePoints> longStepFine {};
 };
 const KernelTables& kernelTables();
+
+/** The output's conversion to float with its rounding error noise-shaped (alias follow-up step, defect 1 of
+    8.18.1; docs/decisions.md "B-Side alias follow-up step" rows 1 to 4). A plain rounding errs by up to half a
+    float step of the output's value: 2^-26 where a narrow pulse sits half a converter range below zero. For a
+    signal periodic in q samples those errors repeat every q samples and gather on the lines at multiples of
+    rate / q: up to -97 dB re a width-4095 pulse's fundamental, where the rendering itself (in double) aliases at
+    -115 dB. The error is fed back through a fixed FIR, so the error reaching the output is shaped by
+    NTF (z) = (1 - 1.75 z^-1 + z^-2) (1 - 0.5 z^-1 + z^-2) = 1 - 2.25 z^-1 + 2.875 z^-2 - 2.25 z^-3 + z^-4:
+    zeros at 0.505 and 1.318 rad, at most -8.2 dB from 0 to 20 kHz at every internal rate of 4.4 (the band is
+    widest at 88.2 kHz: 0 .. 1.425 rad), up to +19.4 dB above it (removed by the decimator). An FIR in the error
+    is stable for any input: the output stays within 4.75 float steps of the value (the sum of the coefficients'
+    magnitudes, 9.5, times half a step). A constant input would make the loop cycle (idle tones of a few float
+    steps where the output stood still and was exact before): once the value has stood still for kSettle (128)
+    conversions it is rounded plainly and the error state is cleared, so a silent or held output is constant
+    again and a later change starts the loop from zero. (With 32, the flat stretches between a 1.9 kHz pulse's
+    edges at 96 kHz, about 33 samples, were rounded plainly and the exact measurement kept only 4 dB of margin;
+    with 128 the exact scans give the figures of a loop that never settles.) The chip shapes its own output,
+    which render adds to the caller's buffer; that addition's rounding is the caller's. Header-only so the tests
+    can measure it directly (ChipRenderExactTests.cpp). */
+class OutputRounding
+{
+public:
+    static constexpr int kSettle = 128;
+
+    float next (double y) noexcept
+    {
+        if (std::bit_cast<std::uint64_t> (y) == std::bit_cast<std::uint64_t> (last))
+            same = same < kSettle ? same + 1 : kSettle;
+        else
+        {
+            last = y;
+            same = 0;
+        }
+        if (same >= kSettle)
+        {
+            e = {};
+            return static_cast<float> (y);
+        }
+        const double v = y - (2.25 * e[0] - 2.875 * e[1] + 2.25 * e[2] - e[3]);
+        const auto q = static_cast<float> (v);
+        e[3] = e[2];
+        e[2] = e[1];
+        e[1] = e[0];
+        e[0] = static_cast<double> (q) - v;
+        return q;
+    }
+
+    /** Whether `y` would be rounded plainly with no state change (the value has stood still for kSettle). */
+    bool settledOn (double y) const noexcept { return same >= kSettle && std::bit_cast<std::uint64_t> (y) == std::bit_cast<std::uint64_t> (last); }
+    bool settled() const noexcept { return same >= kSettle; }
+    /** Whether the error state is all zero (tests). */
+    bool clear() const noexcept
+    {
+        for (const double x : e)
+            if (std::fpclassify (x) != FP_ZERO)
+                return false;
+        return true;
+    }
+
+private:
+    std::array<double, 4> e {}; // the last four rounding errors, newest first
+    double last = 0.0;          // the last value converted (before the error feedback)
+    int same = 0;               // conversions in a row with that value, saturating at kSettle
+};
 
 } // namespace vs::bside::chip::render
