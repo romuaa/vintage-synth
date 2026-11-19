@@ -176,9 +176,12 @@ Actions has no minutes: the job never starts; not a finding).
    parser (`common/params/ParamFactory.cpp`) and the tip cleanup after the audit **(done, PR
    pending)**; (b) the owner makes the repository public;
    (c) the first Windows and Linux x86_64 runs ever (one dispatched `all` run; the list "Merged
-   without ... verification" below) and their fixes; (d) packaging: version (still 0.1.0), one
+   without ... verification" below) and their fixes; (d) packaging: version 0.9.0, one
    zip per platform, licences and install notes inside, a manual release workflow, B-Side
-   excluded (`VS_BUILD_BSIDE=OFF`); (e) tag and publish on the owner's word.
+   excluded (`VS_BUILD_BSIDE=OFF`) **(built as contract 10: `scripts/package-release.sh`,
+   the `release` input of `build.yml`; no part of the workflow has ever run)**; (e) the release
+   rehearsal: `gh workflow run build.yml --ref main -f targets=all -f release=true` gives a
+   draft release; the owner installs from the zips and publishes the draft.
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
@@ -386,6 +389,10 @@ repository.
   19. M8 hardening: the typed-text guard of the shared parameter parsers (`std::isfinite`; a test
       that builds a string with an embedded NUL), the trigger-policy and home-path checks of
       `docs-check.sh` (ruby and `git grep -a` have never run on a runner) (2026-11-19).
+  20. M8 packaging: `scripts/package-release.sh` on real Windows and Linux bundles (checked on
+      hand-made fixtures only; the Windows file list is an assumption), every release job of
+      `build.yml`, the `ldd` checks that could never fail before (a shared libgcc dependency
+      would now stop the Linux rows), the macOS re-sign step in `CMakeLists.txt` (2026-11-20).
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -464,6 +471,7 @@ docs/ui-test-checklist.md  manual checks in the plugin host
 scripts/dev-host.sh  builds plugin + JUCE AudioPluginHost and opens the synth in it (-DVS_BUILD_DEV_HOST)
 scripts/preflight.sh  the local gate: every check this Mac can run (see "Verification is local-first")
 scripts/linux-check.sh  GCC build + tests (or sanitizers) in a Linux ARM64 container (a preflight step)
+scripts/package-release.sh  packs and verifies the release zips (contract 10); texts in resources/release/
 docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
 README.md        public overview, build and test instructions
 CHANGELOG.md     what was done, per milestone (update it with every milestone/infra change)

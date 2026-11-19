@@ -5,6 +5,38 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+## [0.9.0]
+
+First public release of Exitium Vintage Synth, a public beta.
+
+### The instrument
+- Bi-timbral analog-style polysynth in VST3 format: two parts (Lower and Upper), 16 voices each,
+  played as Whole, Dual or Split.
+- Per part: two oscillators (sine, triangle, saw, square, pulse, noise) with sync and cross
+  modulation, high-pass filter, 12/24 dB low-pass filter with resonance, amplifier, two envelopes,
+  an LFO with delay, Poly/Unison/Solo, portamento, velocity, pitch bend and mod wheel.
+- One "Vintage" amount for drift and voice-to-voice variation; clean at zero.
+- Arpeggiator and 16-step sequencer, in time with the host.
+- Chorus, delay and reverb; an output limiter.
+- 64 factory programs, your own programs and banks, loading the sound of one part only.
+- Its own editor: pages Sound, Envelopes, LFO, Play, Arp + Seq, Effects and Browser; pictures that
+  follow the sound; every control follows host automation live; 75 to 200 % size.
+
+### Platforms
+- macOS 11 or newer (Apple silicon and Intel), Windows 10 or newer (x64), Linux with glibc 2.35 or
+  newer (x86_64).
+- Experimental: Windows ARM64 and Linux ARM64 (in the same downloads).
+
+### Known limits of this beta
+- The plugin is not signed with a developer certificate and there is no installer: unpack the zip
+  and copy the plugin into your VST3 folder; `INSTALL.txt` in each zip explains the system warning.
+- **Parameter IDs and the saved-state format are not frozen before 1.0.0:** a session or program
+  saved with this beta may not load unchanged in a later version.
+- Not tested with a screen reader. Some factory programs sound alike; the set will be revised.
+- Cross Mod keeps its classic sound, which aliases at high settings.
+
+## Development history before 0.9.0
+
 ### M8 release hardening (2026-11-19)
 - Release packaging (docs/architecture.md section 10): `scripts/package-release.sh` (`pack`, `verify`, `sums`,
   `changelog`, `selftest`), texts under `resources/release/` (INSTALL per platform, SOURCE, THIRD-PARTY derived
