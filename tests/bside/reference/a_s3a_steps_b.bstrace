@@ -1,0 +1,36 @@
+bside-trace 1
+# S3a gate: steps 1 s apart (frame levels after each write): a held triangle (110 Hz, sustain 15)
+# and volume writes direct and through the low-pass; routing writes with silent voices; resonance writes
+# with a held DC voice (test bit + pulse) routed to the low-pass.
+clock 985248
+model B
+8 15 07
+8 16 ff
+8 18 00
+492624 00 51
+492624 01 07
+492624 05 00
+492624 06 f0
+492624 04 11
+1477872 18 0f
+2463120 18 00
+3448368 18 08
+4433616 17 01
+4433616 18 10
+5418864 18 1f
+6404112 18 10
+7389360 04 10
+7389360 18 1f
+8374608 17 03
+9359856 17 07
+10345104 17 00
+11330352 17 04
+12315600 17 01
+12315600 04 48
+12315600 06 f0
+12315600 04 49
+13300848 17 f1
+14286096 17 01
+15271344 17 81
+16256592 17 01
+end 17241840
