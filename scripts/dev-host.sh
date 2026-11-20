@@ -120,7 +120,7 @@ make_graph() {
     <PLUGIN name="Audio Output" $io file="Audio Output" uniqueId="0" isInstrument="0" numInputs="2" numOutputs="0" isShell="0" hasARAExtension="0" uid="0"/>
   </FILTER>
   <FILTER uid="5" x="0.5" y="0.5" useARA="0">
-    <PLUGIN name="$nm" format="VST3" category="Instrument|Synth" manufacturer="Exitium" version="0.1.0" file="$PLUGIN" uniqueId="$uh" isInstrument="1" numInputs="0" numOutputs="2" isShell="0" hasARAExtension="0" uid="$dh"/>
+    <PLUGIN name="$nm" format="VST3" category="Instrument|Synth" manufacturer="Exitium" version="0.9.0" file="$PLUGIN" uniqueId="$uh" isInstrument="1" numInputs="0" numOutputs="2" isShell="0" hasARAExtension="0" uid="$dh"/>
   </FILTER>
   <CONNECTION srcFilter="2" srcChannel="4096" dstFilter="5" dstChannel="4096"/>
   <CONNECTION srcFilter="5" srcChannel="0" dstFilter="3" dstChannel="0"/>

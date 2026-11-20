@@ -157,7 +157,7 @@ TEST_CASE ("chip replay: the snapshot puts each field where the reference format
     CHECK (v.v[9] == 2);  // osc1 envelope: release
     CHECK (v.v[14] == s.env[2].position);
     CHECK (v.v[17] == (s.env[2].divider | (s.env[2].resetPending ? 0x80u : 0u)));
-    CHECK (v.v[18] == (s.osc[2].readValue >> 4));
+    CHECK (v.v[18] == static_cast<std::uint32_t> (s.osc[2].readValue >> 4));
     CHECK (v.v[19] == s.env[2].readSample);
 }
 

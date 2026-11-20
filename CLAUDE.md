@@ -42,7 +42,9 @@ None right now. When a new one comes up, list it here; once decided, move it to 
   the plugin by them.
 - **pluginval: Claude runs it itself** (official Tracktion release v1.0.4, unpacked in the session
   scratchpad). Don't hand it to the user unless the harness refuses the command. See skill `validate-plugin`.
-- **Repo:** GitHub `romuaa/vintage-synth` (private), branch `main`.
+- **Repo:** GitHub `romuaa/vintage-synth` (**public since 2026-11-20**), branch `main`. `main` is
+  protected (owner, 2026-11-20): changes only through a pull request, no force-push, no deletion,
+  admins included; no required status check (the build workflow is manual-only).
 - **Workflow: orchestrated agents, branches + PR** (skill `orchestrate`). Agents commit on feature
   branches; the orchestrator pushes them as PRs so CI validates Windows. **Merge to `main` only after
   the owner approves that milestone.** Never commit to `main` directly, never force-push.
@@ -105,10 +107,12 @@ None right now. When a new one comes up, list it here; once decided, move it to 
 
 ## Status
 
-### Where the project is (2026-11-19) — read this first when resuming
+### Where the project is (2026-11-20) — read this first when resuming
 
 **Everything below is merged to `main` except B-Side S3a (parked, see below); no agent or build
-is in flight.** Verified by the local gate only (Windows and Linux x86_64: the list "Merged without ... verification" below).
+is in flight.** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
+x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the repository became public
+("First CI runs" below).
 
 - **Exitium Vintage Synth is feature-complete up to M7:** engine, effects, arp/seq, presets and
   64 factory programs, the custom editor with all pages (M7a–M7f). The owner has tried and
@@ -165,20 +169,35 @@ agent is running.
   trace and a noise-before-first-shift trace; an independent model for the program engine's
   goldens; defects 3 and 4 of 8.18.1.
 
-**Going public (owner, 2026-11-19):** at the start of the Vintage release work, after the
-pre-public audit (see "Decisions", "Vintage first release"). Until the owner has flipped
-visibility CI stays offline (the `security` check on every PR "fails" in 2 seconds because
-Actions has no minutes: the job never starts; not a finding).
+**Public since 2026-11-20** (owner flipped visibility after the pre-public audit; its decisions
+are in `docs/decisions.md`, "Pre-public audit"). Actions are free now, and CI still runs only when
+the orchestrator dispatches it (see "Decisions").
+
+**First CI runs (2026-11-20), all dispatched by hand:**
+- Run 44627905615 (`main`, `no-macos`): Linux ARM64 and the sanitizer job passed; Linux x86_64
+  built and passed its unit tests, then hit the job's 30-minute limit (cold cache); Windows failed
+  to build, in B-Side test, tool and benchmark sources only (`getenv` as an error, a
+  signed/unsigned comparison, `1L << 40` with a 32-bit `long`).
+- Run 44634121070 (`m8/ci-fixes`, `no-macos`): every Linux job green (x86_64 with pluginval and
+  the validator, the seven distro load tests, sanitizers, ARM64); Windows built, 2 tests failed
+  on both rows (test assumptions: `/proc/...` is writable on Windows, a path separator).
+- Run 44638566407 (`m8/ci-fixes`, `windows`): Windows x64 (tests, pluginval, validator), Windows
+  ARM64 (tests, host_smoke) and the merged Windows bundle green.
+- **Never run yet:** macOS in CI on the current code, the merged Linux bundle job on the current
+  code (skipped in run 2 because the Windows rows failed), and every release job (`pack`,
+  `zip-smoke`, `package`). The release rehearsal is their first run.
 
 **Next steps:**
-1. **Vintage, M8** (skill `release`): **started 2026-11-19.** Order: (a) pre-public audit of the
+1. **Vintage, M8** (skill `release`): **started 2026-11-19.** Order: (a) **done:** pre-public audit of the
    whole history, the workflow-trigger check in the local gate, the "nan" fix of the shared text
-   parser (`common/params/ParamFactory.cpp`) and the tip cleanup after the audit **(done, PR
-   pending)**; (b) the owner makes the repository public;
-   (c) the first Windows and Linux x86_64 runs ever (one dispatched `all` run; the list "Merged
-   without ... verification" below) and their fixes; (d) packaging: version (still 0.1.0), one
+   parser (`common/params/ParamFactory.cpp`) and the tip cleanup after the audit; (b) **done:** the owner made the repository public;
+   (c) **done:** the first Windows and Linux x86_64 runs and their fixes ("First CI runs"
+   above); (d) packaging: version 0.9.0, one
    zip per platform, licences and install notes inside, a manual release workflow, B-Side
-   excluded (`VS_BUILD_BSIDE=OFF`); (e) tag and publish on the owner's word.
+   excluded (`VS_BUILD_BSIDE=OFF`) **(built as contract 10: `scripts/package-release.sh`,
+   the `release` input of `build.yml`; the release jobs have never run)**; (e) the release
+   rehearsal: `gh workflow run build.yml --ref main -f targets=all -f release=true` gives a
+   draft release; the owner installs from the zips and publishes the draft.
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
@@ -187,7 +206,7 @@ Actions has no minutes: the job never starts; not a finding).
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
 equal width, playing from the computer keyboard, a "Clean" Cross Mod switch, **a go-through of the factory
 preset set (2026-11-19: some presets sound exactly the same)**. **Not done anywhere:**
-a real screen-reader pass; any Windows or Linux x86_64 run.
+a real screen-reader pass; a check in a DAW on a real Windows or Linux machine.
 
 **How work is run:** skill `orchestrate` (brief → implementer → independent reviewer → fixes →
 orchestrator's full `scripts/preflight.sh` → PR → merge only on the owner's word). Lessons of
@@ -339,53 +358,13 @@ repository.
 - **M3 bi-timbral: done** (Upper part, Whole/Dual/Split, balance and pan, stereo, oversampling by
   host rate, product renamed to Exitium Vintage Synth). **M4 arp/sequencer module: done**, standalone
   in `source/common/seq/`, not wired in. Audition approved by the owner.
-- **CI is offline** (no Actions minutes) until the owner makes the repo public for a release.
-  **Local-first verification is the permanent policy** (see decisions): run the local gates before
-  any push; never trigger workflows; agents get no CI budget.
-- **Merged without Windows / Linux x86_64 verification** (check these first when CI is back):
-  1. Linux ARM64 target, distro load tests, `scripts/linux-check.sh`, a GCC/ARM64 warning setting
-     in `CMakeLists.txt`, a float-comparison rewrite in `source/common/fx/FxCommon.h` (2026-11-12).
-  2. `scripts/preflight.sh` and the manual-only CI workflow (the reworked `build.yml` itself has
-     never run on GitHub: its first dispatch is also its first test) (2026-11-12).
-  3. Wave 3 (PR #9): effects and arp/sequencer integration, the common-library split, presets and
-     banks incl. the strict JSON reader and file dialogs (2026-11-13).
-  4. Wave 4a: factory bank and its tests, output trim and soft limiter, VCF slope crossfade,
-     the rule that parameters missing from a session load at their defaults (2026-11-14).
-  5. S1a: the shared processor skeleton, a header-only CRTP template that MSVC has never
-     compiled (highest portability risk on this list) (2026-11-14).
-  6. S1c: the B-Side table and trace readers and `bside_unit` (2026-11-14).
-  7. S1b: B-Side itself, the two-plugin CMake and `build.yml` rewrite (never run), the shared
-     `vs_juce_modules` library on MSVC, `scripts/sanitize-targets.sh` on a runner (2026-11-14).
-  8. M7a: the custom editor, the shared UI library, the embedded font and help-text data,
-     pluginval with its editor tests (CI still passes `--skip-gui-tests`) (2026-11-14).
-  9. S1d: patch tables in presets, `BasicProgramHandover<Hook>` (`[[no_unique_address]]` and
-     `if constexpr` on MSVC), short JSON escapes for control characters (2026-11-14).
-  10. Reference data: `bside_trace`, `SpecAnalysis`, `AnalogMeasure`, byte-exact reference files
-      (`.gitattributes`, no line-ending conversion on Windows) (2026-11-14).
-  11. M7b–M7e: the editor pages, `PresetActions`, new `PresetManager` accessors, the feed's
-      held-key order, the editor → audio note queue (`UiNotes`); the zero-allocation paint tests
-      run on macOS only (2026-11-15).
-  12. S2a: the chip digital core and its tests (JUCE-free; 64-bit arithmetic and bit fields
-      that MSVC has never compiled) (2026-11-15).
-  13. S2b-1 and S2c: combined-waveform tables (`constinit`, `constexpr` array fills, hexadecimal
-      float literals, table hashes pinned across compilers but never computed by MSVC or on
-      x86_64), the program engine, the allocation counter's `BS_NOINLINE` (2026-11-15).
-  14. M7f: accessibility handlers, prepared text in controls, the editor walk's class-name
-      parser (its MSVC branch has never run) (2026-11-15).
-  15. S2b-2: the renderer and the `BasicBlepTable` template (double-precision instance,
-      floating-point contraction may differ: one test accepts 1e-6 outside Apple Clang),
-      `chip_bench` (2026-11-16).
-  16. B-Side parameter step: a nested X-macro with `#N` stringizing (MSVC's preprocessor has never
-      seen it), a `juce::AudioParameterChoice` subclass, `std::optional` number parsing (2026-11-18).
-  17. Render cost step: the reworked renderer and digital fast path (`std::bit_cast`, the
-      inline macro's MSVC branch, a closed form that divided by zero on x86-64 before its fix:
-      no x86-64 run has ever executed this code), kernel tables (2026-11-19).
-  18. Alias follow-up step: `render::OutputRounding` (an expression one compiler may contract
-      into fused multiply-adds and another not: low output bits can differ; the new exact and
-      rounding tests have never run on MSVC or x86_64) (2026-11-19).
-  19. M8 hardening: the typed-text guard of the shared parameter parsers (`std::isfinite`; a test
-      that builds a string with an embedded NUL), the trigger-policy and home-path checks of
-      `docs-check.sh` (ruby and `git grep -a` have never run on a runner) (2026-11-19).
+- **The list "Merged without Windows / Linux x86_64 verification" (20 entries, 2026-11-12 to
+  2026-11-20) is closed:** the runs of 2026-11-20 above compiled and tested all of it on MSVC
+  (x64 and ARM64) and on Linux x86_64. What they found: test-code portability only, no defect in
+  either plugin. Still unproven there and due in the release rehearsal: the packer on real
+  Windows and Linux bundles (the Windows file list is an assumption), the release jobs.
+  **Local-first verification stays the policy:** run the local gates before any push; agents
+  never trigger workflows. When a change cannot get a CI run, start a new such list here.
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
   alias gate (documented in decisions). A "Clean" switch comes later, low priority. Two defects
   from the study are being fixed: sine-carrier sync aliasing, and bounce ≠ playback for sync + cross-mod.
@@ -464,6 +443,7 @@ docs/ui-test-checklist.md  manual checks in the plugin host
 scripts/dev-host.sh  builds plugin + JUCE AudioPluginHost and opens the synth in it (-DVS_BUILD_DEV_HOST)
 scripts/preflight.sh  the local gate: every check this Mac can run (see "Verification is local-first")
 scripts/linux-check.sh  GCC build + tests (or sanitizers) in a Linux ARM64 container (a preflight step)
+scripts/package-release.sh  packs and verifies the release zips (contract 10); texts in resources/release/
 docs/engineering-notes.md  lessons learned (traps, causes, rules); read before starting a milestone
 README.md        public overview, build and test instructions
 CHANGELOG.md     what was done, per milestone (update it with every milestone/infra change)

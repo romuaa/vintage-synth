@@ -5,7 +5,67 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### First Windows and Linux x86_64 CI run (2026-11-20)
+
+The first GitHub Actions run on Windows (MSVC) and Linux x86_64 (run 44627905615) found these; fixed here.
+
+- Windows x64 and ARM64: the build failed in B-Side test, tool and benchmark sources only (the plugins, the
+  Vintage tests, `host_smoke`, `BSideTests` and `bside_independent` compiled and linked; no test had run yet).
+- `getenv` is deprecated on MSVC (C4996, an error in the B-Side targets): one header-only test helper,
+  `tests/support/Env.h` (`testenv::get`, `_dupenv_s` on Windows), now serves every call site in `tests/`.
+  `source/` has no `getenv`.
+- `tests/bside/tools/ShapeFit.cpp`: `1L << 40` is undefined on Windows (`long` has 32 bits); the fit costs are
+  now `std::int64_t` (a real bug there, not only a warning; identical on macOS and Linux).
+- Signed/unsigned comparison in `ChipReplayTests.cpp` (C4389), a shadowed `now` in `PresetTestHelpers.h` (C4458)
+  and a double-to-float range construction in `ReverbTests.cpp` (C4244) cleaned up; no test expectation changed.
+- `build.yml`: the `build` job's timeout is 60 minutes (was 30, sized for a warm cache: the Linux x86_64 row
+  hit it during pluginval on a cold cache).
+
+## [0.9.0]
+
+First public release of Exitium Vintage Synth, a public beta.
+
+### The instrument
+- Bi-timbral analog-style polysynth in VST3 format: two parts (Lower and Upper), 16 voices each,
+  played as Whole, Dual or Split.
+- Per part: two oscillators (sine, triangle, saw, square, pulse, noise) with sync and cross
+  modulation, high-pass filter, 12/24 dB low-pass filter with resonance, amplifier, two envelopes,
+  an LFO with delay, Poly/Unison/Solo, portamento, velocity, pitch bend and mod wheel.
+- One "Vintage" amount for drift and voice-to-voice variation; clean at zero.
+- Arpeggiator and 16-step sequencer, in time with the host.
+- Chorus, delay and reverb; an output limiter.
+- 64 factory programs, your own programs and banks, loading the sound of one part only.
+- Its own editor: pages Sound, Envelopes, LFO, Play, Arp + Seq, Effects and Browser; pictures that
+  follow the sound; every control follows host automation live; 75 to 200 % size.
+
+### Platforms
+- macOS 11 or newer (Apple silicon and Intel), Windows 10 or newer (x64), Linux with glibc 2.35 or
+  newer (x86_64).
+- Experimental: Windows ARM64 and Linux ARM64 (in the same downloads).
+
+### Known limits of this beta
+- The plugin is not signed with a developer certificate and there is no installer: unpack the zip
+  and copy the plugin into your VST3 folder; `INSTALL.txt` in each zip explains the system warning.
+- **Parameter IDs and the saved-state format are not frozen before 1.0.0:** a session or program
+  saved with this beta may not load unchanged in a later version.
+- Not tested with a screen reader. Some factory programs sound alike; the set will be revised.
+- Cross Mod keeps its classic sound, which aliases at high settings.
+
+## Development history before 0.9.0
+
 ### M8 release hardening (2026-11-19)
+- Release packaging (docs/architecture.md section 10): `scripts/package-release.sh` (`pack`, `verify`, `sums`,
+  `changelog`, `selftest`), texts under `resources/release/` (INSTALL per platform, SOURCE, THIRD-PARTY derived
+  from what the build compiles), one zip per platform with `SHA256SUMS.txt`; `verify` works from the zip alone
+  (layout, version, slices, B-Side strings, metadata entries, symlinks, macOS `codesign --verify`).
+- `build.yml`: input `release` (Vintage only, then the jobs `pack`, `zip-smoke` and `package`, which creates a draft
+  release); never run yet (CI is offline). The `mac` step of `scripts/preflight.sh` packs and verifies the zip.
+- `verify` hardened after review (no symlinks, duplicate/case-colliding entries, exact file and mode lists, UTF-16 B-Side scan, platform-specific install text, licence comparison); release runs share one concurrency group, check the tag and that the repository is public, and the draft text carries an experimental-ARM64 header.
+- Second review round: B-Side is recognised by class IDs and bundle identifier (`resources/release/IDENTITY.txt`) instead of a 4-character binary search; `verify` checks the full entry list and unsafe names; `build.yml`: `repo-public` in `plan`, `linux-distros` needs a successful `plan`, and the Linux dependency check (`! ldd | grep -q`, which could never fail) is rewritten.
+- Fixed: the `ldd` checks in `build.yml` and `scripts/linux-check/inner.sh` (`! ldd | grep -q`) could never fail; they now capture the output and fail on a missing library or a shared libstdc++/libgcc.
+- Fixed: the macOS bundle's ad-hoc signature did not cover `moduleinfo.json` (JUCE writes it after the linker signs),
+  so `codesign --verify --deep --strict` failed on every build; the bundle is now signed again (ad hoc) as the last
+  build step.
 - Changed: the local gate (`scripts/preflight/docs-check.sh`) now enforces the Actions trigger policy over every
   file in `.github/workflows/`: `workflow_dispatch` only, except `security.yml` (push to `main`, pull_request,
   one cron at most weekly, workflow_dispatch). `pull_request_target` and `workflow_run` always fail.

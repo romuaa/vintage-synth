@@ -15,6 +15,7 @@
 // Each case renders 4 s of chip time in blocks of 64 samples with its writes at their exact cycles
 // (renderUntil); the best of 5 runs is reported. Arguments: case names to run only those (default: all).
 
+#include "../../support/Env.h"
 #include "bside/chip/Chip.h"
 
 #include <algorithm>
@@ -33,8 +34,8 @@ constexpr std::uint64_t kTick = 19656;
 /** Chip time per run: 4 s, or the environment variable CHIP_BENCH_SECONDS (longer runs for a profiler). */
 double chipSeconds()
 {
-    const char* s = std::getenv ("CHIP_BENCH_SECONDS");
-    const double v = s != nullptr ? std::atof (s) : 0.0;
+    const auto s = testenv::get ("CHIP_BENCH_SECONDS");
+    const double v = s ? std::atof (s->c_str()) : 0.0;
     return v > 0.0 ? v : 4.0;
 }
 

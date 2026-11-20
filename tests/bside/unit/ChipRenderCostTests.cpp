@@ -2,6 +2,7 @@
 // the digital core's skip over repeating envelope states equals stepping, and the regression tests of the
 // three defects 8.17 listed.
 
+#include "../../support/Env.h"
 #include "FuzzSupport.h"
 #include "RenderTestSupport.h"
 
@@ -1129,8 +1130,8 @@ TEST_CASE ("render: the output does not depend on where renderUntil stops withou
 
 TEST_CASE ("render: the output does not depend on where renderUntil stops without a write, long run", "[.render-split-long]")
 {
-    const char* e = std::getenv ("BS_SPLIT_SEEDS");
-    checkSplits (1000, e != nullptr ? std::atoi (e) : 4000);
+    const auto e = testenv::get ("BS_SPLIT_SEEDS");
+    checkSplits (1000, e ? std::atoi (e->c_str()) : 4000);
 }
 
 TEST_CASE ("render: split cases the S2b-2 renderer got wrong (stops without a write)", "[render][batch][split]")

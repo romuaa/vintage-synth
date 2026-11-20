@@ -3,6 +3,14 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## First Windows and Linux x86_64 CI run (2026-11-20)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| `1L << 40` in a tool compiled on macOS and Linux and was undefined on Windows (MSVC C4293). | `long` is 64 bits on LP64 (macOS, Linux) and 32 bits on Windows, x64 and ARM64 alike. Only the compiler on Windows says so. | Never use `long`, `unsigned long` or an `L`/`UL` suffix where 64 bits are meant: use `std::int64_t`, `std::uint64_t` and `std::int64_t { 1 } << n`. Print 64-bit values as `long long` with `%lld`. Small counters may stay `long`. |
+| `std::getenv` failed the Windows build in seven test sources. | MSVC deprecates it (C4996) and our warnings are errors; a macOS and Linux build never shows it. | Tests read the environment only through `tests/support/Env.h` (`testenv::get`, `_dupenv_s` on Windows). No global `_CRT_SECURE_NO_WARNINGS`. |
+| The 30-minute job timeout cancelled the Linux x86_64 row during pluginval. | The figure came from warm-cache runs (ccache or sccache hits); the first run builds cold (about 15 to 20 min) and its unit tests took about 14 min. | Size a job timeout for the cold cache, not the warm one (now 60 min). A new compiler or runner image starts cold too. |
+
 ## B-Side alias follow-up step (2026-11-19)
 
 | Problem | Cause | Fix / rule |
