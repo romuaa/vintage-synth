@@ -11,8 +11,8 @@ The host has no CPU meter: use Activity Monitor, and `voice_bench` for budgeting
 Open it with `scripts/dev-host.sh --plugin bside` (the "Exitium B-Side" node). Its sound is a sine per
 key (a placeholder), so these checks are about the plugin around it; the general sections below apply too.
 - Play keys: a sine per note, up to 16 at once, soft 5 ms start and stop, no clicks. Pitch bend moves it ±2 semitones.
-- The editor shows the preset bar above 75 generic parameters (master volume, key mode, split point,
-  balance, effects, arpeggiator/sequencer, limiter). The program menu lists 64 programs, all "Init".
+- The editor shows the preset bar above the generic parameter list (master volume, key mode, split point,
+  balance, effects, arpeggiator/sequencer, limiter, then the chip parameters, which do nothing yet). The program menu lists 64 programs, all "Init".
 - Set Key Mode to Split or Dual: both parts sound (identically); the split point and balance act.
 - Switch the arpeggiator on and hold a chord: it arpeggiates the sine; reverb, delay and chorus act.
 - Save a program and a bank from the preset bar: files end in `.bsprog` and `.bsbank`, in `Documents/Exitium/B-Side/`.
@@ -26,7 +26,7 @@ key (a placeholder), so these checks are about the plugin around it; the general
 - Quit the host while the editor is open: clean quit.
 
 ## Custom editor (M7)
-First clickable build (M7a, owner review point 1). Start it with `scripts/dev-host.sh`:
+Start it with `scripts/dev-host.sh`:
 - The editor opens on the Sound page at 100 % (or the largest menu size that fits the screen); the
   Size menu (top right) and the corner resizer keep the proportions; text stays sharp at 200 %;
   close and reopen the session: page, edited part and size come back.
@@ -39,8 +39,6 @@ First clickable build (M7a, owner review point 1). Start it with `scripts/dev-ho
   Shift fine) and the high-pass dot; double-click a dot resets it; the dashed curve is the other
   steepness. Play a resonant saw sweep: the peak you hear is where the curve shows it.
 - Signal path: "Effects > Out" opens the Effects page.
-- Every other page lists its parameters with plain sliders (placeholders until M7b–M7e): each one
-  moves the sound like the generic editor did.
 - Output: the meter moves with the sound and turns red above -0.1 dBFS; LIMIT and the chevron
   open the output popover (limiter switch, ceiling, reduction meter); Esc or a click outside closes it.
 - Host automation of cutoff with the Sound page open: slider, handle and curve move together and
