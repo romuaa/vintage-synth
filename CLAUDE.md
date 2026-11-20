@@ -183,9 +183,12 @@ the orchestrator dispatches it (see "Decisions").
   on both rows (test assumptions: `/proc/...` is writable on Windows, a path separator).
 - Run 44638566407 (`m8/ci-fixes`, `windows`): Windows x64 (tests, pluginval, validator), Windows
   ARM64 (tests, host_smoke) and the merged Windows bundle green.
-- **Never run yet:** macOS in CI on the current code, the merged Linux bundle job on the current
-  code (skipped in run 2 because the Windows rows failed), and every release job (`pack`,
-  `zip-smoke`, `package`). The release rehearsal is their first run.
+- **Release rehearsal:** run 44695944505 (`main` at `116c5f8`, `all`, `release=true`): every job
+  green at the first attempt (all five targets, both merged bundles, the seven distro load
+  tests, sanitizers, `pack`, the three `zip-smoke` jobs, `package`). It created the **draft
+  release `v0.9.0`** (three zips and `SHA256SUMS.txt`, target commit `116c5f8`; no tag exists
+  until the owner publishes). The orchestrator downloaded the zips: checksums match and
+  `package-release.sh verify` passes on each.
 
 **Next steps:**
 1. **Vintage, M8** (skill `release`): **started 2026-11-19.** Order: (a) **done:** pre-public audit of the
@@ -195,9 +198,12 @@ the orchestrator dispatches it (see "Decisions").
    above); (d) packaging: version 0.9.0, one
    zip per platform, licences and install notes inside, a manual release workflow, B-Side
    excluded (`VS_BUILD_BSIDE=OFF`) **(built as contract 10: `scripts/package-release.sh`,
-   the `release` input of `build.yml`; the release jobs have never run)**; (e) the release
-   rehearsal: `gh workflow run build.yml --ref main -f targets=all -f release=true` gives a
-   draft release; the owner installs from the zips and publishes the draft.
+   the `release` input of `build.yml`)**; (e) **done:** the release rehearsal
+   (`gh workflow run build.yml --ref main -f targets=all -f release=true`) gave the draft
+   release `v0.9.0`; (f) **waiting for the owner:** install from the zips following only
+   `INSTALL.txt`, then publish the draft (publishing creates the tag `v0.9.0`). If a defect
+   needs a code change first: delete the draft, fix, run the rehearsal again. After
+   publishing: README status box and roadmap, changelog "Nothing has been released yet".
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
@@ -361,8 +367,8 @@ repository.
 - **The list "Merged without Windows / Linux x86_64 verification" (20 entries, 2026-11-12 to
   2026-11-20) is closed:** the runs of 2026-11-20 above compiled and tested all of it on MSVC
   (x64 and ARM64) and on Linux x86_64. What they found: test-code portability only, no defect in
-  either plugin. Still unproven there and due in the release rehearsal: the packer on real
-  Windows and Linux bundles (the Windows file list is an assumption), the release jobs.
+  either plugin. The packer on real Windows and Linux bundles and the release jobs were proven
+  by the release rehearsal (run 44695944505).
   **Local-first verification stays the policy:** run the local gates before any push; agents
   never trigger workflows. When a change cannot get a CI run, start a new such list here.
 - **Cross Mod:** the owner chose to keep today's sound ("Classic"); it is exempt from the −100 dB
