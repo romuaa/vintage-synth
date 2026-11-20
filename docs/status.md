@@ -6,6 +6,8 @@ first when resuming.
 
 ## Where the project is (2026-11-20) — read this first when resuming
 
+**Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20, GitHub pre-release,
+tag `v0.9.0` at commit `116c5f8`: three zips and `SHA256SUMS.txt`). **M8 is done.**
 **Everything below is merged to `main` except B-Side S3a (parked, see below); no agent or build
 is in flight.** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
 x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the repository became public
@@ -97,19 +99,21 @@ the orchestrator dispatches it (see "Decisions").
    excluded (`VS_BUILD_BSIDE=OFF`) **(built as contract 10: `scripts/package-release.sh`,
    the `release` input of `build.yml`)**; (e) **done:** the release rehearsal
    (`gh workflow run build.yml --ref main -f targets=all -f release=true`) gave the draft
-   release `v0.9.0`; (f) **waiting for the owner:** install from the zips following only
-   `INSTALL.txt`, then publish the draft (publishing creates the tag `v0.9.0`). If a defect
-   needs a code change first: delete the draft, fix, run the rehearsal again. After
-   publishing: README status box and roadmap, changelog "Nothing has been released yet".
+   release `v0.9.0`; (f) **done (2026-11-20):** the owner installed from the zips and tried the plugin by hand in
+   Cubase 15 Pro on macOS, Reaper on an Arch-based Linux, and Reaper and Cubase 15 Pro on
+   Windows 11; no defect found; two other people praised the usability. Published on the
+   owner's word as a pre-release. **The identity (class IDs, bundle ID, codes) is frozen from
+   now on.** The next release is made as the skill `release` describes.
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
-2. **B-Side:** resume from the parked state above.
+2. **B-Side:** resume from the parked state above, on the owner's word (the Vintage release it
+   waited for is out).
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
 equal width, playing from the computer keyboard, a "Clean" Cross Mod switch, **a go-through of the factory
 preset set (2026-11-19: some presets sound exactly the same)**. **Not done anywhere:**
-a real screen-reader pass; a check in a DAW on a real Windows or Linux machine.
+a real screen-reader pass; a hands-on check on Windows ARM64 or Linux ARM64.
 
 **How work is run:** skill `orchestrate` (brief → implementer → independent reviewer → fixes →
 orchestrator's full `scripts/preflight.sh` → PR → merge only on the owner's word). Lessons of
