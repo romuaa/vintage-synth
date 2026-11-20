@@ -13,8 +13,8 @@ More pictures of every editor page: [docs/screenshots.md](docs/screenshots.md).
 > arpeggiator and 16-step sequencer, chorus, delay and reverb, 64 factory programs with banks, and
 > its own editor. There is no binary release yet: build from source, or wait for the first
 > release (one unsigned zip per platform, without installers; see [Platforms](#platforms)).
-> macOS and Linux ARM64 are verified on every change; the Windows and Linux x86_64 builds are
-> being confirmed in CI for the first time.
+> macOS and Linux ARM64 are verified on every change; Windows (x64, ARM64) and Linux x86_64 are
+> confirmed by CI runs started by hand.
 
 ## Features
 
