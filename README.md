@@ -6,7 +6,9 @@ naming and design.
 
 ![The Sound page of Exitium Vintage Synth: two oscillators, the filter curve and the signal path](docs/images/sound.png)
 
-More pictures of every editor page: [docs/screenshots.md](docs/screenshots.md).
+**See and hear it:** [demo video](https://youtu.be/IdVCa7lpVsQ) (about 5 minutes: an improvisation recorded with
+version 0.9.0 in a DAW on Windows 11). More pictures of every editor page:
+[docs/screenshots.md](docs/screenshots.md).
 
 > **Status: 0.9.0, a public beta, is released** ([downloads](https://github.com/romuaa/vintage-synth/releases)). The instrument is
 > feature-complete: two 16-voice parts (Lower and Upper) with Whole, Dual and Split modes,

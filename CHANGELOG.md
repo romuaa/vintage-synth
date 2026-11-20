@@ -10,7 +10,7 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 - The release run of the build workflow passed at its first attempt (run 44695944505, all five
   targets, the three release jobs) and created the draft release `v0.9.0`.
 - The owner tried the zips by hand (Cubase 15 Pro on macOS; Reaper on an Arch-based Linux; Reaper
-  and Cubase 15 Pro on Windows 11), found no defect and had the draft published as a pre-release
+  and Cubase 15 Pro on Windows 11; recording and playing back automation included), found no defect and had the draft published as a pre-release
   on 2026-11-20. The tag `v0.9.0` is at commit `116c5f8`.
 - `CLAUDE.md` is now short: the rules, the fixed facts, the definition of done and two rules that
   were the owner's private ones until now ("Check before you claim", and ending a turn with
@@ -22,6 +22,8 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 - Documentation brought up to date after an audit: README (status, CI and security, roadmap),
   `CONTRIBUTING.md`, `SECURITY.md`, the skills `add-parameter`, `validate-plugin`, `build`,
   `release` and `orchestrate`, the manual test checklist.
+- A demo video recorded by the owner with 0.9.0 is linked from the README, the screenshots page
+  and the release notes: https://youtu.be/IdVCa7lpVsQ
 - The second Windows CI run (44634121070) found two test assumptions that hold only off Windows
   (an unwritable path, a path separator); fixed in the tests.
 

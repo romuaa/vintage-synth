@@ -101,7 +101,8 @@ the orchestrator dispatches it (see "Decisions").
    (`gh workflow run build.yml --ref main -f targets=all -f release=true`) gave the draft
    release `v0.9.0`; (f) **done (2026-11-20):** the owner installed from the zips and tried the plugin by hand in
    Cubase 15 Pro on macOS, Reaper on an Arch-based Linux, and Reaper and Cubase 15 Pro on
-   Windows 11; no defect found; two other people praised the usability. Published on the
+   Windows 11, automation record and playback included; no defect found; demo video
+   https://youtu.be/IdVCa7lpVsQ; two other people praised the usability. Published on the
    owner's word as a pre-release. **The identity (class IDs, bundle ID, codes) is frozen from
    now on.** The next release is made as the skill `release` describes.
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
