@@ -11,10 +11,13 @@ More pictures of every editor page: [docs/screenshots.md](docs/screenshots.md).
 > **Status: first release in preparation (0.9.0, a public beta).** The instrument is
 > feature-complete: two 16-voice parts (Lower and Upper) with Whole, Dual and Split modes,
 > arpeggiator and 16-step sequencer, chorus, delay and reverb, 64 factory programs with banks, and
-> its own editor. There is no binary release yet: build from source, or wait for the first
-> release (one unsigned zip per platform, without installers; see [Platforms](#platforms)).
-> macOS and Linux ARM64 are verified on every change; Windows (x64, ARM64) and Linux x86_64 are
-> confirmed by CI runs started by hand.
+> its own editor. All five targets pass their checks, and the release build has been rehearsed:
+> a draft of 0.9.0 is waiting for a last install check before it is published. Until then there
+> is no binary release: build from source (the release will be one unsigned zip per platform,
+> without installers; see [Platforms](#platforms)).
+>
+> This repository is also a worked example of AI-assisted development with automated testing
+> and CI/CD: see [How this project is developed](#how-this-project-is-developed).
 
 ## Features
 
@@ -62,7 +65,8 @@ More pictures of every editor page: [docs/screenshots.md](docs/screenshots.md).
 | Windows 10/11 | x64 and ARM64 in one bundle | VST3 |
 | Linux | x86_64 and ARM64 in one bundle (glibc 2.35 or newer) | VST3 |
 
-There are no binary releases yet: build from source. Until v1.0 the parameter set and the saved-state
+There are no binary releases yet (the first one, 0.9.0, is a draft that is not published yet): build
+from source. Until v1.0 the parameter set and the saved-state
 format may still change.
 
 The first release will be one zip per platform (macOS, Windows, Linux) that you unpack and copy into
@@ -126,8 +130,8 @@ mkdir -p ~/.vst3 && cp -r "build/VintageSynth_artefacts/Release/VST3/Exitium Vin
 
 The Linux build links the C++ runtime statically; at run time it needs glibc 2.35 or newer,
 libfontconfig and libfreetype. CI builds it on Ubuntu 22.04 and load-tests the x86_64 build in
-containers of several distributions (Ubuntu, Debian, Fedora, Arch). The ARM64 build is also built
-and tested locally in a container on every change; it is not performance-tuned for small boards.
+containers of several distributions (Ubuntu, Debian, Fedora, Arch). The ARM64 build is built and
+tested in CI too, and locally in a container on every change; it is not performance-tuned for small boards.
 A check in a DAW on a real Linux machine is pending.
 
 Developers on a Mac with Docker can run `scripts/linux-check.sh` before pushing: it builds and tests
@@ -198,8 +202,30 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
   the release zips, loads them in a host and creates a draft release; only that last job can write
   to the repository's releases, and it never publishes.
 - `security` workflow: [Trivy](https://trivy.dev) scans the repository for vulnerable dependencies,
-  committed secrets and misconfigurations on every push, pull request and weekly.
+  committed secrets and misconfigurations on every push to `main`, on pull requests and weekly.
+- GitHub code scanning (CodeQL, default setup) analyses the C++, Python and workflow code on pushes
+  and pull requests.
 - Dependabot keeps GitHub Actions (pinned by commit SHA) and the JUCE and Catch2 submodules up to date.
+- `main` is protected: changes arrive through pull requests only.
+
+## How this project is developed
+
+A human owner directs AI coding agents: the owner makes the product decisions and approves every
+merge and release; agents write, test and review the code. Besides the instruments, the repository
+is meant as a worked example of good practice in three areas:
+
+- **AI-assisted development:** the agents' rules are files in the repository
+  ([CLAUDE.md](CLAUDE.md), skills in `.claude/skills/`); interfaces are written as contracts before
+  the code; every step is reviewed by an independent agent with its own test harness; decisions
+  and lessons are logged.
+- **Automated testing:** one local gate (`scripts/preflight.sh`) runs every check a single machine
+  can run, with gates written as numbers (alias limit, CPU budget).
+- **CI/CD and DevOps:** CI confirms the platforms the local gate cannot reach, a release is one
+  rehearsed workflow run that ends in a draft for a person to publish, and dependencies, actions
+  and runner images are pinned and scanned.
+
+The full description, with the reason for each practice, is in
+[docs/development-practices.md](docs/development-practices.md).
 
 ## Project layout
 
@@ -234,7 +260,7 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 | M5 | Chorus, delay and reverb | Done |
 | M6 | Presets, patch banks, 64 factory programs, golden-render regression tests | Done |
 | M7 | Custom UI | Done (M7a–M7f); final category colours and a top-bar redesign deferred |
-| M8 | Hardening and the first release (0.9.0, a public beta: unsigned zips, no installers; signing and installers later) | In progress: hardening done, packaging written; first Windows and Linux x86_64 CI runs and the release itself still to come |
+| M8 | Hardening and the first release (0.9.0, a public beta: unsigned zips, no installers; signing and installers later) | In progress, last step: all five targets confirmed, release rehearsal passed; the draft of 0.9.0 waits for the install check and publishing |
 
 A second instrument is in development in this repository: **Exitium B-Side**, a polyphonic synth
 modelled on a classic 3-voice sound chip from early-1980s home computers, as its own plugin sharing

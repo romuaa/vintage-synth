@@ -17,7 +17,7 @@ release notes if you want that.
 ## What is in scope
 
 - The plugin loading **untrusted input**: saved plugin state, session data from a host, and
-  (once they exist) preset and bank files. Memory-safety bugs, crashes, hangs or unbounded
+  preset and bank files. Memory-safety bugs, crashes, hangs or unbounded
   memory use caused by malformed state are in scope.
 - **MIDI input** that crashes, hangs or corrupts memory in the plugin.
 - The **build and release pipeline**: GitHub Actions workflows, how dependencies and tools are

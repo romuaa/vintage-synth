@@ -2,14 +2,14 @@
 #
 # Submodule PRs (JUCE, Catch2) move the submodule to the newest upstream commit/tag. Per CLAUDE.md,
 # dependency upgrades are deliberate: review the upstream release notes, make sure the PR points
-# at a release tag (not a random main commit), and merge only when CI is green. Update the
+# at a release tag (not a random main commit), and merge only after a dispatched CI run is green. Update the
 # versions named in CLAUDE.md / README.md in the same PR.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: monthly # each PR costs a full CI run; weekly again once the repo is public
+      interval: monthly # few, deliberate upgrades; each one gets a dispatched CI run before merging
     groups:
       actions:
         patterns: ["*"]
@@ -19,6 +19,6 @@ updates:
   - package-ecosystem: gitsubmodule
     directory: /
     schedule:
-      interval: monthly # each PR costs a full CI run; weekly again once the repo is public
+      interval: monthly # few, deliberate upgrades; each one gets a dispatched CI run before merging
     commit-message:
       prefix: "deps"

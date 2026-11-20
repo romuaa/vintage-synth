@@ -16,13 +16,14 @@ agents write the code.
 
 ## Startup
 
-1. Read `CLAUDE.md` (its "Status" section says where the project is and what comes next; trust it
+1. Read `CLAUDE.md`, `docs/status.md` (where the project is and what comes next; trust it
    over this file), `CHANGELOG.md`, `docs/decisions.md`, `docs/engineering-notes.md`,
    `docs/architecture.md` (the contracts) and the skills in `.claude/skills/`.
 2. Check the repository: `git status`, all branches, worktrees, stashes, `gh pr list`.
-   `gh run list` shows only the `security` workflow; `build` never runs by itself.
+   `gh run list` shows the `security` and CodeQL runs and the builds you dispatched; `build`
+   never runs by itself.
 3. Tell the owner in a few lines what is merged, what is in flight and what comes next. **If
-   "Status" says the owner said "wait", start nothing** until the owner says "continue".
+   `docs/status.md` says the owner said "wait", start nothing** until the owner says "continue".
 
 ## Limits specific to this project
 
@@ -30,9 +31,8 @@ agents write the code.
   (`--quick` while iterating, the full default set for engine changes) and never push or trigger
   CI. You rerun the full gate yourself before a PR. Windows and Linux x86_64 are confirmed by CI
   only: at most one dispatched run per merge-ready branch
-  (`gh workflow run build.yml --ref <branch> -f targets=no-macos`), only when the owner has
-  Actions minutes, and you warn the owner before any batch. While CI is offline, add each merge
-  to "Merged without Windows / Linux x86_64 verification" in `CLAUDE.md`. Never claim those
+  (`gh workflow run build.yml --ref <branch> -f targets=no-macos`), and you warn the owner before any batch. A merge that could not get a run is listed in
+  `docs/status.md` as merged without Windows / Linux x86_64 verification. Never claim those
   platforms green without a passing run.
 - **Owner gates:** the owner judges by ear or eye (auditions, editor pages, factory sounds).
   Prepare what they need: rendered WAV and spectrogram in the scratchpad via `VS_RENDER_DIR`,

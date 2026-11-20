@@ -5,6 +5,24 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 
 ## [Unreleased]
 
+### Release rehearsal and documentation (2026-11-20)
+
+- The release run of the build workflow passed at its first attempt (run 44695944505, all five
+  targets, the three release jobs) and created the draft release `v0.9.0`. Nothing is published
+  until the owner publishes the draft.
+- `CLAUDE.md` is now short: the rules, the fixed facts, the definition of done and two rules that
+  were the owner's private ones until now ("Check before you claim", and ending a turn with
+  "What I need from you"). The project status moved to `docs/status.md`, the directory guide to
+  `docs/layout.md`, the full list of standing decisions to the top of `docs/decisions.md` and
+  the trap list to the top of `docs/engineering-notes.md`.
+- New `docs/development-practices.md` and a README section: the repository as a worked example
+  of AI-assisted development, automated testing, CI/CD and DevOps practice.
+- Documentation brought up to date after an audit: README (status, CI and security, roadmap),
+  `CONTRIBUTING.md`, `SECURITY.md`, the skills `add-parameter`, `validate-plugin`, `build`,
+  `release` and `orchestrate`, the manual test checklist.
+- The second Windows CI run (44634121070) found two test assumptions that hold only off Windows
+  (an unwritable path, a path separator); fixed in the tests.
+
 ### First Windows and Linux x86_64 CI run (2026-11-20)
 
 The first GitHub Actions run on Windows (MSVC) and Linux x86_64 (run 44627905615) found these; fixed here.

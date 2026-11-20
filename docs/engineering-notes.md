@@ -3,6 +3,40 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Known traps, the short list
+
+One line per trap; the dated sections below have the cause and the details. `CLAUDE.md` names
+only the most general ones. When something new bites, add a row to a dated section and, if it
+is a rule, a line here.
+
+- Never build a `juce::MidiMessage` on the audio thread (SysEx allocates); parse raw bytes.
+- Any stage that adds delay must be added to the reported latency.
+- JUCE's VST3 wrapper adds 2080 "MIDI CC" params + "Bypass"; exclude them when counting ours.
+- Wrap `JUCE_PLUGIN_ARTEFACT_FILE` in `$<GENEX_EVAL:…>`; tests take include dirs/defines from the plugin target.
+- Measure filters far below Nyquist and above the float floor; isolate a failing gate with a diagnostic test.
+- Run the tests under ASan/UBSan before pushing: MSVC's heap catches overruns macOS tolerates.
+- A new continuous parameter is not smoothed unless added to `PartModulator::next`.
+- Per-voice state inherited by a later note must be reset or computed from absolute time; a
+  block-size test only proves something if voices are reused.
+- GCC rejects float `==`/`!=` (`-Wfloat-equal` is an error); Clang and MSVC accept it. Use `std::fpclassify`.
+- Rosetta isn't installed: the x86_64 slice is checked with `lipo` only, never run locally.
+- Shared processor code is reached only through per-block hooks; instrument types are template
+  arguments of `BiTimbralProcessor`, not member types of the derived class.
+- Agents must never unpack, link or build inside the main checkout or a folder they did not create
+  (stray links inside `external/JUCE` and `external/Catch2` have appeared twice).
+- Never link `vs_test_core` and `bs_test_core` into one executable. A new test executable must be
+  added to `scripts/sanitize-targets.sh`.
+- Never `grep -q` on the right side of a pipe under `pipefail` (the left side dies with SIGPIPE and
+  the pipeline "fails"); capture the output first. `VS_PREFLIGHT_PLUGINS` is for `--quick`/`--only`.
+- GCC's `-Wshadow` is an error and also fires for a constructor parameter that shadows a member of
+  a JUCE base class; only the Linux step shows it.
+- `tests/bside/unit/IndependentModel.h` is the independent check of the chip: whoever edits
+  `source/bside/chip/` must not edit it (and the reverse).
+- A hand-over that publishes A and then clears B must be read B then A; change `ProgramHandover.h`
+  only together with its model test (`HandoverModelTests.cpp`).
+- Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
+  script); use the Edit tool for such text. Never read anything under `build/`.
+
 ## First Windows and Linux x86_64 CI run (2026-11-20)
 
 | Problem | Cause | Fix / rule |

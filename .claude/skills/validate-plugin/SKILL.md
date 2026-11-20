@@ -17,7 +17,7 @@ Run these in order and stop at the first failure. Report each step as pass, fail
 1. **Unit tests + host smoke:** `ctest --test-dir build/mac --output-on-failure`. This includes
    `host_smoke`, which loads the real `.vst3` through JUCE's VST3 host (identity, parameter count,
    rendering at 44.1/48/96 kHz, silence after release, state round-trip). It doesn't replace pluginval.
-2. **Golden renders** (from M6, when factory presets exist; not set up yet): `ctest --test-dir build/mac -L render`.
+2. **Golden renders** (part of the local gate): `ctest --test-dir build/mac -L render`.
    Each factory preset renders a fixed MIDI file, and the output is compared against
    `tests/render_regression/golden/`.
    - Only regenerate goldens (`-DUPDATE_GOLDENS=ON`) for an **intended** sound change.
@@ -31,10 +31,11 @@ Run these in order and stop at the first failure. Report each step as pass, fail
    ```
    Pass = the output ends with `SUCCESS` and the exit code is 0. Only if the tool harness still
    refuses the command, ask the user under "What I need from you" to run it with `! `.
-4. **VST3 validator:** runs in CI only (macOS and Windows x64) as ctest `vst3_validator`, built from
-   Steinberg's SDK pinned in `.github/workflows/build.yml` (`VST3_SDK_TAG` / `VST3_SDK_SHA`). It is
-   not built on this Mac (owner decision: CI only). Locally the test is absent unless
-   `-DVS_VST3_VALIDATOR=<path>` is given. Report it from the CI run.
+4. **VST3 validator:** ctest `vst3_validator`, built from Steinberg's SDK pinned in
+   `.github/workflows/build.yml` (`VST3_SDK_TAG` / `VST3_SDK_SHA`). Locally the `validator` step of
+   `scripts/preflight.sh` builds it once into `~/Library/Caches/vs-preflight/` and runs it; in CI
+   it runs on macOS, Windows x64 and Linux x86_64. In a hand-made build the test is absent unless
+   `-DVS_VST3_VALIDATOR=<path>` is given.
 4b. **Sanitizers (before pushing engine or test changes):** configure a second build dir with
    `-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_OSX_ARCHITECTURES=arm64
    -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
@@ -63,9 +64,9 @@ pluginval and the validator; the `linux-sanitizers` job (ubuntu-24.04, Clang, AS
 `halt_on_error`) runs the tests without `host_smoke` in every CI tier. A Linux-only manual run:
 `gh workflow run build.yml --ref <branch> -f targets=linux`.
 
-Windows CI: after a push, check with `gh run list --limit 3` and `gh run view <id> --log-failed`.
-CI minutes cost money while the repo is private: push a branch once, when everything above is green.
-Draft PRs build Windows x64 only; mark the PR ready (`gh pr ready <n>`) for the full matrix.
+Windows and Linux x86_64: a push starts no build. The orchestrator dispatches one run per
+merge-ready branch (`gh workflow run build.yml --ref <branch> -f targets=no-macos`) and reads it
+with `gh run view <id>` / `--log-failed`. Agents never trigger CI.
 
 ## Writing tests: traps we hit
 - When a quality gate fails, write a hidden `[.diag]` test that isolates the stage before tuning anything.

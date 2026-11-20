@@ -3,6 +3,101 @@
 Decisions made during implementation, with the reason for each. Newest milestone first.
 Anything marked **(review)** is a judgement call that the product owner may want to change. Items marked "confirmed by owner" were reviewed and accepted.
 
+## Standing decisions (the ones in force; summary)
+
+Moved here from `CLAUDE.md` on 2026-11-20, which keeps only a one-line version of each. The
+dated log below has the reasons.
+
+- **License: JUCE under AGPLv3**, so this whole project is AGPLv3 (`LICENSE`). Every binary
+  release must ship with (or link to) its complete source. Don't add dependencies that are
+  incompatible with AGPLv3 (check before adding any).
+- **Format: VST3 only.** No AU, CLAP, or standalone (add to `FORMATS` only if decided later).
+- **Voices: 16 per part** (32 total in Dual mode). This is the CPU budget target.
+- **Character:** clean by default. One "Vintage" amount controls drift, voice-to-voice variation,
+  and filter/envelope tolerance.
+- **Stack:** JUCE 9.0.5 and Catch2 v3.16.1 as git submodules in `external/`, pinned to exact tags.
+  Upgrade them deliberately, in their own commit. C++20, CMake ≥ 3.28, Ninja on macOS.
+- **Targets:** macOS universal (`arm64;x86_64`, min macOS 11, the default in `CMakeLists.txt`); Windows
+  x64 + ARM64 merged into one `.vst3` bundle (`Contents/x86_64-win`, `Contents/arm64-win`) by CI.
+  MSVC static runtime. **Linux x86_64 and ARM64** (owner decisions): built on `ubuntu-22.04` /
+  `ubuntu-22.04-arm` for a glibc 2.35 floor, GCC, static libstdc++/libgcc, merged into one bundle
+  (`Contents/x86_64-linux`, `Contents/aarch64-linux`). ARM64 is CI-validated only (no pluginval
+  build exists for it) and not performance-tuned for small boards. Never raise that runner image
+  above the oldest one offered without a decision. **Before pushing engine or test changes run
+  `scripts/linux-check.sh`** (Docker; native Linux ARM64 container; GCC build + all tests, about
+  1 min warm; `--sanitize` for ASan/UBSan): it catches GCC-only errors without a CI round trip.
+  The x86_64 Linux binary is proven in CI only: `gh workflow run build.yml --ref <branch> -f targets=linux`
+  runs the Linux rows, the sanitizer job and the distro load tests.
+- **Identity:** company "Exitium", bundle ID `com.exitium.vintagesynth`, manufacturer code
+  `Exit`, plugin code `Vsy1`. **Never change these after the first release**, because hosts identify
+  the plugin by them.
+- **pluginval: Claude runs it itself** (official Tracktion release v1.0.4, unpacked in the session
+  scratchpad). Don't hand it to the user unless the harness refuses the command. See skill `validate-plugin`.
+- **Repo:** GitHub `romuaa/vintage-synth` (**public since 2026-11-20**), branch `main`. `main` is
+  protected (owner, 2026-11-20): changes only through a pull request, no force-push, no deletion,
+  admins included; no required status check (the build workflow is manual-only).
+- **Workflow: orchestrated agents, branches + PR** (skill `orchestrate`). Agents commit on feature
+  branches; the orchestrator opens the pull requests. **Merge to `main` only after
+  the owner approves that milestone.** Never commit to `main` directly, never force-push.
+  The owner auditions at the end of M2, M5 and M6 and sets the UI direction before M7.
+- **Contracts:** `docs/architecture.md` defines the interfaces agents build against (note events,
+  voice allocation, new parameters, effects, arp/seq). Change it only in its own commit.
+- **CI:** `.github/workflows/build.yml` builds, tests, and runs pluginval on macOS and Win x64.
+  Win ARM64 runs build, unit tests and host_smoke (there's no ARM64 pluginval). Check results with
+  `gh run list` / `gh run view <id> --log-failed` (gh is installed and authenticated). Never claim
+  Windows is green without a passing run. CI builds every target with Ninja and a compiler cache
+  (ccache on macOS, sccache on Windows) inside the newest Visual Studio found by `vswhere`; never
+  hardcode a VS version. LTO applies to the shipped plugin only; tests and `voice_bench` link
+  `vs_test_core` (same sources, no LTO), so add new source files to `VS_COMMON_SOURCES` or `VS_VINTAGE_SOURCES` (`VS_PLUGIN_SOURCES` is their union).
+  Runner images are pinned (`macos-26`, `windows-2025`, `windows-11-arm`, `ubuntu-26.04`);
+  Dependabot doesn't bump them, so check github.com/actions/runner-images when touching CI.
+  Pushing to `main` cancels a running build of `main` (concurrency group): wait for a run you
+  still need before pushing again.
+- **Verification is local-first (owner decision).** Everything this Mac can check is checked here by
+  `scripts/preflight.sh`: macOS universal build + tests + pluginval, the VST3 validator (built once
+  from the pinned SDK commit into `~/Library/Caches/vs-preflight/`), ASan/UBSan, the Linux ARM64
+  container, the security scan, repository hygiene (incl. a hashed brand-name check and "no session
+  link in commits"). `--quick` while iterating, the default set before handing over.
+- **CI never runs by itself** (no PR, branch or `main` triggers on `build`). The orchestrator
+  dispatches it by hand, once per merge-ready branch, when Actions minutes are available:
+  `gh workflow run build.yml --ref <branch> -f targets=no-macos` (`all` before a release; also
+  `windows`, `linux`, `linux-x64`). Agents never trigger CI. **Windows and Linux x86_64 are
+  confirmed by CI only**: never claim them green without a passing dispatched run. A dispatch only
+  works for refs once the workflow file is on the default branch.
+- **Supply chain:** every third-party action is pinned by full commit SHA with a `# vX.Y.Z` comment.
+  `.github/dependabot.yml` updates Actions and submodules monthly. Before merging a submodule PR,
+  check it points at a release tag and update the versions named here and in README.
+- **Security scan:** `.github/workflows/security.yml` runs Trivy (vuln, secret, misconfig) on push,
+  PR and weekly; HIGH/CRITICAL fixable findings fail it. Results are in the job log and the
+  `trivy-results` SARIF artifact; setting the repo variable `CODE_SCANNING=true` also uploads
+  the SARIF to code scanning (not set). GitHub's CodeQL default setup (C/C++, Python, Actions)
+  runs on pushes and pull requests since the repository became public (owner: keep,
+  2026-11-20); it has no workflow file.
+- **B-Side (owner, 2026-11-14; `docs/architecture.md` 8.12):** identity `Bsy1` /
+  `com.exitium.bside`; two parts; Init uses chip Model B; mimic the original chip as closely as
+  possible (its own alias budgets, 8.4.5, approved). **Reference emulator approved as a developer
+  tool only:** built outside the repository (`~/Library/Caches/bside-oracle/`), never linked or
+  shipped, never named in the repository; only generated reference data is committed.
+- **Vintage first release (owner, 2026-11-19):** the repository becomes public at the start of
+  the release work (the owner flips visibility, after a pre-public audit of the whole history),
+  so CI is free. **No code signing and no installers** for now (no Apple Developer membership,
+  no Windows certificate): a release is one zip of plain plugin binaries per platform that the
+  user copies into the plugin folder, with `LICENSE`, the font licence and install notes.
+  **Platforms:** macOS universal, Windows x64 and Linux x86_64; Windows ARM64 and Linux ARM64
+  ship marked "experimental" (no pluginval build exists for them). **CI stays manual-only, also
+  when public:** no workflow may gain an automatic trigger except the cheap `security` one; the
+  local gate checks this. B-Side is not in the release (`VS_BUILD_BSIDE=OFF`). **Version: 0.9.0, a
+  public beta** (parameter IDs and the state format are not frozen until 1.0.0).
+- **M7 editor (owner, 2026-11-14; `docs/architecture.md` 9.8):** round-3 wireframes approved;
+  fixed aspect, 75–200 % (1360×784 at 100 %); embedded font Inter (SIL OFL 1.1, its licence file
+  kept in the repository); dark theme only; static graphs with live markers; delay/reverb on/off
+  as a level-0 switch (no new parameters); values shown as hosts show them (0–10); help bubbles
+  after 600 ms plus the help line.
+- **M7 UI (owner, 2026-11-14):** the tabbed wireframes are approved as the direction, with a
+  colour tint per part, Shape split into LFO and Envelope pages, and hover help on every control.
+- **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new
+  judgement call there (with the reason), and mark the ones the user should review.
+
 ## M8 packaging of the first release (2026-11-19, all review)
 
 Contract: `docs/architecture.md` section 10. Code: `scripts/package-release.sh`, `resources/release/`, the release part of `.github/workflows/build.yml`, the `mac` step of `scripts/preflight.sh`.
