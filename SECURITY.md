@@ -32,5 +32,5 @@ release notes if you want that.
 
 ## Supported versions
 
-The project is pre-release. Only the latest commit on `main` is supported. There are no released
-versions with security backports yet.
+The project is in public beta. The latest release and the latest commit on `main` are supported;
+older releases get no security backports.

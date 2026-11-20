@@ -3,6 +3,8 @@
 The editor of Exitium Vintage Synth, one page per purpose. The pictures show the program
 "Solar Sync" from the factory bank. Pictures taken on macOS at 100 % size (2026-11-19).
 
+To hear it as well: the [demo video](https://youtu.be/IdVCa7lpVsQ), an improvisation recorded with version 0.9.0.
+
 ## Sound
 
 Two oscillators with their live waveforms, sync and cross modulation, the mix, the high-pass and

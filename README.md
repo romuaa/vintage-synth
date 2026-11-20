@@ -6,15 +6,16 @@ naming and design.
 
 ![The Sound page of Exitium Vintage Synth: two oscillators, the filter curve and the signal path](docs/images/sound.png)
 
-More pictures of every editor page: [docs/screenshots.md](docs/screenshots.md).
+**See and hear it:** [demo video](https://youtu.be/IdVCa7lpVsQ) (about 5 minutes: an improvisation recorded with
+version 0.9.0 in a DAW on Windows 11). More pictures of every editor page:
+[docs/screenshots.md](docs/screenshots.md).
 
-> **Status: first release in preparation (0.9.0, a public beta).** The instrument is
+> **Status: 0.9.0, a public beta, is released** ([downloads](https://github.com/romuaa/vintage-synth/releases)). The instrument is
 > feature-complete: two 16-voice parts (Lower and Upper) with Whole, Dual and Split modes,
 > arpeggiator and 16-step sequencer, chorus, delay and reverb, 64 factory programs with banks, and
-> its own editor. All five targets pass their checks, and the release build has been rehearsed:
-> a draft of 0.9.0 is waiting for a last install check before it is published. Until then there
-> is no binary release: build from source (the release will be one unsigned zip per platform,
-> without installers; see [Platforms](#platforms)).
+> its own editor. A release is one unsigned zip per platform, without installers (see
+> [Platforms](#platforms)). It has been tried by hand in Cubase and Reaper on macOS, Windows 11
+> and Linux.
 >
 > This repository is also a worked example of AI-assisted development with automated testing
 > and CI/CD: see [How this project is developed](#how-this-project-is-developed).
@@ -65,11 +66,11 @@ More pictures of every editor page: [docs/screenshots.md](docs/screenshots.md).
 | Windows 10/11 | x64 and ARM64 in one bundle | VST3 |
 | Linux | x86_64 and ARM64 in one bundle (glibc 2.35 or newer) | VST3 |
 
-There are no binary releases yet (the first one, 0.9.0, is a draft that is not published yet): build
-from source. Until v1.0 the parameter set and the saved-state
+Download the zip for your platform from the [releases page](https://github.com/romuaa/vintage-synth/releases) (0.9.0, a public beta,
+marked as a pre-release), or build from source. Until v1.0 the parameter set and the saved-state
 format may still change.
 
-The first release will be one zip per platform (macOS, Windows, Linux) that you unpack and copy into
+A release is one zip per platform (macOS, Windows, Linux) that you unpack and copy into
 your VST3 folder; there are no installers and no code signing yet. Each zip carries an `INSTALL.txt`
 for its platform (folders, the unsigned-plugin warning, uninstall), the licence, a `SOURCE.txt` that
 names the exact commit, and `THIRD-PARTY.txt`. The Windows ARM64 and Linux ARM64 parts of the merged
@@ -132,7 +133,7 @@ The Linux build links the C++ runtime statically; at run time it needs glibc 2.3
 libfontconfig and libfreetype. CI builds it on Ubuntu 22.04 and load-tests the x86_64 build in
 containers of several distributions (Ubuntu, Debian, Fedora, Arch). The ARM64 build is built and
 tested in CI too, and locally in a container on every change; it is not performance-tuned for small boards.
-A check in a DAW on a real Linux machine is pending.
+The release was tried by hand in Reaper on an Arch-based distribution.
 
 Developers on a Mac with Docker can run `scripts/linux-check.sh` before pushing: it builds and tests
 with GCC in a native Linux ARM64 container (`--sanitize` for the AddressSanitizer/UBSan run).
@@ -260,15 +261,14 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 | M5 | Chorus, delay and reverb | Done |
 | M6 | Presets, patch banks, 64 factory programs, golden-render regression tests | Done |
 | M7 | Custom UI | Done (M7a–M7f); final category colours and a top-bar redesign deferred |
-| M8 | Hardening and the first release (0.9.0, a public beta: unsigned zips, no installers; signing and installers later) | In progress, last step: all five targets confirmed, release rehearsal passed; the draft of 0.9.0 waits for the install check and publishing |
+| M8 | Hardening and the first release (0.9.0, a public beta: unsigned zips, no installers; signing and installers later) | Done: 0.9.0 published on 2026-11-20 |
 
 A second instrument is in development in this repository: **Exitium B-Side**, a polyphonic synth
 modelled on a classic 3-voice sound chip from early-1980s home computers, as its own plugin sharing
 the common engine code (`source/bside/`, built unless `-DVS_BUILD_BSIDE=OFF`). The plugin is still a
 shell with the shared parameters, programs, state, arpeggiator and effects around a placeholder
 test-tone part: it makes no chip sound yet. The chip model exists as a tested library that is not
-wired in. **B-Side is paused until the first release of Exitium Vintage Synth is out**, and is not
-part of that release.
+wired in. **B-Side was paused for the first release of Exitium Vintage Synth** and is not part of 0.9.0.
 
 | B-Side step | Scope | Status |
 |---|---|---|

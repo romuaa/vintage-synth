@@ -1,15 +1,17 @@
 # Changelog
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
-versions follow [Semantic Versioning](https://semver.org/). Nothing has been released yet.
+versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9.0 (a public beta).
 
 ## [Unreleased]
 
 ### Release rehearsal and documentation (2026-11-20)
 
 - The release run of the build workflow passed at its first attempt (run 44695944505, all five
-  targets, the three release jobs) and created the draft release `v0.9.0`. Nothing is published
-  until the owner publishes the draft.
+  targets, the three release jobs) and created the draft release `v0.9.0`.
+- The owner tried the zips by hand (Cubase 15 Pro on macOS; Reaper on an Arch-based Linux; Reaper
+  and Cubase 15 Pro on Windows 11; recording and playing back automation included), found no defect and had the draft published as a pre-release
+  on 2026-11-20. The tag `v0.9.0` is at commit `116c5f8`.
 - `CLAUDE.md` is now short: the rules, the fixed facts, the definition of done and two rules that
   were the owner's private ones until now ("Check before you claim", and ending a turn with
   "What I need from you"). The project status moved to `docs/status.md`, the directory guide to
@@ -20,6 +22,8 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
 - Documentation brought up to date after an audit: README (status, CI and security, roadmap),
   `CONTRIBUTING.md`, `SECURITY.md`, the skills `add-parameter`, `validate-plugin`, `build`,
   `release` and `orchestrate`, the manual test checklist.
+- A demo video recorded by the owner with 0.9.0 is linked from the README, the screenshots page
+  and the release notes: https://youtu.be/IdVCa7lpVsQ
 - The second Windows CI run (44634121070) found two test assumptions that hold only off Windows
   (an unwritable path, a path separator); fixed in the tests.
 
@@ -39,7 +43,7 @@ The first GitHub Actions run on Windows (MSVC) and Linux x86_64 (run 44627905615
 - `build.yml`: the `build` job's timeout is 60 minutes (was 30, sized for a warm cache: the Linux x86_64 row
   hit it during pluginval on a cold cache).
 
-## [0.9.0]
+## [0.9.0] - 2026-11-20
 
 First public release of Exitium Vintage Synth, a public beta.
 
