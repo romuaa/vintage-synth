@@ -6,7 +6,7 @@ first when resuming.
 
 ## Where the project is (2026-11-20) — read this first when resuming
 
-**Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20, GitHub pre-release,
+**Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20; shown as the latest release on GitHub since 2026-11-21, owner's word;
 tag `v0.9.0` at commit `116c5f8`: three zips and `SHA256SUMS.txt`). **M8 is done.**
 **Everything below is merged to `main` except B-Side S3a (parked, see below); no agent or build
 is in flight.** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
@@ -103,7 +103,7 @@ the orchestrator dispatches it (see "Decisions").
    Cubase 15 Pro on macOS, Reaper on an Arch-based Linux, and Reaper and Cubase 15 Pro on
    Windows 11, automation record and playback included; no defect found; demo video
    https://youtu.be/IdVCa7lpVsQ; two other people praised the usability. Published on the
-   owner's word as a pre-release. **The identity (class IDs, bundle ID, codes) is frozen from
+   owner's word as a pre-release; the owner had that mark removed on 2026-11-21. **The identity (class IDs, bundle ID, codes) is frozen from
    now on.** The next release is made as the skill `release` describes.
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the

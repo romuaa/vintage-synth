@@ -10,7 +10,7 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 - The release run of the build workflow passed at its first attempt (run 44695944505, all five
   targets, the three release jobs) and created the draft release `v0.9.0`.
 - The owner tried the zips by hand (Cubase 15 Pro on macOS; Reaper on an Arch-based Linux; Reaper
-  and Cubase 15 Pro on Windows 11; recording and playing back automation included), found no defect and had the draft published as a pre-release
+  and Cubase 15 Pro on Windows 11; recording and playing back automation included), found no defect and had the draft published as a pre-release (on 2026-11-21 the owner had the mark removed, so GitHub shows 0.9.0 as the latest release)
   on 2026-11-20. The tag `v0.9.0` is at commit `116c5f8`.
 - `CLAUDE.md` is now short: the rules, the fixed facts, the definition of done and two rules that
   were the owner's private ones until now ("Check before you claim", and ending a turn with
