@@ -66,8 +66,8 @@ version 0.9.0 in a DAW on Windows 11). More pictures of every editor page:
 | Windows 10/11 | x64 and ARM64 in one bundle | VST3 |
 | Linux | x86_64 and ARM64 in one bundle (glibc 2.35 or newer) | VST3 |
 
-Download the zip for your platform from the [releases page](https://github.com/romuaa/vintage-synth/releases) (0.9.0, a public beta,
-marked as a pre-release), or build from source. Until v1.0 the parameter set and the saved-state
+Download the zip for your platform from the [releases page](https://github.com/romuaa/vintage-synth/releases) (0.9.0, a public beta),
+or build from source. Until v1.0 the parameter set and the saved-state
 format may still change.
 
 A release is one zip per platform (macOS, Windows, Linux) that you unpack and copy into
