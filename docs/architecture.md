@@ -1891,6 +1891,49 @@ its cycle and meets the write-discontinuity budget of 8.4.5; "no waveform select
 8.4.4; the filter topology of 8.5; the remaining traces of 8.9.4 (routing, scripted traces);
 the triangle segment of `a_dac_*`; filter sweeps of both models rendered for the owner (8.10).
 
+#### 8.19.3 S3a closing step (contract, 2026-11-23; owner decisions O1 and O2 of 2026-11-22)
+What S3a still owes before it merges, after the second independent review and the escalated
+attempt on Model A's filter. These win over 8.19.1 where they differ.
+- **Model A's filter dynamics stay open.** `Filter::process` keeps the fixed form of round 2 for
+  Model A: it meets the committed `a_*` gates of 8.19.1, and its corners and peaks on the
+  `a_s3a_*` traces and `a_routing_a` stay reported, outside tolerance (the level and DC of what
+  is routed into the filter move the reference's corner; decisions "B-Side S3a round 2" R12).
+  The signal-dependent form of the escalated attempt is not part of S3a: it stays on its own
+  branch until the owner has judged the deviation by ear (O1). Nothing in S3b or S4 may depend
+  on Model A's corners being within 5 % away from the committed `a_filter_a` settings.
+- **Rate dependence** (both models; O2: a correction that costs nothing per sample). The
+  coefficients are mapped so that the discrete filter has the analog prototype's poles (matched
+  poles) and an output row fitted to its magnitude, instead of the plain trapezoidal mapping.
+  **Gate:** for every internal rate of 8.4.4, every mode and mode sum, resonance 0 ... 15 and
+  cutoffs over the whole register range, the magnitude of `Filter`'s linear response (Model B;
+  Model A's linear part) differs from the analog prototype with the same corner and Q by at
+  most 0.5 dB at every frequency from 20 Hz to 20 kHz where the prototype is above -20 dB of
+  its largest value. A setting that cannot meet 0.5 dB at no per-sample cost is reported with
+  its figure and gated at that figure plus 0.1 dB, and goes to the S4 budget decision (O2); the
+  per-sample cost budget of 8.19.1 is not raised. The committed gates of 8.19.1 keep passing
+  at 192 kHz, and the board low-pass (0.48 dB at 88.2 kHz by itself) is measured and reported
+  separately. `processWithCutoff` may use an approximation of the mapping; its error against
+  `setCutoff` + `process` is gated at 0.1 dB over the same set.
+- **Model A `processWithCutoff`** uses the damping, the band-pass weights and the `variation` of
+  the cutoff it is given, not of the stored one (gate: equal to `setCutoff` + `process` within
+  the approximation above, at cutoffs away from the stored one and at `variation` 0, 0.5, 1).
+- **Shared topology** (8.5): its DC is defined, not only its AC. With `volumeDc` on, n chips on
+  one shared filter give the output DC of n Per Note chips within 0.5 dB on a volume step with
+  held routed voices, for n = 1 ... 16, or the difference is a documented property with its
+  measured size in the header and a test that pins it; the header claims nothing it does not
+  test.
+- **Tests that can fail:** the board low-pass corner is pinned (a 15.4 -> 20 kHz change fails);
+  the `volumeDc`-off test writes a volume other than 0 (a volume applied before the board
+  high-pass, or twice, fails); a test named after "every law" pins every law it names or is
+  renamed. All test sources build with GCC 13 as well as GCC 11 (no `-Wdangling-reference`).
+- **Model B high-pass and band-pass stop band** (held-out traces: the floor is about 10 dB too
+  low at mid and full level): the cause is located if a fit to newly generated traces finds it
+  within this step; otherwise it is recorded as a known deviation with its figures, and a gate
+  trace for it is proposed for the next reference regeneration.
+- **Not in this step, moved to S3b (8.19.2):** the aliasing of the static curves (mixer curves,
+  Model A's voice bend and filter output function), which need their own contract with the
+  renderer's interface.
+
 ### 8.20 Alias follow-up step (contract, 2026-11-19; owner decision 2026-11-18: fix, no exemption)
 Fixes known defects 1 and 2 of 8.18.1 in the renderer. Runs beside S3a.
 
