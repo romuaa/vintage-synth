@@ -49,8 +49,14 @@ the parked figures).
   swing on the band-pass one, a shared floor near 220 Hz); no law in a followed DC or rms comes
   closer than 13 to 15 % rms. Limits of the reference itself: cutoff 380 repeats only within
   3 %; at cutoff 300 to 380 with swing its shape is 1.2 to 2.6 dB away from any two-pole.
-- **Escalated attempt on the Model A filter, running** (stronger model, branch
-  `bside/s3a-modela`; one build round and one fix round, then owner decision O1 applies).
+- **Escalated attempt on the Model A filter** (stronger model, branch `bside/s3a-modela`).
+  **Build round done: the accuracy gates are not met.** A signal-dependent form exists as a
+  second entry point (`Filter::processSignalDependent`; `process` and Model B bit-identical):
+  about half of all segments within 5 % (fit 54 %, hold-out 50 %), worst corners 7.4 %
+  (resonance), 22.3 % (level), 35.0 % (voices), 28.4 % (cutoff sweep, worse than before); at
+  rest it fails `a_filter_a` and `a_modes_a`; about 35 ns per sample against 7. **The fix round
+  is running** (the last one; then owner decision O1 applies), with listening files for the
+  owner.
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
@@ -58,6 +64,16 @@ the parked figures).
      quintic) run at the internal rate and alias: -67 dB (Model B) and -53 dB (Model A) for a
      3.85 kHz saw at 88.2 kHz, against budgets of -100 and -80 dB. No contract gate covers it
      yet. To settle in the S3b contract before the renderer's interface is fixed.
+     **Design study done (2026-11-23, prototypes in the developer cache, `s3b-alias/`):** every
+     stage can meet its budget at every rate with 3 dB to spare. Model B mixer: a linear-phase
+     half-band filter on the mixer sum before the curve (about +0.3 ns in the chain at 96 kHz,
+     13 to 39 samples of latency). Model A voice bend: folded into the renderer (bent steps and
+     bent slope changes; exact, no latency; about +2.5 to 5 ns per voice). Model A filter output
+     function and mixer: the same pre-filter, then the curves at twice the rate (about +7.5 ns,
+     24 to 46 samples). Antiderivative forms and plain 2x oversampling do not reach the budgets.
+     Open: the methods move weak in-band products of bright tones by a few dB (judgement call
+     for the S3b contract); a Model A filter with signal-dependent rates aliases inside its
+     loop and would need the filter itself run at 2x to 4x.
   2. Rate dependence confirmed (1.94 dB at 88.2 kHz in round 2's metric, 3.31 dB over all modes
      up to 20 kHz), and a correction at no per-sample cost exists: matched poles and a fitted
      output row (low-pass 1.79 -> 0.02 dB; the band-pass alone needs a better numerator). This
