@@ -98,6 +98,16 @@ dated log below has the reasons.
 - **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new
   judgement call there (with the reason), and mark the ones the user should review.
 
+## B-Side resumed: owner decisions (2026-11-22)
+
+The owner's word to resume B-Side at S3a after the 0.9.0 release, with three answers given before the work started.
+
+| # | Question | Owner's answer |
+|---|---|---|
+| O1 | The Model A filter failed its gates twice. What if the escalated attempt (a diagnostic test, then a stronger model: one build round and one fix round) fails too? | **Split and stop:** a pull request with Model B and the output stage only, Model A left open, and listening files of the Model A deviation so that the owner judges it by ear. No further rounds without the owner. |
+| O2 | The filter's response depends on the internal rate (round 2 row R11: up to 2.0 dB at 88.2 kHz); the known fix (the filter at twice the rate below 150 kHz) breaks Model B's 7 ns budget. | **Try a cheap correction inside 7 ns first.** If none exists, record the measured deviation and decide at S4 together with the Model A CPU budget, with real numbers. The 7 ns budget is not raised now. |
+| O3 | Merging needs the owner's word. May S3b start while the S3a pull request waits? | **Yes:** S3b starts on a branch based on the S3a branch, as its own pull request stacked on S3a. Nothing merges to `main` without the owner. |
+
 ## B-Side S3a round 2: the review's findings (2026-11-20, all review)
 
 What round 2 changed, what it measured and what stays open. Fitting traces (never committed, under the developer cache):
