@@ -103,7 +103,8 @@ catch_discover_tests(bside_independent PROPERTIES LABELS bside)
 # Reads the committed files only and never needs the adapter. Tests that need a chip which does not
 # exist yet report themselves skipped (Catch2 SKIP, ctest "Skipped"), never passed. One label only:
 # catch_discover_tests passes PROPERTIES on unquoted, so a label list would be split.
-add_executable(bside_trace trace/ReferenceDataTests.cpp trace/ShapeDataTests.cpp trace/RenderReferenceTests.cpp trace/AnalogReferenceTests.cpp)
+add_executable(bside_trace trace/ReferenceDataTests.cpp trace/ShapeDataTests.cpp trace/RenderReferenceTests.cpp trace/AnalogReferenceTests.cpp
+    trace/FilterDiagnosticTests.cpp)
 target_link_libraries(bside_trace PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_trace PRIVATE BS_REFERENCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/reference"
     BS_SHAPES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shapes"
