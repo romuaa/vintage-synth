@@ -4,12 +4,12 @@ Where the project is, what is parked, what comes next, and the history of what w
 The orchestrator keeps this file current; `CLAUDE.md` links here. Read "Where the project is"
 first when resuming.
 
-## Where the project is (2026-11-20) — read this first when resuming
+## Where the project is (2026-11-22) — read this first when resuming
 
 **Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20; shown as the latest release on GitHub since 2026-11-21, owner's word;
 tag `v0.9.0` at commit `116c5f8`: three zips and `SHA256SUMS.txt`). **M8 is done.**
-**Everything below is merged to `main` except B-Side S3a (parked, see below); no agent or build
-is in flight.** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
+**Everything below is merged to `main` except B-Side S3a, which is in flight again since
+2026-11-22 (see "B-Side S3a, in flight").** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
 x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the repository became public
 ("First CI runs" below).
 
@@ -21,7 +21,7 @@ x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the reposito
   program engine (S2c), band-limited rendering before the filter (S2b-2).
 
 **Repository housekeeping (2026-11-16, owner's word):** all merged branches are deleted, on GitHub
-and locally. Two branches exist: `main` and `study/crossmod-aliasing` (kept and pushed by owner
+and locally. Besides the work in flight two branches exist: `main` and `study/crossmod-aliasing` (kept and pushed by owner
 decision: the Cross Mod aliasing study's experimental code, built against the old `source/dsp/`
 layout, never to be merged as is; the reference for the deferred "Clean" Cross Mod switch).
 GitHub deletes a PR's branch on merge; delete the local branch after each merge too.
@@ -34,11 +34,19 @@ worktrees, gates, model routing, commit rules) and overrides it. If a session di
 repository's file, read it by hand before orchestrating. Checked 2026-11-16: `/orchestrate`
 loads the personal skill and reaches the repository's file through that instruction.
 
-**Owner decision 2026-11-19: Vintage is released first; B-Side is parked.** B-Side work stops
-where it is and continues only after the Vintage release is complete. Nothing is in flight; no
-agent is running.
+**B-Side is resumed (owner's word, 2026-11-22)** after the 0.9.0 release it waited for (owner
+decision 2026-11-19: Vintage first). The owner's three answers on resuming are in
+`docs/decisions.md`, "B-Side resumed: owner decisions" (O1: if the escalated Model A attempt
+fails, a pull request with Model B and the output stage only, plus listening files; O2: a cheap
+rate correction inside 7 ns or decide at S4; O3: S3b may start stacked on the S3a branch).
 
-**B-Side, parked state (resume here after the Vintage release):**
+**B-Side S3a, in flight (2026-11-22):** `bside/s3a-filter` has `main` merged in (the tests give
+the parked figures). Step 1, running: a diagnostic of the Model A filter's level dependence
+(branch `bside/s3a-diag`, data under the developer cache, `s3a-diag/`) and an independent review
+of round 2 (Model B and the output stage; no commits). Step 2: the escalated attempt on the
+Model A filter by a stronger model, one build round and one fix round, then O1 applies.
+
+**B-Side, state when parked on 2026-11-19 (the background of the work in flight):**
 - Merged: everything up to and including the render cost step (PR #32) and the alias follow-up
   step (PR #33, 2026-11-19; see History).
 - **S3a is unfinished and unmerged** on the pushed branch `bside/s3a-filter` (contract 8.19.1;
@@ -108,8 +116,8 @@ the orchestrator dispatches it (see "Decisions").
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
-2. **B-Side:** resume from the parked state above, on the owner's word (the Vintage release it
-   waited for is out).
+2. **B-Side:** S3a is in flight (above); then S3b, S4 and B-Side's own release work as listed
+   in the parked state.
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
 equal width, playing from the computer keyboard, a "Clean" Cross Mod switch, **a go-through of the factory
