@@ -41,10 +41,40 @@ fails, a pull request with Model B and the output stage only, plus listening fil
 rate correction inside 7 ns or decide at S4; O3: S3b may start stacked on the S3a branch).
 
 **B-Side S3a, in flight (2026-11-22):** `bside/s3a-filter` has `main` merged in (the tests give
-the parked figures). Step 1, running: a diagnostic of the Model A filter's level dependence
-(branch `bside/s3a-diag`, data under the developer cache, `s3a-diag/`) and an independent review
-of round 2 (Model B and the output stage; no commits). Step 2: the escalated attempt on the
-Model A filter by a stronger model, one build round and one fix round, then O1 applies.
+the parked figures).
+- **Diagnostic, done** (`tests/bside/trace/FilterDiagnosticTests.cpp`, tag `[s3a-diag]`; report
+  and data in the developer cache, `s3a-diag/REPORT.md`): the Model A corner errors are 99 %
+  wrong coefficients, not a missing stage or the estimator. The reference is a two-pole whose
+  two integrators follow the instantaneous node levels (DC acts on the low-pass integrator,
+  swing on the band-pass one, a shared floor near 220 Hz); no law in a followed DC or rms comes
+  closer than 13 to 15 % rms. Limits of the reference itself: cutoff 380 repeats only within
+  3 %; at cutoff 300 to 380 with swing its shape is 1.2 to 2.6 dB away from any two-pole.
+- **Escalated attempt on the Model A filter, running** (stronger model, branch
+  `bside/s3a-modela`; one build round and one fix round, then owner decision O1 applies).
+- **Independent review of round 2, done** (no commits; logs in the developer cache,
+  `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
+  to be fixed after the escalated attempt (they touch the same files):
+  1. The static curves (Model B mixer curve, Model A per-voice bend and mixer, Model A output
+     quintic) run at the internal rate and alias: -67 dB (Model B) and -53 dB (Model A) for a
+     3.85 kHz saw at 88.2 kHz, against budgets of -100 and -80 dB. No contract gate covers it
+     yet. To settle in the S3b contract before the renderer's interface is fixed.
+  2. Rate dependence confirmed (1.94 dB at 88.2 kHz in round 2's metric, 3.31 dB over all modes
+     up to 20 kHz), and a correction at no per-sample cost exists: matched poles and a fitted
+     output row (low-pass 1.79 -> 0.02 dB; the band-pass alone needs a better numerator). This
+     is the cheap correction of owner decision O2.
+  3. Fitting hygiene: the resonance tables were fitted at the gate's own setting (cutoff 1024);
+     harmless for Model B (held out within 0.16 dB), but Model A's committed corner gate
+     (4.97 %) does not generalise (held out 13.4 %).
+  4. `AnalogReferenceTests.cpp` and `ReferenceDataTests.cpp` do not build on GCC 13
+     (a dangling-reference warning; GCC 11, the CI compiler, is clean).
+  5. Model B high-pass and band-pass: the stop-band floor is about 10 dB too low at mid and full
+     level on held-out traces (outliers up to 19.5 %); the committed mode gate passes.
+  6. Shared topology: its DC differs from n Per Note chips (up to +3.4 dB on a volume step,
+     Model B, 16 chips); the header comment claims otherwise and the test is blind to DC.
+  7. Model A `processWithCutoff` keeps the stored Q and band-pass weights and ignores
+     `variation`.
+  8. Test gaps: nothing pins the board low-pass frequency; the volume-DC-off test writes the
+     volume to 0 and so cannot see the volume applied before the high-pass; no cost assertion.
 
 **B-Side, state when parked on 2026-11-19 (the background of the work in flight):**
 - Merged: everything up to and including the render cost step (PR #32) and the alias follow-up
