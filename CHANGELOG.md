@@ -17,6 +17,11 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   settling on a constant level, writes every sample, block split, bad input, no allocation); its figures on every
   Model A gate trace are printed (tag "signal-dependent"), and gated where met (three traces' peaks, `a_s3a_modes_a`).
   Stability tests of both models now include DC at both rails. `chip_bench`: `filterAdyn`, `s3aAdyn`, `cutAdyn`.
+- Fix round: the signal-dependent form's control at rest refitted per register code (dense ladder 381 to 519; the
+  threshold region turned out smooth per code). At rest it is now within 5 % on 15 of the 16 `a_filter_a` cutoffs and 12
+  of 15 on `a_s3a_cutoff_a` (worst 6.2 %, was 28.4 %); with resonance and level at cutoff 300 it got worse
+  (`a_s3a_res_a` worst 18.4 %). Still not a replacement for `process`. Its distortion and volume-step figures are now
+  measured and gated (2.20 dB, 0.50 dB).
 
 ### B-Side S3a round 2 (2026-11-20)
 - Model A's held-tone distortion is per voice: `OutputStage::shapeVoice` bends each voice before its envelope (the
