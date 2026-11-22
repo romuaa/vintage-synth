@@ -49,14 +49,24 @@ the parked figures).
   swing on the band-pass one, a shared floor near 220 Hz); no law in a followed DC or rms comes
   closer than 13 to 15 % rms. Limits of the reference itself: cutoff 380 repeats only within
   3 %; at cutoff 300 to 380 with swing its shape is 1.2 to 2.6 dB away from any two-pole.
-- **Escalated attempt on the Model A filter** (stronger model, branch `bside/s3a-modela`).
-  **Build round done: the accuracy gates are not met.** A signal-dependent form exists as a
-  second entry point (`Filter::processSignalDependent`; `process` and Model B bit-identical):
-  about half of all segments within 5 % (fit 54 %, hold-out 50 %), worst corners 7.4 %
-  (resonance), 22.3 % (level), 35.0 % (voices), 28.4 % (cutoff sweep, worse than before); at
-  rest it fails `a_filter_a` and `a_modes_a`; about 35 ns per sample against 7. **The fix round
-  is running** (the last one; then owner decision O1 applies), with listening files for the
-  owner.
+- **Escalated attempt on the Model A filter: failed, closed (2026-11-23).** Build round and fix
+  round by a stronger model; the accuracy gates are not met. Its result, a signal-dependent
+  form as a second entry point (`Filter::processSignalDependent`), is **not part of S3a** and
+  stays on the pushed branch `bside/s3a-modela` (never merged as is). Figures of that form
+  after the fix round: corners within 5 % on 58 % of the fitting and 55 % of the held-out
+  segments (rms 10.3 / 10.7 %); on the gate traces worst corners 18.4 % (resonance), 33.5 %
+  (level), 31.8 % (voices), 6.2 % (cutoff sweep); at rest `a_filter_a` 28 of 32 within 5 %
+  (worst 9.1 %) and `a_modes_a` outside (6.52 % / 1.05 dB); about 35 ns per sample against 7,
+  and it would alias inside its loop. `Filter::process` keeps round 2's fixed form for Model A
+  (committed gates pass; the `a_s3a_*` corners stay reported, up to 74.7 % and 224.5 %).
+  **Owner decision O1 applies: the owner judges the Model A deviation by ear.** Listening
+  files (reference, fixed form, signal-dependent form; six cases with a README) are in the
+  developer cache, `s3a-esc/listen/`. What a further attempt would need: decisions on that
+  branch, "B-Side S3a round 3", rows T12 to T18.
+- **Closing step, running** (contract 8.19.3; branch `bside/s3a-close`): the review's fixes
+  for Model B and the output stage (rate correction with matched poles, GCC 13, Shared DC,
+  Model A `processWithCutoff`, tests that can fail, the Model B stop band). Then the
+  orchestrator's full gate, one CI run and the pull request "Model B and the output stage".
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
