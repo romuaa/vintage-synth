@@ -371,7 +371,8 @@ TEST_CASE ("filter: Model A's signal-dependent dynamics keep the real-time rules
                 one[i] = a.processSignalDependent (in[i]);
                 diffCut = std::max (diffCut, std::abs (one[i] - c.processSignalDependentWithCutoff (in[i], 733.0f)));
             }
-            blocks = in;
+            for (std::size_t i = 0; i < in.size(); ++i) // (a vector assignment here trips a GCC 11 false positive, -Wstringop-overflow)
+                blocks[i] = in[i];
             std::size_t done = 0;
             while (done < blocks.size())
             {
