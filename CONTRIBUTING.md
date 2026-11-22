@@ -20,7 +20,7 @@ ctest --test-dir build/mac --output-on-failure
 ```
 
 On Windows use the commands in the README. You do not need every platform: say in the pull request
-what you built and tested, and CI covers the rest.
+what you built and tested; a maintainer starts the CI run that covers the rest.
 
 ## Rules that are not negotiable
 
@@ -31,18 +31,19 @@ what you built and tested, and CI covers the rest.
   algorithms are fine with a citation, and anything copied needs an AGPLv3-compatible licence.
 - **Parameter IDs are stable.** They are dotted (`lower.vcf.cutoff`). Once 1.0 ships they are
   frozen: only append new ones, never rename, remove or reorder. Saved state must keep loading.
-- **Warnings are errors on all targets** (macOS universal, Windows x64, Windows ARM64). No x86-only
+- **Warnings are errors on all targets** (macOS universal, Windows x64 and ARM64, Linux x86_64 and ARM64; GCC is the strictest). No x86-only
   intrinsics without a NEON path and runtime dispatch.
 - **DSP changes come with tests.** Keep the oscillator alias gate and the render-regression tests
   passing, and do not loosen a threshold to make a test pass without explaining why.
-- New source files go into `VS_PLUGIN_SOURCES` in `CMakeLists.txt`.
+- New source files go into `VS_COMMON_SOURCES` or `VS_VINTAGE_SOURCES` in `CMakeLists.txt`
+  (`BS_SOURCES` for B-Side).
 
 ## Pull requests
 
 - Keep each pull request focused and say what and why; the template has a short checklist.
 - CI does not build pull requests automatically. Run `scripts/preflight.sh` locally (macOS; see the
   README); a maintainer then starts the GitHub Actions confirmation run for Windows and Linux
-  x86_64 by hand. The security scan still runs on every pull request.
+  x86_64 by hand. The security scan and GitHub code scanning still run on every pull request.
 - A maintainer may need to approve the workflow run for a first-time contributor.
 - Dependency upgrades (JUCE, Catch2) are deliberate and happen in their own commit.
 
@@ -53,3 +54,7 @@ of the code against written contracts in `docs/architecture.md`; the owner makes
 decisions. Judgement calls and their reasons are logged in `docs/decisions.md`, and lessons learned
 in `docs/engineering-notes.md`. If your change makes a new judgement call, add a line there.
 Human contributors follow the same rules and face the same checks as the agents.
+
+If you work with an AI coding agent yourself, it will pick up `CLAUDE.md` and the skills in
+`.claude/skills/`. The practices and the reasons for them are described in
+[`docs/development-practices.md`](docs/development-practices.md).

@@ -13,13 +13,16 @@
 #                                        git-ignored build/ (caches, Docker volumes and images), then exit
 #
 # Steps, in run order (cheap and fast-failing first):
-#   docs           brand-name deny-list, no Claude-Session trailers, workflow YAML + JSON + CI plan table,
+#   docs           brand-name deny-list, no Claude-Session trailers, workflow YAML + trigger policy + JSON + CI plan table,
 #                  shell syntax                                       (scripts/preflight/docs-check.sh)
 #   scan           Trivy (vuln, secret, misconfig; HIGH/CRITICAL fail) from its pinned container image,
 #                  scanning a read-only snapshot of the tracked files (same settings as security.yml)
 #   mac            macOS universal Release build of both plugins, warnings as errors, lipo check of
 #                  both slices of each, full ctest, pluginval strictness 10 on each bundle (with its
-#                  editor tests)
+#                  editor tests), then the release packer on the Vintage bundle it just validated:
+#                  pack the macOS zip, verify it from the zip alone, self-test the verifier, check the
+#                  checksums, and load the bundle unpacked from the zip in host_smoke
+#                  (scripts/package-release.sh, docs/architecture.md 10.4)
 #   linux          scripts/linux-check.sh: GCC, Linux ARM64 container, tests under xvfb, bundle check
 #   validator      Steinberg's VST3 validator, built once from the SDK commit pinned in build.yml (cached),
 #                  run on each bundle the `mac` step built; needs "N tests passed, 0 tests failed"
@@ -241,6 +244,31 @@ step_mac() {
     echo "pluginval on: $bundle"
     "$pv" --strictness-level 10 --validate-in-process "$bundle" || return 1
   done < <(selected_bundles)
+  step_mac_package "$b"
+}
+
+# The release packer on the Vintage bundle the `mac` step just built and validated (it runs on every
+# full gate, so the packer cannot rot). Zips go to build/preflight/package (git-ignored), never into
+# a tracked folder. B-Side is never packed: the Vintage bundle must not contain its strings.
+step_mac_package() {
+  local b=$1 ver zdir zipf bundle smoke
+  ver=$(sed -n 's/^project(VintageSynth VERSION \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' CMakeLists.txt)
+  [[ -n $ver ]] || { echo "cannot read the version from CMakeLists.txt"; return 1; }
+  bundle=$(bundle_path "$b" "Exitium Vintage Synth.vst3")
+  [[ -n $bundle ]] || { echo "no Vintage bundle under $b"; return 1; }
+  zdir=$OUT/package
+  rm -rf "$zdir" && mkdir -p "$zdir" || return 1
+  zipf=$("$here/package-release.sh" pack --platform macos --bundle "$bundle" --version "$ver" \
+    --commit "$(git rev-parse HEAD)" --out "$zdir") || return 1
+  echo "zip: $zipf"; unzip -Z1 "$zipf" || return 1
+  "$here/package-release.sh" verify --license "$repo/LICENSE" "$zipf" || return 1
+  "$here/package-release.sh" selftest "$zipf" || return 1
+  "$here/package-release.sh" sums "$zdir" && "$here/package-release.sh" sums "$zdir" --check || return 1
+  # The same check CI runs on every platform: host_smoke against the bundle taken from the zip.
+  smoke=$b/tests/host_smoke_artefacts/Release/host_smoke
+  [[ -x $smoke ]] || { echo "host_smoke not found at $smoke"; return 1; }
+  mkdir -p "$zdir/unpacked" && ditto -x -k "$zipf" "$zdir/unpacked" || return 1
+  "$smoke" --profile vintage "$zdir/unpacked/Exitium Vintage Synth $ver/Exitium Vintage Synth.vst3"
 }
 
 step_mac_sanitize() {

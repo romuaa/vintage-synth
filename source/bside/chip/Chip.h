@@ -981,6 +981,7 @@ private:
         std::uint64_t stateChecks = 0, frozenStateChecks = 0; // renderCheckStates: gates compared (on frozen lines)
         std::uint64_t converterSwitches = 0; // changes of the set of Model A converter bits rendered (diagnostic)
         std::uint64_t levelSwitches = 0;     // switches of how a combined waveform's steps are emitted (diagnostic)
+        render::OutputRounding rounding {}; // the output's noise-shaped conversion to float (RenderTables.h)
     };
 
     void renderActivate() noexcept;
@@ -988,9 +989,9 @@ private:
     void renderPieceOpen() noexcept;
     void renderPieceAdvance (std::uint64_t cycles) noexcept;
     void renderPieceClose (bool toSampleEnd) noexcept;
-    float renderFinishSample() noexcept;
+    double renderFinishSample() noexcept;
     void renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std::uint64_t cyclesDone, std::uint64_t cycleNow, bool converterTerms) noexcept;
-    float renderOutput() noexcept;
+    double renderOutput() noexcept;
     int renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noexcept;
     void renderBeforeChange() noexcept;
     void renderAfterChange (int testSetMask) noexcept;
@@ -1258,9 +1259,12 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // value and slope just before and after it give a step (BLEP) and a slope change (BLAMP) from the shared
 // BlepTable (pulses and combined waveforms: the stronger kernel, RenderTables.h), placed at the event's exact
 // time (a sub-sample position; events up to one sample back are allowed and corrected in the samples already
-// written). The naive value is taken at the sample's end, the output is the per-oscillator ring buffer
-// kLatencySamples (8) samples later, times the envelope. Steps on the short kernel are that kernel's own steps
-// at their exact time, kLatencySamples late (tested against an independent sum of its steps: a free-running
+// written). The values just before an event at the sweep position come from the line's own state (its cell
+// says whether a boundary on the same instant has been taken; alias follow-up step). The naive value is taken
+// at the sample's end, the output is the per-oscillator ring buffer kLatencySamples (8) samples later, times
+// the envelope, summed in double and converted to float with its rounding error noise-shaped (at least 8 dB
+// lower in 0 .. 20 kHz, more above; render::OutputRounding; plain rounding once the sum has stood still for 128
+// samples). Steps on the short kernel are that kernel's own steps at their exact time, kLatencySamples late (tested against an independent sum of its steps: a free-running
 // saw, "[kernel]"; steps at writes, "[timing]"). Both kernels are laid out per table point with the 16 taps
 // side by side (RenderTables.h KernelTables): a step reads two (short; a combined waveform's cell step: the
 // long kernel refined to 2048 points) or four rows (the long kernel's Hermite read) with one weight.

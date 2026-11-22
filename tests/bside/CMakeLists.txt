@@ -60,6 +60,7 @@ add_executable(bside_unit
     unit/ChipRenderStreamTests.cpp
     unit/ChipRenderCostTests.cpp
     unit/ChipRenderDefectTests.cpp
+    unit/ChipRenderExactTests.cpp
     unit/FilterOutputTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_unit PRIVATE BS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")

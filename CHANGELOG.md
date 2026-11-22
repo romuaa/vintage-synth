@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
-versions follow [Semantic Versioning](https://semver.org/). Nothing has been released yet.
+versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9.0 (a public beta).
 
 ## [Unreleased]
 
@@ -37,6 +37,126 @@ versions follow [Semantic Versioning](https://semver.org/). Nothing has been rel
   -120 dB with no limit cycle or subnormal state), any block split bit-identical, no allocation.
 - `chip_bench`: new cases `filterB`, `filterA`, `outputB`, `outputA`, `s3aB`, `s3aA` (filter + output stage:
   6.5 ns Model B, 7.6 ns Model A per internal sample at 96 kHz on this Mac, indicative).
+### Release rehearsal and documentation (2026-11-20)
+
+- The release run of the build workflow passed at its first attempt (run 44695944505, all five
+  targets, the three release jobs) and created the draft release `v0.9.0`.
+- The owner tried the zips by hand (Cubase 15 Pro on macOS; Reaper on an Arch-based Linux; Reaper
+  and Cubase 15 Pro on Windows 11; recording and playing back automation included), found no defect and had the draft published as a pre-release (on 2026-11-21 the owner had the mark removed, so GitHub shows 0.9.0 as the latest release)
+  on 2026-11-20. The tag `v0.9.0` is at commit `116c5f8`.
+- `CLAUDE.md` is now short: the rules, the fixed facts, the definition of done and two rules that
+  were the owner's private ones until now ("Check before you claim", and ending a turn with
+  "What I need from you"). The project status moved to `docs/status.md`, the directory guide to
+  `docs/layout.md`, the full list of standing decisions to the top of `docs/decisions.md` and
+  the trap list to the top of `docs/engineering-notes.md`.
+- New `docs/development-practices.md` and a README section: the repository as a worked example
+  of AI-assisted development, automated testing, CI/CD and DevOps practice.
+- Documentation brought up to date after an audit: README (status, CI and security, roadmap),
+  `CONTRIBUTING.md`, `SECURITY.md`, the skills `add-parameter`, `validate-plugin`, `build`,
+  `release` and `orchestrate`, the manual test checklist.
+- A demo video recorded by the owner with 0.9.0 is linked from the README, the screenshots page
+  and the release notes: https://youtu.be/IdVCa7lpVsQ
+- The second Windows CI run (44634121070) found two test assumptions that hold only off Windows
+  (an unwritable path, a path separator); fixed in the tests.
+
+### First Windows and Linux x86_64 CI run (2026-11-20)
+
+The first GitHub Actions run on Windows (MSVC) and Linux x86_64 (run 44627905615) found these; fixed here.
+
+- Windows x64 and ARM64: the build failed in B-Side test, tool and benchmark sources only (the plugins, the
+  Vintage tests, `host_smoke`, `BSideTests` and `bside_independent` compiled and linked; no test had run yet).
+- `getenv` is deprecated on MSVC (C4996, an error in the B-Side targets): one header-only test helper,
+  `tests/support/Env.h` (`testenv::get`, `_dupenv_s` on Windows), now serves every call site in `tests/`.
+  `source/` has no `getenv`.
+- `tests/bside/tools/ShapeFit.cpp`: `1L << 40` is undefined on Windows (`long` has 32 bits); the fit costs are
+  now `std::int64_t` (a real bug there, not only a warning; identical on macOS and Linux).
+- Signed/unsigned comparison in `ChipReplayTests.cpp` (C4389), a shadowed `now` in `PresetTestHelpers.h` (C4458)
+  and a double-to-float range construction in `ReverbTests.cpp` (C4244) cleaned up; no test expectation changed.
+- `build.yml`: the `build` job's timeout is 60 minutes (was 30, sized for a warm cache: the Linux x86_64 row
+  hit it during pluginval on a cold cache).
+
+## [0.9.0] - 2026-11-20
+
+First public release of Exitium Vintage Synth, a public beta.
+
+### The instrument
+- Bi-timbral analog-style polysynth in VST3 format: two parts (Lower and Upper), 16 voices each,
+  played as Whole, Dual or Split.
+- Per part: two oscillators (sine, triangle, saw, square, pulse, noise) with sync and cross
+  modulation, high-pass filter, 12/24 dB low-pass filter with resonance, amplifier, two envelopes,
+  an LFO with delay, Poly/Unison/Solo, portamento, velocity, pitch bend and mod wheel.
+- One "Vintage" amount for drift and voice-to-voice variation; clean at zero.
+- Arpeggiator and 16-step sequencer, in time with the host.
+- Chorus, delay and reverb; an output limiter.
+- 64 factory programs, your own programs and banks, loading the sound of one part only.
+- Its own editor: pages Sound, Envelopes, LFO, Play, Arp + Seq, Effects and Browser; pictures that
+  follow the sound; every control follows host automation live; 75 to 200 % size.
+
+### Platforms
+- macOS 11 or newer (Apple silicon and Intel), Windows 10 or newer (x64), Linux with glibc 2.35 or
+  newer (x86_64).
+- Experimental: Windows ARM64 and Linux ARM64 (in the same downloads).
+
+### Known limits of this beta
+- The plugin is not signed with a developer certificate and there is no installer: unpack the zip
+  and copy the plugin into your VST3 folder; `INSTALL.txt` in each zip explains the system warning.
+- **Parameter IDs and the saved-state format are not frozen before 1.0.0:** a session or program
+  saved with this beta may not load unchanged in a later version.
+- Not tested with a screen reader. Some factory programs sound alike; the set will be revised.
+- Cross Mod keeps its classic sound, which aliases at high settings.
+
+## Development history before 0.9.0
+
+### M8 release hardening (2026-11-19)
+- Release packaging (docs/architecture.md section 10): `scripts/package-release.sh` (`pack`, `verify`, `sums`,
+  `changelog`, `selftest`), texts under `resources/release/` (INSTALL per platform, SOURCE, THIRD-PARTY derived
+  from what the build compiles), one zip per platform with `SHA256SUMS.txt`; `verify` works from the zip alone
+  (layout, version, slices, B-Side strings, metadata entries, symlinks, macOS `codesign --verify`).
+- `build.yml`: input `release` (Vintage only, then the jobs `pack`, `zip-smoke` and `package`, which creates a draft
+  release); never run yet (CI is offline). The `mac` step of `scripts/preflight.sh` packs and verifies the zip.
+- `verify` hardened after review (no symlinks, duplicate/case-colliding entries, exact file and mode lists, UTF-16 B-Side scan, platform-specific install text, licence comparison); release runs share one concurrency group, check the tag and that the repository is public, and the draft text carries an experimental-ARM64 header.
+- Second review round: B-Side is recognised by class IDs and bundle identifier (`resources/release/IDENTITY.txt`) instead of a 4-character binary search; `verify` checks the full entry list and unsafe names; `build.yml`: `repo-public` in `plan`, `linux-distros` needs a successful `plan`, and the Linux dependency check (`! ldd | grep -q`, which could never fail) is rewritten.
+- Fixed: the `ldd` checks in `build.yml` and `scripts/linux-check/inner.sh` (`! ldd | grep -q`) could never fail; they now capture the output and fail on a missing library or a shared libstdc++/libgcc.
+- Fixed: the macOS bundle's ad-hoc signature did not cover `moduleinfo.json` (JUCE writes it after the linker signs),
+  so `codesign --verify --deep --strict` failed on every build; the bundle is now signed again (ad hoc) as the last
+  build step.
+- Changed: the local gate (`scripts/preflight/docs-check.sh`) now enforces the Actions trigger policy over every
+  file in `.github/workflows/`: `workflow_dispatch` only, except `security.yml` (push to `main`, pull_request,
+  one cron at most weekly, workflow_dispatch). `pull_request_target` and `workflow_run` always fail.
+- Added: `scripts/preflight/test-workflow-triggers.sh`, the policy itself plus a self-test on fixture workflows
+  (run on every docs check) that proves each violation is caught.
+- Removed: a tracked Python bytecode file (`tests/bside/golden/tools/__pycache__/model.cpython-315.pyc`, which
+  embedded a developer's home path). The docs check now fails on any tracked `__pycache__/`, `.pyc` or `.pyo`
+  file and on any absolute home path (macOS, Windows or Linux user directory) in a tracked text or binary file.
+- Changed: a test comment no longer names a third-party product; the hashed brand deny-list gained one more
+  entry (a filter integrated-circuit part number found in old history).
+- Added: screenshots of every editor page (`docs/images/`, `docs/screenshots.md`; the README shows the Sound
+  page). Removed: the Browser wireframe picture. The B-Side reference-data manifests state provenance and licence.
+  Pre-public audit decisions: `docs/decisions.md`.
+- Fixed: typed parameter text such as "nan" gave NaN to 70 float parameters; text naming NaN or infinity, or a
+  result that is not finite, now gives the parameter's default (as in B-Side). Test over all 172 parameters.
+
+### B-Side alias follow-up step (2026-11-19)
+- Fixed: Model B pulses of width 1 and 4095 missed the -100 dB alias budget by up to 2.7 dB at frequencies
+  with a small-denominator ratio to the internal rate. The cause was the float conversion of the output (its
+  rounding errors repeat with the signal and gather on a few lines), not the rendering. The conversion's
+  rounding error is now noise-shaped (at least 8 dB lower in 0 .. 20 kHz; plain rounding once the output has
+  stood still for 128 samples, so a silent output stays constant). Exact measurement over 6 760 rows at every
+  internal rate: worst -113.4 dB (was -97.3).
+- Fixed: a synced target at an exact integer or half-integer frequency ratio lost the step (saw) or slope
+  change (triangle, combined waveforms) of every second reset, where the reset fell on the same instant as the
+  target's own wrap, fold or cell change: a line at half the source's rate, up to 0 dB re the strongest line
+  for Model A combined waveforms. The values before an event now come from the line's own state. Exact
+  ratios 1 to 8, 1/4 to 7/2: worst -108.4 dB re the strongest line (budget -100). Ratios 2 and 4 were affected
+  for combined waveforms only.
+- New gates: the exact measurement of narrow pulses and synced targets at exact ratios, a fast subset in the
+  suite and full scans in the hidden `[.render-exact]` and `[.render-sync-integer]` (which now assert).
+- Output differs from the render cost step by at most 4.8e-7 (-126 dB re 1, the rounding) in patches without
+  sync; `chip_bench` unchanged within its scatter.
+- Review round 1: the rounding is a class of its own (`render::OutputRounding`, `RenderTables.h`) measured
+  directly (in-band suppression at every rate, 4.75 float steps, settle count, cleared state); the exact gate
+  also runs on the general path. Recorded: the cost of re-rounding into a non-zero buffer (-96.5 dB) and of two
+  chips in one float buffer (0.86 dB margin), which bind S3b and S4.
 
 ### B-Side render cost step, fourth review (2026-11-19)
 - Tests and records only. The step moments' alias test now measures synced targets at a non-integer ratio

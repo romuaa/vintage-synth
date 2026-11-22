@@ -3,6 +3,40 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Known traps, the short list
+
+One line per trap; the dated sections below have the cause and the details. `CLAUDE.md` names
+only the most general ones. When something new bites, add a row to a dated section and, if it
+is a rule, a line here.
+
+- Never build a `juce::MidiMessage` on the audio thread (SysEx allocates); parse raw bytes.
+- Any stage that adds delay must be added to the reported latency.
+- JUCE's VST3 wrapper adds 2080 "MIDI CC" params + "Bypass"; exclude them when counting ours.
+- Wrap `JUCE_PLUGIN_ARTEFACT_FILE` in `$<GENEX_EVAL:…>`; tests take include dirs/defines from the plugin target.
+- Measure filters far below Nyquist and above the float floor; isolate a failing gate with a diagnostic test.
+- Run the tests under ASan/UBSan before pushing: MSVC's heap catches overruns macOS tolerates.
+- A new continuous parameter is not smoothed unless added to `PartModulator::next`.
+- Per-voice state inherited by a later note must be reset or computed from absolute time; a
+  block-size test only proves something if voices are reused.
+- GCC rejects float `==`/`!=` (`-Wfloat-equal` is an error); Clang and MSVC accept it. Use `std::fpclassify`.
+- Rosetta isn't installed: the x86_64 slice is checked with `lipo` only, never run locally.
+- Shared processor code is reached only through per-block hooks; instrument types are template
+  arguments of `BiTimbralProcessor`, not member types of the derived class.
+- Agents must never unpack, link or build inside the main checkout or a folder they did not create
+  (stray links inside `external/JUCE` and `external/Catch2` have appeared twice).
+- Never link `vs_test_core` and `bs_test_core` into one executable. A new test executable must be
+  added to `scripts/sanitize-targets.sh`.
+- Never `grep -q` on the right side of a pipe under `pipefail` (the left side dies with SIGPIPE and
+  the pipeline "fails"); capture the output first. `VS_PREFLIGHT_PLUGINS` is for `--quick`/`--only`.
+- GCC's `-Wshadow` is an error and also fires for a constructor parameter that shadows a member of
+  a JUCE base class; only the Linux step shows it.
+- `tests/bside/unit/IndependentModel.h` is the independent check of the chip: whoever edits
+  `source/bside/chip/` must not edit it (and the reverse).
+- A hand-over that publishes A and then clears B must be read B then A; change `ProgramHandover.h`
+  only together with its model test (`HandoverModelTests.cpp`).
+- Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
+  script); use the Edit tool for such text. Never read anything under `build/`.
+
 ## B-Side S3a: filter and output stage (2026-11-19)
 
 | Problem | Cause | Fix / rule |
@@ -19,6 +53,25 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
 | Shell edits through heredocs and long pipelines were refused by the worktree guard, and text with the environment-file suffix by a hook. | The guard cannot verify complex commands; the hook matches the suffix anywhere in the command. | Put edits in script files and run them; avoid that suffix in identifiers used on the command line. |
 | Catch2 ran no test for a test name with a comma ("... on a volume write, off it does not"). | A comma separates test specs on Catch2's command line. | Select such tests by tag (or escape the comma) in scripts. |
 | A per-sample filter cost 8.8 ns where its arithmetic is about a dozen operations. | The trapezoidal form's update is a chain of dependent multiply-adds; a loop of one filter waits on it. | Write the per-sample update as its state-space form (next states and outputs as linear forms of the old states and the input, coefficients precomputed at a change): 6.5 ns. |
+## First Windows and Linux x86_64 CI run (2026-11-20)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| `1L << 40` in a tool compiled on macOS and Linux and was undefined on Windows (MSVC C4293). | `long` is 64 bits on LP64 (macOS, Linux) and 32 bits on Windows, x64 and ARM64 alike. Only the compiler on Windows says so. | Never use `long`, `unsigned long` or an `L`/`UL` suffix where 64 bits are meant: use `std::int64_t`, `std::uint64_t` and `std::int64_t { 1 } << n`. Print 64-bit values as `long long` with `%lld`. Small counters may stay `long`. |
+| `std::getenv` failed the Windows build in seven test sources. | MSVC deprecates it (C4996) and our warnings are errors; a macOS and Linux build never shows it. | Tests read the environment only through `tests/support/Env.h` (`testenv::get`, `_dupenv_s` on Windows). No global `_CRT_SECURE_NO_WARNINGS`. |
+| The 30-minute job timeout cancelled the Linux x86_64 row during pluginval. | The figure came from warm-cache runs (ccache or sccache hits); the first run builds cold (about 15 to 20 min) and its unit tests took about 14 min. | Size a job timeout for the cold cache, not the warm one (now 60 min). A new compiler or runner image starts cold too. |
+
+## B-Side alias follow-up step (2026-11-19)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Narrow pulses missed -100 dB by 2.7 dB in the exact measurement while the bin-centred gate showed about -116 dB, through two steps that reworked the kernels. | Not the rendering: the float conversion of an output that sits half a converter range off zero. Its rounding errors repeat with a signal that repeats every q samples and gather on a dozen lines; a bin-centred measurement uses a fundamental on a power-of-two FFT's bin, so the signal does not repeat within the window (q does not divide 2^15), the errors spread over all bins and sit about 20 dB lower. The Kaiser measurement is not periodic either. | Before changing a kernel for an alias floor, capture the double sum before the float conversion and measure both: if the double is clean, the precision of the output is the defect. Measure narrow or quiet signals at small-denominator ratios with an exact transform over whole periods (`[exact]`). |
+| No gate measured a synced target at an exact frequency ratio, so a reset that lost its step every second period passed two steps and four reviews. | Vintage's sync ratios (1.37, 2.71, 0.71, 1.0031, 1.9969) were taken as they were; all avoid coincidences on purpose, and the above-register test moved from 3 to 2.71 to avoid the artefact rather than finding it. Integer and half-integer ratios are the musically common ones (octave and fifth sync). | Sync gates include exact integer and small-rational ratios, set so that the increments are exact multiples (registers num x M and den x M). A ratio chosen to avoid an artefact is a finding to record, not a test setup. |
+| A value "just before" an event was wrong only when the phase rounded exactly onto a boundary. | Re-deriving a cell from a phase with floor () takes the cell after an exact boundary; the line's own event for that boundary, rounded a little later in time, had not been taken. Two sources of truth for one state (the tracked cell and the phase) disagreed on ties. | At the current position take the tracked state, which knows which events have been taken; re-derive from the phase only where the state cannot know (behind the sweep position). Test coincidences of events by construction (exact ratios), not by chance. |
+| An independent model settled in minutes what spectra had left open across two reviews (which ratios, and why every second period). | Spectra show that something alternates, not where; two measurements with different setups disagreed on ratios 2 and 4. | Compare the output sample by sample with an independent band-limited model (the `[kernel]` construction) and log the events at the first differing sample. |
+| Shaping the output's rounding made a silent chip cycle by a few float steps and failed a gate on a silent output; shaping the caller's buffer made a silent chip three times as expensive in the bench. | An error-feedback loop with a constant input has idle tones; the bench (like a part summing chips) adds into a buffer that changes. | Round plainly once the value has stood still long enough (128 conversions, chosen by the exact scan, not by guess); shape only the chip's own contribution, and hoist the settled test out of the silent loop. |
+| The new exact gates passed with a general path that rounded plainly, and a changed shaping coefficient or settle count passed the whole suite (review round 1). | The gates' signals reach the renderer only through the batched sample loop; the shaping was tested only through its effect on a few rows, and a test that reads the class's own constant follows any change of it. | Run each gate on every path that produces output (batching off; a state that forces the general path); test a numerical component directly against its stated property; write the chosen constant out in the test. |
+| A "fix" that removes the narrow pulses' coherent rounding by resetting the shaping at every repeated value missed -100 dB (-99.2 dB). | Between a narrow pulse's edges the output is exactly constant for a few samples; plain rounding there brings the coherent error back. | A settle rule needs a length above the flat stretches of the signals the gate measures; check it at the frequencies where the stretch length crosses it. |
 
 ## B-Side render cost step (2026-11-18)
 

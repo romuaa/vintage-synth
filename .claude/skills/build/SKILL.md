@@ -63,12 +63,14 @@ This Mac has no Rosetta, so the x86_64 slice can only be checked with `lipo`, no
 - Never commit `build/`. Dependencies are submodules pinned to release tags; never float to `main`. Actions are pinned by SHA; Dependabot proposes updates.
 - An x86-only intrinsic or a missing NEON path is a build bug, even if the mac build passes.
 - Windows can't be built locally on this Mac. Say that it was verified "via CI only".
-- CI runs on push to `main` at GitHub `romuaa/vintage-synth` (private). Check it with `gh run list` and
-  `gh run view <id> --log-failed`; report Windows as "pending CI" until a run passes.
+- The `build` workflow never runs by itself (GitHub `romuaa/vintage-synth`, public): the orchestrator
+  dispatches it by hand. Check a run with `gh run view <id> --log-failed`; report Windows and
+  Linux x86_64 as "pending CI" for a change until a dispatched run passes.
 - Don't pass `-G "Visual Studio NN YYYY"`: runner images change VS versions. Locally use only
   `-A x64|ARM64`. CI uses Ninja inside the VS developer environment (`vswhere -latest` + `vcvarsall`).
-- New `.cpp` files go into `VS_PLUGIN_SOURCES` (top-level `CMakeLists.txt`); both the plugin and the
-  non-LTO `vs_test_core` (tests, `voice_bench`) compile from it.
+- New `.cpp` files go into `VS_COMMON_SOURCES` or `VS_VINTAGE_SOURCES` (top-level `CMakeLists.txt`;
+  `VS_PLUGIN_SOURCES` is their union); both the plugin and the non-LTO `vs_test_core` (tests,
+  `voice_bench`) compile from it.
 - LTO (`juce_recommended_lto_flags`) is linked PRIVATE to the plugin targets only. Never make it
   PUBLIC: anything linking the LTO shared code pays a full link-time code generation
   (about 5 min per Windows job).

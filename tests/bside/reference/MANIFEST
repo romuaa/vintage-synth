@@ -5,6 +5,9 @@
 # sources-commit: the commit of this repository whose source/bside/ the adapter compiled
 #   (trace reader, reference and spec writers, spec analysis); settings-sha256: the emulator
 #   settings the adapter used (all at the emulator's defaults).
+# Provenance and licence: generated data. The traces were written for this project; the reference
+# values are outputs measured from the reference emulator, run as an external developer tool. No
+# third-party code or table is contained here. Distributed under this repository's licence (LICENSE).
 emulator-commit 5393471a02a505ff43aa710148b2d35289b72c31
 emulator-archive-sha256 ac02b0bf7b4be260a22b2b711200e62e01961c2e82cce74400f6232c437d8fa1
 adapter-commit d7c10fa981c5dbd11f2ebfa5bfbf122a3b98b06f

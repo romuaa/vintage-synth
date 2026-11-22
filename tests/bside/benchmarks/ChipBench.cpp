@@ -23,6 +23,7 @@
 //                      down into filterA, outputA and s3aA
 //   cutB, cutA         s3aB and s3aA with a new cutoff every sample through Filter::processWithCutoff
 
+#include "../../support/Env.h"
 #include "bside/chip/Chip.h"
 #include "bside/chip/Filter.h"
 #include "bside/chip/OutputStage.h"
@@ -44,8 +45,8 @@ constexpr std::uint64_t kTick = 19656;
 /** Chip time per run: 4 s, or the environment variable CHIP_BENCH_SECONDS (longer runs for a profiler). */
 double chipSeconds()
 {
-    const char* s = std::getenv ("CHIP_BENCH_SECONDS");
-    const double v = s != nullptr ? std::atof (s) : 0.0;
+    const auto s = testenv::get ("CHIP_BENCH_SECONDS");
+    const double v = s ? std::atof (s->c_str()) : 0.0;
     return v > 0.0 ? v : 4.0;
 }
 

@@ -59,7 +59,10 @@ double measureRt60At1k (const Stereo& ir, double fs)
     for (const auto* ch : { &ir.l, &ir.r })
     {
         auto b1 = bandPass (*ch, 1000.0, 1.414, fs);
-        std::vector<float> tmp (b1.begin(), b1.end());
+        std::vector<float> tmp;
+        tmp.reserve (b1.size());
+        for (const double d : b1)
+            tmp.push_back (static_cast<float> (d));
         const auto b2 = bandPass (tmp, 1000.0, 1.414, fs);
         for (size_t i = 0; i < b2.size(); ++i)
             energy[i] += b2[i] * b2[i];

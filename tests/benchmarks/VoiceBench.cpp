@@ -9,6 +9,7 @@
 //   6. the full plugin path (Wave 3): section 5 plus the arpeggiator on both parts (1/32, host
 //      transport playing) and chorus, delay and reverb on, 32 voices sounding.
 // Run: build/mac-arm64/tests/voice_bench [base sample rate, default 48000] [Vintage, default 0.5]
+#include "../support/Env.h"
 #include "vintage/PluginProcessor.h"
 #include "vintage/engine/Modulation.h"
 #include "common/engine/Oversampler.h"
@@ -36,18 +37,18 @@ constexpr int repeats = 3; // best of
 // 0 sine .. 4 pulse).
 int benchSync()
 {
-    const char* e = std::getenv ("VS_BENCH_SYNC");
-    return e != nullptr ? std::atoi (e) : 1;
+    const auto e = testenv::get ("VS_BENCH_SYNC");
+    return e ? std::atoi (e->c_str()) : 1;
 }
 float benchCrossMod()
 {
-    const char* e = std::getenv ("VS_BENCH_XMOD");
-    return e != nullptr ? static_cast<float> (std::atof (e)) : 0.3f;
+    const auto e = testenv::get ("VS_BENCH_XMOD");
+    return e ? static_cast<float> (std::atof (e->c_str())) : 0.3f;
 }
 int benchWave1()
 {
-    const char* e = std::getenv ("VS_BENCH_WAVE1");
-    return e != nullptr ? std::atoi (e) : 2;
+    const auto e = testenv::get ("VS_BENCH_WAVE1");
+    return e ? std::atoi (e->c_str()) : 2;
 }
 
 vs::PartParams benchParams()

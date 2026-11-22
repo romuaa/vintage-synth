@@ -7,6 +7,7 @@
 // trace is fitted (the mean difference over every compared band of every segment) and every band must then
 // lie within the tolerance: the test checks the spectrum's shape, at every frequency setting, not its level.
 
+#include "../../support/Env.h"
 #include "bside/chip/Chip.h"
 #include "bside/trace/AnalogMeasure.h"
 #include "bside/trace/Compare.h"
@@ -238,7 +239,7 @@ TEST_CASE ("rendered converters against the reference (diagnostic)", "[.render-d
         }
         rms = n > 0 ? std::sqrt (rms / n) : 0.0;
         std::ostringstream o;
-        if (std::getenv ("BS_DAC_FRAMES") != nullptr)
+        if (testenv::isSet ("BS_DAC_FRAMES"))
             for (int f = 0; f < s.spec.frames; f += 12)
                 o << "[" << f << ": " << s.spec.levelTenthDb[static_cast<std::size_t> (f)] / 10.0 << " " << ours.levelTenthDb[static_cast<std::size_t> (f)] / 10.0 + gain << "] ";
         o << name << ": level per frame after a gain of " << gain << " dB: rms " << rms << " dB, worst " << worst << " dB (frame " << worstFrame << ", " << n << " frames)";

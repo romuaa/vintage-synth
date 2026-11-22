@@ -51,9 +51,12 @@ gcc)
     echo "bundle: $bundle"; ls "$bundle/Contents"
     so=$(ls "$bundle"/Contents/*-linux/*.so | head -n 1)
     echo "architecture folder: $(basename "$(dirname "$so")")"
-    ldd "$so"
-    ! ldd "$so" | grep -q "not found"
-    ! ldd "$so" | grep -q "libstdc++"
+    # Captured and tested with an explicit exit: `! cmd | grep -q` can never fail a script (the `!` exempts the
+    # pipeline from `set -e`), so this check used to pass whatever the plugin linked.
+    ldd_out=$(ldd "$so")
+    echo "$ldd_out"
+    case $ldd_out in *"not found"*) echo "ERROR: ldd reports a missing library for $so"; exit 1 ;; esac
+    case $ldd_out in *"libstdc++"*|*"libgcc_s"*) echo "ERROR: $so depends on a shared libstdc++ or libgcc (they must be linked statically)"; exit 1 ;; esac
     echo "Highest glibc symbol version: $(objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
   done
   step "ctest under xvfb (includes host_smoke and host_smoke_bside)"

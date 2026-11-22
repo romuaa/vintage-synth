@@ -67,9 +67,9 @@ struct PresetRig : Rig
     juce::StringArray differences (const std::vector<float>& expected)
     {
         juce::StringArray bad;
-        const auto now = raw();
+        const auto current = raw();
         for (int i = 0; i < schema().numParams(); ++i)
-            if (! schema().isExcluded (i) && ! matches (i, now[static_cast<size_t> (i)], expected[static_cast<size_t> (i)]))
+            if (! schema().isExcluded (i) && ! matches (i, current[static_cast<size_t> (i)], expected[static_cast<size_t> (i)]))
                 bad.add (schema().spec (i).id);
         return bad;
     }

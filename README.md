@@ -4,16 +4,23 @@ A bi-timbral, analog-style polyphonic synthesizer instrument in VST3 format, by 
 It's a two-oscillator subtractive synth in the style of the classic 80s flagship polys, with our own
 naming and design.
 
-> **Status: in development (pre-release).** The instrument is feature-complete for a first
-> release: two 16-voice parts (Lower and Upper) with Whole, Dual and Split modes, arpeggiator and
-> 16-step sequencer, chorus, delay and reverb, 64 factory programs with banks, and its own editor
-> (pages Sound, Envelopes, LFO, Play with a playable keyboard, Arp + Seq, Effects, Browser; live
-> host automation). What remains is hardening, signing and installers (see [Roadmap](#roadmap)).
-> Windows and Linux x86_64 builds are currently unverified (CI is offline).
+![The Sound page of Exitium Vintage Synth: two oscillators, the filter curve and the signal path](docs/images/sound.png)
+
+**See and hear it:** [demo video](https://youtu.be/IdVCa7lpVsQ) (about 5 minutes: an improvisation recorded with
+version 0.9.0 in a DAW on Windows 11). More pictures of every editor page:
+[docs/screenshots.md](docs/screenshots.md).
+
+> **Status: 0.9.0, a public beta, is released** ([downloads](https://github.com/romuaa/vintage-synth/releases)). The instrument is
+> feature-complete: two 16-voice parts (Lower and Upper) with Whole, Dual and Split modes,
+> arpeggiator and 16-step sequencer, chorus, delay and reverb, 64 factory programs with banks, and
+> its own editor. A release is one unsigned zip per platform, without installers (see
+> [Platforms](#platforms)). It has been tried by hand in Cubase and Reaper on macOS, Windows 11
+> and Linux.
+>
+> This repository is also a worked example of AI-assisted development with automated testing
+> and CI/CD: see [How this project is developed](#how-this-project-is-developed).
 
 ## Features
-
-Working now (M3):
 
 - **Two parts:** Lower and Upper, each a complete 16-voice synth. Whole (one sound), Dual (both
   layered, up to 32 voices) or Split (bass below, lead above, movable split point), with balance,
@@ -34,13 +41,22 @@ Working now (M3):
 - **Vintage amount:** 0 is exactly clean; turning it up adds per-voice tuning offsets, slow pitch drift,
   and filter and envelope tolerances. Deterministic, so renders repeat exactly.
 - **Sound quality:** anti-aliased oscillators (measured aliasing ≤ −113 dB up to a 5 kHz fundamental),
-  2× oversampling in real time and 4× when rendering offline. Latency (about 7 samples) is reported to the host.
+  2× oversampling in real time and 4× when rendering offline. Latency (5 to 8 samples) is reported to the host.
 - **Output:** 6 dB of fixed headroom and a soft limiter (on by default, ceiling −12 … 0 dB, no added
   latency, never above the current (smoothed) ceiling) so that heavy chords and effect settings do
   not clip.
 
-Planned: arpeggiator and 16-step sequencer, chorus, delay and reverb (these modules exist and are
-tested, but are not connected to the plugin yet), and patch banks.
+- **Arpeggiator and 16-step sequencer** in time with the host: patterns up, down, up + down, random
+  and as played over 1 to 4 octaves; steps with pitch, velocity, rest and tie; rate from 1/4 to 1/32
+  with triplets, gate, swing and hold; on the Lower part, the Upper part or both.
+- **Effects:** chorus (two modes), delay with ping-pong, and reverb, shared by both parts.
+- **Programs and banks:** 64 factory programs in a browser with categories and search; your own
+  programs, banks to import and export, and loading only the sound of one part ("tone") into
+  Lower or Upper. MIDI Program Change selects programs.
+- **Editor:** one page per purpose (Sound, Envelopes, LFO, Play with a playable keyboard, Arp + Seq,
+  Effects, Browser), pictures drawn from the real envelope, LFO, filter and arpeggiator code, help
+  text for every control, live host automation, 75 to 200 % size. See
+  [docs/screenshots.md](docs/screenshots.md).
 
 ## Platforms
 
@@ -50,7 +66,19 @@ tested, but are not connected to the plugin yet), and patch banks.
 | Windows 10/11 | x64 and ARM64 in one bundle | VST3 |
 | Linux | x86_64 and ARM64 in one bundle (glibc 2.35 or newer) | VST3 |
 
-There are no binary releases yet: build from source. Until v1.0 the parameter set may still change.
+Download the zip for your platform from the [releases page](https://github.com/romuaa/vintage-synth/releases) (0.9.0, a public beta),
+or build from source. Until v1.0 the parameter set and the saved-state
+format may still change.
+
+A release is one zip per platform (macOS, Windows, Linux) that you unpack and copy into
+your VST3 folder; there are no installers and no code signing yet. Each zip carries an `INSTALL.txt`
+for its platform (folders, the unsigned-plugin warning, uninstall), the licence, a `SOURCE.txt` that
+names the exact commit, and `THIRD-PARTY.txt`. The Windows ARM64 and Linux ARM64 parts of the merged
+bundles are experimental: built and unit-tested, but not run through pluginval and not tuned.
+How the zips are made and checked: [docs/architecture.md](docs/architecture.md) section 10 and
+`scripts/package-release.sh` (`pack`, `verify`, `sums`, `selftest`); the release workflow is the
+`build` workflow started by hand with `-f targets=all -f release=true`, which builds Vintage only
+(`-DVS_BUILD_BSIDE=OFF`) and ends in a draft GitHub release that the owner publishes.
 
 ## Building
 
@@ -102,10 +130,10 @@ mkdir -p ~/.vst3 && cp -r "build/VintageSynth_artefacts/Release/VST3/Exitium Vin
 ```
 
 The Linux build links the C++ runtime statically; at run time it needs glibc 2.35 or newer,
-libfontconfig and libfreetype. CI builds it on Ubuntu 22.04. So far Linux is validated by CI only
-(tests, pluginval on x86_64, the VST3 validator); the x86_64 build is also load-tested in containers
-of several distributions (Ubuntu, Debian, Fedora, Arch). ARM64 is CI-validated and not
-performance-tuned for small boards. A check in a DAW on a real machine is pending.
+libfontconfig and libfreetype. CI builds it on Ubuntu 22.04 and load-tests the x86_64 build in
+containers of several distributions (Ubuntu, Debian, Fedora, Arch). The ARM64 build is built and
+tested in CI too, and locally in a container on every change; it is not performance-tuned for small boards.
+The release was tried by hand in Reaper on an Arch-based distribution.
 
 Developers on a Mac with Docker can run `scripts/linux-check.sh` before pushing: it builds and tests
 with GCC in a native Linux ARM64 container (`--sanitize` for the AddressSanitizer/UBSan run).
@@ -135,7 +163,8 @@ image into `~/Library/Caches/vs-preflight/`). It builds and tests both macOS uni
 pluginval and the VST3 validator on each bundle, the sanitizers, the Linux ARM64 container build, a
 security scan and repository checks (`VS_PREFLIGHT_PLUGINS=vintage` or `bside` limits pluginval and the
 validator to one plugin while iterating; the hand-over run always covers both). `scripts/preflight.sh --clean` removes what it cached. Windows and Linux
-x86_64 are confirmed by a manually started CI run.
+x86_64 are confirmed by a manually started CI run. The `mac` step also packs the macOS release zip
+from the Vintage bundle it just validated, verifies the zip and loads the unpacked bundle in a host.
 
 ## Testing
 
@@ -146,40 +175,74 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
 ```
 
 - **Unit tests** (Catch2) cover oscillator aliasing and pitch, filter cutoff, slope and self-oscillation,
-  envelope and LFO timing, sample-accurate MIDI, and determinism.
+  envelope and LFO timing, sample-accurate MIDI, determinism, the arpeggiator and sequencer, the
+  effects, parameters and their text, presets and banks, state, and the editor (models, pictures, no
+  allocation while painting, accessibility inventory).
+- **Render regression** (ctest label `render`) compares rendered audio features with golden references.
 - **host_smoke** loads the built `.vst3` the way a DAW does and checks identity, parameters, rendering at
   44.1/48/96 kHz and state save/restore (`host_smoke --profile vintage|bside <bundle>`; ctest runs
   `host_smoke` and `host_smoke_bside`).
 - **BSideTests** (`tests/bside/`) test Exitium B-Side's shell: the skeleton contract, parameters,
   programs, state, bypass, the guard, the arpeggiator and no allocation in `processBlock`.
-- **bside_trace** (ctest label `trace`) checks the committed chip reference data
-  (`tests/bside/reference/`: register traces with the reference emulator's digital state and audio
-  features, `docs/bside-oracle-adapter.md`); the replay against our chip reports itself skipped
-  until the chip exists.
-- **pluginval** at strictness 10 runs in CI on macOS and Windows x64:
-  `pluginval --strictness-level 10 --validate-in-process --skip-gui-tests "<path>/Exitium Vintage Synth.vst3"`.
+- **bside_unit** and **bside_trace** (ctest labels `bside`, `trace`) test the B-Side chip model as a
+  library: the digital core replays the committed reference data (`tests/bside/reference/`: register
+  traces with the reference emulator's digital state and audio features,
+  `docs/bside-oracle-adapter.md`) without a mismatch; the rendering is held to its alias budgets.
+- **pluginval** at strictness 10 and the **VST3 validator** run on each bundle in the local gate
+  (macOS, with the editor tests) and in CI on macOS, Windows x64 and Linux x86_64 (without them):
+  `pluginval --strictness-level 10 --validate-in-process "<path>/Exitium Vintage Synth.vst3"`.
 
 ## CI and security
 
-- `build` workflow: macOS universal, Windows x64, Windows ARM64 and Linux x86_64 builds with unit
-  tests and the VST3 host smoke test; pluginval and the VST3 validator on macOS, Windows x64 and
-  Linux; merged Windows bundle; a Linux job that runs the tests under AddressSanitizer and UBSan. Ninja and a compiler
-  cache keep it fast.
+- `build` workflow, **started by hand only** (verification is local-first: `scripts/preflight.sh`):
+  macOS universal, Windows x64 and ARM64, Linux x86_64 and ARM64 builds with unit tests and the VST3
+  host smoke test; pluginval on macOS, Windows x64 and Linux x86_64; the VST3 validator; merged
+  Windows and Linux bundles; load tests of the Linux x86_64 build in several distributions; a Linux
+  job that runs the tests under AddressSanitizer and UBSan. Ninja and a compiler cache keep it fast.
+  With the input `release=true` (and `targets=all`) it builds Vintage only, then packs and verifies
+  the release zips, loads them in a host and creates a draft release; only that last job can write
+  to the repository's releases, and it never publishes.
 - `security` workflow: [Trivy](https://trivy.dev) scans the repository for vulnerable dependencies,
-  committed secrets and misconfigurations on every push, pull request and weekly.
+  committed secrets and misconfigurations on every push to `main`, on pull requests and weekly.
+- GitHub code scanning (CodeQL, default setup) analyses the C++, Python and workflow code on pushes
+  and pull requests.
 - Dependabot keeps GitHub Actions (pinned by commit SHA) and the JUCE and Catch2 submodules up to date.
+- `main` is protected: changes arrive through pull requests only.
+
+## How this project is developed
+
+A human owner directs AI coding agents: the owner makes the product decisions and approves every
+merge and release; agents write, test and review the code. Besides the instruments, the repository
+is meant as a worked example of good practice in three areas:
+
+- **AI-assisted development:** the agents' rules are files in the repository
+  ([CLAUDE.md](CLAUDE.md), skills in `.claude/skills/`); interfaces are written as contracts before
+  the code; every step is reviewed by an independent agent with its own test harness; decisions
+  and lessons are logged.
+- **Automated testing:** one local gate (`scripts/preflight.sh`) runs every check a single machine
+  can run, with gates written as numbers (alias limit, CPU budget).
+- **CI/CD and DevOps:** CI confirms the platforms the local gate cannot reach, a release is one
+  rehearsed workflow run that ends in a draft for a person to publish, and dependencies, actions
+  and runner images are pinned and scanned.
+
+The full description, with the reason for each practice, is in
+[docs/development-practices.md](docs/development-practices.md).
 
 ## Project layout
 
 ```
-source/dsp/        DSP building blocks (oscillator, filters, envelope, LFO, drift); no JUCE dependency
-source/engine/     voice, part (note handling, LFO, oversampling)
-source/params/     parameter list, value mappings, parameter layout
-source/            plugin processor
-source/common/     shared by both instruments (dsp, engine, fx, seq, params, presets, shell)
-source/bside/      Exitium B-Side: processor, test-tone part, parameters, presets
-tests/             unit tests, CPU benchmark, VST3 host smoke test; tests/bside/ for B-Side
-docs/              design decisions and engineering notes
+source/common/     shared by both instruments: dsp, engine (notes, voice allocation, mixer), fx,
+                   seq (arpeggiator, sequencer), params, presets, ui (editor library), shell (the
+                   shared processor skeleton)
+source/vintage/    Exitium Vintage Synth: processor, dsp (oscillator, filters, envelope, LFO, drift),
+                   engine (voice, part), params, ui (one file pair per editor page)
+source/bside/      Exitium B-Side: processor, chip model, program engine, parameters, presets
+presets/           factory programs (JSON, embedded in the plugins)
+resources/         the embedded font with its licence; release text templates
+tests/             unit tests, render regression, CPU benchmarks, VST3 host smoke test; tests/bside/
+scripts/           the local gate (preflight.sh), Linux container check, dev host, release packer
+docs/              contracts (architecture.md), decisions, engineering notes, editor help texts,
+                   screenshots
 external/          JUCE and Catch2 (git submodules, pinned)
 ```
 
@@ -198,17 +261,14 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 | M5 | Chorus, delay and reverb | Done |
 | M6 | Presets, patch banks, 64 factory programs, golden-render regression tests | Done |
 | M7 | Custom UI | Done (M7a–M7f); final category colours and a top-bar redesign deferred |
-| M8 | Hardening, signing, installers, release | Not started |
+| M8 | Hardening and the first release (0.9.0, a public beta: unsigned zips, no installers; signing and installers later) | Done: 0.9.0 published on 2026-11-20 |
 
-A second instrument is planned in this repository: **B-Side**, a polyphonic synth modelled on a classic 3-voice
-sound chip from early-1980s home computers, as its own plugin sharing the common engine code. Step S1a
-is done: the instrument-independent processor (MIDI, key modes, arpeggiator/sequencer, effects,
-output stage, bypass, presets, state) is a shared skeleton in `source/common/shell/`. Step S1b is done:
-**Exitium B-Side** exists as a second VST3 plugin (`source/bside/`, built unless `-DVS_BUILD_BSIDE=OFF`)
-with the shared parameters, 64 programs, state, the arpeggiator and the effects around a placeholder
-test-tone part. It makes no chip sound yet. Reference data (digital state at chosen cycles and
-audio features of 76 synthetic register traces, generated with a reference emulator outside this
-repository) is committed in `tests/bside/reference/`.
+A second instrument is in development in this repository: **Exitium B-Side**, a polyphonic synth
+modelled on a classic 3-voice sound chip from early-1980s home computers, as its own plugin sharing
+the common engine code (`source/bside/`, built unless `-DVS_BUILD_BSIDE=OFF`). The plugin is still a
+shell with the shared parameters, programs, state, arpeggiator and effects around a placeholder
+test-tone part: it makes no chip sound yet. The chip model exists as a tested library that is not
+wired in. **B-Side was paused for the first release of Exitium Vintage Synth** and is not part of 0.9.0.
 
 | B-Side step | Scope | Status |
 |---|---|---|
@@ -216,8 +276,8 @@ repository) is committed in `tests/bside/reference/`.
 | S2a | Chip digital core, exact against the reference per cycle | Done |
 | S2b | Own combined-waveform tables (fitted, never copied); band-limited waveform rendering | Done |
 | S2c | Patch program engine | Done |
-| S2 rest | Render cost step, parameters | Done; Model A rendering still above its cost target; an alias follow-up step is open |
-| S3 | Filter and output path | Not started |
+| S2 rest | Render cost step, parameters | Done; Model A rendering still above its cost target; alias follow-up step done (narrow pulses, exact sync ratios) |
+| S3 | Filter and output path | Started (filter in work on a branch), paused |
 | S4 | Polyphony, wiring into the plugin, factory patches | Not started |
 
 ## License
