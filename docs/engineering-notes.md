@@ -37,6 +37,16 @@ is a rule, a line here.
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
 
+## B-Side S3a round 3: Model A's signal-dependent dynamics (2026-11-23)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| A flag tested inside the inline `Filter::process`, with a call to an out-of-line function on one side, made Model B 2.7 ns slower per sample (5.2 to 7.9 ns) although its own arithmetic was unchanged. | The call may change any member, so the compiler kept the two states and every coefficient in memory across the loop; the states then go through a store and a load every sample. | A per-sample inline function calls nothing out of line, on any branch. A second form is a second entry point that the caller chooses per block. Measure the unchanged path after every change to a class it shares. |
+| The same benchmark case measured 2.2 ns slower after another case was added to the same table and call site. | The compiler specialised the shared benchmark function differently; the filter's code was the same. | New benchmark cases get their own function and call site; compare an "unchanged" case before believing a slowdown or a speed-up. |
+| Signal-dependent integrator rates were stable at 192 kHz and blew up at 88.2 and 96 kHz with full-scale noise. | A rate that may jump every sample between its floor and 0.45 x the internal rate (tan up to 6.3) defeats a predictor that uses the previous sample's rates; a constant rate that high is fine. | Limit what the signal may drive a rate to (a quarter of the internal rate here), keep the higher limit for the rate at rest, and test at the lowest internal rate with the loudest input, not at the rate the reference comparison uses. |
+| A cutoff table with one point per fitted cutoff matched every fitted corner and was 30 % off between two of them. | Near the control's threshold the corner changes sixfold over 0.02 of converter value: the reference's value per register code matters there, and a table over our own converter value cannot interpolate it. | Judge a table on cutoffs that were not fitted before believing it; where the response is that steep, only a per-code model of the converter (or a smooth table and an honest error) will do. |
+| Fitting segments with routed DC and a very quiet probe pulled the constants the wrong way. | Between cutoff 400 and 650 the reference does not follow a routed DC when the signal is small (sustain 1 to 4: the corner at sustain 1 is as without the DC), and settles on it as the level rises. | Leave such segments out of a fit and say so; fit level-dependent behaviour at the levels the gates use. |
+
 ## B-Side S3a: filter and output stage (2026-11-19)
 
 | Problem | Cause | Fix / rule |

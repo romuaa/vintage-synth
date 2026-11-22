@@ -5,6 +5,19 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3a round 3 (2026-11-23)
+- Model A filter: a second form, `Filter::processSignalDependent`, whose two integrator rates follow the node levels
+  every sample (the routed DC lowers the corner, a large swing at low cutoffs raises it, a resonance law that depends
+  on the cutoff). Fitted on generated data only; fit and held-out residuals agree (corner median 4.4 / 4.9 %).
+- **Not met:** the 5 % corner gates. On the round 2 gate traces the new form is far closer than the fixed one (worst
+  corner 7.4 % against 45.8 % on `a_s3a_res_a`, 35 % against 224 % with three voices) but not inside, and at rest it
+  misses `a_filter_a` and `a_modes_a`, which the fixed form passes. So `Filter::process` is unchanged (Model A and
+  Model B output bit-identical to before), and the new form is the caller's choice (decisions "B-Side S3a round 3").
+- Tests: the new form's bounds (every chip-reachable input at every rate and setting, inputs beyond any chip,
+  settling on a constant level, writes every sample, block split, bad input, no allocation); its figures on every
+  Model A gate trace are printed (tag "signal-dependent"), and gated where met (three traces' peaks, `a_s3a_modes_a`).
+  Stability tests of both models now include DC at both rails. `chip_bench`: `filterAdyn`, `s3aAdyn`, `cutAdyn`.
+
 ### B-Side S3a round 2 (2026-11-20)
 - Model A's held-tone distortion is per voice: `OutputStage::shapeVoice` bends each voice before its envelope (the
   renderer applies it per voice in S3b); the output stage and the filter's output functions refitted with it. Held tones
