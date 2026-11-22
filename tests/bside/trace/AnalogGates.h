@@ -44,14 +44,16 @@ inline std::string slurpFile (const std::filesystem::path& p)
     return ss.str();
 }
 
-/** Renders a committed trace through the chain and analyses it like the reference (cached per name). */
-inline const Rendered& renderedTrace (const std::filesystem::path& dir, const std::string& name)
+/** Renders a committed trace through the chain and analyses it like the reference (cached per name and dynamics).
+    `signalDependentA`: Model A through Filter::processSignalDependent (Filter::process otherwise). */
+inline const Rendered& renderedTrace (const std::filesystem::path& dir, const std::string& name, bool signalDependentA = false)
 {
     static std::map<std::string, Rendered> cache;
-    const auto it = cache.find (name);
+    const std::string key = name + (signalDependentA ? "#signal-dependent" : "");
+    const auto it = cache.find (key);
     if (it != cache.end())
         return it->second;
-    Rendered& r = cache[name];
+    Rendered& r = cache[key];
     const std::string bytes = slurpFile (dir / (name + ".bstrace"));
     const std::string specText = slurpFile (dir / (name + ".bsspec"));
     if (bytes.empty() || specText.empty())
@@ -68,7 +70,9 @@ inline const Rendered& renderedTrace (const std::filesystem::path& dir, const st
     }
     r.trace = t.trace;
     r.reference = s.spec;
-    r.chain = renderChain (t.trace);
+    ChainOptions options;
+    options.signalDependentA = signalDependentA;
+    r.chain = renderChain (t.trace, options);
     if (! trace::analyseRender (t.trace, trace::sha256Hex (bytes), r.chain.out, r.ours, &r.why))
         return r;
     r.segmentAmbiguous.assign (r.reference.segments.size(), false);

@@ -91,11 +91,15 @@ TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace toler
 
 namespace
 {
-/** Corners (+-5 %) and peaks (+-1 dB) of every segment of a filtered/bypass pair against the reference. */
-void cornersAndPeaks (const char* filtered, const char* bypass, bool gate)
+/** Corners (+-5 %) and peaks (+-1 dB) of every segment of a filtered/bypass pair against the reference. `gate`:
+    both are assertions; `gatePeaks`: the peaks are. `signalDependent`: Model A's signal-dependent dynamics
+    (Filter::processSignalDependent) instead of Filter::process; its lines carry the tag "signal-dependent". */
+void cornersAndPeaks (const char* filtered, const char* bypass, bool gate, bool signalDependent = false, bool gatePeaks = false)
 {
-    const auto& f = renderedTrace (kDir, filtered);
-    const auto& b = renderedTrace (kDir, bypass);
+    const auto& f = renderedTrace (kDir, filtered, signalDependent);
+    const auto& b = renderedTrace (kDir, bypass, signalDependent);
+    const std::string tagged = std::string (signalDependent ? "signal-dependent " : "") + filtered;
+    filtered = tagged.c_str();
     if (! f.ok || ! b.ok)
         SKIP (f.why << " " << b.why);
     REQUIRE (f.reference.segments.size() == f.ours.segments.size());
@@ -130,13 +134,12 @@ void cornersAndPeaks (const char* filtered, const char* bypass, bool gate)
         worstC = std::max (worstC, vc.deviation);
         worstP = std::max (worstP, vp.deviation);
         if (gate)
-        {
             CHECK (vc.pass);
+        if (gate || gatePeaks)
             CHECK (vp.pass);
-        }
     }
     std::printf ("[analog] %s: %d segments, worst corner %.2f %% (allowed 5), worst peak %.2f dB (allowed 1)%s\n", filtered, compared, 100.0 * worstC, worstP,
-                 gate ? "" : " (reported)");
+                 gate ? "" : (gatePeaks ? " (corners reported, peaks gated)" : " (reported)"));
     CHECK (compared > 0);
 }
 } // namespace
@@ -152,6 +155,34 @@ TEST_CASE ("analog: Model A corners and peaks across cutoff, resonance, level an
     cornersAndPeaks ("a_s3a_level_a", "a_s3a_level_bypass_a", false);
     cornersAndPeaks ("a_s3a_voices_a", "a_s3a_voices_bypass_a", false);
     cornersAndPeaks ("a_s3a_cutoff_a", "a_s3a_cutoff_bypass_a", false);
+}
+
+TEST_CASE ("analog: Model A's signal-dependent dynamics against the same reference data (reported; gated where met)", "[trace][reference][chip][analog]")
+{
+    // Filter::processSignalDependent (the caller's choice; decisions "B-Side S3a round 3"): the same traces and
+    // tolerances as the default form above and in ReferenceDataTests.cpp, printed with the tag "signal-dependent".
+    // GATED, because met: the resonance peaks of a_filter_a, a_s3a_res_a and a_s3a_cutoff_a (+-1 dB) and the modes at
+    // cutoff 200 and 1500 (a_s3a_modes_a, the scripted tolerance). REPORTED, NOT GATED: every corner (not within 5 % on
+    // any of the five traces: the control's threshold region and three voices), the peaks of a_s3a_level_a and
+    // a_s3a_voices_a, a_modes_a and a_routing_a.
+    cornersAndPeaks ("a_filter_a", "a_filter_bypass_a", false, true, true);
+    cornersAndPeaks ("a_s3a_res_a", "a_s3a_res_bypass_a", false, true, true);
+    cornersAndPeaks ("a_s3a_level_a", "a_s3a_level_bypass_a", false, true, false);
+    cornersAndPeaks ("a_s3a_voices_a", "a_s3a_voices_bypass_a", false, true, false);
+    cornersAndPeaks ("a_s3a_cutoff_a", "a_s3a_cutoff_bypass_a", false, true, true);
+    for (const char* name : { "a_modes_a", "a_s3a_modes_a", "a_routing_a" })
+    {
+        const auto& r = renderedTrace (kDir, name, true);
+        if (! r.ok)
+            SKIP (r.why);
+        const auto res = tr::compareScripted (r.reference, r.ours);
+        const bool gate = std::string (name) == "a_s3a_modes_a";
+        std::printf ("[analog] signal-dependent %s: outliers %.2f %% (allowed 5), mean %.2f dB (allowed 1), level %.2f dB (allowed 0.5), largest cell %.1f dB%s\n",
+                     name, 100.0 * res.outlierFraction, res.meanCellDb, res.levelDeltaDb, res.maxCellDb, gate ? "" : (res.pass ? " (reported)" : " (reported, outside)"));
+        INFO (res.report);
+        if (gate)
+            CHECK (res.pass);
+    }
 }
 
 TEST_CASE ("analog: Model A held-tone distortion and two-tone products at held-out drives (a_s3a_dist_a)", "[trace][reference][chip][analog]")

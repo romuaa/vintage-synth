@@ -150,7 +150,7 @@ TEST_CASE ("filter: after a loud input, silence decays below -120 dB with no lim
             for (const int res : { 0, 15 })
                 for (const float fc : { 0.0f, 2047.0f })
                     for (std::uint8_t mode = 1; mode < 8; ++mode)
-                        for (const float dc : { 0.0f, 0.7f })
+                        for (const float dc : { 0.0f, 0.7f, kInLo, kInHi }) // silence, one voice's DC, DC at both rails
                         {
                             Filter f;
                             f.prepare (m, rate, 0.5f);
@@ -188,15 +188,273 @@ TEST_CASE ("filter: after a loud input, silence decays below -120 dB with no lim
                                 hi = std::max (hi, y);
                                 tail = std::max (tail, std::abs (static_cast<double> (y) - target));
                             }
-                            if (dc > 0.0f)
+                            if (dc > 0.0f || dc < 0.0f)
                             {
-                                CHECK (tail < 2e-7);     // the float output's own rounding of the target
+                                CHECK (tail < 5e-7);     // the float output's own rounding of the target (up to 4 render units)
                                 CHECK (hi - lo < 1e-12f); // measured at most 1e-15: rounding of the double states (-300 dB), no cycle
                             }
                             else
                                 CHECK (! (tail > 0.0)); // exactly 0: the states are flushed
                         }
     WARN ("slowest decay to within 1e-6 of the static output: " << slowest << " s (allowed 3 s)");
+}
+
+TEST_CASE ("filter: Model A's signal-dependent rates stay bounded and settle (no self-oscillation, state limit never reached)", "[filter][stability]")
+{
+    // Through Filter::processSignalDependent the two integrator rates follow the signal sample by sample
+    // (Filter.h "MODEL A, SIGNAL-DEPENDENT"), so the linear proof of the trapezoidal form does not cover it. Shown here
+    // instead:
+    // 1. With every input a chip can produce (full-scale noise between the rails, noise riding on DC at either rail,
+    //    square waves between the rails at the internal rate's Nyquist and far below it) the output stays below 20
+    //    render units at every rate, cutoff, resonance, mode and variation: far inside the state limit (64), so the
+    //    limit is never what bounds a chip's signal. Measured largest: printed.
+    // 2. With inputs no chip can produce (noise of +-50 and +-1e5 render units, just inside the input guard) the output
+    //    is still finite and bounded (the rate limits and the state limit): below 1e3 x the input's size.
+    // 3. After any of these, a constant input settles: the output stops moving (peak-to-peak below 1e-9 within 1 s)
+    //    at every cutoff across the control's threshold and every level between the rails: no limit cycle, no
+    //    self-oscillation of the rate feedback.
+    bst::Rng r (41);
+    float largest = 0.0f;
+    for (const double rate : kRates)
+        for (const float var : { 0.0f, 0.5f, 1.0f })
+            for (const int res : { 0, 9, 15 })
+                for (const float fc : { 0.0f, 250.0f, 380.0f, 459.5f, 600.0f, 1023.0f, 1024.0f, 1500.0f, 2047.0f })
+                    for (const std::uint8_t mode : { std::uint8_t { 0x10 }, std::uint8_t { 0x20 }, std::uint8_t { 0x40 }, std::uint8_t { 0x70 } })
+                    {
+                        Filter f;
+                        f.prepare (Model::A, rate, var);
+                        f.setCutoff (fc);
+                        f.setResonance (res);
+                        f.setMode (mode);
+                        INFO ("rate " << rate << " variation " << var << " res " << res << " cutoff " << fc << " mode " << int (mode));
+                        float big = 0.0f;
+                        for (int kind = 0; kind < 5; ++kind)
+                            for (int i = 0; i < 4000; ++i)
+                            {
+                                float x = 0.0f;
+                                switch (kind)
+                                {
+                                    case 0: x = uniform (r, kInLo, kInHi); break;                 // full-scale noise
+                                    case 1: x = kInHi - uniform (r, 0.0f, 1.5f); break;            // noise at the upper rail
+                                    case 2: x = kInLo + uniform (r, 0.0f, 1.5f); break;            // noise at the lower rail
+                                    case 3: x = (i & 1) != 0 ? kInHi : kInLo; break;               // Nyquist square between the rails
+                                    default: x = ((i / 400) & 1) != 0 ? kInHi : kInLo; break;      // slow square between the rails
+                                }
+                                const float y = f.processSignalDependent (x);
+                                big = std::max (big, std::abs (y));
+                            }
+                        REQUIRE (finiteAndBounded (big, 20.0f));
+                        largest = std::max (largest, big);
+                        // inputs beyond any chip: finite and bounded
+                        for (const float amp : { 50.0f, 1.0e5f })
+                        {
+                            float huge = 0.0f;
+                            for (int i = 0; i < 2000; ++i)
+                                huge = std::max (huge, std::abs (f.processSignalDependent (uniform (r, -amp, amp))));
+                            REQUIRE (finiteAndBounded (huge, 1.0e3f * amp));
+                        }
+                    }
+    WARN ("Model A: largest output with every chip-reachable input over all settings: " << largest << " (bound 20, state limit 64)");
+
+    // 3. settling at constant levels across the threshold of the control
+    double slowest = 0.0;
+    for (const double rate : { 88200.0, 96000.0, 192000.0 })
+        for (const int res : { 0, 15 })
+            for (int reg = 0; reg <= 2047; reg += 89)
+                for (const float dc : { kInLo, 0.0f, 0.47f, 1.2f, 2.2f, 3.0f, kInHi })
+                {
+                    Filter f;
+                    f.prepare (Model::A, rate, 0.5f);
+                    f.setCutoff (static_cast<float> (reg));
+                    f.setResonance (res);
+                    f.setMode (0x70);
+                    for (int i = 0; i < 2000; ++i)
+                        f.processSignalDependent (uniform (r, kInLo, kInHi));
+                    const int n = static_cast<int> (rate);
+                    float lo = 1e30f, hi = -1e30f;
+                    int still = 0, settledAt = n;
+                    float last = f.processSignalDependent (dc);
+                    for (int i = 0; i < n; ++i)
+                    {
+                        const float y = f.processSignalDependent (dc);
+                        still = std::abs (y - last) < 1e-9f ? still + 1 : 0;
+                        if (still == 0)
+                            settledAt = n;
+                        else if (settledAt == n && still >= 64)
+                            settledAt = i;
+                        last = y;
+                        if (i >= n - 2000)
+                        {
+                            lo = std::min (lo, y);
+                            hi = std::max (hi, y);
+                        }
+                    }
+                    INFO ("rate " << rate << " res " << res << " cutoff " << reg << " level " << dc << ": last " << last << " peak-to-peak " << hi - lo);
+                    REQUIRE (hi - lo < 1e-9f);
+                    REQUIRE (std::abs (static_cast<double> (last) - f.staticOutput (dc)) < 1e-5);
+                    slowest = std::max (slowest, settledAt / rate);
+                }
+    WARN ("Model A: slowest settling on a constant level: " << slowest << " s (within the 1 s tested)");
+}
+
+TEST_CASE ("filter: Model A's signal-dependent dynamics keep the real-time rules (writes every sample, block split, bad input, silence, no allocation)", "[filter][stability][split][rt]")
+{
+    bst::Rng r (43);
+    // Model B has one form: processSignalDependent is process
+    {
+        Filter b, c;
+        b.prepare (Model::B, 96000.0, 0.5f);
+        c.prepare (Model::B, 96000.0, 0.5f);
+        for (Filter* f : { &b, &c })
+        {
+            f->setCutoff (900.0f);
+            f->setResonance (9);
+            f->setMode (0x70);
+        }
+        float diff = 0.0f;
+        for (int i = 0; i < 5000; ++i)
+        {
+            const float x = uniform (r, kInLo, kInHi);
+            diff = std::max (diff, std::abs (b.process (x) - c.processSignalDependent (x)));
+            diff = std::max (diff, std::abs (b.processWithCutoff (x, 700.0f) - c.processSignalDependentWithCutoff (x, 700.0f)));
+        }
+        CHECK (! (diff > 0.0f));
+    }
+    for (const double rate : kRates)
+    {
+        INFO ("rate " << rate);
+        // a cutoff, resonance or mode write every sample, the two forms mixed on one stream: finite and bounded
+        {
+            Filter f;
+            f.prepare (Model::A, rate, 0.5f);
+            OutputStage o;
+            o.prepare (Model::A, rate, true);
+            for (int i = 0; i < 40000; ++i)
+            {
+                f.setCutoff (uniform (r, -10.0f, 2100.0f));
+                if (r.chance (30))
+                    f.setResonance (r.range (-1, 16));
+                const auto mv = static_cast<std::uint8_t> (r.below (256));
+                if (r.chance (20))
+                {
+                    f.setMode (mv);
+                    o.setModeVolume (mv);
+                    o.setRouting (static_cast<std::uint8_t> (r.below (256)));
+                }
+                if (r.chance (2))
+                    (void) f.process (o.filterBusLevel (uniform (r, -1.5f, 1.5f), uniform (r, 0.0f, 3.0f))); // the fixed form on the same states
+                if (r.chance (2))
+                    f.setVariation (uniform (r, 0.0f, 1.0f));
+                const float y = r.chance (50) ? f.processSignalDependent (o.filterBusLevel (uniform (r, -1.5f, 1.5f), uniform (r, 0.0f, 3.0f)))
+                                              : f.processSignalDependentWithCutoff (o.filterBusLevel (uniform (r, -1.5f, 1.5f), uniform (r, 0.0f, 3.0f)), uniform (r, -10.0f, 2100.0f));
+                const float out = o.process (y, uniform (r, -1.5f, 1.5f), uniform (r, 0.0f, 3.0f));
+                REQUIRE (finiteAndBounded (y, 60.0f));
+                REQUIRE (finiteAndBounded (out, 10.0f));
+            }
+        }
+        // bit-identical for any block split, and processWithCutoff at the stored cutoff equals process
+        {
+            std::vector<float> in (6000), one (6000), blocks (6000);
+            for (float& v : in)
+                v = uniform (r, kInLo, kInHi);
+            Filter a, b, c;
+            for (Filter* f : { &a, &b, &c })
+            {
+                f->prepare (Model::A, rate, 0.5f);
+                f->setCutoff (733.0f);
+                f->setResonance (11);
+                f->setMode (0x30);
+            }
+            float diffCut = 0.0f;
+            for (std::size_t i = 0; i < in.size(); ++i)
+            {
+                one[i] = a.processSignalDependent (in[i]);
+                diffCut = std::max (diffCut, std::abs (one[i] - c.processSignalDependentWithCutoff (in[i], 733.0f)));
+            }
+            blocks = in;
+            std::size_t done = 0;
+            while (done < blocks.size())
+            {
+                const std::size_t n = std::min (blocks.size() - done, static_cast<std::size_t> (1 + r.below (97)));
+                b.processSignalDependent (blocks.data() + done, static_cast<int> (n));
+                done += n;
+            }
+            bool same = true;
+            for (std::size_t i = 0; i < in.size(); ++i)
+                same = same && ! (one[i] < blocks[i] || one[i] > blocks[i]);
+            CHECK (same);
+            CHECK (! (diffCut > 0.0f));
+        }
+        // a NaN, an infinity or an absurd value does not poison the state; silence after a loud input ends at exactly 0
+        for (const float bad : { std::nanf (""), std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), 1e30f })
+        {
+            Filter f;
+            f.prepare (Model::A, rate, 0.5f);
+            f.setCutoff (500.0f);
+            f.setResonance (15);
+            f.setMode (0x70);
+            for (int i = 0; i < 2000; ++i)
+                f.processSignalDependent (uniform (r, kInLo, kInHi));
+            (void) f.processSignalDependent (bad);
+            float y = 1.0f;
+            for (int i = 0; i < static_cast<int> (rate); ++i)
+            {
+                y = f.processSignalDependent (0.0f);
+                REQUIRE (std::isfinite (y));
+                REQUIRE (std::fpclassify (y) != FP_SUBNORMAL);
+            }
+            CHECK (! (std::abs (y) > 0.0f));
+        }
+    }
+    // no allocation in the setters or processing
+    if (bst::allocationsAreCounted())
+    {
+        Filter warm;
+        const auto before = bst::totalAllocations();
+        Filter f;
+        f.prepare (Model::A, 96000.0, 0.5f);
+        float acc = 0.0f;
+        for (int i = 0; i < 10000; ++i)
+        {
+            f.setCutoff (static_cast<float> (i % 2048));
+            f.setResonance (i % 16);
+            f.setMode (static_cast<std::uint8_t> (i));
+            f.setVariation (static_cast<float> (i % 10) / 10.0f);
+            acc += f.processSignalDependent (0.6f) + f.processSignalDependentWithCutoff (0.6f, static_cast<float> ((i * 7) % 2048));
+        }
+        CHECK (std::isfinite (acc));
+        CHECK (bst::totalAllocations() == before);
+    }
+    // the corner follows the level routed into the filter (what the fixed form cannot do): the response at a frequency
+    // above the corner falls, against the fixed form's, when the filter-bus DC rises from one quiet voice to three
+    {
+        auto gainAt = [] (bool signalDependent, double dc) {
+            Filter f;
+            f.prepare (Model::A, 192000.0, 0.5f);
+            f.setCutoff (800.0f);
+            f.setMode (Filter::kLowPass);
+            const int settle = 38400, n = 19200; // whole periods of 6 kHz at 192 kHz
+            double sn = 0.0, cs = 0.0;
+            for (int i = 0; i < settle + n; ++i)
+            {
+                const double ph = 2.0 * kPi * 6000.0 * i / 192000.0;
+                const auto x = static_cast<float> (dc + 0.01 * std::sin (ph));
+                const double y = signalDependent ? f.processSignalDependent (x) : f.process (x);
+                if (i >= settle)
+                {
+                    sn += y * std::sin (ph);
+                    cs += y * std::cos (ph);
+                }
+            }
+            return 2.0 * std::sqrt (sn * sn + cs * cs) / n / 0.01;
+        };
+        const double one = gainAt (true, 0.47), three = gainAt (true, 1.24), fixedOne = gainAt (false, 0.47), fixedThree = gainAt (false, 1.24);
+        WARN ("Model A, cutoff 800, gain at 6 kHz with filter-bus DC 0.47 / 1.24: signal-dependent " << one << " / " << three << ", fixed " << fixedOne << " / "
+                                                                                                    << fixedThree);
+        // the fixed form's gain there changes only through the static output function (measured: the signal-dependent
+        // ratio 0.83, the fixed one 1.15)
+        CHECK (three / one < 0.8 * (fixedThree / fixedOne));
+    }
 }
 
 TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant fails)", "[filter]")

@@ -38,6 +38,7 @@ struct ChainOptions
     double rate = 192000.0;   // internal rate; a multiple of 48 kHz for the decimator
     bool volumeDc = true;     // the reference has it
     float variation = 0.5f;   // Model A: the reference's curve
+    bool signalDependentA = false; // Model A: Filter::processSignalDependent instead of process
 };
 
 struct ChainRender
@@ -265,7 +266,8 @@ inline ChainRender runChain (const ChipRecord& rec, const ChainOptions& o = {})
                 ++r.ambiguousSamples;
             }
         }
-        const float fOut = filter.process (stage.filterBusLevel (aF, envF));
+        const float fIn = stage.filterBusLevel (aF, envF);
+        const float fOut = o.signalDependentA ? filter.processSignalDependent (fIn) : filter.process (fIn);
         r.internal[j] = stage.process (fOut, aD, envD);
     }
 

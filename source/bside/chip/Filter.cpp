@@ -56,6 +56,47 @@ constexpr double kALpMin = -1.5, kALpMax = 4.5;
 // band leak by 2 dB to meet a_modes_a (decisions "B-Side S3a", review)
 constexpr double kABand = 0.59, kABandRes = 0.42, kAHigh = -0.59, kAHighBand = -0.20;
 
+// ---- Model A, signal-dependent dynamics (Filter.h "MODEL A, SIGNAL-DEPENDENT") ----
+// Filter.h "MODEL A, SIGNAL-DEPENDENT"; decisions "B-Side S3a round 3". Every value is our own fit to noise responses
+// generated with the reference adapter on fitting traces (never the committed gate traces).
+// the rates' floor (Hz) of the band-pass (1) and the low-pass (2) integrator
+constexpr double kAIFloor1 = 243.00, kAIFloor2 = 318.00;
+// the damping at resonance 0 (1 / Q of the loop when the two rates are equal)
+constexpr double kAIDamp0 = 1.44276;
+// the input node's factor (Hz per render unit): the high-pass node for integrator 1, the band-pass node for 2
+constexpr double kAIIn1 = 26088.1, kAIIn2 = 31798.6;
+// how far each control follows its input node (0: not at all, 0.5: a resistance linear in its input)
+constexpr double kAIGate1 = 0.23449, kAIGate2 = 0.23059;
+// the low-pass integrator's overdrive falls with the low-pass node's level v (render units): kAIOut2 v, plus
+// kAIOut2Sq (v - kAIOutKnee)^2 above the knee
+constexpr double kAIOut2 = 2426.18, kAIOut2Sq = 4939.49, kAIOutKnee = 1.9576;
+// the softness of the threshold (Hz)
+constexpr double kAISoft = 262.51;
+// integrator 1's control from integrator 2's: scale and offset (Hz)
+constexpr double kAICtl1Scale = 0.89731, kAICtl1Offset = -2.64;
+// the control of integrator 2 (Hz) against the cutoff converter's value d (piecewise linear)
+constexpr std::array<double, 26> kAICtlD { 0.000, 0.060, 0.100, 0.130, 0.150, 0.165, 0.180, 0.195,
+                                           0.210, 0.225, 0.240, 0.255, 0.270, 0.285, 0.300, 0.325,
+                                           0.350, 0.400, 0.450, 0.500, 0.550, 0.600, 0.700, 0.800,
+                                           0.900, 1.000 };
+constexpr std::array<double, 26> kAICtlHz { -6121.9, -3910.2, -2222.6, -1241.1, -396.3, 838.2, 838.2, 1037.1,
+                                            1425.4, 2037.7, 2529.5, 2638.3, 2971.6, 3376.6, 4358.4, 4861.0,
+                                            5592.7, 7549.3, 9261.9, 10898.6, 12490.5, 14202.8, 16702.1, 19724.9,
+                                            20862.0, 21802.1 };
+// per resonance step: the factor on Q (the damping is kAIDamp0 / kAIQRes): 1 / (1 - 0.029753 r - 0.0010969 r^2)
+constexpr std::array<double, 16> kAIQRes { 1.0000, 1.0318, 1.0683, 1.1100, 1.1582, 1.2139, 1.2788, 1.3550,
+                                           1.4456, 1.5543, 1.6870, 1.8519, 2.0618, 2.3374, 2.7140, 3.2584 };
+// the loop gain rho = (1 - a r - kAIResCornerSq r^2)^2 for resonance r, with a = kAIResCornerLow where integrator 2's
+// control is at or below kAIResCtlLow (Hz) and kAIResCornerHigh at or above kAIResCtlHigh (linear between)
+constexpr double kAIResCornerLow = -0.006203, kAIResCornerHigh = 0.005784, kAIResCornerSq = 0.0002439, kAIResCtlLow = 2500.0, kAIResCtlHigh = 4500.0;
+// the integrator states are limited to this (render units; a chip's signal stays below 5)
+constexpr double kAIStateLimit = 64.0;
+// the largest rate the signal may drive an integrator to, as a fraction of the internal rate (see modelARateCaps)
+constexpr double kAIDynamicLimit = 0.25;
+// band-pass output: kAIBand x bp x (1 + kAIBandRes (lowGain - 1)); high-pass output: kAIHigh hp + kAIHighBand x bp x the
+// same resonance factor (fitted on the mode responses of the fitting traces; decisions "B-Side S3a round 3")
+constexpr double kAIBand = 0.8250, kAIBandRes = 0.4151, kAIHigh = -0.5469, kAIHighBand = -0.2584;
+
 const render::LadderWeights& cutoffWeights() noexcept
 {
     static const render::LadderWeights w = render::ladderWeights (11, kALadderRatio, true);
@@ -92,6 +133,69 @@ double modelAQ0 (double hz) noexcept
     const double f = std::log2 (hz / kAQ0Hz[i]) / std::log2 (kAQ0Hz[i + 1] / kAQ0Hz[i]);
     return kAQ0[i] + (kAQ0[i + 1] - kAQ0[i]) * f;
 }
+/** Model A: the control of the low-pass integrator (Hz) for a converter value d (piecewise linear, held outside). */
+double dynamicControl (double d) noexcept
+{
+    const double x = std::clamp (d, 0.0, 1.0);
+    std::size_t i = 0;
+    while (i + 2 < kAICtlD.size() && x >= kAICtlD[i + 1])
+        ++i;
+    return kAICtlHz[i] + (kAICtlHz[i + 1] - kAICtlHz[i]) * (x - kAICtlD[i]) / (kAICtlD[i + 1] - kAICtlD[i]);
+}
+
+/** Model A: the converter value a register value and a variation give (0..1). */
+double modelAConverterValue (double registerValue, double variation) noexcept
+{
+    return Filter::modelACutoffConverter (registerValue) + (variation - 0.5) * 2.0 * Filter::kVariationShift;
+}
+
+/** Model A: the rate above the floor (Hz) of a resistance at overdrive t with nothing across it: the limit of
+    (soft (t)^2 - soft (t - e)^2) / (2 e) for e -> 0, soft (t) = (t + sqrt (t^2 + w^2)) / 2. */
+double restRate (double t) noexcept
+{
+    const double s = std::sqrt (t * t + kAISoft * kAISoft);
+    return 0.5 * (t + s) * 0.5 * (1.0 + t / s);
+}
+
+/** Model A: the low-pass integrator's overdrive for its control and the low-pass node's level. */
+double lowOverdrive (double control2, double lp) noexcept
+{
+    const double over = lp > kAIOutKnee ? lp - kAIOutKnee : 0.0;
+    return control2 - kAIOut2 * lp - kAIOut2Sq * over * over;
+}
+
+/** Model A: the loop gain rho for a resonance step and the low-pass integrator's control: the corner factor
+    1 - a r - b r^2 squared, a between kAIResCornerLow (control at or below kAIResCtlLow) and kAIResCornerHigh (at or
+    above kAIResCtlHigh). */
+double dynamicLoopGain (int resonance, double control2) noexcept
+{
+    const double z = std::clamp ((control2 - kAIResCtlLow) / (kAIResCtlHigh - kAIResCtlLow), 0.0, 1.0);
+    const double a = kAIResCornerLow + (kAIResCornerHigh - kAIResCornerLow) * z;
+    const double r = static_cast<double> (resonance);
+    const double f = std::max (0.2, 1.0 - a * r - kAIResCornerSq * r * r);
+    return f * f;
+}
+
+struct RestRates
+{
+    double r1, r2;
+};
+
+/** Model A: the two rates (Hz) with a constant filter-bus level and nothing sounding. */
+RestRates dynamicRestRates (double control1, double control2, double level, double rateMax) noexcept
+{
+    return { std::min (rateMax, kAIFloor1 + restRate (control1)), std::min (rateMax, kAIFloor2 + restRate (lowOverdrive (control2, level))) };
+}
+
+/** Model A: the largest rate (Hz) the signal may drive an integrator to: kAIDynamicLimit x the internal rate, or
+    the integrator's own rate at rest where that is higher (a constant rate is stable up to rateMax; rates that jump
+    every sample are not, measured: decisions "B-Side S3a round 3"). */
+RestRates dynamicRateCaps (double control1, double control2, double internalRate, double rateMax) noexcept
+{
+    const auto rest = dynamicRestRates (control1, control2, 0.0, rateMax);
+    const double dynamic = kAIDynamicLimit * internalRate;
+    return { std::max (dynamic, rest.r1), std::max (dynamic, rest.r2) };
+}
 } // namespace
 
 Filter::Filter() noexcept
@@ -126,12 +230,23 @@ void Filter::prepare (Model model, double internalRate, float variationValue) no
     variation = std::isfinite (variationValue) ? std::clamp (variationValue, 0.0f, 1.0f) : 0.5f;
     updateCoefficients();
     updateOutputs();
+    restDynamic();
 }
 
 void Filter::reset() noexcept
 {
     s1 = 0.0;
     s2 = 0.0;
+    restDynamic();
+}
+
+void Filter::restDynamic() noexcept
+{
+    // the predictor's memory as after a long rest at the stored cutoff (only processSignalDependent uses it)
+    const auto r = dynamicRestRates (ctl1, ctl2, 0.0, rateMax);
+    gPrev1 = fastTan (piOverRate * r.r1);
+    gPrev2 = fastTan (piOverRate * r.r2);
+    dPrev = 1.0 / (1.0 + gPrev1 * (rho * gPrev2 + damp));
 }
 
 void Filter::setCutoff (float registerValue) noexcept
@@ -200,6 +315,19 @@ void Filter::updateCoefficients() noexcept
     kg = k + g;
     h = 1.0 / (1.0 + g * kg);
     updateStateSpace();
+    piOverRate = kPi / rate;
+    rateMax = 0.45 * rate;
+    if (mdl == Model::A)
+    {
+        // the signal-dependent dynamics' controls, loop gain, damping and rate limits for this cutoff and resonance
+        ctl2 = dynamicControl (modelAConverterValue (static_cast<double> (fcReg), static_cast<double> (variation)));
+        ctl1 = ctl2 * kAICtl1Scale + kAICtl1Offset;
+        rho = dynamicLoopGain (res, ctl2);
+        damp = kAIDamp0 / kAIQRes[r];
+        const auto caps = dynamicRateCaps (ctl1, ctl2, rate, rateMax);
+        cap1 = caps.r1;
+        cap2 = caps.r2;
+    }
 }
 
 void Filter::updateStateSpace() noexcept
@@ -245,10 +373,59 @@ void Filter::updateOutputs() noexcept
     p3 = (lo ? kAL3 * lowGain : 0.0) + (band ? kAB3 : 0.0);
     p4 = lo ? kAL4 * lowGain : 0.0;
     p5 = lo ? kAL5 * lowGain : 0.0;
+    // the signal-dependent form: the band-pass state of its two-rate loop peaks at rho / k whatever the cutoff, so
+    // its gains are plain
+    const double bandResDyn = 1.0 + kAIBandRes * (lowGain - 1.0);
+    cBpDyn = (band ? kAIBand * bandResDyn : 0.0) + (high ? kAIHighBand * bandResDyn : 0.0);
+    cHpDyn = high ? kAIHigh : 0.0;
     updateStateSpace();
     lpMin = kALpMin;
     lpMax = kALpMax;
 }
+
+double Filter::stepA (double x, double control1, double control2, double limit1, double limit2, double loop) noexcept
+{
+    // 1. predictor: this sample's nodes with the previous sample's rates
+    const double fb = loop * gPrev2 + damp;
+    const double hpE = (loop * (x - s2) - fb * s1) * dPrev;
+    const double bpE = gPrev1 * hpE + s1;
+    const double lpE = gPrev2 * bpE + s2;
+    // 2. the two rates from the predicted nodes. For a resistance with overdrive t at the integrator's side and
+    //    t - e at its input side: rate = (a^2 - b^2) / (2 e), a = soft (t), b = soft (t - e), soft (v) =
+    //    (v + sqrt (v^2 + w^2)) / 2, written as (a + b) / 4 x (1 + (2 t - e) / (sa + sb)) with the two square
+    //    roots sa, sb: no 0 / 0 at e = 0, and always between 0 and (a + b) / 2. One division serves both.
+    const double e1 = kAIIn1 * hpE, e2 = kAIIn2 * bpE;
+    const double t1 = control1 + kAIGate1 * e1, t2 = lowOverdrive (control2, lpE) + kAIGate2 * e2;
+    const double u1 = t1 - e1, u2 = t2 - e2;
+    constexpr double w2 = kAISoft * kAISoft;
+    const double sum1 = std::sqrt (t1 * t1 + w2) + std::sqrt (u1 * u1 + w2);
+    const double sum2 = std::sqrt (t2 * t2 + w2) + std::sqrt (u2 * u2 + w2);
+    const double inv = 1.0 / (sum1 * sum2);
+    const double r1 = std::min (limit1, kAIFloor1 + 0.125 * (t1 + u1 + sum1) * (1.0 + (t1 + u1) * sum2 * inv));
+    const double r2 = std::min (limit2, kAIFloor2 + 0.125 * (t2 + u2 + sum2) * (1.0 + (t2 + u2) * sum1 * inv));
+    // 3. the trapezoidal loop with g1 = tan (pi r1 / rate), g2 likewise (the rational tan of Filter.h as numerator
+    //    and denominator, so that one division gives g1, g2 and the solve's reciprocal)
+    const double x1 = piOverRate * r1, x2 = piOverRate * r2, z1 = x1 * x1, z2 = x2 * x2;
+    const double n1 = x1 * (945.0 - z1 * (105.0 - z1)), d1 = 945.0 - z1 * (420.0 - 15.0 * z1);
+    const double n2 = x2 * (945.0 - z2 * (105.0 - z2)), d2 = 945.0 - z2 * (420.0 - 15.0 * z2);
+    const double dd = d1 * d2;
+    const double m = dd + n1 * (loop * n2 + damp * d2);
+    const double rec = 1.0 / (dd * m);
+    const double g1 = n1 * d2 * m * rec, g2 = n2 * d1 * m * rec, solve = dd * dd * rec;
+    const double hp = (loop * (x - s2) - (loop * g2 + damp) * s1) * solve;
+    const double bp = g1 * hp + s1;
+    const double lp = g2 * bp + s2;
+    // the states, limited (a signal the chip can produce stays far inside; the limit bounds every other input)
+    const double q1 = bp + g1 * hp, q2 = lp + g2 * bp;
+    s1 = q1 < -kAIStateLimit ? -kAIStateLimit : (q1 > kAIStateLimit ? kAIStateLimit : q1);
+    s2 = q2 < -kAIStateLimit ? -kAIStateLimit : (q2 > kAIStateLimit ? kAIStateLimit : q2);
+    gPrev1 = g1;
+    gPrev2 = g2;
+    dPrev = solve;
+    settle();
+    return cBpDyn * bp + cHpDyn * hp + shape (lp);
+}
+
 
 float Filter::processWithCutoff (float in, float registerValue) noexcept
 {
@@ -277,5 +454,28 @@ void Filter::process (float* inOut, int n) noexcept
 {
     for (int i = 0; i < n; ++i)
         inOut[i] = process (inOut[i]);
+}
+float Filter::processSignalDependent (float in) noexcept
+{
+    if (mdl != Model::A)
+        return process (in);
+    return static_cast<float> (stepA (guard (in), ctl1, ctl2, cap1, cap2, rho));
+}
+
+float Filter::processSignalDependentWithCutoff (float in, float registerValue) noexcept
+{
+    if (mdl != Model::A)
+        return processWithCutoff (in, registerValue);
+    const double v = std::isfinite (registerValue) ? std::clamp (static_cast<double> (registerValue), 0.0, 2047.0) : 0.0;
+    const double c2 = dynamicControl (modelAConverterValue (v, static_cast<double> (variation)));
+    const double c1 = c2 * kAICtl1Scale + kAICtl1Offset;
+    const auto caps = dynamicRateCaps (c1, c2, rate, rateMax);
+    return static_cast<float> (stepA (guard (in), c1, c2, caps.r1, caps.r2, dynamicLoopGain (res, c2)));
+}
+
+void Filter::processSignalDependent (float* inOut, int n) noexcept
+{
+    for (int i = 0; i < n; ++i)
+        inOut[i] = processSignalDependent (inOut[i]);
 }
 } // namespace vs::bside::chip

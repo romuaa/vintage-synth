@@ -27,10 +27,39 @@
 //   to 1.2 x at 15); the band-pass output is k0 x bp (k0 = 1 / Q at resonance 0) plus a static cubic of the
 //   low-pass state (a leak); the high-pass output carries some of the band-pass state and a little of the
 //   low-pass state.
+// MODEL A, SIGNAL-DEPENDENT (processSignalDependent instead of process; the caller chooses; all fitted to
+// generated reference data; decisions "B-Side S3a round 3"). The reference's Model A moves its corner with the level
+// and the DC of what is routed into it. In this form the two integrators do not share one cutoff: each has its own
+// rate, and the rates follow the signal, sample by sample. It follows the reference's level, DC and resonance
+// behaviour far better than the fixed form above, but its corner at rest is not within 5 % at every cutoff, so the
+// fixed form stays what process () does (the gate figures of both: decisions "B-Side S3a round 3"). Both forms share
+// the two states, so a stream is run through one of them.
+// - The loop: hp = rho (x - lp) - k bp, bp' = 2 pi r1 hp, lp' = 2 pi r2 bp; k falls with the resonance (16 steps)
+//   and the loop gain rho changes with it too: above the control's threshold region the corner goes down as the
+//   resonance goes up, in the threshold region much less (a fitted law in the resonance and the control).
+// - A rate is a floor (about 260 Hz: what is left when the cutoff control is below its threshold) plus the rate of a
+//   voltage-controlled resistance: with the overdrive t at the integrator's own side and t - e at its input side
+//   (e = the input node's level times a fitted factor), rate = (soft (t)^2 - soft (t - e)^2) / (2 e), where soft is
+//   a smooth max (0, .). Small e: the rate is t (linear in the control); a large swing at the input node of a
+//   resistance near its threshold opens it on one half-wave only, so the rate RISES with the swing (the band-pass
+//   integrator at low cutoffs); t of the low-pass integrator FALLS with the low-pass node's level (the DC of the
+//   voices routed into the filter lowers the corner, down to the floor), faster above a knee.
+// - The control: the cutoff register goes through its own converter, an 11-bit terminated resistor ladder of ratio
+//   2.18 (RenderTables.h ladderWeights; it makes the steps at the bit boundaries, e.g. 1023 -> 1024 falls by 8 %),
+//   and the converter value d (0..1) through a fitted table (piecewise linear, 26 points) to the control in Hz;
+//   `variation` shifts d by +-kVariationShift (0.5: the reference's curve).
+// - Each sample: the nodes are predicted with the previous sample's rates, the two rates are computed from the
+//   predicted nodes, and the trapezoidal loop is solved with them (tan pre-warped per integrator). The rates lie
+//   between the floor and a limit whatever the signal (a quarter of the internal rate, or the integrator's own
+//   rate at rest where that is higher, never above 0.45 x the internal rate), and the states are limited to +-64
+//   (never reached by a signal the chip can produce), so the output is bounded for every input.
+// - The outputs: as the fixed form, with plain gains on the band-pass state (it peaks at rho / k at every cutoff).
 // INPUT GUARD. A non-finite or absurd input is replaced by 0 before it reaches the states (off the per-sample
 // dependency chain), so the states can never become non-finite.
 // THREAD AND COST. setCutoff / setResonance / setMode recompute the coefficients (one tan, a few table reads);
-// process() costs about a dozen multiplications (Model B) or two dozen (Model A) per sample.
+// process() costs about a dozen multiplications (Model B) or two dozen (Model A) per sample; Model A's
+// signal-dependent form adds its two rates (four square roots, two divisions in one dependency chain) and costs
+// several times as much (chip_bench filterAdyn).
 
 #include "bside/chip/ChipTypes.h"
 
@@ -100,6 +129,14 @@ public:
     /** In place over n samples (identical to n calls of process). */
     void process (float* inOut, int n) noexcept;
 
+    /** Model A's signal-dependent dynamics (header, "MODEL A, SIGNAL-DEPENDENT"), one internal sample: the two
+        integrators' rates follow the node levels. Same input, output, registers and states as process; Model B: process. */
+    float processSignalDependent (float in) noexcept;
+    /** The same with a cutoff (register value) that may change every sample (Model B: processWithCutoff). */
+    float processSignalDependentWithCutoff (float in, float registerValue) noexcept;
+    /** In place over n samples (identical to n calls of processSignalDependent). */
+    void processSignalDependent (float* inOut, int n) noexcept;
+
     /** The selected outputs for a constant input `dc` once settled (low-pass state = dc, band- and
         high-pass 0): what the filter makes of the voices' DC (OutputStage, volumeDc off). */
     double staticOutput (double dc) const noexcept { return mdl == Model::A ? shape (dc) : cLp * dc; }
@@ -143,6 +180,11 @@ private:
         return ((((p5 * v + p4) * v + p3) * v + p2) * v + p1) * v;
     }
 
+    /** Signal-dependent Model A: one sample with the two integrators' controls and largest rates (Hz) and the loop
+        gain; Filter.cpp. */
+    double stepA (double x, double control1, double control2, double limit1, double limit2, double loop) noexcept;
+    /** Signal-dependent Model A: the predictor's memory (the previous sample's rates) as at rest. */
+    void restDynamic() noexcept;
     void updateCoefficients() noexcept;
     void updateOutputs() noexcept;
     void updateStateSpace() noexcept;
@@ -157,6 +199,12 @@ private:
     // state and coefficients
     double s1 = 0.0, s2 = 0.0;
     double g = 0.0, k = 1.0, kg = 1.0, h = 1.0, fcHz = 0.0, k0 = 1.0;
+    // signal-dependent Model A: the integrators' controls and largest rates (Hz), the loop gain and damping, pi / rate,
+    // 0.45 x rate, its gains on the band- and high-pass states, and the predictor's memory (the previous sample's two
+    // tan values and the reciprocal of its solve)
+    double cBpDyn = 0.0, cHpDyn = 0.0;
+    double ctl1 = 0.0, ctl2 = 0.0, cap1 = 0.0, cap2 = 0.0, rho = 1.0, damp = 1.0, piOverRate = 0.0, rateMax = 0.0;
+    double gPrev1 = 0.0, gPrev2 = 0.0, dPrev = 1.0;
     // output mix: Model B linear; Model A linear parts plus a quintic of the (limited) low-pass state
     double cLp = 0.0, cBp = 0.0, cHp = 0.0, p1 = 0.0, p2 = 0.0, p3 = 0.0, p4 = 0.0, p5 = 0.0;
     double lpMin = -1.0e9, lpMax = 1.0e9;
