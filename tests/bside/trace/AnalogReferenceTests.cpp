@@ -17,6 +17,10 @@ using namespace vs::bside::test;
 namespace
 {
 const fs::path kDir { BS_REFERENCE_DIR };
+// Whether the signal-dependent form's figures on the distortion and step traces are assertions (they are when met:
+// decisions "B-Side S3a round 3").
+constexpr bool kGateSignalDependentDistortion = true;
+constexpr bool kGateSignalDependentSteps = true;
 }
 
 TEST_CASE ("analog: the filter modes and their sums within the scripted-trace tolerance (a_modes_*)", "[trace][reference][chip][analog]")
@@ -161,12 +165,12 @@ TEST_CASE ("analog: Model A's signal-dependent dynamics against the same referen
 {
     // Filter::processSignalDependent (the caller's choice; decisions "B-Side S3a round 3"): the same traces and
     // tolerances as the default form above and in ReferenceDataTests.cpp, printed with the tag "signal-dependent".
-    // GATED, because met: the resonance peaks of a_filter_a, a_s3a_res_a and a_s3a_cutoff_a (+-1 dB) and the modes at
-    // cutoff 200 and 1500 (a_s3a_modes_a, the scripted tolerance). REPORTED, NOT GATED: every corner (not within 5 % on
-    // any of the five traces: the control's threshold region and three voices), the peaks of a_s3a_level_a and
-    // a_s3a_voices_a, a_modes_a and a_routing_a.
+    // GATED, because met: the resonance peaks of a_filter_a and a_s3a_cutoff_a (+-1 dB), the modes at cutoff 200 and
+    // 1500 (a_s3a_modes_a, the scripted tolerance), and in their own test cases the held-tone distortion (a_s3a_dist_a)
+    // and the volume steps (a_s3a_steps_a). REPORTED, NOT GATED: every corner (not all within 5 % on any of the five
+    // traces), the peaks of a_s3a_res_a, a_s3a_level_a and a_s3a_voices_a, a_modes_a and a_routing_a.
     cornersAndPeaks ("a_filter_a", "a_filter_bypass_a", false, true, true);
-    cornersAndPeaks ("a_s3a_res_a", "a_s3a_res_bypass_a", false, true, true);
+    cornersAndPeaks ("a_s3a_res_a", "a_s3a_res_bypass_a", false, true, false);
     cornersAndPeaks ("a_s3a_level_a", "a_s3a_level_bypass_a", false, true, false);
     cornersAndPeaks ("a_s3a_voices_a", "a_s3a_voices_bypass_a", false, true, false);
     cornersAndPeaks ("a_s3a_cutoff_a", "a_s3a_cutoff_bypass_a", false, true, true);
@@ -191,45 +195,52 @@ TEST_CASE ("analog: Model A held-tone distortion and two-tone products at held-o
     // f1 + f2 against f1, from the segment spectra (toneLevelDb), +-3 dB where the reference's line lies above -60 dB.
     // Gated: the held tones through the low-pass at 2047 and 1024 and on the direct path (s00..s07, s10..s12).
     // Reported, outside: the band-pass at 1500 (s08, s09) and the two-tone products (s13..s16: up to 4.5 dB).
-    const auto& d = renderedTrace (kDir, "a_s3a_dist_a");
-    if (! d.ok)
-        SKIP (d.why);
-    REQUIRE (d.chain.ambiguousSamples == 0);
-    const double f1 = 985248.0 * std::round (160.0 * 16777216.0 / 985248.0) / 16777216.0;
-    const double f2 = 985248.0 * std::round (211.0 * 16777216.0 / 985248.0) / 16777216.0;
-    const std::size_t segs = d.reference.segments.size();
-    REQUIRE (segs == 17);
-    double worst = 0.0;
-    for (std::size_t i = 0; i < segs; ++i)
-    {
-        const bool twoTone = i >= 13;
-        const auto& rs = d.reference.segments[i];
-        const auto& os = d.ours.segments[i];
-        std::array<double, 4> fr {};
-        if (twoTone)
-            fr = { 2 * f1, 2 * f2, f2 - f1, f1 + f2 };
-        else
-            fr = { 2 * f1, 3 * f1, 4 * f1, 5 * f1 };
-        std::string line;
-        for (std::size_t k = 0; k < 4; ++k)
+    // Both forms of Model A's filter: Filter::process, then Filter::processSignalDependent (tag "signal-dependent").
+    auto run = [&] (bool sd) {
+        const auto& d = renderedTrace (kDir, "a_s3a_dist_a", sd);
+        const char* tag = sd ? "signal-dependent " : "";
+        if (! d.ok)
+            SKIP (d.why);
+        REQUIRE (d.chain.ambiguousSamples == 0);
+        const double f1 = 985248.0 * std::round (160.0 * 16777216.0 / 985248.0) / 16777216.0;
+        const double f2 = 985248.0 * std::round (211.0 * 16777216.0 / 985248.0) / 16777216.0;
+        const std::size_t segs = d.reference.segments.size();
+        REQUIRE (segs == 17);
+        double worst = 0.0;
+        for (std::size_t i = 0; i < segs; ++i)
         {
-            const double r = tr::toneLevelDb (rs, fr[k]) - tr::toneLevelDb (rs, f1);
-            const double o = tr::toneLevelDb (os, fr[k]) - tr::toneLevelDb (os, f1);
-            char buf[64];
-            std::snprintf (buf, sizeof buf, " %6.1f/%6.1f", o, r);
-            line += buf;
-            const bool gated = ! twoTone && i != 8 && i != 9;
-            if (r > -60.0 && gated)
+            const bool twoTone = i >= 13;
+            const auto& rs = d.reference.segments[i];
+            const auto& os = d.ours.segments[i];
+            std::array<double, 4> fr {};
+            if (twoTone)
+                fr = { 2 * f1, 2 * f2, f2 - f1, f1 + f2 };
+            else
+                fr = { 2 * f1, 3 * f1, 4 * f1, 5 * f1 };
+            std::string line;
+            for (std::size_t k = 0; k < 4; ++k)
             {
-                INFO (rs.name << " line " << k << ": ours " << o << " dB, reference " << r << " dB");
-                CHECK (std::abs (o - r) <= tr::tolerance::distortionDb);
-                worst = std::max (worst, std::abs (o - r));
+                const double r = tr::toneLevelDb (rs, fr[k]) - tr::toneLevelDb (rs, f1);
+                const double o = tr::toneLevelDb (os, fr[k]) - tr::toneLevelDb (os, f1);
+                char buf[64];
+                std::snprintf (buf, sizeof buf, " %6.1f/%6.1f", o, r);
+                line += buf;
+                const bool gated = ! twoTone && i != 8 && i != 9;
+                if (r > -60.0 && gated)
+                {
+                    INFO (rs.name << " line " << k << ": ours " << o << " dB, reference " << r << " dB");
+                    if (! sd || kGateSignalDependentDistortion)
+                        CHECK (std::abs (o - r) <= tr::tolerance::distortionDb);
+                    worst = std::max (worst, std::abs (o - r));
+                }
             }
+            std::printf ("[analog] %sa_s3a_dist_a %s %s (ours/reference dB):%s%s\n", tag, rs.name.c_str(), twoTone ? "2f1 2f2 f2-f1 f1+f2" : "h2 h3 h4 h5", line.c_str(),
+                         twoTone || i == 8 || i == 9 ? " (reported)" : "");
         }
-        std::printf ("[analog] a_s3a_dist_a %s %s (ours/reference dB):%s%s\n", rs.name.c_str(), twoTone ? "2f1 2f2 f2-f1 f1+f2" : "h2 h3 h4 h5", line.c_str(),
-                     twoTone || i == 8 || i == 9 ? " (reported)" : "");
-    }
-    std::printf ("[analog] a_s3a_dist_a: worst gated line %.2f dB (allowed 3)\n", worst);
+        std::printf ("[analog] %sa_s3a_dist_a: worst gated line %.2f dB (allowed 3)%s\n", tag, worst, sd && ! kGateSignalDependentDistortion ? " (reported)" : "");
+    };
+    run (false);
+    run (true);
 }
 
 TEST_CASE ("analog: the modes at cutoff 200 and 1500 within the scripted-trace tolerance (a_s3a_modes_a)", "[trace][reference][chip][analog]")
@@ -255,9 +266,11 @@ TEST_CASE ("analog: steps after volume, routing and resonance writes (a_s3a_step
     // The level of the first whole frame after each write against +-1 dB (the voice-DC tolerance of 8.9.4). Gated:
     // the volume writes (Model A). Reported: the routing and resonance writes on Model A (up to 2 dB outside,
     // finding 9 stays open) and every Model B step (they lie near the reference's board high-pass residual).
-    for (const char m : { 'a', 'b' })
+    for (const char m : { 'a', 'b', 'A' }) // 'A': Model A through Filter::processSignalDependent (tag "signal-dependent")
     {
-        const auto& r = renderedTrace (kDir, std::string ("a_s3a_steps_") + m);
+        const bool sd = m == 'A';
+        const char* tag = sd ? "signal-dependent " : "";
+        const auto& r = renderedTrace (kDir, std::string ("a_s3a_steps_") + (sd ? 'a' : m), sd);
         if (! r.ok)
             SKIP (r.why);
         double worst = 0.0;
@@ -273,15 +286,16 @@ TEST_CASE ("analog: steps after volume, routing and resonance writes (a_s3a_step
                 continue; // both quiet (a write that changes nothing audible)
             const bool pass = std::abs (lo - lr) <= tr::tolerance::voiceDcDb;
             const bool volumeWrite = w.reg == 0x18;
-            std::printf ("[analog] a_s3a_steps_%c write at cycle %llu (frame %zu): ours %6.1f dBFS, reference %6.1f dBFS (%+.1f dB)%s\n", m,
-                         static_cast<unsigned long long> (w.cycle), fr, lo, lr, lo - lr, m == 'a' ? (pass ? "" : "  OUTSIDE") : " (reported)");
-            if (m == 'a' && volumeWrite)
+            std::printf ("[analog] %sa_s3a_steps_%c write at cycle %llu (frame %zu): ours %6.1f dBFS, reference %6.1f dBFS (%+.1f dB)%s\n", tag, sd ? 'a' : m,
+                         static_cast<unsigned long long> (w.cycle), fr, lo, lr, lo - lr, m != 'b' ? (pass ? "" : "  OUTSIDE") : " (reported)");
+            if (m != 'b' && volumeWrite)
             {
-                CHECK (pass);
+                if (! sd || kGateSignalDependentSteps)
+                    CHECK (pass);
                 worst = std::max (worst, std::abs (lo - lr));
             }
         }
-        if (m == 'a')
-            std::printf ("[analog] a_s3a_steps_a: worst volume step %.2f dB (allowed 1)\n", worst);
+        if (m != 'b')
+            std::printf ("[analog] %sa_s3a_steps_a: worst volume step %.2f dB (allowed 1)\n", tag, worst);
     }
 }

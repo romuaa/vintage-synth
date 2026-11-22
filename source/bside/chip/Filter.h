@@ -46,7 +46,7 @@
 //   voices routed into the filter lowers the corner, down to the floor), faster above a knee.
 // - The control: the cutoff register goes through its own converter, an 11-bit terminated resistor ladder of ratio
 //   2.18 (RenderTables.h ladderWeights; it makes the steps at the bit boundaries, e.g. 1023 -> 1024 falls by 8 %),
-//   and the converter value d (0..1) through a fitted table (piecewise linear, 26 points) to the control in Hz;
+//   and the converter value d (0..1) through a fitted table (piecewise linear, one point per fitted cutoff) to the control in Hz;
 //   `variation` shifts d by +-kVariationShift (0.5: the reference's curve).
 // - Each sample: the nodes are predicted with the previous sample's rates, the two rates are computed from the
 //   predicted nodes, and the trapezoidal loop is solved with them (tan pre-warped per integrator). The rates lie

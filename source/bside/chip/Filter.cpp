@@ -60,7 +60,7 @@ constexpr double kABand = 0.59, kABandRes = 0.42, kAHigh = -0.59, kAHighBand = -
 // Filter.h "MODEL A, SIGNAL-DEPENDENT"; decisions "B-Side S3a round 3". Every value is our own fit to noise responses
 // generated with the reference adapter on fitting traces (never the committed gate traces).
 // the rates' floor (Hz) of the band-pass (1) and the low-pass (2) integrator
-constexpr double kAIFloor1 = 243.00, kAIFloor2 = 318.00;
+constexpr double kAIFloor1 = 230.85, kAIFloor2 = 302.10;
 // the damping at resonance 0 (1 / Q of the loop when the two rates are equal)
 constexpr double kAIDamp0 = 1.44276;
 // the input node's factor (Hz per render unit): the high-pass node for integrator 1, the band-pass node for 2
@@ -74,18 +74,41 @@ constexpr double kAIOut2 = 2426.18, kAIOut2Sq = 4939.49, kAIOutKnee = 1.9576;
 constexpr double kAISoft = 262.51;
 // integrator 1's control from integrator 2's: scale and offset (Hz)
 constexpr double kAICtl1Scale = 0.89731, kAICtl1Offset = -2.64;
-// the control of integrator 2 (Hz) against the cutoff converter's value d (piecewise linear)
-constexpr std::array<double, 26> kAICtlD { 0.000, 0.060, 0.100, 0.130, 0.150, 0.165, 0.180, 0.195,
-                                           0.210, 0.225, 0.240, 0.255, 0.270, 0.285, 0.300, 0.325,
-                                           0.350, 0.400, 0.450, 0.500, 0.550, 0.600, 0.700, 0.800,
-                                           0.900, 1.000 };
-constexpr std::array<double, 26> kAICtlHz { -6121.9, -3910.2, -2222.6, -1241.1, -396.3, 838.2, 838.2, 1037.1,
-                                            1425.4, 2037.7, 2529.5, 2638.3, 2971.6, 3376.6, 4358.4, 4861.0,
-                                            5592.7, 7549.3, 9261.9, 10898.6, 12490.5, 14202.8, 16702.1, 19724.9,
-                                            20862.0, 21802.1 };
+// the control of integrator 2 (Hz) against the cutoff converter's value d (piecewise linear between
+// these points: one per fitted cutoff, ascending in d)
+constexpr std::array<double, 118> kAICtlD { 0.000000, 0.033387, 0.067252, 0.094807, 0.121001, 0.130842, 0.136674, 0.147136,
+                                            0.152893, 0.162407, 0.168239, 0.179575, 0.187467, 0.195137, 0.196360, 0.196432,
+                                            0.197508, 0.197655, 0.198731, 0.199746, 0.200969, 0.202117, 0.203340, 0.204102,
+                                            0.205325, 0.206473, 0.207696, 0.208711, 0.209934, 0.211082, 0.212305, 0.212579,
+                                            0.213802, 0.214313, 0.214950, 0.216173, 0.217188, 0.218411, 0.219559, 0.220145,
+                                            0.220782, 0.221544, 0.222767, 0.223915, 0.225138, 0.226153, 0.227376, 0.228524,
+                                            0.229073, 0.229747, 0.230296, 0.231444, 0.232667, 0.233682, 0.234905, 0.236053,
+                                            0.237276, 0.238038, 0.239262, 0.240410, 0.241633, 0.242647, 0.243870, 0.245018,
+                                            0.246241, 0.246515, 0.247739, 0.248886, 0.250110, 0.250602, 0.251124, 0.251825,
+                                            0.252347, 0.252973, 0.253495, 0.254196, 0.254718, 0.255481, 0.256704, 0.257852,
+                                            0.259075, 0.260089, 0.260153, 0.261312, 0.262460, 0.263683, 0.276372, 0.292104,
+                                            0.297475, 0.313902, 0.327329, 0.338044, 0.369742, 0.385415, 0.416981, 0.422560,
+                                            0.438779, 0.468886, 0.486352, 0.489946, 0.495569, 0.506031, 0.506165, 0.513648,
+                                            0.521511, 0.527268, 0.554898, 0.604982, 0.652354, 0.679775, 0.704126, 0.744519,
+                                            0.797883, 0.848841, 0.869397, 0.897027, 0.947985, 1.000000 };
+constexpr std::array<double, 118> kAICtlHz { -6121.9, -4891.2, -3679.1, -2550.4, -1451.3, -1205.5, -1679.2, -517.3,
+                                             -638.2, 647.9, 845.8, 955.7, 1052.3, 1273.9, 1300.5, 1287.7,
+                                             1382.2, 1321.3, 1342.6, 1370.0, 1410.1, 1450.8, 1473.0, 1517.7,
+                                             1599.0, 1571.8, 1627.3, 1659.5, 1643.1, 1722.6, 1761.9, 1714.7,
+                                             1759.8, 1813.6, 1802.2, 1838.3, 1823.5, 1845.3, 1866.0, 1892.2,
+                                             1907.0, 1904.1, 1919.0, 1977.1, 1991.9, 1991.0, 2024.6, 2034.8,
+                                             2059.9, 2113.3, 2061.9, 2147.1, 2184.8, 2229.9, 2302.2, 2312.4,
+                                             2409.1, 2426.5, 2500.4, 2487.2, 2514.1, 2567.9, 2589.6, 2604.9,
+                                             2673.9, 2647.8, 2685.6, 2685.5, 2737.6, 2690.2, 2746.2, 2726.0,
+                                             2764.4, 2729.0, 2787.2, 2785.0, 2804.1, 2816.0, 2859.8, 2887.1,
+                                             2892.3, 2911.0, 2873.2, 2955.9, 2943.8, 2964.9, 3201.9, 4066.5,
+                                             4303.9, 4767.9, 5198.3, 5198.0, 6440.4, 7278.7, 8243.3, 8362.8,
+                                             9001.3, 10171.7, 10724.3, 10785.7, 11072.9, 11428.4, 11263.4, 11673.9,
+                                             11878.5, 11925.6, 13014.8, 14446.9, 15666.4, 16041.8, 17226.8, 18415.8,
+                                             19660.9, 20280.3, 20514.0, 20828.2, 21313.1, 21802.1 };
 // per resonance step: the factor on Q (the damping is kAIDamp0 / kAIQRes): 1 / (1 - 0.029753 r - 0.0010969 r^2)
 constexpr std::array<double, 16> kAIQRes { 1.0000, 1.0318, 1.0683, 1.1100, 1.1582, 1.2139, 1.2788, 1.3550,
-                                           1.4456, 1.5543, 1.6870, 1.8519, 2.0618, 2.3374, 2.7140, 3.2584 };
+                                            1.4456, 1.5543, 1.6870, 1.8519, 2.0618, 2.3374, 2.7140, 3.2584 };
 // the loop gain rho = (1 - a r - kAIResCornerSq r^2)^2 for resonance r, with a = kAIResCornerLow where integrator 2's
 // control is at or below kAIResCtlLow (Hz) and kAIResCornerHigh at or above kAIResCtlHigh (linear between)
 constexpr double kAIResCornerLow = -0.006203, kAIResCornerHigh = 0.005784, kAIResCornerSq = 0.0002439, kAIResCtlLow = 2500.0, kAIResCtlHigh = 4500.0;
@@ -137,9 +160,16 @@ double modelAQ0 (double hz) noexcept
 double dynamicControl (double d) noexcept
 {
     const double x = std::clamp (d, 0.0, 1.0);
-    std::size_t i = 0;
-    while (i + 2 < kAICtlD.size() && x >= kAICtlD[i + 1])
-        ++i;
+    // the interval that holds x, by bisection (the table is ascending in d; at most 8 steps)
+    std::size_t i = 0, hi = kAICtlD.size() - 1;
+    while (hi - i > 1)
+    {
+        const std::size_t mid = (i + hi) / 2;
+        if (x >= kAICtlD[mid])
+            i = mid;
+        else
+            hi = mid;
+    }
     return kAICtlHz[i] + (kAICtlHz[i + 1] - kAICtlHz[i]) * (x - kAICtlD[i]) / (kAICtlD[i + 1] - kAICtlD[i]);
 }
 
