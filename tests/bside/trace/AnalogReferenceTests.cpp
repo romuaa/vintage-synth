@@ -29,8 +29,10 @@ TEST_CASE ("analog: the filter modes and their sums within the scripted-trace to
     for (const char m : { 'a', 'b' })
     {
         const std::string sm (1, m);
-        const auto& r = renderedTrace (kDir, "a_modes_" + sm);
-        const auto& b = renderedTrace (kDir, "a_modes_bypass_" + sm);
+        // named strings, not temporaries: GCC 13's -Wdangling-reference would flag a temporary argument
+        const std::string modesName = "a_modes_" + sm, bypassName = "a_modes_bypass_" + sm;
+        const auto& r = renderedTrace (kDir, modesName);
+        const auto& b = renderedTrace (kDir, bypassName);
         if (! r.ok || ! b.ok)
             SKIP (r.why << " " << b.why);
         INFO ("model " << sm);
@@ -75,7 +77,8 @@ TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace toler
     // filter's dependence on the level and the routed DC is not modelled; cutoff 300 here).
     for (const char* name : { "a_routing_a", "a_routing_b" })
     {
-        const auto& r = renderedTrace (kDir, name);
+        const std::string traceName (name);
+        const auto& r = renderedTrace (kDir, traceName);
         if (! r.ok)
             SKIP (r.why);
         REQUIRE (r.chain.ambiguousSamples == 0);
@@ -94,8 +97,9 @@ namespace
 /** Corners (+-5 %) and peaks (+-1 dB) of every segment of a filtered/bypass pair against the reference. */
 void cornersAndPeaks (const char* filtered, const char* bypass, bool gate)
 {
-    const auto& f = renderedTrace (kDir, filtered);
-    const auto& b = renderedTrace (kDir, bypass);
+    const std::string filteredName (filtered), bypassName (bypass);
+    const auto& f = renderedTrace (kDir, filteredName);
+    const auto& b = renderedTrace (kDir, bypassName);
     if (! f.ok || ! b.ok)
         SKIP (f.why << " " << b.why);
     REQUIRE (f.reference.segments.size() == f.ours.segments.size());
@@ -160,7 +164,8 @@ TEST_CASE ("analog: Model A held-tone distortion and two-tone products at held-o
     // f1 + f2 against f1, from the segment spectra (toneLevelDb), +-3 dB where the reference's line lies above -60 dB.
     // Gated: the held tones through the low-pass at 2047 and 1024 and on the direct path (s00..s07, s10..s12).
     // Reported, outside: the band-pass at 1500 (s08, s09) and the two-tone products (s13..s16: up to 4.5 dB).
-    const auto& d = renderedTrace (kDir, "a_s3a_dist_a");
+    const std::string distName ("a_s3a_dist_a");
+    const auto& d = renderedTrace (kDir, distName);
     if (! d.ok)
         SKIP (d.why);
     REQUIRE (d.chain.ambiguousSamples == 0);
@@ -206,7 +211,8 @@ TEST_CASE ("analog: the modes at cutoff 200 and 1500 within the scripted-trace t
     // The bypass twin is gated; the filtered trace is reported, outside (finding 5 of the review stays open).
     for (const char* name : { "a_s3a_modes_a", "a_s3a_modes_bypass_a" })
     {
-        const auto& r = renderedTrace (kDir, name);
+        const std::string traceName (name);
+        const auto& r = renderedTrace (kDir, traceName);
         if (! r.ok)
             SKIP (r.why);
         const auto res = tr::compareScripted (r.reference, r.ours);
@@ -226,7 +232,8 @@ TEST_CASE ("analog: steps after volume, routing and resonance writes (a_s3a_step
     // finding 9 stays open) and every Model B step (they lie near the reference's board high-pass residual).
     for (const char m : { 'a', 'b' })
     {
-        const auto& r = renderedTrace (kDir, std::string ("a_s3a_steps_") + m);
+        const std::string stepsName = std::string ("a_s3a_steps_") + m;
+        const auto& r = renderedTrace (kDir, stepsName);
         if (! r.ok)
             SKIP (r.why);
         double worst = 0.0;

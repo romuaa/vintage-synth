@@ -240,8 +240,9 @@ struct Totals
 
 void diagnose (const char* filtered, const char* bypass, Totals& sum)
 {
-    const auto& f = renderedTrace (kDir, filtered);
-    const auto& b = renderedTrace (kDir, bypass);
+    const std::string filteredName (filtered), bypassName (bypass); // no temporary argument (GCC 13 -Wdangling-reference)
+    const auto& f = renderedTrace (kDir, filteredName);
+    const auto& b = renderedTrace (kDir, bypassName);
     if (! f.ok || ! b.ok)
         SKIP (f.why << " " << b.why);
     const auto ops = operatingPoints (f);

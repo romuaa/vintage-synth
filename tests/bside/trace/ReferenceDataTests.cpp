@@ -372,8 +372,11 @@ TEST_CASE ("reference data: analog tolerances against our chip", "[trace][refere
     for (const char m : { 'a', 'b' })
     {
         const std::string sm (1, m);
-        const auto& f = renderedTrace (kDir, "a_filter_" + sm);
-        const auto& b = renderedTrace (kDir, "a_filter_bypass_" + sm);
+        // named strings, not temporaries: GCC 13's -Wdangling-reference would flag a temporary argument
+        const std::string filterName = "a_filter_" + sm, bypassName = "a_filter_bypass_" + sm, distName = "a_distortion_" + sm,
+                          dcName = "a_voice_dc_" + sm;
+        const auto& f = renderedTrace (kDir, filterName);
+        const auto& b = renderedTrace (kDir, bypassName);
         if (! f.ok || ! b.ok)
             SKIP (f.why << " " << b.why);
         INFO ("model " << sm);
@@ -419,7 +422,7 @@ TEST_CASE ("reference data: analog tolerances against our chip", "[trace][refere
 
         // distortion: harmonics 2..5 against the fundamental, triangle 160.1 Hz through the low-pass at 2047, drive
         // 1, 2, 3 voices (s00..s02, the gate, 8.9.4: Model A) and 3 voices at sustain 8 (s03, reported)
-        const auto& d = renderedTrace (kDir, "a_distortion_" + sm);
+        const auto& d = renderedTrace (kDir, distName);
         REQUIRE (d.ok);
         REQUIRE (d.reference.segments.size() >= 4);
         const double f0 = 985248.0 * 0x0aa6 / 16777216.0;
@@ -441,7 +444,7 @@ TEST_CASE ("reference data: analog tolerances against our chip", "[trace][refere
         // voice DC: the level of the first whole frame after each write that changes the volume (8.15.7). The
         // gate is Model A's (8.9.4); Model B's steps (-27 to -42 dBFS) lie within 13 dB of the reference's board
         // high-pass residual (-46.4 dBFS, 8.15.6, a reference artefact we do not reproduce), so they are printed only.
-        const auto& vd = renderedTrace (kDir, "a_voice_dc_" + sm);
+        const auto& vd = renderedTrace (kDir, dcName);
         REQUIRE (vd.ok);
         double worstDc = 0.0;
         int steps = 0;
