@@ -1,4 +1,4 @@
-// The chip's filter (Filter.h; docs/architecture.md 8.19.1; every constant: docs/decisions.md "B-Side S3a").
+// The chip's filter (Filter.h; docs/architecture.md 8.19.1, 8.19.3; every constant: docs/decisions.md "B-Side S3a").
 // All constants are our own fits to data generated with the reference adapter (noise through the filter
 // and its bypass twin, a two-pole response fitted per setting; static levels for the output functions).
 
@@ -13,6 +13,7 @@ namespace vs::bside::chip
 namespace
 {
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kLn2 = 0.69314718055994530942;
 
 // ---- Model B ----
 // fc (Hz) = c3 FC^3 + c2 FC^2 + c1 FC + c0 (fitted over FC 64 .. 2047, largest error 0.22 %), at least kBMinHz.
@@ -26,6 +27,8 @@ constexpr std::array<double, 16> kBFcRes { 1.0000, 0.9983, 0.9969, 0.9952, 0.994
                                            0.9903, 0.9894, 0.9891, 0.9881, 0.9875, 0.9868, 0.9867, 0.9858 };
 // outputs (render units, against the direct path): low-pass and high-pass inverted
 constexpr double kBLow = -0.997, kBBand = 1.011, kBHigh = -1.025;
+// processWithCutoff's table: a knot every kBCutStep register units, 0 .. 2048
+constexpr double kBCutStep = 64.0;
 
 // ---- Model A ----
 constexpr double kALadderRatio = 2.1756; // the cutoff converter: 11-bit terminated ladder (fitted)
@@ -55,6 +58,10 @@ constexpr double kALpMin = -1.5, kALpMax = 4.5;
 // Fitted from the mode responses at FC 612 and 1024 (0.525, -0.537, -0.156), then raised by about 1 dB and the
 // band leak by 2 dB to meet a_modes_a (decisions "B-Side S3a", review)
 constexpr double kABand = 0.59, kABandRes = 0.42, kAHigh = -0.59, kAHighBand = -0.20;
+// processWithCutoff's table: knots at kACutHz0 x 2^(j / kACutPerOctave) of the corner at resonance 0 (on the Q law's
+// own knots); the curve spans 261 Hz .. 21 kHz, knots j = 0 .. 26
+constexpr double kACutHz0 = 250.0, kACutLog2Hz0 = 7.965784284662087, kACutPerOctave = 4.0; // log2 (250)
+constexpr int kACutKnots = 27;
 
 const render::LadderWeights& cutoffWeights() noexcept
 {
@@ -72,12 +79,13 @@ double converterAt (int v) noexcept
     return d;
 }
 
-double modelAHz (double d) noexcept
+/** ln (fc / Hz) of Model A's curve at a converter value d (variation included). */
+double modelALnHz (double d) noexcept
 {
     const double x = std::clamp (d, 0.0, 1.0) * 23.0;
     const auto i = static_cast<std::size_t> (std::min (22.0, std::floor (x)));
     const double f = x - static_cast<double> (i);
-    return std::exp (kALogFc[i] + (kALogFc[i + 1] - kALogFc[i]) * f);
+    return kALogFc[i] + (kALogFc[i + 1] - kALogFc[i]) * f;
 }
 
 double modelAQ0 (double hz) noexcept
@@ -92,6 +100,12 @@ double modelAQ0 (double hz) noexcept
     const double f = std::log2 (hz / kAQ0Hz[i]) / std::log2 (kAQ0Hz[i + 1] / kAQ0Hz[i]);
     return kAQ0[i] + (kAQ0[i + 1] - kAQ0[i]) * f;
 }
+
+/** Model B's curve before the floor (the cubic), for any register value. */
+double modelBCubic (double v) noexcept { return ((kBCubic[0] * v + kBCubic[1]) * v + kBCubic[2]) * v + kBCubic[3]; }
+
+/** The corner the discrete filter is designed for: never at or above 0.45 x the rate. */
+double designCorner (double hz, double sampleRate) noexcept { return std::min (hz, 0.45 * sampleRate); }
 } // namespace
 
 Filter::Filter() noexcept
@@ -113,9 +127,9 @@ double Filter::cutoffCurveHz (Model model, double registerValue, double variatio
 {
     const double v = std::isfinite (registerValue) ? std::clamp (registerValue, 0.0, 2047.0) : 0.0;
     if (model == Model::B)
-        return std::max (kBMinHz, ((kBCubic[0] * v + kBCubic[1]) * v + kBCubic[2]) * v + kBCubic[3]);
+        return std::max (kBMinHz, modelBCubic (v));
     const double var = std::isfinite (variationValue) ? std::clamp (variationValue, 0.0, 1.0) : 0.5;
-    return modelAHz (modelACutoffConverter (v) + (var - 0.5) * 2.0 * kVariationShift);
+    return std::exp (modelALnHz (modelACutoffConverter (v) + (var - 0.5) * 2.0 * kVariationShift));
 }
 
 void Filter::prepare (Model model, double internalRate, float variationValue) noexcept
@@ -124,8 +138,11 @@ void Filter::prepare (Model model, double internalRate, float variationValue) no
     mdl = model;
     rate = internalRate > 1000.0 && std::isfinite (internalRate) ? internalRate : 96000.0;
     variation = std::isfinite (variationValue) ? std::clamp (variationValue, 0.0f, 1.0f) : 0.5f;
-    updateCoefficients();
-    updateOutputs();
+    node2 = std::min (20000.0, 0.4 * rate);
+    const double s = std::sin (kPi * node2 / rate);
+    node2Phi = s * s;
+    cutValid = false; // processWithCutoff's table depends on the model, rate, resonance and mode only
+    update();
 }
 
 void Filter::reset() noexcept
@@ -140,9 +157,7 @@ void Filter::setCutoff (float registerValue) noexcept
     if (v < fcReg || v > fcReg) // a change of the stored value (no float ==: GCC -Wfloat-equal)
     {
         fcReg = v;
-        updateCoefficients();
-        if (mdl == Model::A)
-            updateOutputs(); // the band-pass gain follows Q at resonance 0
+        update();
     }
 }
 
@@ -152,8 +167,8 @@ void Filter::setResonance (int value) noexcept
     if (r != res)
     {
         res = r;
-        updateCoefficients();
-        updateOutputs();
+        cutValid = false;
+        update();
     }
 }
 
@@ -163,7 +178,8 @@ void Filter::setMode (std::uint8_t modeVolume) noexcept
     if (m != modeBits)
     {
         modeBits = m;
-        updateOutputs();
+        cutValid = false;
+        update();
     }
 }
 
@@ -173,12 +189,132 @@ void Filter::setVariation (float value) noexcept
     if (v < variation || v > variation)
     {
         variation = v;
-        updateCoefficients();
-        updateOutputs();
+        update();
     }
 }
 
-void Filter::updateCoefficients() noexcept
+std::array<double, 3> Filter::modelAWeights (std::uint8_t mode, int resonance, double dampingAtZero) noexcept
+{
+    const bool lo = (mode & kLowPass) != 0, band = (mode & kBandPass) != 0, high = (mode & kHighPass) != 0;
+    const double lowGain = kALowGain[static_cast<std::size_t> (resonance)];
+    const double bandRes = 1.0 + kABandRes * (lowGain - 1.0);
+    return { (lo ? kAL1 * lowGain : 0.0) + (band ? kAB1 : 0.0) + (high ? kAH1 : 0.0),
+             (band ? kABand * dampingAtZero * bandRes : 0.0) + (high ? kAHighBand * dampingAtZero * bandRes : 0.0),
+             high ? kAHigh : 0.0 };
+}
+
+Filter::Mapped Filter::mapMatched (double fc, double damping, double cL, double cB, double cH, bool notch, double sampleRate,
+                                   double n2, double phi2) noexcept
+{
+    // POLES (Filter.h "RATE"): s = wc (-k/2 +- sqrt (k^2/4 - 1)) -> exp (s T); P = 1 + a1 + a2, M = 1 - a1 + a2 and
+    // 1 - a2 without cancellation (expm1, 1 - cos as 2 sin^2), so a corner of 15 Hz at 384 kHz stays exact
+    const double theta = 2.0 * kPi * fc / sampleRate;
+    const double sigma = 0.5 * damping * theta;
+    const double r = std::exp (-sigma);
+    const double disc = 1.0 - 0.25 * damping * damping;
+    double a1 = 0.0, pSum = 0.0;
+    if (disc >= 0.0)
+    {
+        const double psi = theta * std::sqrt (disc);
+        const double sh = std::sin (0.5 * psi);
+        const double oneMinusCos = 2.0 * sh * sh;
+        const double oneMinusR = -std::expm1 (-sigma);
+        a1 = -2.0 * r * (1.0 - oneMinusCos);
+        pSum = oneMinusR * oneMinusR + 2.0 * r * oneMinusCos;
+    }
+    else // real poles (Q < 0.5): exp (-(sigma -+ psi))
+    {
+        const double psi = theta * std::sqrt (-disc);
+        pSum = std::expm1 (-(sigma + psi)) * std::expm1 (-(sigma - psi));
+        a1 = -2.0 * r * std::cosh (psi);
+    }
+    const double a2 = r * r;
+    const double mSum = 1.0 - a1 + a2;
+    const double oneMinusA2 = -std::expm1 (-2.0 * sigma);
+    Mapped m {};
+    m.g = std::sqrt (pSum / mSum);
+    m.k = 2.0 * oneMinusA2 / (mSum * m.g);
+
+    // NUMERATOR b0 + b1 z^-1 + b2 z^-2 (over the denominator with a0 = 1), then the output weights of the trapezoidal
+    // form realising it: wL = sum b / P, wB = 2 (b0 - b2) / (M g), wH = (b0 - b1 + b2) / M
+    double b0 = 0.0, b1 = 0.0, b2 = 0.0;
+    if (notch)
+    {
+        // zeros on the unit circle at the prototype's notch (cL - cH x^2 = 0), DC gain exact
+        const double wn = std::min (2.0 * kPi * fc * std::sqrt (cL / cH) / sampleRate, kPi);
+        const double sn = std::sin (0.5 * wn);
+        const double kk = cL * pSum / (4.0 * sn * sn); // 2 - 2 cos wn = 4 sin^2 (wn / 2)
+        b0 = kk;
+        b1 = -2.0 * (1.0 - 2.0 * sn * sn) * kk;
+        b2 = kk;
+    }
+    else
+    {
+        // |B|^2 = B0 phi0 + B1 phi1 + B2 phi2 (phi1 = sin^2 (w/2), phi0 = 1 - phi1, phi2 = 4 phi0 phi1); the same form
+        // with A0 = P^2, A1 = M^2, A2 = -4 a2 is the denominator's. B0 from the DC gain, B1 and B2 from the magnitude
+        // at the nodes n1 = min (fc, n2 / 2) and n2.
+        const double aa0 = pSum * pSum, aa1 = mSum * mSum, aa2 = -4.0 * a2;
+        const double bb0 = aa0 * cL * cL;
+        auto protoSq = [&] (double hz) {
+            const double x = hz / fc, x2 = x * x;
+            const double re = cL - cH * x2, den = (1.0 - x2) * (1.0 - x2) + damping * damping * x2;
+            return (re * re + cB * cB * x2) / den;
+        };
+        const double n1 = std::min (fc, 0.5 * n2);
+        const double sn1 = std::sin (kPi * n1 / sampleRate);
+        const double phiA[2] { sn1 * sn1, phi2 };
+        const double hz[2] { n1, n2 };
+        double m1[2] {}, m2[2] {}, rhs[2] {};
+        for (int i = 0; i < 2; ++i)
+        {
+            const double f1 = phiA[i], f0 = 1.0 - f1, f2 = 4.0 * f0 * f1;
+            m1[i] = f1;
+            m2[i] = f2;
+            rhs[i] = protoSq (hz[i]) * (aa0 * f0 + aa1 * f1 + aa2 * f2) - bb0 * f0;
+        }
+        const double det = m1[0] * m2[1] - m2[0] * m1[1]; // 4 phi1 phi1' (phi0' - phi0) != 0: n1 < n2
+        const double bb1 = (rhs[0] * m2[1] - m2[0] * rhs[1]) / det;
+        const double bb2 = (m1[0] * rhs[1] - m1[1] * rhs[0]) / det;
+        // factor: b0 + b1 + b2 = r0, b0 - b1 + b2 = r1 (signs: the prototype's at DC and at half the rate),
+        // b0 b2 = -B2 / 4; minimum phase (|b0| >= |b2|). A discriminant below 0 (a double zero rounded) is taken as 0.
+        const double xn = 0.5 * sampleRate / fc, xn2 = xn * xn;
+        const double reNyq = (cL - cH * xn2) * (1.0 - xn2) + cB * damping * xn2;
+        const double r0 = (cL < 0.0 ? -1.0 : 1.0) * std::sqrt (std::max (bb0, 0.0));
+        const double r1 = (reNyq < 0.0 ? -1.0 : 1.0) * std::sqrt (std::max (bb1, 0.0));
+        b1 = 0.5 * (r0 - r1);
+        const double sum02 = 0.5 * (r0 + r1);
+        const double sq = std::sqrt (std::max (sum02 * sum02 + bb2, 0.0));
+        const double t1 = 0.5 * (sum02 + sq), t2 = 0.5 * (sum02 - sq);
+        b0 = std::abs (t1) >= std::abs (t2) ? t1 : t2;
+        b2 = std::abs (t1) >= std::abs (t2) ? t2 : t1;
+    }
+    m.wL = (b0 + b1 + b2) / pSum;
+    m.wB = 2.0 * (b0 - b2) / (mSum * m.g);
+    m.wH = (b0 - b1 + b2) / mSum;
+    return m;
+}
+
+Filter::Linear Filter::stateSpace (double g, double damping, double wL, double wB, double wH) noexcept
+{
+    // hp = hx x + h1 s1 + h2 s2, bp = g hp + s1, lp = g bp + s2 (Filter.h, process); s1' = 2 bp - s1, s2' = 2 lp - s2
+    const double h = 1.0 / (1.0 + g * (damping + g));
+    const double hx = h, h1 = -h * (damping + g), h2 = -h;
+    const double bx = g * hx, b1 = g * h1 + 1.0, b2 = g * h2;
+    const double lxx = g * bx, l11 = g * b1, l22 = g * b2 + 1.0;
+    Linear l {};
+    l.a1x = 2.0 * bx;
+    l.a11 = 2.0 * b1 - 1.0;
+    l.a12 = 2.0 * b2;
+    l.a2x = 2.0 * lxx;
+    l.a21 = 2.0 * l11;
+    l.a22 = 2.0 * l22 - 1.0;
+    l.ox = wL * lxx + wB * bx + wH * hx;
+    l.o1 = wL * l11 + wB * b1 + wH * h1;
+    l.o2 = wL * l22 + wB * b2 + wH * h2;
+    return l;
+}
+
+void Filter::update() noexcept
 {
     const auto r = static_cast<std::size_t> (res);
     const double base = cutoffCurveHz (mdl, static_cast<double> (fcReg), static_cast<double> (variation));
@@ -187,90 +323,173 @@ void Filter::updateCoefficients() noexcept
         fcHz = base * kBFcRes[r];
         k0 = kBInvQ[0];
         k = kBInvQ[r];
+        protoL = (modeBits & kLowPass) != 0 ? kBLow : 0.0;
+        protoB = (modeBits & kBandPass) != 0 ? kBBand : 0.0;
+        protoH = (modeBits & kHighPass) != 0 ? kBHigh : 0.0;
+        p1 = p2 = p3 = p4 = p5 = 0.0;
+        lpMin = -1.0e9;
+        lpMax = 1.0e9;
     }
     else
     {
         fcHz = base * kAFcRes[r];
         k0 = 1.0 / modelAQ0 (base);
         k = k0 / kAQRes[r];
+        const bool lo = (modeBits & kLowPass) != 0, band = (modeBits & kBandPass) != 0, high = (modeBits & kHighPass) != 0;
+        const double lowGain = kALowGain[r];
+        const auto w = modelAWeights (modeBits, res, k0);
+        protoL = w[0];
+        protoB = w[1];
+        protoH = w[2];
+        p1 = w[0];
+        p2 = (lo ? kAL2 * lowGain : 0.0) + (band ? kAB2 : 0.0) + (high ? kAH2 : 0.0);
+        p3 = (lo ? kAL3 * lowGain : 0.0) + (band ? kAB3 : 0.0);
+        p4 = lo ? kAL4 * lowGain : 0.0;
+        p5 = lo ? kAL5 * lowGain : 0.0;
+        lpMin = kALpMin;
+        lpMax = kALpMax;
     }
-    // never at or above a quarter of the rate's Nyquist margin (tan grows without bound at rate / 2)
-    const double f = std::min (fcHz, 0.45 * rate);
-    g = std::tan (kPi * f / rate);
-    kg = k + g;
-    h = 1.0 / (1.0 + g * kg);
-    updateStateSpace();
+    const bool notch = mdl == Model::B && modeBits == (kLowPass | kHighPass);
+    const Mapped m = mapMatched (designCorner (fcHz, rate), k, protoL, protoB, protoH, notch, rate, node2, node2Phi);
+    // Model A: the static functions carry p1 x lp already; the linear row carries the rest of the designed numerator
+    const Linear l = stateSpace (m.g, m.k, m.wL - p1, m.wB, m.wH);
+    const Linear lpRow = stateSpace (m.g, m.k, 1.0, 0.0, 0.0);
+    a1x = l.a1x;
+    a11 = l.a11;
+    a12 = l.a12;
+    a2x = l.a2x;
+    a21 = l.a21;
+    a22 = l.a22;
+    ox = l.ox;
+    o1 = l.o1;
+    o2 = l.o2;
+    lx = lpRow.ox;
+    l1 = lpRow.o1;
+    l2 = lpRow.o2;
 }
 
-void Filter::updateStateSpace() noexcept
+void Filter::buildCutTable() noexcept
 {
-    // hp = hx x + h1 s1 + h2 s2, bp = g hp + s1, lp = g bp + s2 (Filter.h, process)
-    const double hx = h, h1 = -h * kg, h2 = -h;
-    const double bx = g * hx, b1 = g * h1 + 1.0, b2 = g * h2;
-    lx = g * bx;
-    l1 = g * b1;
-    l2 = g * b2 + 1.0;
-    a1x = 2.0 * bx;
-    a11 = 2.0 * b1 - 1.0;
-    a12 = 2.0 * b2;
-    a2x = 2.0 * lx;
-    a21 = 2.0 * l1;
-    a22 = 2.0 * l2 - 1.0;
-    ox = cLp * lx + cBp * bx + cHp * hx;
-    o1 = cLp * l1 + cBp * b1 + cHp * h1;
-    o2 = cLp * l2 + cBp * b2 + cHp * h2;
+    // processWithCutoff's knots (Filter.h): the mapping at each knot's corner, g' against the rational tan the
+    // per-sample code uses, the output weights (Model A: minus the static functions' linear term, which is constant
+    // over the cutoff at a resonance and mode)
+    const auto r = static_cast<std::size_t> (res);
+    const int knots = mdl == Model::B ? kCutKnots : kACutKnots;
+    const bool notch = mdl == Model::B && modeBits == (kLowPass | kHighPass);
+    for (int j = 0; j < knots; ++j)
+    {
+        double fc = 0.0, damping = k;
+        std::array<double, 3> w { protoL, protoB, protoH };
+        if (mdl == Model::B)
+            fc = std::max (kBMinHz, modelBCubic (kBCutStep * j)) * kBFcRes[r];
+        else
+        {
+            const double base = kACutHz0 * std::exp2 (j / kACutPerOctave);
+            const double dampingAtZero = 1.0 / modelAQ0 (base);
+            fc = base * kAFcRes[r];
+            damping = dampingAtZero / kAQRes[r];
+            w = modelAWeights (modeBits, res, dampingAtZero);
+        }
+        const double fcc = designCorner (fc, rate);
+        const Mapped m = mapMatched (fcc, damping, w[0], w[1], w[2], notch, rate, node2, node2Phi);
+        auto& t = cutTable[static_cast<std::size_t> (j)];
+        t[0] = m.g / fastTan (kPi * fcc / rate);
+        t[1] = m.k;
+        t[2] = m.wL - p1;
+        t[3] = m.wB;
+        t[4] = m.wH;
+    }
+    cutValid = true;
 }
 
-void Filter::updateOutputs() noexcept
+Filter::Mapped Filter::cutAt (float registerValue) const noexcept
 {
-    const bool lo = (modeBits & kLowPass) != 0, band = (modeBits & kBandPass) != 0, high = (modeBits & kHighPass) != 0;
+    const double v = std::isfinite (registerValue) ? std::clamp (static_cast<double> (registerValue), 0.0, 2047.0) : 0.0;
+    double fc = 0.0, pos = 0.0;
+    int last = kCutKnots - 1;
     if (mdl == Model::B)
     {
-        cLp = lo ? kBLow : 0.0;
-        cBp = band ? kBBand : 0.0;
-        cHp = high ? kBHigh : 0.0;
-        p1 = p2 = p3 = p4 = p5 = 0.0;
-        lpMin = -1.0e9;
-        lpMax = 1.0e9;
-        updateStateSpace();
-        return;
+        fc = std::max (kBMinHz, modelBCubic (v)) * kBFcRes[static_cast<std::size_t> (res)];
+        pos = v * (1.0 / kBCutStep);
     }
-    const double lowGain = kALowGain[static_cast<std::size_t> (res)];
-    const double bandRes = 1.0 + kABandRes * (lowGain - 1.0);
-    cLp = 0.0;
-    cBp = (band ? kABand * k0 * bandRes : 0.0) + (high ? kAHighBand * k0 * bandRes : 0.0);
-    cHp = high ? kAHigh : 0.0;
-    p1 = (lo ? kAL1 * lowGain : 0.0) + (band ? kAB1 : 0.0) + (high ? kAH1 : 0.0);
-    p2 = (lo ? kAL2 * lowGain : 0.0) + (band ? kAB2 : 0.0) + (high ? kAH2 : 0.0);
-    p3 = (lo ? kAL3 * lowGain : 0.0) + (band ? kAB3 : 0.0);
-    p4 = lo ? kAL4 * lowGain : 0.0;
-    p5 = lo ? kAL5 * lowGain : 0.0;
-    updateStateSpace();
-    lpMin = kALpMin;
-    lpMax = kALpMax;
+    else
+    {
+        const double lnBase = modelALnHz (modelACutoffConverter (v) + (static_cast<double> (variation) - 0.5) * 2.0 * kVariationShift);
+        fc = std::exp (lnBase) * kAFcRes[static_cast<std::size_t> (res)];
+        last = kACutKnots - 1;
+        pos = std::clamp ((lnBase * (1.0 / kLn2) - kACutLog2Hz0) * kACutPerOctave, 0.0, static_cast<double> (last));
+    }
+    const int i = std::min (static_cast<int> (pos), last - 1);
+    const double f = pos - i;
+    const auto& lo = cutTable[static_cast<std::size_t> (i)];
+    const auto& hi = cutTable[static_cast<std::size_t> (i + 1)];
+    Mapped m {};
+    m.g = (lo[0] + (hi[0] - lo[0]) * f) * fastTan (kPi / rate * designCorner (fc, rate));
+    m.k = lo[1] + (hi[1] - lo[1]) * f;
+    m.wL = lo[2] + (hi[2] - lo[2]) * f;
+    m.wB = lo[3] + (hi[3] - lo[3]) * f;
+    m.wH = lo[4] + (hi[4] - lo[4]) * f;
+    return m;
 }
 
 float Filter::processWithCutoff (float in, float registerValue) noexcept
 {
-    const double v = std::isfinite (registerValue) ? std::clamp (static_cast<double> (registerValue), 0.0, 2047.0) : 0.0;
-    double hz = 0.0;
-    if (mdl == Model::B)
-        hz = std::max (kBMinHz, ((kBCubic[0] * v + kBCubic[1]) * v + kBCubic[2]) * v + kBCubic[3]) * kBFcRes[static_cast<std::size_t> (res)];
-    else
-        hz = modelAHz (modelACutoffConverter (v) + (static_cast<double> (variation) - 0.5) * 2.0 * kVariationShift) * kAFcRes[static_cast<std::size_t> (res)];
-    const double gg = fastTan (kPi / rate * std::min (hz, 0.45 * rate));
+    if (! cutValid)
+        buildCutTable(); // after a rate, resonance or mode change: bounded (33 mappings)
+    const Mapped c = cutAt (registerValue);
     const double x = guard (in);
-    const double kg2 = k + gg;
-    const double hp = (x - kg2 * s1 - s2) / (1.0 + gg * kg2);
-    const double bp = gg * hp + s1;
-    const double lp = gg * bp + s2;
-    s1 = bp + gg * hp;
-    s2 = lp + gg * bp;
+    const double kg2 = c.k + c.g;
+    const double hp = (x - kg2 * s1 - s2) / (1.0 + c.g * kg2);
+    const double bp = c.g * hp + s1;
+    const double lp = c.g * bp + s2;
+    s1 = bp + c.g * hp;
+    s2 = lp + c.g * bp;
     settle();
-    double out = cLp * lp + cBp * bp + cHp * hp;
+    double out = c.wL * lp + c.wB * bp + c.wH * hp;
     if (mdl == Model::A)
         out += shape (lp);
     return static_cast<float> (out);
+}
+
+Filter::Linear Filter::linearPart() const noexcept
+{
+    Linear l { a11, a12, a21, a22, a1x, a2x, ox, o1, o2 };
+    // Model A: its static functions' linear term on the low-pass row
+    l.ox += p1 * lx;
+    l.o1 += p1 * l1;
+    l.o2 += p1 * l2;
+    return l;
+}
+
+Filter::Linear Filter::linearPartWithCutoff (float registerValue) noexcept
+{
+    if (! cutValid)
+        buildCutTable();
+    const Mapped c = cutAt (registerValue);
+    return stateSpace (c.g, c.k, c.wL + p1, c.wB, c.wH);
+}
+
+std::complex<double> Filter::response (const Linear& l, double hz, double sampleRate) noexcept
+{
+    return responseAt (l, std::polar (1.0, 2.0 * kPi * hz / sampleRate));
+}
+
+std::complex<double> Filter::responseAt (const Linear& l, std::complex<double> z) noexcept
+{
+    // H (z) = ox + [o1 o2] (z I - A)^-1 [a1x a2x]
+    const std::complex<double> d = (z - l.a11) * (z - l.a22) - l.a12 * l.a21;
+    const std::complex<double> v1 = ((z - l.a22) * l.a1x + l.a12 * l.a2x) / d;
+    const std::complex<double> v2 = (l.a21 * l.a1x + (z - l.a11) * l.a2x) / d;
+    return l.ox + l.o1 * v1 + l.o2 * v2;
+}
+
+double Filter::spectralRadius (const Linear& l) noexcept
+{
+    const double tr = l.a11 + l.a22, det = l.a11 * l.a22 - l.a12 * l.a21;
+    const double disc = tr * tr - 4.0 * det;
+    if (disc >= 0.0)
+        return std::max (std::abs (0.5 * (tr + std::sqrt (disc))), std::abs (0.5 * (tr - std::sqrt (disc))));
+    return std::sqrt (std::max (det, 0.0));
 }
 
 void Filter::process (float* inOut, int n) noexcept

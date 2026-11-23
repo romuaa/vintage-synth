@@ -2,7 +2,8 @@
 // (corners, peaks, distortion, voice DC, modes) are in tests/bside/trace/; here: stability at every setting and
 // internal rate of 4.4, writes every sample, decay after a loud input (no limit cycle, no denormal), block-size
 // independence, no allocation, and the behaviours the contract names (signs, notch, resonance, the cutoff
-// converter's steps, variation, volume DC).
+// converter's steps, variation, volume DC). The closing step (8.19.3): the response's independence of the internal
+// rate against the analog prototype ([rate]), processWithCutoff against setCutoff, every pole inside the unit circle.
 
 #include "FuzzSupport.h"
 
@@ -11,9 +12,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
+#include <string>
 #include <vector>
 
 using namespace vs::bside::chip;
@@ -60,6 +65,105 @@ double sineGain (Filter& f, double rate, double hz, double dc = 0.5)
         c += (y[static_cast<std::size_t> (i)] - mean) * std::cos (ph);
     }
     return 2.0 * std::sqrt (s * s + c * c) / n / 0.01;
+}
+
+/** The analog prototype of a filter's present setting (Filter.h "WHAT IT IS"): corner, Q and weights as the class
+    reports them; the corner as designed (below 0.45 x the rate). */
+std::complex<double> prototype (const Filter& f, double rate, double hz)
+{
+    const double fc = std::min (f.cutoffHz(), 0.45 * rate);
+    const auto w = f.prototypeWeights();
+    const std::complex<double> s (0.0, hz / fc);
+    return (w[2] * s * s + w[1] * s + w[0]) / (s * s + s / f.q() + 1.0);
+}
+
+/** The gate band of 8.19.3: 20 Hz .. 20 kHz, 161 points spaced evenly in log frequency. */
+const std::vector<double>& gateGrid()
+{
+    static const std::vector<double> g = [] {
+        std::vector<double> v;
+        for (int i = 0; i <= 160; ++i)
+            v.push_back (20.0 * std::pow (1000.0, i / 160.0));
+        return v;
+    }();
+    return g;
+}
+
+struct Worst
+{
+    double db = 0.0;
+    double hz = 0.0;
+};
+
+/** One setting of the rate gate: the prototype on the gate grid, which points are gated (the prototype above -20 dB
+    of its largest value: DC, infinity, and around the corner at 1/8 octave, +-4 octaves), and the deviation of a
+    linear part (Filter::responseAt) from the prototype or from another linear part there. */
+struct GateSetting
+{
+    GateSetting (const Filter& f, double rate, const std::vector<std::complex<double>>& z) : unit (z)
+    {
+        const double floor = 0.1 * largest (f, rate);
+        const auto& grid = gateGrid();
+        for (std::size_t i = 0; i < grid.size(); ++i)
+        {
+            const auto p = prototype (f, rate, grid[i]);
+            if (std::abs (p) > floor)
+            {
+                index.push_back (i);
+                proto.push_back (p);
+            }
+        }
+    }
+    static double largest (const Filter& f, double rate)
+    {
+        const auto w = f.prototypeWeights();
+        double m = std::max (std::abs (w[0]), std::abs (w[2]));
+        const double fc = std::min (f.cutoffHz(), 0.45 * rate);
+        for (int i = -32; i <= 32; ++i)
+            m = std::max (m, std::abs (prototype (f, rate, fc * std::exp2 (i / 8.0))));
+        return m;
+    }
+    /** |20 log10 (|H| / |reference|)|, worst over the gated points; reference: the prototype, or `other`. */
+    Worst deviation (const Filter::Linear& l, const Filter::Linear* other = nullptr) const
+    {
+        Worst w;
+        for (std::size_t j = 0; j < index.size(); ++j)
+        {
+            const auto z = unit[index[j]];
+            const double ref = other != nullptr ? std::abs (Filter::responseAt (*other, z)) : std::abs (proto[j]);
+            const double d = std::abs (20.0 * std::log10 (std::abs (Filter::responseAt (l, z)) / ref));
+            if (! (d <= w.db)) // NaN counts as the worst
+            {
+                w.db = std::isfinite (d) ? d : 1e9;
+                w.hz = gateGrid()[index[j]];
+            }
+        }
+        return w;
+    }
+    const std::vector<std::complex<double>>& unit;
+    std::vector<std::size_t> index;
+    std::vector<std::complex<double>> proto;
+};
+
+/** The response of a filter to an impulse of amplitude `amp` (process, or processWithCutoff at `cutoff` >= 0) at
+    `hz`, from n samples (the tail beyond n is below the double rounding for the settings the tests use). */
+std::complex<double> impulseResponse (Filter& f, double rate, double hz, int n, float amp, float cutoff)
+{
+    f.reset();
+    std::complex<double> acc = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        const float x = i == 0 ? amp : 0.0f;
+        const float y = cutoff >= 0.0f ? f.processWithCutoff (x, cutoff) : f.process (x);
+        acc += static_cast<double> (y) * std::polar (1.0, -2.0 * kPi * hz * i / rate);
+    }
+    return acc / static_cast<double> (amp);
+}
+
+const char* modeName (int mode)
+{
+    static const char* const names[] { "none", "low", "band", "low+band", "high", "low+high", "band+high", "all" };
+    return names[mode];
 }
 } // namespace
 
@@ -247,44 +351,254 @@ TEST_CASE ("filter: the rational tan, and a cutoff every sample (processWithCuto
     }
     CHECK (worstLow < 1e-8);
     CHECK (worstHigh < 3e-5);
-    // Model B: a cutoff every sample equals setCutoff + process (the rational tan's error only)
+    // In time: a cutoff swept every sample through processWithCutoff against setCutoff + process every sample, noise at
+    // full scale (Model A's static functions at work), on a filter whose stored cutoff stays elsewhere (8.19.3: the
+    // damping, band weights and variation of the cutoff given). The difference's rms against the output's: below
+    // 10^(0.1/20) - 1 (the 0.1 dB of 8.19.3). Model A at variation 0, 0.5 and 1 and at resonance 0 and 12.
     bst::Rng r (37);
-    Filter a, b;
-    a.prepare (Model::B, 96000.0, 0.5f);
-    b.prepare (Model::B, 96000.0, 0.5f);
-    for (Filter* f : { &a, &b })
+    double worstRel = 0.0;
+    for (const Model m : { Model::B, Model::A })
+        for (const float var : { 0.0f, 0.5f, 1.0f })
+            for (const int res : { 0, 12 })
+                for (const std::uint8_t mode : { std::uint8_t { 0x10 }, std::uint8_t { 0x20 }, std::uint8_t { 0x70 } })
+                {
+                    if (m == Model::B && var > 0.0f)
+                        continue;
+                    Filter a, b;
+                    a.prepare (m, 96000.0, var);
+                    b.prepare (m, 96000.0, var);
+                    b.setCutoff (1800.0f); // the stored cutoff, far from the swept one
+                    for (Filter* f : { &a, &b })
+                    {
+                        f->setMode (mode);
+                        f->setResonance (res);
+                    }
+                    double num = 0.0, den = 0.0;
+                    for (int i = 0; i < 40000; ++i)
+                    {
+                        const float fc = 700.0f + 600.0f * static_cast<float> (std::sin (i * 0.0007));
+                        const float x = m == Model::A ? uniform (r, 0.0f, 2.1f) : uniform (r, -1.0f, 1.0f);
+                        a.setCutoff (fc);
+                        const double ya = a.process (x);
+                        const double yb = b.processWithCutoff (x, fc);
+                        if (i >= 2000)
+                        {
+                            num += (ya - yb) * (ya - yb);
+                            den += ya * ya;
+                        }
+                    }
+                    const double rel = std::sqrt (num / den);
+                    INFO ("model " << (m == Model::A ? "A" : "B") << " variation " << var << " resonance " << res << " mode " << int (mode));
+                    CHECK (rel < 0.0116);
+                    worstRel = std::max (worstRel, rel);
+                }
+    WARN ("processWithCutoff against setCutoff + process, swept cutoff and noise: largest relative rms difference " << worstRel
+                                                                                                                     << " (allowed 0.0116)");
+}
+
+namespace
+{
+// For every internal rate of 4.4, mode combination 1..7, resonance 0..15, cutoff 0, 4, ..., 2044, 2047 (Model A at
+// variation 0, 0.5 and 1): the magnitude of the filter's linear part (Filter::linearPart, the per-sample code's own
+// coefficients; that this is the class's response is the next test's) against its analog prototype (corner, Q and
+// weights as the class reports them), 20 Hz .. 20 kHz where the prototype is above -20 dB of its largest value:
+// at most 0.5 dB. processWithCutoff's linear part (Filter::linearPartWithCutoff) at the same cutoff, on a filter
+// whose stored cutoff is elsewhere, against setCutoff's: at most 0.1 dB. Prints the worst per model, rate and mode.
+void rateGate (Model m)
+{
+    constexpr double kAllowed = 0.5, kAllowedCut = 0.1;
+    double worstAll = 0.0, worstCutAll = 0.0;
+    for (const double rate : kRates)
     {
-        f->setMode (0x70);
-        f->setResonance (11);
+        std::vector<std::complex<double>> unit;
+        for (const double hz : gateGrid())
+            unit.push_back (std::polar (1.0, 2.0 * kPi * hz / rate));
+        for (int mode = 1; mode < 8; ++mode)
+        {
+            Worst worst, worstCut;
+            std::string at, atCut;
+            for (const float var : { 0.0f, 0.5f, 1.0f })
+            {
+                if (m == Model::B && var > 0.0f)
+                    continue;
+                Filter f, other;
+                f.prepare (m, rate, var);
+                other.prepare (m, rate, var);
+                f.setMode (static_cast<std::uint8_t> (mode << 4));
+                other.setMode (static_cast<std::uint8_t> (mode << 4));
+                other.setCutoff (1500.0f);
+                for (int res = 0; res < 16; ++res)
+                {
+                    f.setResonance (res);
+                    other.setResonance (res);
+                    for (int v = 0; v <= 2048; v += 4)
+                    {
+                        const auto fc = static_cast<float> (std::min (v, 2047));
+                        f.setCutoff (fc);
+                        const auto lin = f.linearPart();
+                        const auto cut = other.linearPartWithCutoff (fc);
+                        const GateSetting gs (f, rate, unit);
+                        const auto d = gs.deviation (lin);
+                        const auto c = gs.deviation (cut, &lin);
+                        char buf[96];
+                        if (d.db > worst.db)
+                        {
+                            worst = d;
+                            std::snprintf (buf, sizeof buf, "FC %g res %d var %g at %.0f Hz", static_cast<double> (fc), res, static_cast<double> (var), d.hz);
+                            at = buf;
+                        }
+                        if (c.db > worstCut.db)
+                        {
+                            worstCut = c;
+                            std::snprintf (buf, sizeof buf, "FC %g res %d var %g at %.0f Hz", static_cast<double> (fc), res, static_cast<double> (var), c.hz);
+                            atCut = buf;
+                        }
+                    }
+                }
+            }
+            INFO ("model " << (m == Model::A ? "A" : "B") << " rate " << rate << " mode " << modeName (mode) << ": " << worst.db << " dB at " << at
+                           << "; processWithCutoff " << worstCut.db << " dB at " << atCut);
+            CHECK (worst.db <= kAllowed);
+            CHECK (worstCut.db <= kAllowedCut);
+            worstAll = std::max (worstAll, worst.db);
+            worstCutAll = std::max (worstCutAll, worstCut.db);
+            std::printf ("[rate] model %s %6.0f Hz %-9s worst %.3f dB (%s); processWithCutoff %.3f dB (%s)\n", m == Model::A ? "A" : "B", rate,
+                         modeName (mode), worst.db, at.c_str(), worstCut.db, atCut.c_str());
+        }
     }
+    std::printf ("[rate] model %s, worst over every setting: %.3f dB (allowed %.1f); processWithCutoff against setCutoff %.3f dB (allowed %.1f)\n",
+                 m == Model::A ? "A" : "B", worstAll, kAllowed, worstCutAll, kAllowedCut);
+}
+} // namespace
+
+TEST_CASE ("filter: Model B's response does not depend on the internal rate: within 0.5 dB of the analog prototype (8.19.3)", "[filter][rate]")
+{
+    rateGate (Model::B);
+}
+
+TEST_CASE ("filter: Model A's linear response does not depend on the internal rate: within 0.5 dB of the analog prototype (8.19.3)", "[filter][rate]")
+{
+    rateGate (Model::A);
+}
+
+TEST_CASE ("filter: the linear part the rate gate measures is the class's own response (impulse at sample points)", "[filter][rate]")
+{
+    // Filter::response (linearPart ()) and (linearPartWithCutoff (FC)) against the DFT of the class's impulse response
+    // through process and processWithCutoff (amplitude 1e-6 on Model A, where its static functions are linear to
+    // 1e-7), at 6 frequencies, random settings over every rate, mode, resonance and the register range (corners from
+    // 15 Hz: 1 s of response, -150 dB of decay at the slowest). Relative to the largest magnitude: below 1e-4.
+    bst::Rng r (41);
     double worst = 0.0;
-    for (int i = 0; i < 20000; ++i)
+    for (int t = 0; t < 48; ++t)
     {
-        const float fc = 1000.0f + 900.0f * static_cast<float> (std::sin (i * 0.001));
-        const float x = uniform (r, -1.0f, 1.0f);
-        a.setCutoff (fc);
-        const float ya = a.process (x);
-        const float yb = b.processWithCutoff (x, fc);
-        worst = std::max (worst, static_cast<double> (std::abs (ya - yb)));
+        const Model m = t % 2 == 0 ? Model::A : Model::B;
+        const double rate = kRates[r.below (7)];
+        const float var = static_cast<float> (r.below (3)) * 0.5f;
+        const auto mode = static_cast<std::uint8_t> ((1 + r.below (7)) << 4);
+        const int res = r.range (0, 15);
+        const float fc = t < 4 ? static_cast<float> (t) : uniform (r, 0.0f, 2047.0f);
+        const float stored = uniform (r, 0.0f, 2047.0f);
+        Filter f;
+        f.prepare (m, rate, var);
+        f.setMode (mode);
+        f.setResonance (res);
+        f.setCutoff (fc);
+        const auto lin = f.linearPart();
+        Filter g;
+        g.prepare (m, rate, var);
+        g.setMode (mode);
+        g.setResonance (res);
+        g.setCutoff (stored);
+        const auto cut = g.linearPartWithCutoff (fc);
+        const float amp = m == Model::A ? 1e-6f : 1.0f;
+        const int n = static_cast<int> (rate);
+        double largest = 0.0, err = 0.0, errCut = 0.0;
+        for (const double hz : { 20.0, 200.0, 1000.0, 4000.0, 12000.0, 20000.0 })
+            largest = std::max ({ largest, std::abs (Filter::response (lin, hz, rate)), std::abs (Filter::response (cut, hz, rate)) });
+        for (const double hz : { 20.0, 200.0, 1000.0, 4000.0, 12000.0, 20000.0 })
+        {
+            err = std::max (err, std::abs (impulseResponse (f, rate, hz, n, amp, -1.0f) - Filter::response (lin, hz, rate)));
+            errCut = std::max (errCut, std::abs (impulseResponse (g, rate, hz, n, amp, fc) - Filter::response (cut, hz, rate)));
+        }
+        INFO ("model " << (m == Model::A ? "A" : "B") << " rate " << rate << " variation " << var << " mode " << int (mode) << " res " << res << " FC " << fc);
+        CHECK (err < 1e-4 * largest);
+        CHECK (errCut < 1e-4 * largest);
+        worst = std::max ({ worst, err / largest, errCut / largest });
     }
-    WARN ("Model B processWithCutoff against setCutoff + process: largest difference " << worst);
-    CHECK (worst < 1e-4);
-    // Model A at its stored cutoff: identical to process
-    Filter c, d;
-    c.prepare (Model::A, 96000.0, 0.5f);
-    d.prepare (Model::A, 96000.0, 0.5f);
-    for (Filter* f : { &c, &d })
+    WARN ("largest relative difference between the closed-form response and the impulse response: " << worst << " (allowed 1e-4)");
+}
+
+TEST_CASE ("filter: processWithCutoff follows a mode, resonance, rate or variation change after its table was built", "[filter]")
+{
+    // Its table is built at the first processWithCutoff after such a change (Filter.h): a filter that has used it and is
+    // then changed must give exactly what a fresh filter with the new setting gives.
+    for (const Model m : { Model::A, Model::B })
     {
-        f->setCutoff (700.0f);
-        f->setMode (0x10);
+        auto same = [] (const Filter::Linear& x, const Filter::Linear& y) {
+            return ! (x.a11 < y.a11 || x.a11 > y.a11 || x.a12 < y.a12 || x.a12 > y.a12 || x.ox < y.ox || x.ox > y.ox || x.o1 < y.o1 || x.o1 > y.o1
+                      || x.o2 < y.o2 || x.o2 > y.o2);
+        };
+        auto fresh = [m] (double rate, float var, std::uint8_t mode, int res) {
+            Filter f;
+            f.prepare (m, rate, var);
+            f.setMode (mode);
+            f.setResonance (res);
+            return f.linearPartWithCutoff (900.0f);
+        };
+        Filter f;
+        f.prepare (m, 96000.0, 0.5f);
+        f.setMode (0x10);
+        (void) f.linearPartWithCutoff (900.0f); // builds the table
+        f.setMode (0x60);
+        INFO ("model " << (m == Model::A ? "A" : "B"));
+        CHECK (same (f.linearPartWithCutoff (900.0f), fresh (96000.0, 0.5f, 0x60, 0)));
+        f.setResonance (13);
+        CHECK (same (f.linearPartWithCutoff (900.0f), fresh (96000.0, 0.5f, 0x60, 13)));
+        f.prepare (m, 192000.0, 0.5f);
+        CHECK (same (f.linearPartWithCutoff (900.0f), fresh (192000.0, 0.5f, 0x60, 13)));
+        f.setVariation (0.0f);
+        CHECK (same (f.linearPartWithCutoff (900.0f), fresh (192000.0, 0.0f, 0x60, 13)));
+        f.setCutoff (300.0f); // the stored cutoff does not enter
+        CHECK (same (f.linearPartWithCutoff (900.0f), fresh (192000.0, 0.0f, 0x60, 13)));
     }
-    float diff = 0.0f;
-    for (int i = 0; i < 5000; ++i)
-    {
-        const float x = uniform (r, 0.0f, 1.5f);
-        diff = std::max (diff, std::abs (c.process (x) - d.processWithCutoff (x, 700.0f)));
-    }
-    CHECK (! (diff > 0.0f));
+}
+
+TEST_CASE ("filter: every pole inside the unit circle at every register value, resonance, variation and rate", "[filter][stability]")
+{
+    // The spectral radius of the state matrix of setCutoff's mapping and of processWithCutoff's (at every register
+    // value and half-way between), Model A at variation 0, 0.5 and 1: below 1. Printed: the largest (the slowest decay:
+    // 15 Hz at 384 kHz).
+    double largest = 0.0;
+    for (const Model m : { Model::A, Model::B })
+        for (const double rate : kRates)
+            for (const float var : { 0.0f, 0.5f, 1.0f })
+            {
+                if (m == Model::B && var > 0.0f)
+                    continue;
+                Filter f;
+                f.prepare (m, rate, var);
+                f.setMode (0x70);
+                for (int res = 0; res < 16; ++res)
+                {
+                    f.setResonance (res);
+                    for (int v = 0; v < 2048; ++v)
+                    {
+                        f.setCutoff (static_cast<float> (v));
+                        const double a = Filter::spectralRadius (f.linearPart());
+                        const double b = Filter::spectralRadius (f.linearPartWithCutoff (static_cast<float> (v)));
+                        const double c = Filter::spectralRadius (f.linearPartWithCutoff (static_cast<float> (v) + 0.5f));
+                        const double worst = std::max ({ a, b, c });
+                        if (! (worst < 1.0))
+                        {
+                            INFO ("model " << (m == Model::A ? "A" : "B") << " rate " << rate << " variation " << var << " res " << res << " FC " << v
+                                           << ": spectral radius " << a << " / " << b << " / " << c);
+                            FAIL();
+                        }
+                        largest = std::max (largest, worst);
+                    }
+                }
+            }
+    WARN ("largest spectral radius: " << largest);
 }
 
 TEST_CASE ("output stage: volume DC off, a volume or routing write with held voices does not move the output's DC", "[output]")
