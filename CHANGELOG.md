@@ -7,19 +7,21 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ### B-Side: Model A's cutoff jump at code 512 fixed; below 480 unchanged (2026-11-23)
 - Scope by owner decision: only the jump at cutoff code 512 and the converter's boundaries above it. For every
-  cutoff code below 480 Model A's corner is bit-identical to the previous form (pinned by a test, on both of the
-  filter's paths).
+  register value up to and including 479.0 Model A's corner is bit-identical to the previous form (pinned by a test
+  at arbitrary values and variations, on both of the filter's paths).
 - From code 480 up the mapping follows the reference's corner steps: within 2 percentage points per code step from
-  479 -> 480 up to 1600 (worst 1.69 at 512; was 7.3 there). The fall at 511 -> 512 is -13 % (was -22 %; the
-  reference's -15 %). In the owner's one-voice sweep every write from code 480 up is now within 0.5 dB of the
-  reference's step at the same write (worst 0.48 dB; was 0.79), the jump at 512 in the 2 to 5 kHz band -1.3 dB
-  (was -2.2; the reference's -1.7).
+  479 -> 480 up to 1600 (worst 1.43; was 7.3 at 512). The fall at 511 -> 512 is -15.4 % (was -22 %; the reference's
+  -15.0 % at a low level). In the owner's one-voice sweep every write from code 480 up is within 0.5 dB of the
+  reference's step at the same write (worst 0.34 dB; was 0.79), with one named exception: the jump at 512 in the
+  0.8 to 2 kHz band, where the reference does not move and ours falls 0.46 dB (Model A's level dependence, parked).
+  In 2 to 5 kHz that jump is -1.44 dB (was -2.23; the reference's -1.67).
 - Still open, recorded with Model A's parked level dependence: below code 480 the sweep keeps the previous steps
   (383 -> 384: -1.42 dB against the reference's -0.49 dB in 2 to 5 kHz), and the reference's steps at 255 -> 256 and
   319 -> 320 are missing in ours.
 - New reference data: `a_cutcode_*` (the cutoff register walked one code at a time across the boundaries from 480 to
   1600, noise at a low level) and `a_cutsweep_a` (the one-voice sweep), with the reference's step per write as
-  constants. A cutoff every sample (`processWithCutoff`, Model A) got cheaper: 29 -> 21 ns.
+  constants. A cutoff every sample (`processWithCutoff`, Model A) got cheaper from code 480 up (29 -> 21 ns in
+  `chip_bench`); below 480 it costs what it did.
 
 ### Tests: the editor feed's seqlock test no longer depends on the scheduler (2026-11-23)
 - "UiFeed: the held-order seqlock never hands out a torn copy" failed once on the Linux ARM64 CI runner: the writer
