@@ -102,9 +102,12 @@ the parked figures).
   **Diagnosis:** a use-after-free in the validation tool itself at teardown (its bundled
   framework version; fixed upstream later), on Linux x86_64 in about 6 to 7 % of runs, with
   any plugin. Pull request 42 (`ci/pluginval-teardown`) runs the tool under a debugger and
-  accepts a crash with that exact signature only; its run 45121955371 is green. **Linux
-  x86_64 is not confirmed for this branch yet:** after pull request 42 has merged, `main` is
-  merged in here and one Linux run is dispatched.
+  accepts a crash with that exact signature only; its run 45121955371 is green. Pull request
+  42 is merged and `main` is merged in here. **Third run (45140132683, on `3faf2cc`, Linux
+  only): green.** Linux x86_64, Linux ARM64, the sanitizer job, the bundle and all seven
+  distribution checks passed; every pluginval invocation ended normally (no crash to accept
+  in this run). Windows x64 and ARM64 were confirmed by the first run on `61983f3`; since
+  then only the workflow, one test tag and records changed.
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
