@@ -31,11 +31,49 @@ constexpr double kBLow = -0.997, kBBand = 1.011, kBHigh = -1.025;
 constexpr double kBCutStep = 64.0;
 
 // ---- Model A ----
-constexpr double kALadderRatio = 2.1756; // the cutoff converter: 11-bit terminated ladder (fitted)
-// ln (fc / Hz) at d = i / 23, i = 0 .. 23 (piecewise linear in d)
-constexpr std::array<double, 24> kALogFc { 5.566978, 5.601697, 5.794737, 5.830848, 5.952658, 7.166796, 7.832795, 8.205156,
-                                           8.463033, 8.749728, 8.914376, 9.091689, 9.229615, 9.347138, 9.468028, 9.542380,
-                                           9.620053, 9.686958, 9.733824, 9.790228, 9.835870, 9.887333, 9.914261, 9.951000 };
+// The cutoff mapping (register value -> corner at resonance 0) has two parts (docs/architecture.md 8.19.3, owner
+// decision O9; decisions "B-Side Model A cutoff steps, scope 512"):
+// - codes 0 .. 479: the S3a form, bit for bit: an 11-bit terminated ladder of ratio 2.1756 (the converter value d)
+//   and ln fc piecewise linear over 24 points of d. Nothing here depends on the refitted converter below.
+// - codes 480 .. 2047: the refitted form: d from a weight per bit (fitted; close to the ladder) and ln fc piecewise
+//   linear over 129 points of d, whose slope at each fall-back of the converter sets the corner's step there (within
+//   2 percentage points of the reference's per code from 479 -> 480 up to 1600). Codes 480 .. 511 take fitted values
+//   of d instead of the sum of their bits (kAJoin): they join the S3a corner at 479 with the reference's step there
+//   (-2.2 %, the committed noise walk) and rise evenly (+1.0 % per code at the -3 dB point) to code 511, which lies on
+//   the refitted curve, so the fall at 511 -> 512 is the curve's (-15.0 % at the -3 dB point; the committed walk:
+//   -15.0 %; decisions S7).
+// - a register value between 479 and 480 (Smooth) interpolates ln fc between the two.
+constexpr int kAFirstRefitted = 480;
+// codes 0 .. 479 (S3a)
+constexpr double kALowLadderRatio = 2.1756;
+constexpr std::array<double, 24> kALowLogFc { 5.566978, 5.601697, 5.794737, 5.830848, 5.952658, 7.166796, 7.832795, 8.205156,
+                                              8.463033, 8.749728, 8.914376, 9.091689, 9.229615, 9.347138, 9.468028, 9.542380,
+                                              9.620053, 9.686958, 9.733824, 9.790228, 9.835870, 9.887333, 9.914261, 9.951000 };
+// codes 480 .. 2047: the weight per bit (bit 0 first), the converter values of 480 .. 511, ln (fc / Hz) at
+// d = i / kALogFcIntervals
+constexpr std::array<double, 11> kAConverter { 0.000677536, 0.001300386, 0.002520950, 0.004900252, 0.009531922, 0.017761255, 0.033858608, 0.066655995, 0.128577338, 0.249785711, 0.484430046 };
+constexpr std::array<double, 32> kAJoin { 0.240074656, 0.240536530, 0.240935837, 0.241294777, 0.241666672, 0.242034619, 0.242619999, 0.243409451,
+    0.244224166, 0.245050991, 0.245866650, 0.246581038, 0.247379271, 0.248182767, 0.248991804, 0.249790746,
+    0.250766321, 0.251787836, 0.252868325, 0.253934267, 0.254970039, 0.256039093, 0.257083874, 0.258118306,
+    0.259042431, 0.260039855, 0.261015547, 0.261965596, 0.262869040, 0.263844735, 0.264844312, 0.265784232 };
+constexpr int kALogFcIntervals = 128;
+constexpr std::array<double, 129> kALogFc { 5.568762, 5.574051, 5.579520, 5.585102, 5.590843, 5.597733, 5.613662, 5.649298,
+    5.682199, 5.716583, 5.749633, 5.784669, 5.799238, 5.805900, 5.812686, 5.818856,
+    5.825178, 5.834360, 5.857475, 5.879546, 5.900385, 5.922892, 5.941360, 6.091184,
+    6.310404, 6.519868, 6.735299, 6.941595, 7.168982, 7.329803, 7.469615, 7.632934,
+    7.707134, 7.763385, 7.825549, 7.895722, 7.971609, 8.049846, 8.133840, 8.205641,
+    8.261674, 8.308356, 8.349665, 8.391052, 8.431115, 8.474731, 8.529889, 8.591215,
+    8.647933, 8.694001, 8.733191, 8.769271, 8.802955, 8.836176, 8.869572, 8.900264,
+    8.930406, 8.958206, 8.986429, 9.018792, 9.051212, 9.083282, 9.114686, 9.142244,
+    9.167545, 9.191416, 9.213670, 9.234926, 9.255931, 9.277678, 9.300422, 9.323396,
+    9.346121, 9.368434, 9.389309, 9.408517, 9.426244, 9.443287, 9.460551, 9.478162,
+    9.494880, 9.510347, 9.524757, 9.538788, 9.553100, 9.567833, 9.582439, 9.596270,
+    9.609154, 9.621597, 9.633743, 9.645440, 9.656640, 9.666661, 9.675656, 9.685001,
+    9.696134, 9.704555, 9.712976, 9.721397, 9.729819, 9.739656, 9.749791, 9.759926,
+    9.770061, 9.780196, 9.789827, 9.798028, 9.806229, 9.814430, 9.822632, 9.830833,
+    9.839762, 9.849009, 9.858256, 9.867504, 9.876751, 9.885423, 9.890262, 9.895100,
+    9.899939, 9.904778, 9.909616, 9.915451, 9.922053, 9.928654, 9.935256, 9.941858,
+    9.948459 };
 // Q at resonance 0 against log2 (fc), piecewise linear between these points (held outside)
 constexpr std::array<double, 8> kAQ0Hz { 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0, 21000.0 };
 constexpr std::array<double, 8> kAQ0 { 0.79, 0.62, 0.55, 0.55, 0.651, 0.745, 0.764, 0.77 };
@@ -63,15 +101,16 @@ constexpr double kABand = 0.59, kABandRes = 0.42, kAHigh = -0.59, kAHighBand = -
 constexpr double kACutHz0 = 250.0, kACutLog2Hz0 = 7.965784284662087, kACutPerOctave = 4.0; // log2 (250)
 constexpr int kACutKnots = 27;
 
-const render::LadderWeights& cutoffWeights() noexcept
+const render::LadderWeights& lowWeights() noexcept
 {
-    static const render::LadderWeights w = render::ladderWeights (11, kALadderRatio, true);
+    static const render::LadderWeights w = render::ladderWeights (11, kALowLadderRatio, true);
     return w;
 }
 
-double converterAt (int v) noexcept
+/** Codes 0 .. 479 (and 480 as the upper neighbour of 479): the S3a converter, summed bit by bit as it always was. */
+double lowConverterAt (int v) noexcept
 {
-    const auto& w = cutoffWeights();
+    const auto& w = lowWeights();
     double d = 0.0;
     for (std::size_t i = 0; i < 11; ++i)
         if (((v >> i) & 1) != 0)
@@ -79,13 +118,63 @@ double converterAt (int v) noexcept
     return d;
 }
 
-/** ln (fc / Hz) of Model A's curve at a converter value d (variation included). */
-double modelALnHz (double d) noexcept
+double lowConverter (double v) noexcept
+{
+    const int lo = static_cast<int> (std::floor (v));
+    const int hi = std::min (2047, lo + 1);
+    const double f = v - lo;
+    return lowConverterAt (lo) + (lowConverterAt (hi) - lowConverterAt (lo)) * f;
+}
+
+double lowLnHz (double d) noexcept
 {
     const double x = std::clamp (d, 0.0, 1.0) * 23.0;
     const auto i = static_cast<std::size_t> (std::min (22.0, std::floor (x)));
     const double f = x - static_cast<double> (i);
+    return kALowLogFc[i] + (kALowLogFc[i + 1] - kALowLogFc[i]) * f;
+}
+
+/** Codes 480 .. 2047: the converter value of every code, built at compile time (a lookup on the audio thread). */
+constexpr std::array<double, 2048> kAConverterTable = [] {
+    std::array<double, 2048> t {};
+    for (std::size_t v = 0; v < 2048; ++v)
+        for (std::size_t i = 0; i < 11; ++i)
+            if (((v >> i) & 1) != 0)
+                t[v] += kAConverter[i];
+    for (std::size_t j = 0; j < kAJoin.size(); ++j)
+        t[static_cast<std::size_t> (kAFirstRefitted) + j] = kAJoin[j];
+    return t;
+}();
+
+double converterAt (int v) noexcept { return kAConverterTable[static_cast<std::size_t> (v)]; }
+
+double refittedConverter (double v) noexcept
+{
+    const int lo = static_cast<int> (std::floor (v));
+    const int hi = std::min (2047, lo + 1);
+    const double f = v - lo;
+    return converterAt (lo) + (converterAt (hi) - converterAt (lo)) * f;
+}
+
+double refittedLnHz (double d) noexcept
+{
+    const double x = std::clamp (d, 0.0, 1.0) * static_cast<double> (kALogFcIntervals);
+    const auto i = static_cast<std::size_t> (std::min (static_cast<double> (kALogFcIntervals - 1), std::floor (x)));
+    const double f = x - static_cast<double> (i);
     return kALogFc[i] + (kALogFc[i + 1] - kALogFc[i]) * f;
+}
+
+/** ln (fc / Hz) of Model A's curve at a (clamped) register value and variation: the two parts above. */
+double modelALnBase (double v, double var) noexcept
+{
+    // each part's expression written exactly as the S3a form wrote it (one expression: the same rounding)
+    if (v <= kAFirstRefitted - 1.0)
+        return lowLnHz (lowConverter (v) + (var - 0.5) * 2.0 * Filter::kVariationShift);
+    if (v >= kAFirstRefitted)
+        return refittedLnHz (refittedConverter (v) + (var - 0.5) * 2.0 * Filter::kVariationShift);
+    const double a = lowLnHz (lowConverterAt (kAFirstRefitted - 1) + (var - 0.5) * 2.0 * Filter::kVariationShift);
+    const double b = refittedLnHz (converterAt (kAFirstRefitted) + (var - 0.5) * 2.0 * Filter::kVariationShift);
+    return a + (b - a) * (v - (kAFirstRefitted - 1.0));
 }
 
 double modelAQ0 (double hz) noexcept
@@ -171,17 +260,21 @@ bool reflectZeros (double b0, double b1, double b2, double w, double cL, double 
 
 Filter::Filter() noexcept
 {
-    (void) cutoffWeights(); // the converter weights are built here, never on the audio thread
+    (void) lowWeights(); // the S3a converter weights are built here, never on the audio thread
     prepare (Model::B, 96000.0, 0.5f);
 }
 
 double Filter::modelACutoffConverter (double registerValue) noexcept
 {
+    // the converter of the part in force: S3a's up to 479, the refitted one from 480 (between 479 and 480 the two
+    // values interpolated; it is not one converter there)
     const double v = std::isfinite (registerValue) ? std::clamp (registerValue, 0.0, 2047.0) : 0.0;
-    const int lo = static_cast<int> (std::floor (v));
-    const int hi = std::min (2047, lo + 1);
-    const double f = v - lo;
-    return converterAt (lo) + (converterAt (hi) - converterAt (lo)) * f;
+    if (v <= kAFirstRefitted - 1.0)
+        return lowConverter (v);
+    if (v >= kAFirstRefitted)
+        return refittedConverter (v);
+    const double a = lowConverterAt (kAFirstRefitted - 1), b = converterAt (kAFirstRefitted);
+    return a + (b - a) * (v - (kAFirstRefitted - 1.0));
 }
 
 double Filter::cutoffCurveHz (Model model, double registerValue, double variationValue) noexcept
@@ -190,12 +283,12 @@ double Filter::cutoffCurveHz (Model model, double registerValue, double variatio
     if (model == Model::B)
         return std::max (kBMinHz, modelBCubic (v));
     const double var = std::isfinite (variationValue) ? std::clamp (variationValue, 0.0, 1.0) : 0.5;
-    return std::exp (modelALnHz (modelACutoffConverter (v) + (var - 0.5) * 2.0 * kVariationShift));
+    return std::exp (modelALnBase (v, var));
 }
 
 void Filter::prepare (Model model, double internalRate, float variationValue) noexcept
 {
-    (void) cutoffWeights();
+    (void) lowWeights();
     mdl = model;
     rate = internalRate > 1000.0 && std::isfinite (internalRate) ? internalRate : 96000.0;
     variation = std::isfinite (variationValue) ? std::clamp (variationValue, 0.0f, 1.0f) : 0.5f;
@@ -467,9 +560,22 @@ void Filter::buildCutTable() noexcept
     cutValid = true;
 }
 
+double Filter::cutRegister (float registerValue) noexcept
+{
+    return std::isfinite (registerValue) ? std::clamp (static_cast<double> (registerValue), 0.0, 2047.0) : 0.0;
+}
+
+double Filter::cutBaseLn (double v) const noexcept { return modelALnBase (v, static_cast<double> (variation)); }
+
+double Filter::cornerWithCutoffHz (float registerValue) const noexcept
+{
+    const double v = cutRegister (registerValue);
+    return mdl == Model::B ? std::max (kBMinHz, modelBCubic (v)) : std::exp (cutBaseLn (v));
+}
+
 Filter::Mapped Filter::cutAt (float registerValue) const noexcept
 {
-    const double v = std::isfinite (registerValue) ? std::clamp (static_cast<double> (registerValue), 0.0, 2047.0) : 0.0;
+    const double v = cutRegister (registerValue);
     double fc = 0.0, pos = 0.0;
     int last = kCutKnots - 1;
     if (mdl == Model::B)
@@ -479,7 +585,7 @@ Filter::Mapped Filter::cutAt (float registerValue) const noexcept
     }
     else
     {
-        const double lnBase = modelALnHz (modelACutoffConverter (v) + (static_cast<double> (variation) - 0.5) * 2.0 * kVariationShift);
+        const double lnBase = cutBaseLn (v);
         fc = std::exp (lnBase) * kAFcRes[static_cast<std::size_t> (res)];
         last = kACutKnots - 1;
         pos = std::clamp ((lnBase * (1.0 / kLn2) - kACutLog2Hz0) * kACutPerOctave, 0.0, static_cast<double> (last));

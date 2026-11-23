@@ -3,12 +3,17 @@
 // DC are in ReferenceDataTests.cpp ("analog tolerances against our chip").
 
 #include "AnalogGates.h"
+#include "CutSweepReference.h"
+#include "SweepSteps.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 namespace tr = vs::bside::trace;
@@ -337,5 +342,192 @@ TEST_CASE ("analog: steps after volume, routing and resonance writes (a_s3a_step
         }
         if (m == 'a')
             std::printf ("[analog] a_s3a_steps_a: worst volume step %.2f dB (allowed 1)\n", worst);
+    }
+}
+
+TEST_CASE ("analog: Model A's corner steps per cutoff code from 479 -> 480 up to 1600 (a_cutcode_*)", "[trace][reference][chip][analog]")
+{
+    // 8.19.3, scope O9; decisions "B-Side Model A cutoff steps, scope 512". The register walked one code at a time
+    // across every multiple of 32 from 480 to 1600 (where the converter falls back), noise at a low level through the
+    // low-pass at resonance 0 (gen_cutcode_traces.py). Per code the corner (AnalogMeasure.h) of every segment that
+    // holds it, ours and the reference's alike, averaged over the passes whose corner the estimator resolves; per walked
+    // pair (c - 1, c) the relative step of that mean. GATED for every pair from 479 -> 480 to 1600: within 2 percentage
+    // points of the reference's (479 is the last code of the S3a form, 480 the first of the refitted one). MONOTONIC:
+    // wherever the reference's mean rises from c - 1 to c by more than 0.5 % (the resolution of two passes; smaller
+    // rises and falls, e.g. at 1471 -> 1472, have either sign from pass to pass), our mapping rises.
+    constexpr double kAllowedPp = 2.0, kRisePct = 0.5;
+    constexpr int kFirstGated = 480, kLastGated = 1600, kFiles = 5;
+    const std::string bypassName = "a_cutcode_bypass_a";
+    const auto& b = renderedTrace (kDir, bypassName);
+    if (! b.ok)
+        SKIP (b.why);
+    std::map<int, std::vector<double>> ref, ours;
+    for (int file = 0; file < kFiles; ++file)
+    {
+        const std::string name = "a_cutcode_" + std::to_string (file) + "_a";
+        const auto& f = renderedTrace (kDir, name);
+        REQUIRE (f.ok);
+        std::vector<int> codes;
+        int low = 0;
+        for (const auto& w : f.trace.writes)
+        {
+            if (w.cycle < 1000)
+                continue;
+            if (w.reg == 0x15)
+                low = w.value & 7;
+            else if (w.reg == 0x16)
+                codes.push_back ((static_cast<int> (w.value) << 3) | low);
+        }
+        INFO (name);
+        REQUIRE (codes.size() == 60);
+        REQUIRE (f.reference.segments.size() == 60);
+        REQUIRE (f.ours.segments.size() == 60);
+        REQUIRE (b.reference.segments.size() == 60);
+        for (std::size_t i = 0; i < 60; ++i)
+        {
+            const auto cr = tr::lowpassCorner (tr::filterResponse (f.reference.segments[i], b.reference.segments[i]));
+            const auto co = tr::lowpassCorner (tr::filterResponse (f.ours.segments[i], b.ours.segments[i]));
+            if (cr.found)
+                ref[codes[i]].push_back (cr.hz);
+            if (co.found)
+                ours[codes[i]].push_back (co.hz);
+        }
+    }
+    auto mean = [] (const std::vector<double>& v) {
+        double sum = 0.0;
+        for (const double x : v)
+            sum += x;
+        return sum / static_cast<double> (v.size());
+    };
+    double worst = 0.0;
+    int worstAt = 0, gated = 0, rising = 0, notRising = 0;
+    for (const auto& [c, rv] : ref)
+    {
+        const auto prev = ref.find (c - 1);
+        if (prev == ref.end() || c < kFirstGated || c > kLastGated)
+            continue;
+        const auto oc = ours.find (c), op = ours.find (c - 1);
+        INFO ("code " << c);
+        REQUIRE ((oc != ours.end() && op != ours.end()));
+        const double sr = 100.0 * (mean (rv) / mean (prev->second) - 1.0), so = 100.0 * (mean (oc->second) / mean (op->second) - 1.0);
+        const bool pass = std::abs (so - sr) <= kAllowedPp;
+        std::printf ("[cutcode] %4d -> %4d: reference %+7.2f %% (%zu passes), ours %+7.2f %%: %+6.2f pp%s\n", c - 1, c, sr, rv.size(), so, so - sr,
+                     pass ? "" : "  OUTSIDE");
+        ++gated;
+        CHECK (pass);
+        if (std::abs (so - sr) > worst)
+        {
+            worst = std::abs (so - sr);
+            worstAt = c;
+        }
+        if (sr > kRisePct)
+        {
+            ++rising;
+            const bool rises = vs::bside::chip::Filter::cutoffCurveHz (vs::bside::chip::Model::A, c, 0.5)
+                               > vs::bside::chip::Filter::cutoffCurveHz (vs::bside::chip::Model::A, c - 1, 0.5);
+            notRising += rises ? 0 : 1;
+            CHECK (rises);
+        }
+    }
+    std::printf ("[cutcode] %d steps gated (%d -> %d up to %d): worst %.2f pp at %d (allowed %.1f); our mapping rises at %d of the %d steps where "
+                 "the reference's rises by more than %.1f %%\n",
+                 gated, kFirstGated - 1, kFirstGated, kLastGated, worst, worstAt, kAllowedPp, rising - notRising, rising, kRisePct);
+    // 18 odd multiples of 32 (one step each) and 18 multiples of 64 (two steps each) in 480 .. 1600 make 54; at 1599 and
+    // 1600 the reference's corner lies beyond what the estimator resolves (above 17 kHz) in every pass of this walk
+    CHECK (gated == 52);
+    CHECK (rising >= 5);
+    // The join (codes 480 .. 511 take fitted converter values between the S3a corner at 479 and the refitted curve at
+    // 511): its two ends are gated above (479 -> 480 and 510 -> 511); the rise from 480 to 511 must lie in the range the
+    // reference shows across levels (+18 to +43 %: noise at sustain 2 .. 8 and the held sawtooth at full level).
+    REQUIRE ((ours.count (480) == 1 && ours.count (511) == 1 && ref.count (480) == 1 && ref.count (511) == 1));
+    const double riseOurs = 100.0 * (mean (ours[511]) / mean (ours[480]) - 1.0), riseRef = 100.0 * (mean (ref[511]) / mean (ref[480]) - 1.0);
+    std::printf ("[cutcode] the join: rise from 480 to 511 ours %+.1f %%, reference (this walk) %+.1f %% (allowed +18 .. +43 %%)\n", riseOurs, riseRef);
+    CHECK (riseOurs >= 18.0);
+    CHECK (riseOurs <= 43.0);
+}
+
+TEST_CASE ("analog: Model A's one-voice cutoff sweep, every write from code 480 up, step for step against the reference (a_cutsweep_a)",
+           "[trace][reference][chip][analog]")
+{
+    // 8.19.3, scope O9: the owner's sweep (110 Hz sawtooth, cutoff 200 up to 1900 and back, a write every 10 ms).
+    // SweepSteps.h's step at every write on our 48 kHz render, in 2 .. 5 kHz and 0.8 .. 2 kHz, against the reference's
+    // step at the SAME write (CutSweepReference.h: measured with the same function on the adapter's render of this
+    // committed trace). Gated for every write whose two codes are both 480 or above: within 0.5 dB, and the sum over
+    // any four consecutive such writes within 0.7 dB of the reference's sum over the same writes. A step moved to a
+    // neighbouring write or split over two writes differs at a write. Writes below 480 (the S3a form, decision O9)
+    // are printed where they differ by more than 0.5 dB, not gated.
+    // ONE NAMED EXCEPTION (8.19.3, after the review of scope "512"): the writes 510 -> 515 and 515 -> 510 in the
+    // 0.8 .. 2 kHz band. There the reference does not move (+0.07 dB) and ours falls with the corner (-0.46 dB) for
+    // any fall at 512 between -11 and -15 %: at full level the reference's corner at 511 is about 40 % above ours, so
+    // that band lies below it. That is the level dependence of Model A's corner, parked (O8). Those two writes are
+    // gated at their measured miss plus 0.05 dB; the four-write sums that contain them keep 0.7 dB.
+    constexpr double kAllowedDb = 0.5, kAllowedSumDb = 0.7, kException08to2Db = 0.58; // measured 0.53
+    constexpr int kFirst = 480;
+    const std::string name = "a_cutsweep_a";
+    const auto& r = renderedTrace (kDir, name);
+    if (! r.ok)
+        SKIP (r.why);
+    const std::size_t nRef = sizeof (kCutSweepReference) / sizeof (kCutSweepReference[0]);
+    for (const int band : { 0, 1 })
+    {
+        const double lo = band == 0 ? 2000.0 : 800.0, hi = band == 0 ? 5000.0 : 2000.0;
+        const auto st = sweepSteps (r.trace, r.chain.out, 1.0 / 110.0, lo, hi);
+        REQUIRE (st.size() == nRef);
+        std::vector<double> diff (st.size(), 0.0);
+        std::vector<bool> gated (st.size(), false);
+        double worst = 0.0, worstSum = 0.0;
+        std::size_t worstAt = 0, worstSumAt = 0, writes = 0;
+        for (std::size_t i = 0; i < st.size(); ++i)
+        {
+            const auto& w = kCutSweepReference[i];
+            INFO ("write " << i);
+            REQUIRE (st[i].from == w.from);
+            REQUIRE (st[i].to == w.to);
+            const double rs = band == 0 ? w.band2to5 : w.band08to2;
+            diff[i] = st[i].excessDb - rs;
+            gated[i] = w.from >= kFirst && w.to >= kFirst;
+            if (! gated[i])
+            {
+                if (std::abs (diff[i]) > kAllowedDb)
+                    std::printf ("[cutsweep] band %.0f .. %.0f Hz write %3zu %4d -> %4d: ours %+.2f dB, reference %+.2f dB (below %d: reported)\n", lo, hi, i,
+                                 w.from, w.to, st[i].excessDb, rs, kFirst);
+                continue;
+            }
+            ++writes;
+            const bool named = band == 1 && ((w.from == 510 && w.to == 515) || (w.from == 515 && w.to == 510));
+            if (named)
+            {
+                std::printf ("[cutsweep] band %.0f .. %.0f Hz write %3zu %4d -> %4d: ours %+.2f dB, reference %+.2f dB: miss %.2f dB (named exception, "
+                             "allowed %.2f)\n",
+                             lo, hi, i, w.from, w.to, st[i].excessDb, rs, std::abs (diff[i]), kException08to2Db);
+                CHECK (std::abs (diff[i]) <= kException08to2Db);
+            }
+            const bool pass = named || std::abs (diff[i]) <= kAllowedDb;
+            if (! pass)
+                std::printf ("[cutsweep] band %.0f .. %.0f Hz write %3zu %4d -> %4d: ours %+.2f dB, reference %+.2f dB  OUTSIDE\n", lo, hi, i, w.from, w.to,
+                             st[i].excessDb, rs);
+            CHECK (pass);
+            if (! named && std::abs (diff[i]) > worst)
+            {
+                worst = std::abs (diff[i]);
+                worstAt = i;
+            }
+            if (i >= 3 && gated[i - 1] && gated[i - 2] && gated[i - 3])
+            {
+                const double sum = std::abs (diff[i] + diff[i - 1] + diff[i - 2] + diff[i - 3]);
+                CHECK (sum <= kAllowedSumDb);
+                if (sum > worstSum)
+                {
+                    worstSum = sum;
+                    worstSumAt = i - 3;
+                }
+            }
+        }
+        std::printf ("[cutsweep] band %.0f .. %.0f Hz: %zu writes from code %d up; worst outside the named exception %.2f dB at %d -> %d (ours %+.2f, reference %+.2f; allowed %.1f); "
+                     "worst four-write sum %.2f dB from %d -> %d (allowed %.1f)\n",
+                     lo, hi, writes, kFirst, worst, kCutSweepReference[worstAt].from, kCutSweepReference[worstAt].to, st[worstAt].excessDb,
+                     band == 0 ? kCutSweepReference[worstAt].band2to5 : kCutSweepReference[worstAt].band08to2, kAllowedDb, worstSum,
+                     kCutSweepReference[worstSumAt].from, kCutSweepReference[worstSumAt].to, kAllowedSumDb);
+        CHECK (writes > 250);
     }
 }

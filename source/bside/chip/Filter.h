@@ -43,11 +43,16 @@
 // noise floors alone was tried and removed: it was wrong on tones, aliased and broke Shared). A later attempt must
 // fit tones and noise together and meet the alias budget.
 // MODEL A (all fitted to generated reference data; decisions "B-Side S3a"):
-// - the cutoff register goes through its own converter, an 11-bit terminated resistor ladder of ratio 2.18
-//   (RenderTables.h ladderWeights; it makes the steps at the bit boundaries, e.g. 1023 -> 1024 falls by 8 %),
-//   and the converter value d (0..1) through a fitted curve (ln fc piecewise linear over 24 points of d, about
-//   260 Hz at 0 to 21 kHz at 2047), fitted so that the -3 dB point the shared estimator (AnalogMeasure.h)
-//   finds lands on the reference's; `variation` shifts d by +-kVariationShift (0.5: the reference's curve);
+// - the cutoff register goes through its own converter (a value d, 0..1) and a fitted curve (ln fc piecewise linear in
+//   d, about 260 Hz at 0 to 21 kHz at 2047), fitted so that the -3 dB point the shared estimator (AnalogMeasure.h)
+//   finds lands on the reference's at the a_filter_a settings; `variation` shifts d by +-kVariationShift (0.5: the
+//   reference's curve). Two parts (owner decision O9; decisions "B-Side Model A cutoff steps, scope 512"): codes 0 ..
+//   479 are the S3a form bit for bit (an 11-bit terminated resistor ladder of ratio 2.18, 24 points of d; its fall at
+//   383 -> 384 stays larger than the reference's at full level, recorded open); from code 480 a fitted weight per
+//   bit (d falls back at every multiple of 32, e.g. by 6.0 % at 511 -> 512, code 511 on the curve) and 129 points of d, whose slope at each
+//   fall-back sets the corner's step there: within 2 percentage points of the reference's per code from 479 -> 480
+//   up to 1600 (the -3 dB point falls by 15 % at 511 -> 512, by 9 % at 1023 -> 1024); codes 480 .. 511 take fitted
+//   converter values that join the S3a corner at 479;
 // - Q at resonance 0 depends on the cutoff (0.79 at 250 Hz, 0.55 around 1 to 2 kHz, 0.77 at 21 kHz); resonance
 //   multiplies it by a fitted 16-step law (2.9 x at 15) and lowers the cutoff (to 0.87 x at 15);
 // - the outputs are not the ideal ones: the low-pass output is a static quintic of the low-pass state (the
@@ -62,8 +67,11 @@
 // processWithCutoff (a cutoff every sample) reads the mapped parameters from a table over the cutoff (Model B: the
 // register, a knot every 64; Model A: log2 of the corner at resonance 0, four knots per octave, on the Q law's own
 // knots), g' stored against tan (pi fc / rate), linear in between: its complex response within 0.1 dB and 1 degree of
-// setCutoff + process (tested, FilterOutputTests.cpp). The table depends on the rate, the resonance and the mode
-// only; it is rebuilt (27 or 33 designs, bounded) at the first processWithCutoff after one of them changed.
+// setCutoff + process (tested, FilterOutputTests.cpp). The corner itself is computed from the register value exactly
+// as setCutoff computes it; the table holds only what depends smoothly on the corner, so Model A's fall-backs are never
+// interpolated across (within 0.05 dB and 1 degree at and around every multiple of 32; tested). The table depends on
+// the rate, the resonance and the mode only; it is rebuilt (27 or 33 designs, bounded) at the first processWithCutoff
+// after one of them changed.
 // INPUT GUARD. A non-finite input or one of magnitude 1e6 or more is replaced by 0 before it reaches the states (off
 // the per-sample dependency chain), so the states can never become non-finite (tested at the threshold). A
 // subnormal input is not flushed: it reaches the output through the direct term ox x (the states flush below 1e-15);
@@ -231,6 +239,8 @@ public:
     static double modelACutoffConverter (double registerValue) noexcept;
     /** Cutoff in Hz at resonance 0 for a model, register value and variation (tests, diagnostics). */
     static double cutoffCurveHz (Model model, double registerValue, double variation) noexcept;
+    /** The corner at resonance 0 that processWithCutoff uses for a register value, computed on its own path (tests). */
+    double cornerWithCutoffHz (float registerValue) const noexcept;
 
 private:
     /** The mapped trapezoidal parameters and the output weights on its low-, band- and high-pass. */
@@ -274,6 +284,9 @@ private:
     void update() noexcept;
     void buildCutTable() noexcept;
     Mapped cutAt (float registerValue) const noexcept;
+    /** processWithCutoff's register value (clamped, non-finite -> 0) and Model A's ln (corner / Hz) at resonance 0. */
+    static double cutRegister (float registerValue) noexcept;
+    double cutBaseLn (double v) const noexcept;
     static Linear stateSpace (double g, double k, double wL, double wB, double wH) noexcept;
 
     Model mdl = Model::B;

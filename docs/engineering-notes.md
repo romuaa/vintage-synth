@@ -12,6 +12,16 @@ Things that went wrong or surprised us, the fix, and the rule that follows from 
   deadline that fails rather than hangs), and keep the property under test (here: never a torn copy) asserted on
   every read.
 
+## B-Side Model A cutoff steps (2026-11-23)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The reference's corner at one fixed cutoff code differed by 5 to 25 % from one 0.6 s noise segment to the next (sustain 4, codes below about 450), while ours stayed within 0.5 %. Longer segments did not help. | Around its knee Model A's reference response bends slowly (about 6 dB per octave at the -3 dB point) and depends on the signal; per-bin noise of a dB moves the -3 dB crossing by a tenth of an octave. | Measure the scatter at a fixed setting before gating a difference between neighbouring settings; gate only where the step is resolved, report the rest with its scatter (decisions M5). |
+| Two passes of the same trace gave identical corners: no averaging. | The reference and the noise generator are deterministic; the same writes at the same cycles give the same noise. | Repeat a measurement at other cycles (another place in the file, another order) to get another noise realisation. The converse is useful: files with identical write cycles share one bypass twin. |
+| The level of the reference moves the knee of Model A's cutoff curve (sustain 2: the 511 -> 512 step is -45 %; sustain 4: -15 %; sustain 8: about -18 %). | The reference's corner follows the signal level and the routed DC (decisions R1); the fixed form does not. | A per-code gate of a level-independent model holds at one level only: state the level, and keep the absolute corners on the level the other gates use. |
+| Keeping a law "bit for bit" failed at variation 0.37 only: 6 of 7668 corners differed in the last bit. | The variation shift had been computed in its own statement; in the old code it was part of one expression, which the compiler may fuse into a multiply-add (one rounding instead of two). Shifts of 0 and +-0.06 are exact, so variations 0, 0.5 and 1 hid it. | To keep old results bit for bit, keep the old expressions whole and compare the two builds at values whose products are not exact. A replica of the old law inside a test is an exact oracle only where every product is exact: GCC fused the same expression differently in the test's translation unit (6 of 7668 at variation 0.37), while the two builds of the class matched. |
+| Replacing a function-local static weight array by a `constexpr` array and the same loop made `cutA` 2.6 ns slower. | The loop of eleven data-dependent branches per lookup, twice per sample, compiled differently. | A per-code value that is a fixed function of 11 bits belongs in a table built at compile time (`constexpr` lambda): `cutA` 29.3 -> 21.0 ns. |
+
 ## Known traps, the short list
 
 One line per trap; the dated sections below have the cause and the details. `CLAUDE.md` names

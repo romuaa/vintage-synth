@@ -136,7 +136,9 @@ the parked figures).
   cache, `s3b1/listen/`.
   **S3b-2, the aliasing of the static curves, on `bside/s3b-alias`: built, reviewed
   independently four times, fixed after each; the fourth review found no defect in the
-  code. Gated locally; pull request open.** As built:
+  code. Merged (pull request 44, on the owner's word "merge both when green", 2026-11-24;
+  full local gate on `8405f75`, quick gate and CI run 45274663699 green on `6f5eebf`, after a
+  first run failed to build two test files on Windows).** As built:
   a linear-phase half-band pre-filter before Model B's mixer curve (the curve at the internal
   rate); Model A's voice bend folded into the renderer; Model A's pre-filter on both buses and
   its output function, gain and mixer curve at twice the rate; Model A's mixer curve continued
@@ -198,9 +200,22 @@ the parked figures).
   (O10): Model B is accepted by ear ("practically perfect; some minor audible things, ok");
   Model A opens later but faster than the reference and closes the same way, so the start
   and end of a sweep are cleaner than the reference; no further effort goes into Model A
-  for now beyond finishing what is in flight.** In flight: the fix of the fixed form's
-  cutoff jump at code 512 and above on `bside/modela-cutoff-steps` (scope O9; below code 480
-  unchanged, because the low-cutoff region depends on level in the reference itself).
+  for now beyond finishing what is in flight.** **The cutoff jump at code 512, fixed (scope O9; `bside/modela-cutoff-steps`; full local gate
+  passed on the branch with S3b-2 merged in, `69284ce`):** from code
+  480 up Model A's cutoff mapping follows the reference (the fall at 511 -> 512 is -15.4 %
+  against the reference's -15.0 %; in the owner's one-voice sweep the jump there is -1.44 dB
+  in 2 to 5 kHz, was -2.23, reference -1.67; every write at or above 480 within 0.34 dB of
+  the reference's step in that band); **up to register value 479.0 the mapping is
+  bit-identical to the S3a form.** Reviewed independently twice (the first version, with a
+  hand-shaped curve near code 384, failed its review; the second had the fall at 512 tuned to
+  a gate, put back on the reference). **One named exception:** at the write 510 -> 515 the
+  0.8 to 2 kHz band moves by 0.46 dB where the reference barely moves (a miss of 0.53 dB,
+  gated at 0.58): the level dependence of Model A's corner. **Open, with Model A's parked
+  dynamics:** below code 480 the sweep keeps its steps (383 -> 384: -1.42 dB against the
+  reference's -0.49 dB), the reference's steps at 255 -> 256 and 319 -> 320 are missing, and
+  the start and end of a sweep are cleaner than the reference (O10). Three reported corner
+  lines in the join (codes 480 to 500) moved 1.3 to 3.8 points the wrong way; the resonant
+  sweep's largest step fell from 2.33 to 1.45 dB (reference 0.79), not gated.
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
