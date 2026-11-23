@@ -5,14 +5,16 @@
 // per chip. JUCE-free, allocates nothing, no locks, no exceptions.
 //
 // SIGNAL FLOW (render units in, the reference's output units out):
-//   voice          v = shapeVoice (u, e): u + al u^2 / e + be u^3 / e^2 (= e f (u / e)), per voice, by the renderer
-//                  (Model A: the waveform is bent before the envelope multiplies it; the bend's relative strength
-//                  does not depend on the envelope level, measured). Model B: v = u.
+//   voice          v = e f (w), Model A's voice bend (render::bend), folded into the renderer since S3b-2
+//                  (Chip::renderBendVoices; the waveform is bent before the envelope multiplies it). Model B: v = e w.
 //   bus level      = sum of v + kEnvDc x (sum of the bus's envelope converter values) + voices x kVoiceDc
 //                    (filterBusLevel for the filter's input; the direct bus inside process)
 //   mixer sum S    = kMixerDc + direct bus level + filter output (Filter::process of the filter bus level)
 //   mixer          = Y0 + V (volume) x kScale x N (G x S)
 //   board filters  = one-pole high-pass 1.196 Hz, one-pole low-pass 15.4 kHz (8.15.7), at the internal rate
+// process () runs this at the internal rate as S3a built it (tests, the bench's S3a cases). The chain (ChipVoice, S3b-2)
+// takes the pieces instead (directSumWith, gainFactor, mixerCurve, postScale / postOffset / postGain, board) and puts
+// its anti-alias filters between them (HalfBand.h; ChipVoice.h "ALIAS").
 // The output is in the reference's units (8.15.7: its board-filter output x 3/2 (A) or 5/2 (B) / 32768).
 //
 // - Voice DC (8.4.4): every voice adds kVoiceDc wherever it is routed (none when oscillator 3 is off and not
@@ -52,6 +54,7 @@
 
 #include "bside/chip/ChipTypes.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 
@@ -75,23 +78,6 @@ public:
     /** What the filter makes of the filter bus's static DC (Filter::staticOutput (staticFilterBusDc ())),
         needed with volumeDc off. The owner sets it when the routing, the mode or the resonance changes. */
     void setFilterStaticDc (double filterOutputDc) noexcept;
-
-    /** One voice's contribution to its bus (render units): the renderer's voice audio u (its waveform after the
-        converter, minus the converter's centre, times its envelope value e) bent as the model's voice bends it. */
-    static float shapeVoice (Model m, float u, float e) noexcept
-    {
-        if (m == Model::B || ! (e > 1e-4f))
-            return u;
-        return static_cast<float> (shapeVoice (m, static_cast<double> (u), static_cast<double> (e)));
-    }
-    /** The same in double precision (the renderer's buses, Chip.h "BUSES"). */
-    static double shapeVoice (Model m, double u, double e) noexcept
-    {
-        if (m == Model::B || ! (e > 1e-4))
-            return u;
-        const double w = u / e;
-        return e * (w + w * w * (kShapeA2 + w * kShapeA3));
-    }
 
     /** Voices routed to the filter and voices on the direct path (oscillator 3 off taken into account). */
     int filterVoices() const noexcept { return nFilter; }
@@ -171,6 +157,24 @@ public:
     /** What multiplies the board high-pass's output: 1 with volume DC on (the volume is in the mixer), the volume
         level with it off (the volume behind the high-pass). */
     double postGain() const noexcept { return volumeDcOn ? 1.0 : level; }
+
+    // ---- the mixer in pieces (the chain, S3b-2): mixerOutput (fo, a, e) = postScale () mixerCurve (gainFactor () s)
+    //      + postOffset (), s = fo + directSumWith (a, e, directVoices) ----
+
+    /** The direct bus's part of the mixer sum for a voice count (the stage's own count not used): its audio, its
+        envelopes' DC, the mixer's DC and the voices' DC. */
+    double directSumWith (double audio, double envelopeSum, double directVoiceCount) const noexcept
+    {
+        return audio + envDc * envelopeSum + (mixerDcConst + voiceDcConst * directVoiceCount);
+    }
+    /** The static curve N (limited) of the mixer, on gain x sum. */
+    double mixerCurve (double x) const noexcept { return curve (x); }
+    /** Where N is limited (the quintic's turning points; beyond them N is flat): {lower, upper}. */
+    std::array<double, 2> mixerLimits() const noexcept { return { curveMin, curveMax }; }
+    /** What multiplies the curve's output (the volume level with volume DC on, else 1) and what is added to it (Y0 with
+        volume DC on, minus the curve at the static operating point with it off). */
+    double postScale() const noexcept { return volumeDcOn ? level : 1.0; }
+    double postOffset() const noexcept { return volumeDcOn ? offset : -curveDc; }
     /** The board filters over a mixer value (mixerOutput) and a post gain (postGain): one internal sample of the output
         in the reference's units. A chain blending configurations across a write passes their blends. */
     double board (double mix, double post) noexcept
@@ -188,11 +192,10 @@ public:
     double gainFactor() const noexcept { return gain; }
     double volumeLevel() const noexcept { return level; }
 
-    /** The fitted constants a renderer needs (render units; decisions "B-Side S3a"). */
+    /** The fitted constants a renderer needs (render units; decisions "B-Side S3a"). Model A's voice bend is
+        render::bend (RenderTables.h). */
     static double voiceDc (Model m) noexcept;
     static double envelopeDc (Model m) noexcept;
-    /** Model A's voice bend f (w) = w + kShapeA2 w^2 + kShapeA3 w^3 (fitted; decisions "B-Side S3a"). */
-    static constexpr double kShapeA2 = -0.175104, kShapeA3 = -0.097759;
 
 private:
     /** A filter state: 0 below 1e-15 (no subnormal numbers). */
@@ -215,7 +218,7 @@ private:
     int nFilter = 0, nDirect = 3;
     bool externalCounts = false; // setVoices has been called: cntF, cntD come from the renderer
     double cntF = 0.0, cntD = 3.0;
-    double envDc = 0.0, filterBusDc = 0.0, staticDirect = 0.0;
+    double envDc = 0.0, filterBusDc = 0.0, staticDirect = 0.0, mixerDcConst = 0.0, voiceDcConst = 0.0;
     double gain = 1.0, level = 0.0, offset = 0.0, curveDc = 0.0;
     bool quintic = false;
     double n2 = 0.0, n3 = 0.0, n4 = 0.0, n5 = 0.0, curveMin = -8.0, curveMax = 8.0;

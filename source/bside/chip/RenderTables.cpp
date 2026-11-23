@@ -120,14 +120,17 @@ void buildSteps (const RenderTables& t, const combined::ShapeTables& shapes, std
     }
 }
 
-void build (Model model, ShapeSet set, RenderTables& t)
+void build (Model model, ShapeSet set, bool bent, RenderTables& t)
 {
     const bool ideal = model == Model::B;
     const LadderWeights w12 = ideal ? ladderWeights (12, 2.0, true) : ladderWeights (12, kModelARatio, false);
     const LadderWeights w8 = ideal ? ladderWeights (8, 2.0, true) : ladderWeights (8, kModelARatio, false);
     t.dac = makeConverter (w12, ideal);
     for (unsigned v = 0; v < 4096; ++v)
-        t.wave[v] = static_cast<float> ((ideal ? static_cast<double> (v) / 4095.0 : convert (w12, v)) - t.dac.center);
+    {
+        const double w = (ideal ? static_cast<double> (v) / 4095.0 : convert (w12, v)) - t.dac.center;
+        t.wave[v] = static_cast<float> (bent ? bend (w) : w);
+    }
     for (unsigned v = 0; v < 256; ++v)
         t.envelope[v] = static_cast<float> (ideal ? static_cast<double> (v) / 255.0 : convert (w8, v));
 
@@ -138,12 +141,12 @@ void build (Model model, ShapeSet set, RenderTables& t)
 }
 
 /** Built in place (about 320 KiB: never a by-value copy), once per (model, shape set). */
-template <Model M, ShapeSet S>
+template <Model M, ShapeSet S, bool Bent>
 const RenderTables& built()
 {
     static const RenderTables& t = [] () -> const RenderTables& {
         static RenderTables storage;
-        build (M, S, storage);
+        build (M, S, Bent, storage);
         return storage;
     }();
     return t;
@@ -270,10 +273,12 @@ const KernelTables& kernelTables()
     return t;
 }
 
-const RenderTables& tablesFor (Model m, ShapeSet s)
+const RenderTables& tablesFor (Model m, ShapeSet s, bool bent)
 {
+    if (m == Model::B)
+        return s == ShapeSet::placeholder ? built<Model::B, ShapeSet::placeholder, false>() : built<Model::B, ShapeSet::fitted, false>();
     if (s == ShapeSet::placeholder)
-        return m == Model::A ? built<Model::A, ShapeSet::placeholder>() : built<Model::B, ShapeSet::placeholder>();
-    return m == Model::A ? built<Model::A, ShapeSet::fitted>() : built<Model::B, ShapeSet::fitted>();
+        return bent ? built<Model::A, ShapeSet::placeholder, true>() : built<Model::A, ShapeSet::placeholder, false>();
+    return bent ? built<Model::A, ShapeSet::fitted, true>() : built<Model::A, ShapeSet::fitted, false>();
 }
 } // namespace vs::bside::chip::render

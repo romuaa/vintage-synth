@@ -4,7 +4,6 @@
 // is exactly what stepping gives (tested).
 
 #include "bside/chip/Chip.h"
-#include "bside/chip/OutputStage.h"
 
 #include <algorithm>
 #include <bit>
@@ -221,7 +220,7 @@ double Chip::renderValue (int n, double u) const noexcept
         case rmCycle: return static_cast<double> (T.wave[v.held & 0xfffu]);
         case rmPulse: return static_cast<double> (v.gate ? T.wave[0xfff] : T.wave[0]);
         case rmTri:
-        case rmSaw: return triSawValue (T.dac, v.mode == rmSaw, v.imin, v.k, v.ringFlip, u);
+        case rmSaw: return bent (triSawValue (T.dac, v.mode == rmSaw, v.imin, v.k, v.ringFlip, u));
         case rmTable:
         {
             const std::uint8_t c = ctl (n);
@@ -254,7 +253,7 @@ double Chip::renderValueAt (int n, double u) noexcept
 double Chip::renderDerivativeAt (int n, double u) noexcept
 {
     RenderOsc& v = rs.osc[idx (n)];
-    if (v.mode != rmTri)
+    if (v.mode != rmTri && ! (bendOn && v.mode == rmSaw)) // a bent saw's slope depends on its value: its cell too
         return renderDerivative (n, u);
     const std::int64_t keep = v.k;
     const double w = frac01 (u);
@@ -264,21 +263,25 @@ double Chip::renderDerivativeAt (int n, double u) noexcept
     return r;
 }
 
-double Chip::renderDerivative (int n, double) const noexcept
+double Chip::renderDerivative (int n, double u) const noexcept
 {
     const RenderOsc& v = rs.osc[idx (n)];
     const render::RenderTables& T = *rtab;
+    double d = 0.0;
     switch (v.mode)
     {
-        case rmSaw: return T.dac.g * 4096.0;
+        case rmSaw: d = T.dac.g * 4096.0; break;
         case rmTri:
         {
             const auto ixBase = static_cast<std::uint32_t> ((static_cast<std::uint64_t> (v.k) << v.imin) & 0xfffu);
             const std::uint32_t b = ((ixBase >> 11) & 1u) ^ (v.ringFlip ? 1u : 0u);
-            return T.dac.g * (b != 0 ? -8192.0 : 8192.0);
+            d = T.dac.g * (b != 0 ? -8192.0 : 8192.0);
+            break;
         }
         default: return 0.0;
     }
+    // bent ("BEND"): f' (w) times the line's slope, at the value the line has at u in its cell
+    return bendOn ? d * render::bendSlope (triSawValue (T.dac, v.mode == rmSaw, v.imin, v.k, v.ringFlip, u)) : d;
 }
 
 double Chip::renderNextLineEvent (int n, double t, double slope, double& ue, int& kind) const noexcept
@@ -1143,13 +1146,20 @@ void Chip::renderSweepLine (int n, double tEnd) noexcept
         const bool saw = v.mode == rmSaw;
         const std::uint32_t flip = v.ringFlip ? 1u : 0u;
         const double invSlope = 1.0 / slope;
-        // renderValue (tri, saw) at index cell kk; renderDerivative at kk
-        auto value = [&] (std::int64_t kk) { return triSawValue (d, saw, imin, kk, flip != 0, v.u); };
+        // renderValue (tri, saw) at index cell kk; renderDerivative at kk (bent: f (w) and f' (w) times the slope)
+        const bool bendLine = bendOn;
+        auto value = [&] (std::int64_t kk) {
+            const double w = triSawValue (d, saw, imin, kk, flip != 0, v.u);
+            return bendLine ? render::bend (w) : w;
+        };
         auto derivative = [&] (std::int64_t kk) {
-            if (saw)
-                return d.g * 4096.0;
-            const auto ixBase = static_cast<std::uint32_t> ((static_cast<std::uint64_t> (kk) << imin) & 0xfffu);
-            return d.g * (((ixBase >> 11) & 1u) != flip ? -8192.0 : 8192.0);
+            double dd = d.g * 4096.0;
+            if (! saw)
+            {
+                const auto ixBase = static_cast<std::uint32_t> ((static_cast<std::uint64_t> (kk) << imin) & 0xfffu);
+                dd = d.g * (((ixBase >> 11) & 1u) != flip ? -8192.0 : 8192.0);
+            }
+            return bendLine ? dd * render::bendSlope (triSawValue (d, saw, imin, kk, flip != 0, v.u)) : dd;
         };
         for (int guard = 0; guard < kSweepGuard; ++guard)
         {
@@ -1881,9 +1891,10 @@ void Chip::renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std
     {
         ++rs.converterSwitches;
         const double wl = renderValue (n, v.u);
+        const double sl = renderDerivative (n, v.u); // (bent: the slope moves with the value; plain: equal on both sides)
         v.imin = imin;
         v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));
-        renderEmit (n, rs.tEnd, renderValue (n, v.u) - wl, 0.0);
+        renderEmit (n, rs.tEnd, renderValue (n, v.u) - wl, (renderDerivative (n, v.u) - sl) * rate);
     }
     const int tableLevel = converterTerms && v.mode == rmTable ? renderTableLevel (n, v.level) : v.level;
     if (tableLevel != v.level)
@@ -2177,7 +2188,6 @@ int Chip::renderBatch (Out& out, int offset, int maxSamples, std::uint64_t until
 
     std::uint64_t cum = 0;
     int done = 0;
-    const bool bendBus = renderBend && cfg.model == Model::A;
     const Members& mem = kMembers[static_cast<std::size_t> (rs.route & 0x0f)]; // no write inside a batch
     while (done < maxSamples)
     {
@@ -2244,7 +2254,7 @@ int Chip::renderBatch (Out& out, int offset, int maxSamples, std::uint64_t until
                 continue;
             }
             // ... else what it does there, written out
-            const double value = l.triSaw ? triSawValue (rtab->dac, v.mode == rmSaw, v.imin, v.k, v.ringFlip, v.u)
+            const double value = l.triSaw ? bent (triSawValue (rtab->dac, v.mode == rmSaw, v.imin, v.k, v.ringFlip, v.u))
                                  : v.mode == rmPulse ? static_cast<double> (v.gate ? rtab->wave[0xfff] : rtab->wave[0]) // (renderValue)
                                                      : renderValue (n, v.u);
             v.buf[slot] += value;
@@ -2281,9 +2291,9 @@ int Chip::renderBatch (Out& out, int offset, int maxSamples, std::uint64_t until
                     v.env[outSlot] = 0.0f;
                 }
             }
-            if (! bendBus && rs.sample >= rs.routeBusyUntil)
+            if (rs.sample >= rs.routeBusyUntil)
             {
-                // the common case written out: no write's window open, no bend (renderBusMix's fast path)
+                // the common case written out: no write's window open (renderBusMix's fast path)
                 const auto j = static_cast<std::size_t> (offset + done++);
                 out.b.filterAudio[j] = mem.f[0] * x[0] + mem.f[1] * x[1] + mem.f[2] * x[2];
                 out.b.directAudio[j] = mem.d[0] * x[0] + mem.d[1] * x[1] + mem.d[2] * x[2];
@@ -2392,10 +2402,7 @@ void Chip::renderRouteKeep (std::size_t outSlot) noexcept
 void Chip::renderBusMix (const std::array<double, 3>& x, const std::array<double, 3>& e, std::uint8_t route, const std::size_t* devSlot, double* v) noexcept
 {
     const Members& m = kMembers[static_cast<std::size_t> (route & 0x0f)];
-    std::array<double, 3> xv = x;
-    if (renderBend && cfg.model == Model::A)
-        for (std::size_t n = 0; n < 3; ++n)
-            xv[n] = OutputStage::shapeVoice (Model::A, x[n], e[n]);
+    const std::array<double, 3>& xv = x; // (Model A's bend is in the rings already: "BEND")
     if (devSlot == nullptr)
     {
         // no routing write's window open: the memberships are the byte's
@@ -2602,7 +2609,7 @@ int Chip::renderUntilImpl (Out& out, int maxSamples, std::uint64_t untilCycle) n
                 v.buf[outSlot] = 0.0;
                 v.env[outSlot] = 0.0f;
             }
-            if (rs.sample >= rs.routeBusyUntil && ! (renderBend && cfg.model == Model::A))
+            if (rs.sample >= rs.routeBusyUntil)
             {
                 // the common case written out (as in renderBatch)
                 const Members& mem = kMembers[static_cast<std::size_t> (rs.route & 0x0f)];

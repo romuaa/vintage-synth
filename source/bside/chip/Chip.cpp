@@ -13,7 +13,10 @@ void Chip::prepare (const Config& c) noexcept
     clock.prepare (cfg.clockHz, cfg.internalRate);
     shapes = &combined::tablesFor (cfg.model, cfg.shapes);
     rtab = &render::tablesFor (cfg.model, cfg.shapes);
+    if (cfg.model == Model::A)
+        (void) render::tablesFor (cfg.model, cfg.shapes, true); // the bent tables too (renderBendVoices never builds)
     ktab = &render::kernelTables(); // the first use builds the tables (and both BLEP tables): here, never in a render
+    selectBend();
     reset();
 }
 

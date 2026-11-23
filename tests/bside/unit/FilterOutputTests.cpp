@@ -9,6 +9,7 @@
 
 #include "bside/chip/Filter.h"
 #include "bside/chip/OutputStage.h"
+#include "bside/chip/RenderTables.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -766,7 +767,7 @@ TEST_CASE ("output stage: a volume write with held voices: volume DC off does no
                         phase += 110.0 / rate;
                         phase -= std::floor (phase);
                         const float u = static_cast<float> (2.0 * std::abs (phase - 0.5) - 0.5); // triangle +-0.5
-                        const float v = OutputStage::shapeVoice (m, u, 1.0f);
+                        const auto v = static_cast<float> (vs::bside::chip::render::shapeVoice (m, static_cast<double> (u), 1.0));
                         const float fOut = f.process (o.filterBusLevel (routed ? v : 0.0f, routed ? 1.0f : 0.0f));
                         mix += o.mixerOutput (fOut, routed ? 0.0f : v, routed ? 0.0f : 1.0f);
                         const double y = o.process (fOut, routed ? 0.0f : v, routed ? 0.0f : 1.0f);
@@ -900,7 +901,7 @@ SharedRun sharedRun (Model m, int n, bool shared, const SharedCase& sc)
                 phase -= std::floor (phase);
                 const double wave = sc.saw ? phase - 0.5 : 2.0 * std::abs (phase - 0.5) - 0.5;
                 const auto u = static_cast<float> (wave * static_cast<double> (env));
-                const float v = OutputStage::shapeVoice (m, u, env);
+                const auto v = static_cast<float> (vs::bside::chip::render::shapeVoice (m, static_cast<double> (u), static_cast<double> (env)));
                 double y = 0.0;
                 if (! shared)
                     for (std::size_t c = 0; c < st.size(); ++c)

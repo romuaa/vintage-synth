@@ -128,6 +128,8 @@ void OutputStage::update() noexcept
         cntD = nDirect;
     }
     envDc = c.envDc;
+    mixerDcConst = c.mixerDc;
+    voiceDcConst = c.voiceDc;
     filterBusDc = c.voiceDc * cntF;
     staticDirect = c.mixerDc + c.voiceDc * cntD;
     gain = 1.0
