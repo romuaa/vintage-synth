@@ -5,6 +5,19 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3b-2 review round (2026-11-23)
+- Write timing: Model A's output-function coefficients now follow the interpolated sample they act on (mode steps
+  landed 0.31 samples early); resonance writes blend two configurations like mode writes; every volume, routing, mode
+  and resonance write lands within 0.0005 samples of where `latencySamples ()` says (tested per type, both models, Per
+  Note and Shared). A shared filter's owner hands over its output function per sample and applies cutoff, resonance and
+  mode `filterLagSamples ()` after the write.
+- Model A's mixer curve continues smoothly past its fitted range (no flat clamp); the gated reference traces are
+  unchanged. Model A's 2x half-bands are about 100 dB; every half-band has the fewest pairs that meet the pass band.
+  Model B's filter, output stage and pre-filter now take 6.3 to 6.4 ns per sample at 96 kHz (budget 7: met).
+- The alias gate restated (8.19.4): met everywhere except Model A driven hard through the resonant low-pass (4 rows
+  with ideal voices, -93.4 to -96.7 dB against -99; 38 real-chip rows above the four-times-the-rate reference) and 6 rows
+  within 0.7 dB of the reference; the owner decides.
+
 ### B-Side S3b-2: aliasing of the static curves (2026-11-23)
 - The chain's static curves run on band-limited signals: Model B's mixer input passes a linear-phase half-band FIR
   (pass band to 20 kHz within 0.01 dB) before the curve; Model A's two buses pass the same FIR before the filter, and the
