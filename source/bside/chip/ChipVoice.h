@@ -33,8 +33,14 @@
 // for that one chip's static DC (finishShared); each voice takes its share (OutputStage::sharedShare: the static
 // output in full, 1/n of the rest) and subtracts the static output with volume DC off, both per sample, so Shared
 // output does not depend on the owner's block length, also across routing and mute writes. The owner sets the shared
-// filter's cutoff, resonance and mode itself (the most recent note's); the voice's own 0x18 still sets its stage
-// (volume, the mixer's gain for the selected modes, oscillator 3's mute). Shared runs no filter copy in the voice.
+// filter's cutoff, resonance and mode itself (the most recent note's), and it must apply each such write to the shared
+// filter filterLagSamples () after the write in the output: at the bus sample whose index minus filterLagSamples () is
+// the chip sample the write was made in (the filter's signal time of the write; the voice applies its own writes at
+// the same place). The owner's filter switches at that sample; Per Note blends the two configurations over the write's
+// window (tested: a Shared mode write equals Per Note outside the window, its step within 0.6 samples of Per Note's).
+// The voice's own 0x18 still sets its stage (volume, the mixer's gain for the selected modes, oscillator 3's mute).
+// Shared runs no filter copy in the voice. The owner hands over the shared filter's output function per bus sample too
+// (finishShared: its Filter::Shape), so a mode or resonance write inside an owner block takes effect at its sample.
 // - n = 1 is Per Note bit for bit (tested, routing and mute writes, volume DC on and off).
 // - Model B with n chips equals n Per Note chips for IDENTICAL voices only (tested, n = 1, 2, 16). With different
 //   notes it does not: each chip's mixer curve sees its share of the summed filter output, not its own filter's
@@ -44,7 +50,7 @@
 //   Pinned for n = 2 by "the Shared topology with different notes" (ChipVoiceTests.cpp).
 //
 // LATENCY. latencySamples (), fixed at prepare: the renderer's (Chip::kLatencySamples) plus the anti-alias stages'
-// ("ALIAS"): at 96 kHz 8 + 21 (Model B) and 8 + 21 + 7 (Model A); at 88.2 kHz 8 + 41 and 8 + 41 + 7.
+// ("ALIAS"): at 96 kHz 8 + 21 (Model B) and 8 + 21 + 11 (Model A); at 88.2 kHz 8 + 37 and 8 + 37 + 13.
 //
 // TIMING. Audio, envelopes and voice counts reach the filter filterLagSamples () after the output sample that holds
 // them leaves the renderer (its latency, plus Model A's bus pre-filter), and every register write that the filter or
@@ -62,8 +68,11 @@
 //   a volume write is then the chip's own step (sample playback) at its full size, band-limited, never smoothed. Up to
 //   kMaxConfigs configurations are blended at once (writes less than a window apart); a further write retires the
 //   oldest at once (a step that is not band-limited: only with more than three volume or mode writes in 17 samples).
-// - CUTOFF (0x15, 0x16, setFilter) and RESONANCE (0x17 bits 4..7): from the output sample of the write's own sample
-//   on (not blended; a cutoff jump is the filter's own change of state, which the chip makes too). The cutoff runs
+// - RESONANCE (0x17 bits 4..7), since the S3b-2 review: blended like a mode write (a copy of the filter keeps the old
+//   resonance and runs on beside it over the write's window; their poles differ, so the two states part, which the
+//   blend's weights confine to the window), so the step lands at the write's place (tested to 0.02 samples).
+// - CUTOFF (0x15, 0x16, setFilter): from the output sample of the write's own sample on (not blended; a cutoff jump is
+//   the filter's own change of state, which the chip makes too). The cutoff runs
 //   per sample through Filter::processWithCutoff while it moves (a change less than kCutoffSettle samples after the
 //   previous one) and through setCutoff + process once it has stood still for kCutoffSettle samples.
 // - A write before the first render is part of the state the render starts on.
@@ -99,6 +108,14 @@ public:
     static constexpr int kMaxPending = 32;
     /** A cutoff that changes again within this many samples counts as moving (processWithCutoff). */
     static constexpr int kCutoffSettle = 256;
+    /** The anti-alias filters' design (HalfBand.h): pass band to 20 kHz within 1.15e-3 (0.01 dB), which for a half-band
+        is also the stop band's level (about -59 dB); the fewest pairs per rate that meet it. Three of them in Model A's
+        path: at most 0.03 dB in the pass band. */
+    static constexpr double kAntiAliasPassHz = 20000.0, kAntiAliasDeviation = 1.15e-3;
+    /** Model A's 2x half-bands (interpolators and decimator): 1e-5, about 100 dB, so that what leaks through them (an image
+        of the band at twice the rate, the decimator's stop band) stays below what the curves at four times the rate
+        alias (8.19.4 after the review, statement (c)); a pass band within 0.0001 dB each. */
+    static constexpr double kTwiceDeviation = 1.0e-5;
 
     ChipVoice() noexcept;
 
@@ -143,10 +160,11 @@ public:
     /** Shared, second half, for the buses of the last renderBusesUntil (n samples): per bus sample i the shared
         filter's LINEAR output (Filter::processLinearDouble; Model B: its whole output) sharedLinear[i] and its low-pass
         value sharedLowPass[i] (Model A; may be null on Model B), its static output for the static DC the owner fed in at
-        that sample, filterStaticOut[i] = Filter::staticOutput (that chip's staticFilterBusDc (i)); the shared filter
-        itself (its output function, Model A); the number of chips feeding it. Output ADDED to out. */
-    void finishShared (const Filter& shared, const double* sharedLinear, const double* sharedLowPass, const double* filterStaticOut, int chips,
-                       double* out, int n) noexcept;
+        that sample, filterStaticOut[i] = Filter::staticOutput (that chip's staticFilterBusDc (i)); the shared filter's
+        output function at that sample, sharedShape[i] = Filter::outputShapeCoefficients () (Model A; may be null on
+        Model B); the number of chips feeding it. Output ADDED to out. */
+    void finishShared (const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass, const double* filterStaticOut,
+                       int chips, double* out, int n) noexcept;
 
     /** Test aid: the chain run on the given buses instead of the chip's (Per Note; the chip is not rendered, no write may
         be pending; the sample index counts on from the last such call): ADDS n output samples to out. */
@@ -204,7 +222,7 @@ private:
     void prepareBlock (int n) noexcept;
     /** One output sample from bus sample i at ring sample q (Per Note when shared is null; Shared: the shared filter, its
         linear output, low-pass value and static output at that sample). */
-    double chainSample (int i, std::int64_t q, const Filter* shared, const double* sharedLinear, const double* sharedLowPass,
+    double chainSample (int i, std::int64_t q, bool shared, const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass,
                         const double* sharedStaticOut, int chips) noexcept;
     double runFilter (Filter& f, double in, double& lowPass) const noexcept;
     static double weightAt (std::int64_t q, std::uint64_t sample, int first, const std::array<double, render::kKernelTaps>& taps) noexcept;
@@ -227,8 +245,6 @@ private:
     HalfBandUp upLin, upLow;                // Model A: the 2x part's inputs
     HalfBandDown down;                      // Model A
     bool freshPre = true, freshPost = true; // the filters are primed with their first input after reset
-    double dcLast = 0.0;                    // Model A: the voices' DC into preDc, and how long it has stood still
-    int dcSame = 0;
     double preDcNow = 0.0;                  // Model A: the pre-filtered voices' DC the filter's static output was taken for
     std::array<double, kBlock> pAc {}, pDc {}, pDi {}, cF {}, cD {}; // per bus sample of the block (Model A pre-filtered)
     std::array<std::array<double, 3>, kDelayRing> postRing {};   // (postScale, postOffset, postGain) blended

@@ -19,13 +19,20 @@
 //
 // - Voice DC (8.4.4): every voice adds kVoiceDc wherever it is routed (none when oscillator 3 is off and not
 //   routed) and kEnvDc times its envelope converter value; kMixerDc is the mixer's own DC.
-// - N is a static curve (a quintic limited where it turns), G the mixer's gain, which falls with the number of
+// - N is a static curve, G the mixer's gain, which falls with the number of
 //   inputs connected (direct voices, selected filter outputs).
 // - volumeDc off (chip.volume_dc, 8.4.4): no DC reaches the volume. The static DC (mixer DC, kVoiceDc on both
 //   paths, Y0) is subtracted at the curve's operating point (no step at a routing write), and the volume moves
 //   behind the board high-pass, which removes what remains (the envelopes' DC, what the curves make of the
 //   audio): a volume write with held voices then changes the output's DC by less than -60 dBFS once the
 //   high-pass has settled (tested). On: as the reference, the volume before the board filters.
+// - N: Model B a cubic (limited to +-8, never reached); Model A a quintic fitted on [-3.06, 3.55] (the gated traces'
+//   range), continued smoothly beyond its joins at -3.08 and 3.80 (S3b-2 review, 8.19.4): past a join N approaches a
+//   bound exponentially, N = L + a exp (b (x - j)) below, U - a exp (-b (x - j)) above, a and b chosen so that value,
+//   slope and curvature are continuous at the join (a = s^2 / |k|, b = |k| / s, s and k the quintic's slope and
+//   curvature there): monotonic, bounded, twice continuously differentiable. (The first build clamped N flat at the
+//   quintic's turning points, -3.297 and 4.081: a jump in curvature that folded at twice the rate.) Between the joins N
+//   is the quintic unchanged, to the bit.
 // - V is the volume register's level: Model A a fitted compressive table, Model B k / 15.
 // - INPUT GUARD: a non-finite or absurd mixer value is replaced by 0 before the board filters, off the per-sample
 //   dependency chain of their states.
@@ -169,7 +176,7 @@ public:
     }
     /** The static curve N (limited) of the mixer, on gain x sum. */
     double mixerCurve (double x) const noexcept { return curve (x); }
-    /** Where N is limited (the quintic's turning points; beyond them N is flat): {lower, upper}. */
+    /** Where N leaves its polynomial (Model A: the joins of its smooth continuation; Model B: its limits): {lower, upper}. */
     std::array<double, 2> mixerLimits() const noexcept { return { curveMin, curveMax }; }
     /** What multiplies the curve's output (the volume level with volume DC on, else 1) and what is added to it (Y0 with
         volume DC on, minus the curve at the static operating point with it off). */
@@ -202,10 +209,17 @@ private:
     static double flush (double v) noexcept { return std::abs (v) < 1e-15 ? 0.0 : v; }
     double curve (double x) const noexcept
     {
-        const double c = x < curveMin ? curveMin : (x > curveMax ? curveMax : x); // NaN passes; the guard stops it
         if (! quintic)
+        {
+            const double c = x < curveMin ? curveMin : (x > curveMax ? curveMax : x); // NaN passes; the guard stops it
             return ((n3 * c + n2) * c + 1.0) * c;
-        return ((((n5 * c + n4) * c + n3) * c + n2) * c + 1.0) * c;
+        }
+        // Model A: the quintic between its joins, the smooth continuation beyond them (see "N" above; NaN passes)
+        if (x < curveMin)
+            return loBound + loA * std::exp (loB * (x - curveMin));
+        if (x > curveMax)
+            return hiBound - hiA * std::exp (hiB * (curveMax - x));
+        return ((((n5 * x + n4) * x + n3) * x + n2) * x + 1.0) * x;
     }
     void update() noexcept;
 
@@ -222,6 +236,7 @@ private:
     double gain = 1.0, level = 0.0, offset = 0.0, curveDc = 0.0;
     bool quintic = false;
     double n2 = 0.0, n3 = 0.0, n4 = 0.0, n5 = 0.0, curveMin = -8.0, curveMax = 8.0;
+    double loBound = 0.0, loA = 0.0, loB = 0.0, hiBound = 0.0, hiA = 0.0, hiB = 0.0; // Model A's continuation
     double hpA = 1.0, lpG = 0.5, lpKeep = 0.5, lpIn = 1.0, lpNext = 0.0;
     double hpX = 0.0, hpY = 0.0, lpS = 0.0;
 };

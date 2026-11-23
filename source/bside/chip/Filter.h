@@ -125,14 +125,14 @@ public:
 
     /** The same sample split for a chain that applies Model A's static functions at another rate (ChipVoice, S3b-2):
         returns the output without them (Model B: the whole output) and sets lowPass to the low-pass value they are
-        functions of; processDouble (x) = processLinearDouble (x, lp) + outputShape (lp), the state advanced alike.
+        functions of (0 on Model B); processDouble (x) = processLinearDouble (x, lp) + outputShape (lp), the state advanced alike.
         The trapezoidal state-variable filter written as its state-space form (identical arithmetic in exact numbers, a
         shorter dependency chain per sample): every output a linear form in x, s1, s2. */
     double processLinearDouble (double in, double& lowPass) noexcept
     {
         const double x = guard (in);
         const double out = ox * x + o1 * s1 + o2 * s2;
-        lowPass = lx * x + l1 * s1 + l2 * s2;
+        lowPass = mdl == Model::A ? lx * x + l1 * s1 + l2 * s2 : 0.0; // Model B has no output function
         const double n1 = a1x * x + a11 * s1 + a12 * s2;
         s2 = a2x * x + a21 * s1 + a22 * s2;
         s1 = n1;

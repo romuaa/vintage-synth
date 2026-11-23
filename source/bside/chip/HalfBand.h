@@ -16,24 +16,26 @@
 // from the centre 0, the taps at odd distances 1, 3, ..., 2 P - 1 (P pairs) a Kaiser-windowed sinc normalised so that
 // the DC gain is 1. Its zero-phase response satisfies H (f) + H (r / 2 - f) = 1, so the pass band's deviation from 1 up
 // to the pass edge equals the stop band's level beyond r / 2 - pass edge: a pass band within 0.01 dB (deviation
-// 1.15e-3) means a stop band at least 58.8 dB down. The design takes the Kaiser window for the deviation asked
-// (beta from it), starts from Kaiser's length estimate and adds pairs until the response, evaluated on a grid of the
-// pass band, meets the deviation (bounded: kMaxPairs). The stop band then starts at r / 2 - pass edge, which for a pass
+// 1.15e-3) means a stop band at least 58.8 dB down. The design takes the fewest pairs for which some Kaiser window
+// meets the deviation: from a little below Kaiser's length estimate, for each count the window's parameter is
+// searched (2 .. 12 in 0.05 steps, on a coarse grid of the pass band) and the count is taken if its best parameter
+// meets the deviation on the fine grid (bounded: kMaxPairs counts). The stop band then starts at r / 2 - pass edge, which for a pass
 // edge of 20 kHz is at least (r - 20 kHz) / 3 for every rate from 80 kHz up (8.19.4's stop edge: the larger of the two).
 // - Delay: 2 P - 1 samples of its rate (an integer: the centre tap).
-// - Sizes (deviation 1e-3, pass edge 20 kHz): at the internal rates 88.2 / 96 / 128 / 176.4 / 192 / 352.8 / 384 kHz,
-//   P = 20 / 12 / 6 / 4 / 4 / 2 / 2 (tested: HalfBandTests.cpp prints them); at twice those rates (the 2x part) P = 4 at
-//   most.
+// - Sizes as built (ChipVoice::kAntiAliasDeviation 1.15e-3, pass edge 20 kHz): at the internal rates 88.2 / 96 / 128 /
+//   176.4 / 192 / 352.8 / 384 kHz P = 19 / 11 / 5 / 4 / 4 / 2 / 2; at twice those rates (the 2x part) 4 / 4 / 3 / 2 / 2 /
+//   2 / 2 (printed by "alias: the half-band designs ..." in ChipVoiceAliasTests.cpp).
 //
 // THE FILTERS. HalfBandFir: one rate. HalfBandUp: rate r -> 2 r, two outputs per input (polyphase: one phase is the
 // input delayed, the other the pairs). HalfBandDown: 2 r -> r, one output per two inputs (only the outputs kept are
-// computed). Every pair is taken as its difference from the centre sample. Zero input gives exactly zero output once the filter's length has passed (no state survives: the
-// filters are FIR). A constant input gives exactly that constant once the filter's length has passed: each pair is
-// taken as its difference from the centre sample, (x[c - k] + x[c + k]) - 2 x[c] (exact for a constant), weighted,
-// and added to x[c] (the taps on the pairs sum to 1/2, the centre's 1/2 is folded in), so a held static DC and the
-// curve's static operating point subtracted from it cancel exactly.
+// computed). Zero input gives exactly zero output once the filter's length has passed (no state survives: the filters
+// are FIR). A constant input gives exactly that constant once the filter's length has passed, so a held static DC and
+// the curve's static operating point subtracted from it cancel exactly: HalfBandFir returns a held input as it is once
+// its whole window holds it (and skips its taps: the per-sample form is the plain one), HalfBandUp and HalfBandDown take
+// each pair as its difference from the centre sample, (x[c - k] + x[c + k]) - 2 x[c], weighted and added to x[c].
 
 #include <array>
+#include <bit>
 #include <cstdint>
 
 namespace vs::bside::chip
@@ -53,6 +55,8 @@ struct HalfBandDesign
     double response (double hz) const noexcept;
     /** The largest |response - 1| over 0 .. passHz (a fine grid and the edge). */
     double passDeviation() const noexcept;
+    /** The same on a grid of the given number of intervals. */
+    double passDeviationOn (int intervals) const noexcept;
 };
 
 /** A half-band low-pass at `rate` with its pass band to passHz within `deviation` (the stop band from rate / 2 - passHz
@@ -73,18 +77,30 @@ public:
         pos = (pos + 1) & (kRing - 1);
         buf[static_cast<std::size_t> (pos)] = x;
         buf[static_cast<std::size_t> (pos + kRing)] = x;
+        // a constant input: once the whole window holds it, the output is that constant exactly and the taps are skipped
+        if (std::bit_cast<std::uint64_t> (x) == std::bit_cast<std::uint64_t> (held))
+        {
+            if (same < 4 * pairs - 2)
+                ++same;
+            else
+                return x;
+        }
+        else
+        {
+            held = x;
+            same = 0;
+        }
         const double* e = buf.data() + pos + kRing - (2 * pairs - 1); // the centre
-        const double c2 = 2.0 * e[0];
         double a0 = 0.0, a1 = 0.0;
         int j = 0;
         for (; j + 1 < pairs; j += 2)
         {
-            a0 += h[static_cast<std::size_t> (j)] * ((e[2 * j + 1] + e[-(2 * j + 1)]) - c2);
-            a1 += h[static_cast<std::size_t> (j + 1)] * ((e[2 * j + 3] + e[-(2 * j + 3)]) - c2);
+            a0 += h[static_cast<std::size_t> (j)] * (e[2 * j + 1] + e[-(2 * j + 1)]);
+            a1 += h[static_cast<std::size_t> (j + 1)] * (e[2 * j + 3] + e[-(2 * j + 3)]);
         }
         if (j < pairs)
-            a0 += h[static_cast<std::size_t> (j)] * ((e[2 * j + 1] + e[-(2 * j + 1)]) - c2);
-        return e[0] + (a0 + a1);
+            a0 += h[static_cast<std::size_t> (j)] * (e[2 * j + 1] + e[-(2 * j + 1)]);
+        return 0.5 * e[0] + (a0 + a1);
     }
     int delay() const noexcept { return 2 * pairs - 1; }
 
@@ -93,6 +109,8 @@ private:
     std::array<double, 2 * kRing> buf {};
     std::array<double, HalfBandDesign::kMaxPairs> h {};
     int pairs = 1, pos = 0;
+    double held = 0.0; // the last input and how many inputs before it were the same (bit for bit)
+    int same = 0;
 };
 
 /** Rate r -> 2 r. For each input x[m], the outputs y[2 m] (interpolated) and y[2 m + 1] (an input, delayed); y[k] is the
@@ -128,7 +146,7 @@ public:
     int pairCount() const noexcept { return pairs; }
 
 private:
-    static constexpr int kRing = 64; // > 2 x kMaxPairs
+    static constexpr int kRing = 64; // >= 2 x kMaxPairs: the 2 P newest inputs, newest at pos
     std::array<double, 2 * kRing> buf {};
     std::array<double, HalfBandDesign::kMaxPairs> h2 {}; // 2 h_j
     int pairs = 1, pos = 0;

@@ -56,9 +56,10 @@ double HalfBandDesign::response (double hz) const noexcept
     return y;
 }
 
-double HalfBandDesign::passDeviation() const noexcept
+double HalfBandDesign::passDeviation() const noexcept { return passDeviationOn (400); }
+
+double HalfBandDesign::passDeviationOn (int kGrid) const noexcept
 {
-    constexpr int kGrid = 400;
     double worst = 0.0;
     for (int i = 0; i <= kGrid; ++i)
         worst = std::max (worst, std::abs (response (passHz * i / kGrid) - 1.0));
@@ -67,20 +68,33 @@ double HalfBandDesign::passDeviation() const noexcept
 
 HalfBandDesign designHalfBand (double rate, double passHz, double deviation) noexcept
 {
+    // The fewest pairs that meet the deviation: for each count from below Kaiser's estimate, the Kaiser window's
+    // parameter is searched (2 .. 12 in 0.05 steps, on a coarse grid of the pass band); the first count whose best parameter meets
+    // the deviation on the fine grid is taken (bounded: at most kMaxPairs counts x 201 parameters).
     HalfBandDesign d;
     d.rate = rate > 1000.0 && std::isfinite (rate) ? rate : 96000.0;
     d.passHz = std::clamp (passHz, 1.0, 0.24 * d.rate);
     d.deviation = std::clamp (deviation, 1e-7, 0.1);
     const double atten = -20.0 * std::log10 (d.deviation);
-    const double beta = atten > 50.0 ? 0.1102 * (atten - 8.7) : (atten >= 21.0 ? 0.5842 * std::pow (atten - 21.0, 0.4) + 0.07886 * (atten - 21.0) : 0.0);
-    // Kaiser's length estimate for the transition from the pass edge to rate / 2 - pass edge
     const double dw = 2.0 * kPi * (0.5 * d.rate - 2.0 * d.passHz) / d.rate;
     const double order = (atten - 7.95) / (2.285 * dw);
-    int pairs = std::clamp (static_cast<int> (std::ceil ((order + 2.0) / 4.0)) - 1, 1, HalfBandDesign::kMaxPairs);
-    for (;; ++pairs)
+    const int start = std::clamp (static_cast<int> (std::ceil ((order + 2.0) / 4.0)) - 3, 1, HalfBandDesign::kMaxPairs);
+    for (int pairs = start; pairs <= HalfBandDesign::kMaxPairs; ++pairs)
     {
-        kaiserTaps (d, pairs, beta);
-        if (pairs >= HalfBandDesign::kMaxPairs || d.passDeviation() <= d.deviation)
+        double bestBeta = -1.0, bestDev = 1e9;
+        for (int i = 0; i <= 200; ++i)
+        {
+            const double beta = 2.0 + 0.05 * i;
+            kaiserTaps (d, pairs, beta);
+            const double dev = d.passDeviationOn (96);
+            if (dev < bestDev)
+            {
+                bestDev = dev;
+                bestBeta = beta;
+            }
+        }
+        kaiserTaps (d, pairs, bestBeta);
+        if (d.passDeviation() <= d.deviation || pairs == HalfBandDesign::kMaxPairs)
             break;
     }
     return d;
@@ -97,9 +111,16 @@ void HalfBandFir::reset() noexcept
 {
     buf.fill (0.0);
     pos = 0;
+    held = 0.0;
+    same = 0;
 }
 
-void HalfBandFir::prime (double x) noexcept { buf.fill (x); }
+void HalfBandFir::prime (double x) noexcept
+{
+    buf.fill (x);
+    held = x;
+    same = 4 * pairs - 2;
+}
 
 void HalfBandUp::prepare (const HalfBandDesign& d) noexcept
 {

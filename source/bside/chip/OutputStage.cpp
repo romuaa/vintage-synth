@@ -25,7 +25,7 @@ struct Constants
 // two-tone spectra (harmonics 2..5 and the products, rms 0.83 dB, largest 3.4 dB) (decisions "B-Side S3a").
 constexpr Constants kA {
     0.387973, 0.386539, 0.403086, 0.179676, 0.074531, 0.049466, 0.001478, -0.003231, 0.131771, 0.049526, 0.072176, 0.078753,
-    -0.3877, -3.297366, 4.081098,
+    -0.3877, -3.08, 3.80, // the joins of the smooth continuation (OutputStage.h "N"; the quintic turns at -3.297 / 4.081)
     { 0.0, 0.0783, 0.1545, 0.2292, 0.3018, 0.3729, 0.4423, 0.5101, 0.5765, 0.6414, 0.7048, 0.7668, 0.8272, 0.8862, 0.9438, 1.0 }
 };
 // Model B: rms error 0.00039, largest 0.0021.
@@ -142,6 +142,21 @@ void OutputStage::update() noexcept
     quintic = mdl == Model::A;
     curveMin = c.curveMin;
     curveMax = c.curveMax;
+    if (quintic)
+    {
+        // the continuation's constants from the quintic's value, slope and curvature at each join
+        auto value = [this] (double x) { return ((((n5 * x + n4) * x + n3) * x + n2) * x + 1.0) * x; };
+        auto slope = [this] (double x) { return (((5.0 * n5 * x + 4.0 * n4) * x + 3.0 * n3) * x + 2.0 * n2) * x + 1.0; };
+        auto curvature = [this] (double x) { return ((20.0 * n5 * x + 12.0 * n4) * x + 6.0 * n3) * x + 2.0 * n2; };
+        const double sl = slope (curveMin), kl = std::abs (curvature (curveMin));
+        loA = sl * sl / kl;
+        loB = kl / sl;
+        loBound = value (curveMin) - loA;
+        const double sh = slope (curveMax), kh = std::abs (curvature (curveMax));
+        hiA = sh * sh / kh;
+        hiB = kh / sh;
+        hiBound = value (curveMax) + hiA;
+    }
     level = c.volume[static_cast<std::size_t> (modeVolume & 0x0f)] * c.scale;
     if (volumeDcOn)
     {

@@ -213,8 +213,8 @@ double s3bNsPerSample (Model m, double rate, int which)
         audio[i] = std::fmod (t * 0.0123, 1.0) + std::fmod (t * 0.0071, 1.0) + std::fmod (t * 0.0049, 1.0) - 1.5;
         env[i] = 2.5 + 0.0001 * static_cast<double> (i % 7);
     }
-    const HalfBandDesign pre = designHalfBand (rate, 20000.0, 1.0e-3);
-    const HalfBandDesign twice = designHalfBand (2.0 * rate, 20000.0, 1.0e-3);
+    const HalfBandDesign pre = designHalfBand (rate, 20000.0, ChipVoice::kAntiAliasDeviation);
+    const HalfBandDesign twice = designHalfBand (2.0 * rate, 20000.0, ChipVoice::kTwiceDeviation);
     double best = 1e300;
     double sink = 0.0;
     for (int run = 0; run < 5; ++run)
