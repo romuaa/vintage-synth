@@ -5,6 +5,19 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3b-2 round after phases (2026-11-23)
+- Resonance writes are placed between samples: the filter's dynamics change at the write's place as a mixture of the
+  switch at the sample before and after it, while the output equation follows the band-limited blend. Against an ideal
+  render of the same writes at eight times the rate (a write every tick, resonance 0 <-> 15 and 4 <-> 12, low-pass and
+  band-pass, both models, 88.2 and 96 kHz) the excess was up to -78.4 dB and is now at most -95.9 dB (budget -90).
+- The alias gate's four-times-the-rate reference now runs Model B's mixer input through the chain's own pre-filter, as
+  Model A's did: the two Model B rows reported in the second review round equal their reference. Every row of the full
+  set meets its rule; the 16 pinned Model A rows (owner decision O6/O8) are unchanged.
+- The write budget's reference line is the output's strongest line other than DC (with volume DC on the output's mean
+  had been taken as the line, flattering those rows by about 20 dB); every row still meets it.
+- The alias gate's part of the normal test run takes 26 s (was 161 s): every listed row in its worst constellation and
+  the common reset, a reduced set of the others; the full set by its tag.
+
 ### B-Side S3b-2 second review round (2026-11-23)
 - Alias gate over voice phases: every multi-voice row runs in five phase constellations (all voices at phase 0
   among them) and the worst counts. **Known deviation (owner decision O6), its real extent:** with Model A's mixer
@@ -12,17 +25,15 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   12.4 dB over the limit at 88.2 kHz, 11.1 dB at 96 kHz and 0.2 dB at 128 kHz internal rate, at 2 kHz and at
   3.85 kHz, depending on the voices' phases. 16 such rows are listed in the test with their worst figures and gated at
   figure + 1 dB, two-sided (a row more than 2 dB better, or inside the limits, fails as stale).
-- **Not met:** two Model B rows through the resonant band-pass exceed the four-times-the-rate reference + 1 dB by 0.5
-  and 0.9 dB in one phase constellation (88.2 and 192 kHz); reported, not pinned. The default test run fails on the
-  first; the owner decides.
+- Two Model B rows through the resonant band-pass seemed to exceed the four-times-the-rate reference + 1 dB by 0.5 and
+  0.9 dB in one phase constellation; the round after phases found the reference at fault (see there).
 - Shared: the owner of a shared filter switches a mode or resonance write at the nearest sample
   (`ChipVoice::sharedSwitchSample`, new): within 0.5 samples of Per Note's band-limited step (was up to 1.06). The
   0.02-sample timing remains Per Note's; `ChipVoice.h` states what an owner must do to reach it (S4).
 - GCC's contraction of multiply-adds is off for the chip code in every target that compiles it, the B-Side plugin
   included, set in one place in the build.
-- Resonance writes join the write-budget test (met through the low-pass; through the band-pass -87.5 to -89.5 dB
-  against -90 at 2 kHz: reported, not gated); the mixer curve's continuation has its own unit test; at most five
-  configurations are blended at once (tested).
+- The mixer curve's continuation has its own unit test; at most five configurations are blended at once (tested).
+  (Resonance writes: see the round after phases.)
 
 ### B-Side S3b-2 closing round (2026-11-23)
 - Alias gate (8.19.4): a real-chip row now passes inside its model's absolute limit or within 1 dB of the
