@@ -2011,6 +2011,38 @@ attempt on Model A's filter. These win over 8.19.1 where they differ.
     own corner there, and removed if it disagrees).
   - **Reported lines:** every `a_s3a_*` corner line that moves by more than 1 percentage point
     is listed in the records, better or worse.
+- **Scope of the cutoff-step fix (2026-11-23; owner decision O9 "512"; this bullet wins over the two above):**
+  - **Found in the fix round:** between codes 200 and 520 the reference's corner depends on
+    level (a sawtooth at full level: corners about twice those of the noise at medium level
+    that `a_filter_a` is built on; 1210 Hz against 345 Hz at code 306), and at full level it
+    moves in single-code steps that no sum of weights per bit reproduces. One level-free curve
+    cannot follow both; two joint fits missed the sawtooth gates of the bullet above (0.81 and
+    0.64 dB steps against 0.35). That region is the level dependence of Model A's filter,
+    which is parked (O8).
+  - **What is built:** only the jump at code 512 and the boundaries above it. **For every
+    code below 480 the corner is bit-identical to the form in `main`** (commit `44bc753`), on
+    `setCutoff` and on `processWithCutoff`. From code 480 up the mapping follows the reference
+    (the first round's result there, which the review confirmed on held-out data), joined at
+    479 -> 480 without a step the reference lacks.
+  - **Gates:** (1) codes 0 to 479: bit-identical to the pinned old law (a test that fails on
+    any change there); (2) the noise walk per code, every step from 479 -> 480 up to 1600:
+    our relative corner step within 2 percentage points of the reference's; (3) the owner's
+    one-voice sweep, every cutoff write whose codes are both 480 or above: the band-level
+    step (2 to 5 kHz and 0.8 to 2 kHz) within 0.5 dB of the reference's step at the same
+    write, and the sum over any four consecutive such writes within 0.7 dB of the
+    reference's; (4) every committed gate unchanged (`a_filter_a`, `a_modes_a`, rate, phase,
+    `processWithCutoff` against `setCutoff`, Model B bit-identical, cost). The sawtooth-walk
+    gates of the bullet above are not built; no sawtooth walk is committed.
+  - **Constraint, stated:** the curve from 480 up is fitted under the condition that the
+    committed gates hold. Where that condition binds (found: at code 612 the unconstrained fit
+    is 0.9 % higher, nearer the reference's own corner there, and takes `a_modes_a` from 4.93
+    to 5.01 % against 5 %), the value that keeps the committed gate is used and the place is
+    named in the records. If gate (3) cannot be met at a write, it is reported with figures;
+    it is not met by reshaping below 480.
+  - **Recorded as open with Model A's dynamics (O8):** below code 480 the sweep keeps the
+    steps of `main` (383 -> 384: -1.42 dB against the reference's -0.49 dB in 2 to 5 kHz at
+    full level), and the reference's steps at 255 -> 256 and 319 -> 320 stay missing.
+  - **Committed data:** the noise walk only where it carries gate (2); the sweep's trace.
 
 #### 8.19.4 S3b in two steps (contract, 2026-11-23; refines 8.19.2; owner decision O3 of 2026-11-22)
 S3b is stacked on the S3a branch until S3a has merged (O3). It is split so that the renderer's
