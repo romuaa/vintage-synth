@@ -618,6 +618,18 @@ int ChipVoice::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle
     return done;
 }
 
+std::int64_t ChipVoice::sharedSwitchSample() noexcept
+{
+    const Chip::EventTime t = c.renderEventTime();
+    if (t.beforeStart)
+        return -1;
+    // the write lies `base` (0 .. 2) samples before the end of sample t.sample (Chip.h "EVENT TIME"), where Per Note's
+    // blend (the long kernel's unit step there, ChipVoice::queue) has its centre; the filter's signal sample nearest it
+    // is t.sample + floor (1 - base), shown at the bus sample filterLagSamples () later (tested at every cycle of three
+    // samples per rate: within 0.45 samples of the blend's centre)
+    return static_cast<std::int64_t> (t.sample) + filterLagSamples() + static_cast<std::int64_t> (std::floor (1.0 - t.base));
+}
+
 int ChipVoice::renderBusesUntil (int maxSamples, std::uint64_t untilCycle) noexcept
 {
     blockStart = c.renderSampleIndex();

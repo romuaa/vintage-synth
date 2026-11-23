@@ -410,13 +410,14 @@ WriteAlias chainWrites (Model m, const RateConfig& rc, double hz, bool vdc, std:
 }
 } // namespace
 
-TEST_CASE ("chain: routing, volume and mode writes every tick meet the write budget before the board filters (<= -90 dB to 2 kHz)", "[chain][alias][writes]")
+TEST_CASE ("chain: routing, volume, mode and resonance writes every tick meet the write budget before the board filters (<= -90 dB to 2 kHz)", "[chain][alias][writes]")
 {
     struct Row
     {
         const char* name;
         bool vdc;
         std::uint8_t reg, a, b, control, route, modeVolume;
+        bool gated = true;
     };
     const Row rows[] { { "routing filter <-> direct (saw)", true, 0x17, 0x40, 0x41, ctrl::saw, 0x00, 0x1f },
                        { "routing filter <-> direct (pulse)", false, 0x17, 0x40, 0x41, ctrl::pulse, 0x00, 0x1f },
@@ -424,7 +425,13 @@ TEST_CASE ("chain: routing, volume and mode writes every tick meet the write bud
                        { "volume 15 <-> 6, volume DC on (the chip's step)", true, 0x18, 0x1f, 0x16, ctrl::saw, 0x01, 0x1f },
                        { "volume 15 <-> 6, volume DC off", false, 0x18, 0x1f, 0x16, ctrl::saw, 0x01, 0x1f },
                        { "mode low-pass <-> high-pass", true, 0x18, 0x1f, 0x4f, ctrl::saw, 0x01, 0x1f },
-                       { "mode low-pass <-> band-pass, volume DC off", false, 0x18, 0x1f, 0x2f, ctrl::triangle, 0x01, 0x1f } };
+                       { "mode low-pass <-> band-pass, volume DC off", false, 0x18, 0x1f, 0x2f, ctrl::triangle, 0x01, 0x1f },
+                       // resonance writes blend two configurations like mode writes (S3b-2 review round, R4; 8.19.4 after the
+                       // second review: in this test)
+                       { "resonance 0 <-> 15 (low-pass)", true, 0x17, 0x01, 0xf1, ctrl::saw, 0x01, 0x1f },
+                       // reported, NOT gated (docs/decisions.md "B-Side S3b-2 second review round" S7): through the band-pass
+                       // at 2 kHz the writes add -87.5 to -89.5 dB at 88.2 and 96 kHz (budget -90); open for the owner
+                       { "resonance 4 <-> 12 (band-pass), volume DC off", false, 0x17, 0x41, 0xc1, ctrl::saw, 0x01, 0x2f, false } };
     for (const Model m : { Model::B, Model::A })
         for (const auto& row : rows)
         {
@@ -439,14 +446,15 @@ TEST_CASE ("chain: routing, volume and mode writes every tick meet the write bud
                     INFO ((m == Model::A ? "Model A, " : "Model B, ") << row.name << ", " << rc.internalRate << " Hz internal, " << hz << " Hz: the writes add "
                                                                      << a.write.worstDb << " dB at " << a.write.worstHz << " Hz (output " << a.raw.worstDb
                                                                      << " dB, held states " << a.baseline.worstDb << " dB)");
-                    CHECK (a.write.worstDb <= -90.0);
+                    if (row.gated)
+                        CHECK (a.write.worstDb <= -90.0);
                     CHECK (a.raw.worstDb > -299.0); // something was measured: bins exist between the lines
                     worst = std::max (worst, a.write.worstDb);
                     worstRaw = std::max (worstRaw, a.raw.worstDb);
                     worstBase = std::max (worstBase, a.baseline.worstDb);
                 }
             }
-            WARN ((m == Model::A ? "Model A " : "Model B ") << row.name << " every tick: the writes add at worst " << worst << " dB (budget -90); the output "
+            WARN ((m == Model::A ? "Model A " : "Model B ") << row.name << (row.gated ? "" : " (reported, not gated)") << " every tick: the writes add at worst " << worst << " dB (budget -90); the output "
                                                             << worstRaw << " dB, held without writes " << worstBase << " dB (the static curves, S3b-2)");
         }
 }
@@ -1038,6 +1046,54 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
                                                          // multiply-add differently in the two inlined copies; a rule
                                                          // broken by one sample differs by 1e-6 or more)
     }
+}
+
+TEST_CASE ("chain: at most kMaxConfigs + 1 configurations are blended; a further mode, volume or resonance write in the window retires the oldest at once", "[chain][queue]")
+{
+    // ChipVoice.h "TIMING" (VOLUME and MODE; RESONANCE): every 0x18 write that changes a mode or the volume, and every
+    // resonance write that changes it, opens a configuration over the write's window (the long kernel, 16 samples);
+    // kMaxConfigs (4) earlier configurations plus the current one are blended at once, and one more such write while
+    // all are open retires the oldest at once. Six changing writes at one cycle (the second review's case: resonance;
+    // here mode and resonance alike, both models): the blend reaches kMaxConfigs + 1 = 5 configurations and no more,
+    // every output sample is finite, the windows close (1 configuration) and the voice ends in the last write's
+    // state: its held output equals that of a voice given only the last write.
+    for (const Model m : { Model::B, Model::A })
+        for (const bool resonance : { false, true })
+        {
+            auto run = [&] (bool all, int& most) {
+                PerNote p (m, 96000.0, true);
+                ChipVoice& v = *p.v;
+                v.boardFiltersEnabled (false);
+                osc (v, 0, 0.0, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::test | ctrl::gate)); // a held voice
+                v.write (0x15, 0);
+                v.write (0x16, 0x80);
+                v.write (0x17, 0x01);
+                v.write (0x18, 0x1f);
+                std::vector<double> y (6000, 0.0);
+                int done = v.renderUntil (y.data(), 6000, 40000);
+                const std::uint8_t res[] { 0x31, 0xf1, 0x51, 0xd1, 0x71, 0xb1 }, mode[] { 0x4f, 0x2f, 0x1e, 0x4d, 0x2c, 0x1b };
+                for (int k = all ? 0 : 5; k < 6; ++k)
+                    v.write (resonance ? 0x17 : 0x18, resonance ? res[k] : mode[k]);
+                most = 1;
+                while (done < 6000)
+                {
+                    done += v.renderUntil (y.data() + done, 1, ~std::uint64_t { 0 });
+                    most = std::max (most, v.configsActive());
+                    REQUIRE (std::isfinite (y[static_cast<std::size_t> (done - 1)]));
+                }
+                CHECK (v.configsActive() == 1);
+                return y;
+            };
+            int most = 0, mostOne = 0;
+            const auto y6 = run (true, most);
+            const auto y1 = run (false, mostOne);
+            INFO ((m == Model::A ? "Model A, " : "Model B, ") << (resonance ? "resonance" : "mode and volume") << ": at most " << most
+                                                             << " configurations blended (one write: " << mostOne << "); held output after the windows "
+                                                             << y6.back() << " against the last write alone " << y1.back());
+            CHECK (most == ChipVoice::kMaxConfigs + 1);
+            CHECK (mostOne == 2);
+            CHECK (std::abs (y6.back() - y1.back()) <= 1.0e-9 * std::max (1.0, std::abs (y1.back())));
+        }
 }
 
 TEST_CASE ("chain: a full write queue applies its oldest entry at once, keeping the order and every value", "[chain][queue]")

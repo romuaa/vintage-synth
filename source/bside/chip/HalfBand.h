@@ -23,8 +23,13 @@
 // edge of 20 kHz is at least (r - 20 kHz) / 3 for every rate from 80 kHz up (8.19.4's stop edge: the larger of the two).
 // - Delay: 2 P - 1 samples of its rate (an integer: the centre tap).
 // - Sizes as built (ChipVoice::kAntiAliasDeviation 1.15e-3, pass edge 20 kHz): at the internal rates 88.2 / 96 / 128 /
-//   176.4 / 192 / 352.8 / 384 kHz P = 19 / 11 / 5 / 4 / 4 / 2 / 2; at twice those rates (the 2x part) 4 / 4 / 3 / 2 / 2 /
-//   2 / 2 (printed by "alias: the half-band designs ..." in ChipVoiceAliasTests.cpp).
+//   176.4 / 192 / 352.8 / 384 kHz P = 19 / 11 / 5 / 4 / 4 / 2 / 2; Model A's 2x part (ChipVoice::kTwiceDeviation 1e-5,
+//   about 100 dB, at twice those rates) 7 / 6 / 5 / 5 / 4 / 4 / 4 (printed by "alias: the half-band designs ..." in
+//   ChipVoiceAliasTests.cpp).
+// - Cost of the design: the parameter search runs in prepare (ChipVoice::prepare designs the pre-filter and, Model A,
+//   the 2x part): 0.5 to 8 ms per voice (the second review, under load; the most at 88.2 kHz, Model A). Off the audio
+//   thread, but S4 prepares many voices: S4 either designs once per rate and shares the design (HalfBandDesign is a
+//   plain value) or tables the seven rates' designs.
 //
 // THE FILTERS. HalfBandFir: one rate. HalfBandUp: rate r -> 2 r, two outputs per input (polyphase: one phase is the
 // input delayed, the other the pairs). HalfBandDown: 2 r -> r, one output per two inputs (only the outputs kept are

@@ -178,6 +178,8 @@ public:
     double mixerCurve (double x) const noexcept { return curve (x); }
     /** Where N leaves its polynomial (Model A: the joins of its smooth continuation; Model B: its limits): {lower, upper}. */
     std::array<double, 2> mixerLimits() const noexcept { return { curveMin, curveMax }; }
+    /** Test aid: N's polynomial coefficients {n2, n3, n4, n5} (N = x + n2 x^2 + ... + n5 x^5 between the limits). */
+    std::array<double, 4> mixerCoefficients() const noexcept { return { n2, n3, n4, n5 }; }
     /** What multiplies the curve's output (the volume level with volume DC on, else 1) and what is added to it (Y0 with
         volume DC on, minus the curve at the static operating point with it off). */
     double postScale() const noexcept { return volumeDcOn ? level : 1.0; }

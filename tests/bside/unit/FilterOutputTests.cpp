@@ -14,6 +14,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -1338,5 +1339,73 @@ TEST_CASE ("output stage: volume DC on steps the output on a volume write, off i
         o.setRouting (3);
         CHECK (o.directVoices() == 1);
         CHECK (o.filterVoices() == 2);
+    }
+}
+
+TEST_CASE ("output stage: Model A's mixer curve continued past its joins: value, slope and curvature continuous, monotonic, bounded, the quintic to the bit between", "[output][mixer]")
+{
+    // 8.19.4 (after the review and after the second review): between the joins (mixerLimits) N is the fitted quintic,
+    // bit for bit (the same Horner form); beyond them N = bound -+ a exp (-+b (x - join)) with value, slope and
+    // curvature continuous at the joins (one-sided differences of second order on each side, h = 1e-4: the old flat
+    // clamp's curvature jump was 1.68 and -2.74), non-decreasing everywhere, and bounded (-2.870 .. 5.558, reached in
+    // the limit). The cost: inside the joins the polynomial only; outside, one exp per call (about 1 ns, measured by the
+    // second review: 1.6 to 1.8 ns per call against 0.6 inside, under load).
+    for (const double rate : kRates)
+    {
+        OutputStage o;
+        o.prepare (Model::A, rate, true);
+        const auto j = o.mixerLimits();
+        const auto c = o.mixerCoefficients();
+        auto quintic = [&] (double x) { return ((((c[3] * x + c[2]) * x + c[1]) * x + c[0]) * x + 1.0) * x; };
+        CHECK (std::abs (j[0] - -3.08) < 1e-15);
+        CHECK (std::abs (j[1] - 3.80) < 1e-15);
+        // the quintic to the bit between the joins, both joins included
+        int differ = 0;
+        for (int i = 0; i <= 200000; ++i)
+        {
+            const double x = j[0] + (j[1] - j[0]) * i / 200000.0;
+            if (std::bit_cast<std::uint64_t> (o.mixerCurve (x)) != std::bit_cast<std::uint64_t> (quintic (x)))
+                ++differ;
+        }
+        CHECK (differ == 0);
+        CHECK (std::bit_cast<std::uint64_t> (o.mixerCurve (j[0])) == std::bit_cast<std::uint64_t> (quintic (j[0])));
+        CHECK (std::bit_cast<std::uint64_t> (o.mixerCurve (j[1])) == std::bit_cast<std::uint64_t> (quintic (j[1])));
+        // continuity at each join: value, and second-order one-sided slope and curvature from each side
+        const double h = 1.0e-4;
+        for (const double x0 : { j[0], j[1] })
+        {
+            auto n = [&] (double x) { return o.mixerCurve (x); };
+            const double vl = n (std::nextafter (x0, -10.0)), vr = n (std::nextafter (x0, 10.0));
+            const double sl = (3.0 * n (x0) - 4.0 * n (x0 - h) + n (x0 - 2.0 * h)) / (2.0 * h);
+            const double sr = (-3.0 * n (x0) + 4.0 * n (x0 + h) - n (x0 + 2.0 * h)) / (2.0 * h);
+            const double kl = (2.0 * n (x0) - 5.0 * n (x0 - h) + 4.0 * n (x0 - 2.0 * h) - n (x0 - 3.0 * h)) / (h * h);
+            const double kr = (2.0 * n (x0) - 5.0 * n (x0 + h) + 4.0 * n (x0 + 2.0 * h) - n (x0 + 3.0 * h)) / (h * h);
+            INFO ("join " << x0 << ": value " << vl << " / " << vr << ", slope " << sl << " / " << sr << ", curvature " << kl << " / " << kr);
+            CHECK (std::abs (vr - vl) < 1.0e-12);
+            CHECK (std::abs (sr - sl) < 1.0e-6);
+            CHECK (std::abs (kr - kl) < 1.0e-3);
+            CHECK (sl > 0.1);
+        }
+        // non-decreasing and bounded over [-50, 50], and at the infinities
+        double prev = o.mixerCurve (-50.0), lo = prev, hi = prev;
+        int decreasing = 0;
+        for (int i = 1; i <= 1000000; ++i)
+        {
+            const double v = o.mixerCurve (-50.0 + 100.0 * i / 1000000.0);
+            if (v < prev)
+                ++decreasing;
+            prev = v;
+            lo = std::min (lo, v);
+            hi = std::max (hi, v);
+        }
+        const double nInfLo = o.mixerCurve (-std::numeric_limits<double>::infinity()), nInfHi = o.mixerCurve (std::numeric_limits<double>::infinity());
+        INFO (rate << " Hz: N over [-50, 50] " << lo << " .. " << hi << ", at the infinities " << nInfLo << " .. " << nInfHi);
+        CHECK (decreasing == 0);
+        CHECK (std::isfinite (nInfLo));
+        CHECK (std::isfinite (nInfHi));
+        CHECK (std::abs (nInfLo - -2.870058) < 1.0e-5);
+        CHECK (std::abs (nInfHi - 5.558435) < 1.0e-5);
+        CHECK (lo >= nInfLo);
+        CHECK (hi <= nInfHi);
     }
 }
