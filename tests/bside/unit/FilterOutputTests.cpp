@@ -6,6 +6,7 @@
 // rate against the analog prototype ([rate]), processWithCutoff against setCutoff, every pole inside the unit circle.
 
 #include "FuzzSupport.h"
+#include "S3aCutoffLaw.h"
 
 #include "bside/chip/Filter.h"
 #include "bside/chip/OutputStage.h"
@@ -20,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -324,40 +326,6 @@ TEST_CASE ("filter: after a loud input, silence decays below -120 dB with no lim
 
 namespace
 {
-/** Model A's corner below code 480 exactly as the S3a form computed it (commit 44bc753, Filter.cpp): the ladder's
-    converter summed bit by bit, interpolated between codes, shifted by variation, ln fc over 24 points. Written with
-    the same expressions in the same order, so it gives the same bits. */
-struct S3aLowLaw
-{
-    static constexpr double kLogFc[24] { 5.566978, 5.601697, 5.794737, 5.830848, 5.952658, 7.166796, 7.832795, 8.205156,
-                                         8.463033, 8.749728, 8.914376, 9.091689, 9.229615, 9.347138, 9.468028, 9.542380,
-                                         9.620053, 9.686958, 9.733824, 9.790228, 9.835870, 9.887333, 9.914261, 9.951000 };
-    vs::bside::chip::render::LadderWeights w = vs::bside::chip::render::ladderWeights (11, 2.1756, true);
-    double converterAt (int v) const
-    {
-        double d = 0.0;
-        for (std::size_t i = 0; i < 11; ++i)
-            if (((v >> i) & 1) != 0)
-                d += w[i];
-        return d;
-    }
-    double converter (double v) const
-    {
-        const int lo = static_cast<int> (std::floor (v));
-        const int hi = std::min (2047, lo + 1);
-        const double f = v - lo;
-        return converterAt (lo) + (converterAt (hi) - converterAt (lo)) * f;
-    }
-    static double lnHz (double d)
-    {
-        const double x = std::clamp (d, 0.0, 1.0) * 23.0;
-        const auto i = static_cast<std::size_t> (std::min (22.0, std::floor (x)));
-        const double f = x - static_cast<double> (i);
-        return kLogFc[i] + (kLogFc[i + 1] - kLogFc[i]) * f;
-    }
-    double hz (double v, double var) const { return std::exp (lnHz (converter (v) + (var - 0.5) * 2.0 * Filter::kVariationShift)); }
-};
-
 bool sameBits (double a, double b)
 {
     std::uint64_t x = 0, y = 0;
@@ -367,37 +335,52 @@ bool sameBits (double a, double b)
 }
 } // namespace
 
-TEST_CASE ("filter: Model A below code 480 is the S3a form bit for bit, on setCutoff and on processWithCutoff (8.19.3, O9)", "[filter]")
+TEST_CASE ("filter: Model A up to register value 479.0 is the S3a form bit for bit, on setCutoff and on processWithCutoff (8.19.3, O9)",
+           "[filter]")
 {
-    // Owner decision O9: the cutoff-step fix covers code 480 and up only. Every register value from 0 to 479 in steps of
-    // a quarter, at variation 0, 0.25, 0.5, 0.75 and 1: the corner of setCutoff (cutoffCurveHz, the stored corner after
-    // setCutoff) and the corner processWithCutoff computes on its own path (cornerWithCutoffHz) have exactly the bits of
-    // the S3a law. Any change below 480, in the last bit, on either path, fails. The variations are those whose shift
-    // (variation - 0.5) x 2 x 0.06 is an exact product: elsewhere a compiler may fuse the shift into a multiply-add in
-    // one translation unit and not in another, so this replica would not be an exact oracle (GCC did so at 0.37). The
-    // class itself was compared with the S3a build there too, outside the tests (decisions S1).
-    const S3aLowLaw law;
+    // Owner decision O9: the cutoff-step fix covers register values above 479 only (between 479 and 480 the corner is
+    // interpolated between the two parts). The oracle is the S3a law itself, copied verbatim into its own translation
+    // unit (S3aCutoffLaw.cpp) so the compiler rounds it as it rounded the S3a build (a replica written inside this
+    // file was not exact under GCC at variation 0.37: a multiply-add fused in one place and not in the other). Every
+    // quarter step from 0 to 479 at variation 0, 0.25, 0.37, 0.5, 0.75 and 1, and 200000 pseudo-random register values
+    // in 0 .. 479.0 (479.0 and 300.1 included) at 400 pseudo-random variations: the corner of setCutoff
+    // (cutoffCurveHz, and the stored corner after setCutoff) and the corner processWithCutoff computes on its own path
+    // (cornerWithCutoffHz) have exactly the bits of the S3a law. Any change there, in the last bit, on either path, fails.
+    namespace o = vs::bside::test::s3a;
     int bad = 0, n = 0;
     std::string first;
-    for (const float var : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+    auto check = [&] (Filter& f, double v, float var) {
+        const auto vf = static_cast<float> (v);
+        const bool ok = sameBits (Filter::cutoffCurveHz (Model::A, v, static_cast<double> (var)), o::cutoffCurveHzA (v, static_cast<double> (var)))
+                        && [&] {
+                               f.setCutoff (vf);
+                               return sameBits (f.cutoffHz(), o::cutoffCurveHzA (static_cast<double> (vf), static_cast<double> (var)));
+                           }()
+                        && sameBits (f.cornerWithCutoffHz (vf), o::cornerWithCutoffHzA (vf, var));
+        ++n;
+        if (! ok && bad++ == 0)
+            first = "register " + std::to_string (v) + " variation " + std::to_string (var);
+    };
+    for (const float var : { 0.0f, 0.25f, 0.37f, 0.5f, 0.75f, 1.0f })
     {
         Filter f;
         f.prepare (Model::A, 96000.0, var);
         for (int q = 0; q <= 479 * 4; ++q)
-        {
-            const double v = q * 0.25;
-            const double want = law.hz (v, static_cast<double> (var));
-            f.setCutoff (static_cast<float> (v));
-            const bool ok = sameBits (Filter::cutoffCurveHz (Model::A, v, static_cast<double> (var)), want) && sameBits (f.cutoffHz(), want)
-                            && sameBits (f.cornerWithCutoffHz (static_cast<float> (v)), want);
-            ++n;
-            if (! ok && bad++ == 0)
-                first = "register " + std::to_string (v) + " variation " + std::to_string (var);
-        }
+            check (f, q * 0.25, var);
+    }
+    std::mt19937_64 rng (7);
+    std::uniform_real_distribution<double> rv (0.0, 479.0), rvar (0.0, 1.0);
+    for (int k = 0; k < 400; ++k)
+    {
+        const auto var = static_cast<float> (rvar (rng));
+        Filter f;
+        f.prepare (Model::A, 96000.0, var);
+        for (int j = 0; j < 500; ++j)
+            check (f, j == 0 ? 479.0 : (j == 1 ? 300.1 : rv (rng)), var);
     }
     INFO ("first difference at " << first);
     CHECK (bad == 0);
-    std::printf ("[s3a-law] Model A below code 480: %d of %d corners bit-identical to the S3a law on both paths\n", n - bad, n);
+    std::printf ("[s3a-law] Model A up to register value 479.0: %d of %d corners bit-identical to the S3a law on both paths\n", n - bad, n);
 }
 
 TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant fails)", "[filter]")
@@ -416,10 +399,10 @@ TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant f
     constexpr double kALowLogFc[24] { 5.566978, 5.601697, 5.794737, 5.830848, 5.952658, 7.166796, 7.832795, 8.205156, 8.463033, 8.749728, 8.914376, 9.091689,
                                     9.229615, 9.347138, 9.468028, 9.542380, 9.620053, 9.686958, 9.733824, 9.790228, 9.835870, 9.887333, 9.914261, 9.951000 };
     constexpr double kAConverter[11] { 0.000677536, 0.001300386, 0.002520950, 0.004900252, 0.009531922, 0.017761255, 0.033858608, 0.066655995, 0.128577338, 0.249785711, 0.484430046 }; // codes 480 ..
-    constexpr double kAJoin[32] { 0.240911853, 0.241217428, 0.241543148, 0.241863281, 0.242177263, 0.242821602, 0.243518500, 0.244224759,
-                                    0.244938928, 0.245641225, 0.246277032, 0.246956046, 0.247648327, 0.248352463, 0.249043992, 0.249737022,
-                                    0.250569272, 0.251478769, 0.252361353, 0.253309033, 0.254243103, 0.255121144, 0.256050282, 0.256960142,
-                                    0.257873241, 0.258717440, 0.259524034, 0.260382270, 0.261217467, 0.262051461, 0.262810122, 0.263677569 };
+    constexpr double kAJoin[32] { 0.240074656, 0.240536530, 0.240935837, 0.241294777, 0.241666672, 0.242034619, 0.242619999, 0.243409451,
+                                    0.244224166, 0.245050991, 0.245866650, 0.246581038, 0.247379271, 0.248182767, 0.248991804, 0.249790746,
+                                    0.250766321, 0.251787836, 0.252868325, 0.253934267, 0.254970039, 0.256039093, 0.257083874, 0.258118306,
+                                    0.259042431, 0.260039855, 0.261015547, 0.261965596, 0.262869040, 0.263844735, 0.264844312, 0.265784232 };
     constexpr double kALogFc[129] { 5.568762, 5.574051, 5.579520, 5.585102, 5.590843, 5.597733, 5.613662, 5.649298, 5.682199, 5.716583, 5.749633, 5.784669,
                                     5.799238, 5.805900, 5.812686, 5.818856, 5.825178, 5.834360, 5.857475, 5.879546, 5.900385, 5.922892, 5.941360, 6.091184,
                                     6.310404, 6.519868, 6.735299, 6.941595, 7.168982, 7.329803, 7.469615, 7.632934, 7.707134, 7.763385, 7.825549, 7.895722,

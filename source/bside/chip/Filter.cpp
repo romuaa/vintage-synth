@@ -39,9 +39,9 @@ constexpr double kBCutStep = 64.0;
 //   linear over 129 points of d, whose slope at each fall-back of the converter sets the corner's step there (within
 //   2 percentage points of the reference's per code from 479 -> 480 up to 1600). Codes 480 .. 511 take fitted values
 //   of d instead of the sum of their bits (kAJoin): they join the S3a corner at 479 with the reference's step there
-//   (-0.3 %) and rise evenly to 511, 2.2 % below the refitted curve there, so the fall at 511 -> 512 is 13 % at the
-//   -3 dB point (the reference's 14.8 % on noise; in the sweep at full level the smaller fall meets both bands:
-//   decisions S4).
+//   (-2.2 %, the committed noise walk) and rise evenly (+1.0 % per code at the -3 dB point) to code 511, which lies on
+//   the refitted curve, so the fall at 511 -> 512 is the curve's (-15.0 % at the -3 dB point; the committed walk:
+//   -15.0 %; decisions S7).
 // - a register value between 479 and 480 (Smooth) interpolates ln fc between the two.
 constexpr int kAFirstRefitted = 480;
 // codes 0 .. 479 (S3a)
@@ -52,10 +52,10 @@ constexpr std::array<double, 24> kALowLogFc { 5.566978, 5.601697, 5.794737, 5.83
 // codes 480 .. 2047: the weight per bit (bit 0 first), the converter values of 480 .. 511, ln (fc / Hz) at
 // d = i / kALogFcIntervals
 constexpr std::array<double, 11> kAConverter { 0.000677536, 0.001300386, 0.002520950, 0.004900252, 0.009531922, 0.017761255, 0.033858608, 0.066655995, 0.128577338, 0.249785711, 0.484430046 };
-constexpr std::array<double, 32> kAJoin { 0.240911853, 0.241217428, 0.241543148, 0.241863281, 0.242177263, 0.242821602, 0.243518500, 0.244224759,
-    0.244938928, 0.245641225, 0.246277032, 0.246956046, 0.247648327, 0.248352463, 0.249043992, 0.249737022,
-    0.250569272, 0.251478769, 0.252361353, 0.253309033, 0.254243103, 0.255121144, 0.256050282, 0.256960142,
-    0.257873241, 0.258717440, 0.259524034, 0.260382270, 0.261217467, 0.262051461, 0.262810122, 0.263677569 };
+constexpr std::array<double, 32> kAJoin { 0.240074656, 0.240536530, 0.240935837, 0.241294777, 0.241666672, 0.242034619, 0.242619999, 0.243409451,
+    0.244224166, 0.245050991, 0.245866650, 0.246581038, 0.247379271, 0.248182767, 0.248991804, 0.249790746,
+    0.250766321, 0.251787836, 0.252868325, 0.253934267, 0.254970039, 0.256039093, 0.257083874, 0.258118306,
+    0.259042431, 0.260039855, 0.261015547, 0.261965596, 0.262869040, 0.263844735, 0.264844312, 0.265784232 };
 constexpr int kALogFcIntervals = 128;
 constexpr std::array<double, 129> kALogFc { 5.568762, 5.574051, 5.579520, 5.585102, 5.590843, 5.597733, 5.613662, 5.649298,
     5.682199, 5.716583, 5.749633, 5.784669, 5.799238, 5.805900, 5.812686, 5.818856,

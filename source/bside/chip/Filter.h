@@ -49,9 +49,9 @@
 //   reference's curve). Two parts (owner decision O9; decisions "B-Side Model A cutoff steps, scope 512"): codes 0 ..
 //   479 are the S3a form bit for bit (an 11-bit terminated resistor ladder of ratio 2.18, 24 points of d; its fall at
 //   383 -> 384 stays larger than the reference's at full level, recorded open); from code 480 a fitted weight per
-//   bit (d falls back at every multiple of 32, e.g. by 6.0 % at 511 -> 512) and 129 points of d, whose slope at each
+//   bit (d falls back at every multiple of 32, e.g. by 6.0 % at 511 -> 512, code 511 on the curve) and 129 points of d, whose slope at each
 //   fall-back sets the corner's step there: within 2 percentage points of the reference's per code from 479 -> 480
-//   up to 1600 (the -3 dB point falls by 13 % at 511 -> 512, by 9 % at 1023 -> 1024); codes 480 .. 511 take fitted
+//   up to 1600 (the -3 dB point falls by 15 % at 511 -> 512, by 9 % at 1023 -> 1024); codes 480 .. 511 take fitted
 //   converter values that join the S3a corner at 479;
 // - Q at resonance 0 depends on the cutoff (0.79 at 250 Hz, 0.55 around 1 to 2 kHz, 0.77 at 21 kHz); resonance
 //   multiplies it by a fitted 16-step law (2.9 x at 15) and lowers the cutoff (to 0.87 x at 15);
