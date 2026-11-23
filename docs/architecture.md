@@ -2102,6 +2102,26 @@ chain's output.
     switch with the bend on (the slope term); sync and ring with a bent sawtooth; the write
     timing per type above; the chain's output after the filter with a moving cutoff (the
     S3b-1 test compared the whole chain; its replacement covers the filter only).
+- **After the fix round of S3b-2 (2026-11-23; owner decision O6 "pin"; these win over the bullet above):**
+  - **Statement (c) corrected (orchestrator, review):** a real-chip row passes when it is
+    inside the absolute limit of its model, **or** within 1 dB of the 4x reference. A row that
+    already meets the budget does not also have to match the reference (found: rows at -111
+    to -144 dB up to 0.7 dB above it).
+  - **Model A with the mixer overdriven: a known deviation, pinned (owner, O6).** Rows of the
+    set in which Model A's mixer input leaves the range its curve was fitted on (two or three
+    full-level voices through the filter at resonance 15) and that miss (a) or (c) after the
+    smooth continuation are listed by name in the test with their measured figure, and each is
+    gated at that figure + 1 dB: it fails when it gets worse. The list is closed: a row not on
+    it gets the full limits, and a listed row that comes inside the limits must be taken off
+    the list (the test fails on a stale entry). Measured at the pin: (a) four rows at 88.2 and
+    96 kHz, -93.4 to -96.7 dB against -99 dB; (c) up to 18 dB above the 4x reference at 88.2
+    to 192 kHz. Model B has no pinned row. Four times the rate for Model A's curves is not
+    taken. **Open, to revisit with the Model A filter form (O4, O5) and the S4 budget:** both
+    change the level that reaches the mixer.
+  - **Two bend mutations stay reported, not tested (orchestrator, review):** the slope term at
+    a converter switch (no output changes; if the site is unreachable for a bent sawtooth it is
+    removed or marked as such in the code) and the cell update of the derivative at an event
+    (at most 2.5e-5).
 
 ### 8.20 Alias follow-up step (contract, 2026-11-19; owner decision 2026-11-18: fix, no exemption)
 Fixes known defects 1 and 2 of 8.18.1 in the renderer. Runs beside S3a.
