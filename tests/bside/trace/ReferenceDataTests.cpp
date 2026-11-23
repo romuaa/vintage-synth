@@ -5,8 +5,11 @@
 // SHA-256 and names the generator commits the files carry. The digital replay runs every trace through
 // our chip (docs/architecture.md 8.9.4, 8.15, ChipReplay.h): exact at every checkpoint, with the
 // shape exemption of 8.15.8 counted and reported per trace (`[replay]` lines on stdout); a `d_*` trace
-// may have no exemption. The analog tolerances need the chip's filter and output stage (S3) and report
-// themselves skipped until it exists; the rendered noise spectra (S2b) are in RenderReferenceTests.cpp.
+// may have no exemption. The analog tolerances run our chain with the filter and output stage of S3a
+// (AnalogGates.h); the rendered noise spectra (S2b) are in RenderReferenceTests.cpp, the modes and the traces
+// that need two buses (S3b) in AnalogReferenceTests.cpp.
+
+#include "AnalogGates.h"
 
 #include "../../support/Env.h"
 #include "bside/trace/ChipReplay.h"
@@ -360,6 +363,114 @@ TEST_CASE ("reference data: our fitted shapes against the S2a placeholder in the
 
 TEST_CASE ("reference data: analog tolerances against our chip", "[trace][reference][chip]")
 {
-    // Compare.h: filter corners, resonance peaks, distortion, voice DC steps, noise spectra (8.9.4).
-    SKIP ("needs the chip's filter and output stage (S3); the rendered noise spectra are compared in RenderReferenceTests.cpp");
+    // Compare.h: filter corners, resonance peaks, distortion, voice DC steps (8.9.4), measured with
+    // AnalogMeasure.h on our chain (Chip::render -> Filter -> OutputStage, tests/bside/trace/AnalogChain.h) at
+    // 192 kHz against the committed a_* data; the noise spectra are compared in RenderReferenceTests.cpp, the
+    // modes (scripted tolerance) and what stays skipped in AnalogReferenceTests.cpp. Every figure is printed
+    // ([analog] lines on stdout).
+    using namespace vs::bside::test;
+    for (const char m : { 'a', 'b' })
+    {
+        const std::string sm (1, m);
+        // named strings, not temporaries: GCC 13's -Wdangling-reference would flag a temporary argument
+        const std::string filterName = "a_filter_" + sm, bypassName = "a_filter_bypass_" + sm, distName = "a_distortion_" + sm,
+                          dcName = "a_voice_dc_" + sm;
+        const auto& f = renderedTrace (kDir, filterName);
+        const auto& b = renderedTrace (kDir, bypassName);
+        if (! f.ok || ! b.ok)
+            SKIP (f.why << " " << b.why);
+        INFO ("model " << sm);
+        REQUIRE (f.reference.segments.size() == 32);
+        REQUIRE (f.ours.segments.size() == 32);
+        double worstCorner = 0.0, worstPeak = 0.0;
+        for (std::size_t i = 0; i < 32; ++i)
+        {
+            INFO (f.reference.segments[i].name);
+            REQUIRE_FALSE (f.segmentAmbiguous[i]); // one routing: the noise voice alone sounds
+            REQUIRE_FALSE (b.segmentAmbiguous[i]);
+            const auto ref = filterResponse (f.reference.segments[i], b.reference.segments[i]);
+            const auto ours = filterResponse (f.ours.segments[i], b.ours.segments[i]);
+            if (i < 16)
+            {
+                const auto cr = lowpassCorner (ref), co = lowpassCorner (ours);
+                if (! cr.found)
+                {
+                    std::printf ("[analog] model %s %s corner: the reference has none the estimator resolves (below 40 Hz); ours %s %.1f Hz: not compared\n",
+                                 sm.c_str(), f.reference.segments[i].name.c_str(), co.found ? "at" : "none,", co.hz);
+                    continue;
+                }
+                REQUIRE (co.found);
+                const auto v = checkFilterCorner (co.hz, cr.hz);
+                std::printf ("[analog] model %s %s corner ours %8.1f Hz, reference %8.1f Hz: %+.2f %% (allowed 5 %%)\n", sm.c_str(),
+                             f.reference.segments[i].name.c_str(), co.hz, cr.hz, 100.0 * (co.hz / cr.hz - 1.0));
+                CHECK (v.pass);
+                worstCorner = std::max (worstCorner, v.deviation);
+            }
+            else
+            {
+                const auto pr = resonancePeak (ref), po = resonancePeak (ours);
+                REQUIRE (pr.found);
+                REQUIRE (po.found);
+                const auto v = checkResonancePeak (po.db, pr.db);
+                std::printf ("[analog] model %s %s (resonance %2zu) peak ours %+6.2f dB at %7.1f Hz, reference %+6.2f dB at %7.1f Hz: %+.2f dB (allowed 1)\n",
+                             sm.c_str(), f.reference.segments[i].name.c_str(), i - 16, po.db, po.hz, pr.db, pr.hz, po.db - pr.db);
+                CHECK (v.pass);
+                worstPeak = std::max (worstPeak, v.deviation);
+            }
+        }
+        std::printf ("[analog] model %s worst corner %.2f %% (allowed 5), worst peak %.2f dB (allowed 1)\n", sm.c_str(), 100.0 * worstCorner, worstPeak);
+
+        // distortion: harmonics 2..5 against the fundamental, triangle 160.1 Hz through the low-pass at 2047, drive
+        // 1, 2, 3 voices (s00..s02, the gate, 8.9.4: Model A) and 3 voices at sustain 8 (s03, reported)
+        const auto& d = renderedTrace (kDir, distName);
+        REQUIRE (d.ok);
+        REQUIRE (d.reference.segments.size() >= 4);
+        const double f0 = 985248.0 * 0x0aa6 / 16777216.0;
+        for (std::size_t i = 0; i < 4; ++i)
+        {
+            REQUIRE_FALSE (d.segmentAmbiguous[i]);
+            const auto hr = harmonics (d.reference.segments[i], f0), ho = harmonics (d.ours.segments[i], f0);
+            const auto v = checkDistortion (ho.data(), hr.data());
+            std::printf ("[analog] model %s distortion %s: ours %6.1f %6.1f %6.1f %6.1f, reference %6.1f %6.1f %6.1f %6.1f dB (h2..h5; allowed +-3)%s\n",
+                         sm.c_str(), d.reference.segments[i].name.c_str(), ho[0], ho[1], ho[2], ho[3], hr[0], hr[1], hr[2], hr[3],
+                         i < 3 ? "" : " (reported)");
+            if (m == 'a' && i < 3)
+            {
+                INFO (v.what);
+                CHECK (v.pass);
+            }
+        }
+
+        // voice DC: the level of the first whole frame after each write that changes the volume (8.15.7). The
+        // gate is Model A's (8.9.4); Model B's steps (-27 to -42 dBFS) lie within 13 dB of the reference's board
+        // high-pass residual (-46.4 dBFS, 8.15.6, a reference artefact we do not reproduce), so they are printed only.
+        const auto& vd = renderedTrace (kDir, dcName);
+        REQUIRE (vd.ok);
+        double worstDc = 0.0;
+        int steps = 0;
+        std::uint8_t volume = 0;
+        for (const auto& w : vd.trace.writes)
+        {
+            if (w.reg != 0x18)
+                continue;
+            const auto before = volume;
+            volume = static_cast<std::uint8_t> (w.value & 0x0f);
+            if (w.cycle < 1000 || volume == before)
+                continue;
+            const auto fr = static_cast<std::size_t> (frameOfCycle (vd.trace, w.cycle) + 1);
+            const double lr = vd.reference.levelTenthDb[fr] / 10.0, lo = vd.ours.levelTenthDb[fr] / 10.0;
+            const auto v = checkVoiceDcStep (lo, lr);
+            std::printf ("[analog] model %s voice DC: write 18 %02x at cycle %llu, frame %zu: ours %6.1f dBFS, reference %6.1f dBFS: %+.1f dB (allowed 1)%s\n",
+                         sm.c_str(), w.value, static_cast<unsigned long long> (w.cycle), fr, lo, lr, lo - lr, m == 'a' ? "" : " (reported)");
+            ++steps;
+            if (m == 'a')
+            {
+                CHECK (v.pass);
+                worstDc = std::max (worstDc, v.deviation);
+            }
+        }
+        CHECK (steps == 9);
+        if (m == 'a')
+            std::printf ("[analog] model a voice DC worst %.2f dB over %d volume steps (allowed 1)\n", worstDc, steps);
+    }
 }

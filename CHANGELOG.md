@@ -5,6 +5,67 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3a fix round after the third review (2026-11-23)
+- Model B's band/high second-order term is removed: it matched noise floors but put harmonics on tones that the
+  reference does not have, aliased far above the budget and broke the Shared claim. Model B's filter is linear again;
+  its high-pass stop-band floor on noise at mid and full level stays about 6 to 7 dB low (a recorded known deviation).
+  `s3aB` 5.5 ns at 96 kHz (budget 7).
+- Phase: the filter's numerator keeps the prototype's zeros on their side of the unit circle (was always the
+  minimum-phase factor, up to 180 degrees off). The phase of the linear response is gated at 30 degrees from the
+  prototype over the rate gate's set (seven settings at 88.2 and 96 kHz gated at their own figure + 2, at most 33.7
+  degrees); `processWithCutoff` within 1 degree of `setCutoff`. Magnitudes are unchanged.
+- Tests: the Shared test also runs where the band- and high-pass carry the signal (volume DC on and off); the input
+  guard's threshold is pinned. `Filter.h` documents the table rebuild cost of a resonance or mode write and the
+  subnormal input path; its claims are reduced to what is tested.
+
+### B-Side S3a closing step (2026-11-23)
+- The filter's response no longer depends on the internal rate: matched poles and a numerator designed per mode
+  combination, at no per-sample cost. Within 0.19 dB (Model B) and 0.10 dB (Model A's linear part) of the analog
+  prototype at every rate of 4.4 (was up to 3.2 dB at 88.2 kHz); tested over every mode sum, resonance and cutoff.
+- `Filter::processWithCutoff` reads the mapping from a small table (within 0.05 dB of `setCutoff`) and now follows
+  Model A's damping, band weights and `variation` at the cutoff given.
+- Shared topology: every chip's stage gets the filter's static DC in full (`OutputStage::sharedFilterShare`): Model B
+  equals n Per Note chips for n = 1 .. 16; Model A's difference (summed distortion) is documented and tested.
+- Model B's band- and high-pass part carries a second-order term (0.10), the reference's stop-band floor at mid and full
+  level (was about 10 dB low; held-out traces now within 0.2 dB). Removed again in the fix round above.
+- Tests that can fail: the board low-pass corner, the volume with held voices (DC off and on, applied once), every
+  resonance and cutoff law; each shown failing on a mutation. Test sources build with GCC 13.
+- Cost (`chip_bench`, 96 kHz, indicative): `s3aB` 5.9 ns (budget 7), `cutB` 10.4 ns. Open: `ChipRender.cpp` fails GCC
+  13's `-Warray-bounds` (GCC 11 builds it).
+
+### B-Side S3a round 2 (2026-11-20)
+- Model A's held-tone distortion is per voice: `OutputStage::shapeVoice` bends each voice before its envelope (the
+  renderer applies it per voice in S3b); the output stage and the filter's output functions refitted with it. Held tones
+  through the low-pass and direct at drives never fitted: within 2.2 dB.
+- Volume DC off: the volume follows the board high-pass; volume and routing writes with held or silent voices no longer
+  move the output's DC (below -60 dBFS, tested).
+- Input guards off the dependency chain, Model B `s3aB` 4.9 ns at 96 kHz; `Filter::processWithCutoff` for a cutoff every
+  sample (3.5 ns extra on Model B); the Shared topology defined and tested for 1 to 16 chips.
+- Test harness renders each voice alone (no sync or ring), so `a_routing_*` is compared; new committed gate traces
+  `a_s3a_*` (13 files, generator `tests/bside/tools/gen_s3a_traces.py`).
+- **Open (reported, not gated):** Model A's cutoff and Q do not follow the routed DC, the level or the resonance as the
+  reference does (corners up to 75 % off on `a_s3a_level_a`); modes at cutoff 200; Model A routing; the resonance-write
+  DC step; band-pass and two-tone distortion; the internal-rate dependence (decisions "B-Side S3a round 2").
+
+### B-Side S3a: filter and output stage (2026-11-19)
+- `source/bside/chip/Filter.*`: the chip's 2-pole state-variable filter for both models (low-, band- and
+  high-pass summed by the mode bits, inverted as the reference; continuous cutoff 0 .. 2047, 16 resonance
+  steps). Model B close to linear in the register; Model A with its own cutoff converter (11-bit ladder, the
+  steps at bit boundaries), a fitted cutoff curve, Q against the cutoff, `variation`, and its distortion as
+  static functions of the low-pass state. Clock-independent, no allocation, can be shared by several chips.
+- `source/bside/chip/OutputStage.*`: voice DC (per voice and envelope), mixer (a static curve after a gain
+  that falls with the inputs connected), 4-bit volume, `volumeDc` off, board filters and the reference's
+  output scale. All constants are our own fits to generated data (`docs/decisions.md` "B-Side S3a").
+- Gates against the committed analog data (`bside_trace`): filter corners at 16 cutoffs (worst 3.9 % Model A,
+  1.8 % Model B; allowed 5 %), resonance peaks 0 .. 15 (0.22 / 0.06 dB; allowed 1), Model A distortion
+  harmonics 2 .. 5 at three drives (within 2.3 dB; allowed 3), Model A voice DC steps (0.3 dB; allowed 1), the
+  modes within the scripted tolerance (Model A 4.47 % outliers, mean 0.94 dB; Model B 2.48 %, 0.57 dB).
+  `a_routing_*` stays skipped until the renderer has two buses (S3b).
+- Unit tests: stability at every setting and internal rate (full-scale noise, writes every sample, decay to
+  -120 dB with no limit cycle or subnormal state), any block split bit-identical, no allocation.
+- `chip_bench`: new cases `filterB`, `filterA`, `outputB`, `outputA`, `s3aB`, `s3aA` (filter + output stage:
+  6.5 ns Model B, 7.6 ns Model A per internal sample at 96 kHz on this Mac, indicative).
+
 ### CI: pluginval teardown crash (2026-11-23)
 
 - Linux x86_64: pluginval 1.0.4 (the newest build that runs on glibc 2.35) crashes in about 6 to 7 % of runs

@@ -14,12 +14,23 @@
 //            the triangle+saw combined waveform, about A3..A4, sustaining envelopes
 // Each case renders 4 s of chip time in blocks of 64 samples with its writes at their exact cycles
 // (renderUntil); the best of 5 runs is reported. Arguments: case names to run only those (default: all).
+// S3a (8.19.1) adds the filter and the output stage on their own, per internal sample, over a prepared input
+// (three voices' worth of saw-like signal plus their DC, render units), a cutoff write every 64 samples:
+//   filterB, filterA   Filter alone (low-pass + band-pass selected, resonance 8)
+//   outputB, outputA   OutputStage alone (mixer, volume, board filters)
+//   s3aB, s3aA         both together, as a chip uses them (filterBusLevel -> Filter -> OutputStage): the 7 ns
+//                      budget of 8.19.1 is s3aB at 96 kHz; Model A has no budget (S4 question) and is broken
+//                      down into filterA, outputA and s3aA
+//   cutB, cutA         s3aB and s3aA with a new cutoff every sample through Filter::processWithCutoff
 
 #include "../../support/Env.h"
 #include "bside/chip/Chip.h"
+#include "bside/chip/Filter.h"
+#include "bside/chip/OutputStage.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -92,6 +103,60 @@ double nsPerSample (Model m, double rate, Setup&& setup, Tick&& tick, bool digit
         volatile float sink = out[0];
         (void) sink;
     }
+    return best;
+}
+
+/** ns per internal sample of the S3a stages (see the header): `which` 0 filter, 1 output stage, 2 both, 3 both with
+    a new cutoff every sample (Filter::processWithCutoff). */
+double s3aNsPerSample (Model m, double rate, int which)
+{
+    const auto samples = static_cast<std::size_t> (chipSeconds() * rate);
+    std::vector<float> audio (4096), env (4096);
+    for (std::size_t i = 0; i < audio.size(); ++i)
+    {
+        // three saws (incommensurate) in render units, and an envelope sum near three full voices
+        const double t = static_cast<double> (i);
+        audio[i] = static_cast<float> (std::fmod (t * 0.0123, 1.0) + std::fmod (t * 0.0071, 1.0) + std::fmod (t * 0.0049, 1.0) - 1.5);
+        env[i] = 2.5f + 0.0001f * static_cast<float> (i % 7);
+    }
+    double best = 1e300;
+    float sink = 0.0f;
+    for (int run = 0; run < 5; ++run)
+    {
+        Filter f;
+        f.prepare (m, rate, 0.5f);
+        f.setResonance (8);
+        f.setMode (0x3f);
+        OutputStage o;
+        o.prepare (m, rate, false);
+        o.setRouting (0x03);
+        o.setModeVolume (0x3f);
+        o.setFilterStaticDc (f.staticOutput (o.staticFilterBusDc()));
+        float acc = 0.0f;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (std::size_t done = 0; done < samples; done += 64)
+        {
+            f.setCutoff (static_cast<float> (600 + (done / 64) % 1000) + 0.5f);
+            const std::size_t base = done % 4096;
+            for (std::size_t j = 0; j < 64; ++j)
+            {
+                const float a = audio[(base + j) & 4095], e = env[(base + j) & 4095];
+                if (which == 0)
+                    acc += f.process (a);
+                else if (which == 1)
+                    acc += o.process (a, a, e);
+                else if (which == 2)
+                    acc += o.process (f.process (o.filterBusLevel (a, e)), a, e);
+                else
+                    acc += o.process (f.processWithCutoff (o.filterBusLevel (a, e), 600.0f + 0.37f * static_cast<float> ((done + j) % 2000)), a, e);
+            }
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+        best = std::min (best, std::chrono::duration<double, std::nano> (t1 - t0).count() / static_cast<double> (samples));
+        sink += acc;
+    }
+    volatile float keep = sink;
+    (void) keep;
     return best;
 }
 } // namespace
@@ -265,5 +330,26 @@ int main (int argc, char** argv)
             r[i] = nsPerSample (Model::A, rates[i], s4Setup, typicalTick);
         std::printf ("%-8s %10.1f %10.1f %10.1f   (the S4 gate's patch: Model A pulse, saw, triangle+saw)\n", "s4gate", r[0], r[1], r[2]);
     }
+    // S3a: the filter and the output stage (8.19.1)
+    struct S3aCase
+    {
+        const char* name;
+        Model model;
+        int which;
+        const char* what;
+    };
+    const S3aCase s3a[] { { "filterB", Model::B, 0, "Filter alone, Model B" },       { "filterA", Model::A, 0, "Filter alone, Model A" },
+                          { "outputB", Model::B, 1, "OutputStage alone, Model B" },  { "outputA", Model::A, 1, "OutputStage alone, Model A" },
+                          { "s3aB", Model::B, 2, "filter + output stage, Model B (budget 7 ns at 96 kHz)" },
+                          { "s3aA", Model::A, 2, "filter + output stage, Model A (no budget: S4)" },
+                          { "cutB", Model::B, 3, "s3aB with a cutoff every sample (processWithCutoff)" },
+                          { "cutA", Model::A, 3, "s3aA with a cutoff every sample (processWithCutoff)" } };
+    for (const auto& c : s3a)
+        if (want (c.name))
+        {
+            for (int i = 0; i < 3; ++i)
+                r[i] = s3aNsPerSample (c.model, rates[i], c.which);
+            std::printf ("%-8s %10.1f %10.1f %10.1f   (%s)\n", c.name, r[0], r[1], r[2], c.what);
+        }
     return 0;
 }

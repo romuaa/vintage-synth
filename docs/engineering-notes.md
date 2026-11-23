@@ -36,6 +36,44 @@ is a rule, a line here.
   only together with its model test (`HandoverModelTests.cpp`).
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
+- GCC 13's `-Wdangling-reference` fires on `const auto& x = f (temporary)` even when `f` returns into a
+  static map; name the argument first (GCC 11, CI's compiler, does not warn).
+- A test that a write does *not* change something needs a companion check that the write still acts
+  (a mutation removing the volume passed a DC-only test).
+- Fit and validate a nonlinearity on tones and noise together, and measure its aliasing; a fit to noise
+  floors alone was right there and 6 to 12 dB wrong on tones.
+- A magnitude-only design fixes a response only up to reflecting its zeros: gate the phase too, or a
+  wrong factor (180 degrees off) passes.
+
+## B-Side S3a closing step (2026-11-23)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Test sources that build with GCC 11 failed with GCC 13 (`-Wdangling-reference`). | GCC 13 flags any reference bound to the result of a call that took a temporary by reference, whatever the function returns. | Bind the argument to a named variable first; check new test sources with g++ 13 (the Ubuntu 24.04 image of `scripts/linux-check.sh` has it). |
+| Magnitude-fitted numerators per filter mode, summed, missed the low + high notch by far. | A notch is a cancellation between modes; per-mode magnitude fits do not keep the phases it needs. | Design the numerator of each mode combination as a whole (or match complex responses); gate every combination. |
+| A least-squares numerator on a fixed frequency grid was exact in some places and 5 dB off in others. | Where the gated band is narrow (low cutoffs at high rates) the grid leaves one or two points and the system degenerates. | Prefer a closed form with nodes placed relative to the corner and the band edge; never solve on a grid without checking its conditioning. |
+| `processWithCutoff` cost 20 ns instead of 10 after a table was added. | The table was invalidated in the shared coefficient update, so every `setCutoff` (one per 64 samples in the bench) rebuilt it. | Invalidate a cache only on what it depends on; benchmark the path with the writes it will see. |
+| A quadratic on the whole filter output fixed the stop-band floor and broke `a_routing_b`. | The term added harmonics to low-pass tones. (Placed on the band/high part instead it passed every committed gate, but the third review showed it wrong there too; next row.) | Before placing a nonlinearity, run it against traces of the other modes and of tones, not only the data that motivated it. |
+| A second-order term fitted on noise floors (held-out error 7.3 -> 0.2 dB) was removed after review. | Noise floors fix the term's size on noise only; on tones it put second harmonics 6 to 12 dB above the reference's (band-pass, pulse), carried a DC that moves with the audio, was n times too large in Shared and aliased at -36 dB against the fundamental (decisions C6). | Fit and validate a nonlinearity on tones and noise together, check it in every topology it runs in, and measure its aliasing against the budget before committing it; let a header claim only what a test measured. |
+| A rate-independent filter met its 0.5 dB magnitude gate with its phase up to 180 degrees off the prototype. | The numerator was designed from the magnitude alone and factored minimum-phase; where the prototype has right-half-plane zeros the reflected factor has the same magnitude and the wrong phase. A mutation swapping b0 and b2 survived every test. | Gate the phase (or the complex response) of a magnitude-designed filter; put the zeros on the prototype's side (decisions C11). |
+| A volume test with held voices passed while the volume was not applied at all. | It checked only that the DC did not move, and the target volume was 0. | Write a non-zero target and check that the write still acts (the audio scales by the volume) next to what must not change. |
+
+## B-Side S3a: filter and output stage (2026-11-19)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Levels read from the reference's output drifted by 0.005 per group of segments. | The reference's board high-pass has a dead band; integrating an inverse of the high-pass over seconds accumulates its residue. | Measure every level against a baseline next to it (gate on, gate off, both sides of each edge), never by chaining jumps over a long run. |
+| A two-pole fit per setting put Model A's corners up to 37 % off what the gate measures, and the first cutoff curve failed the corner gate by 30 to 49 %. | The fit weighted a high-frequency floor and a shallow skirt that no two-pole has; the gate measures a -3 dB point against a plateau, a different quantity. | Fit what the gate measures, with the gate's own estimator (`AnalogMeasure` on `.bsspec` segments of the gate's length), on data of your own; keep a model's free shape parameters (Q) for the other gates. |
+| A static fit with a 0.6 % rms error still missed the distortion gate by 9 dB at low drive. | A second harmonic at -28 dB is a 4 % curvature over the swing: below the fit's error budget when the fit weights levels, not curvature. | Fit distortion on waveforms or harmonics directly (in log), with the static levels as a second set of residuals. |
+| One model of the mixer met every filtered-path gate but put the direct path's second harmonic 12 dB low with two voices. | Model A's distortion depends on the operating point but shows almost no intermodulation: no static function of the sum can do both. | Run an intermodulation test (two tones, f2 +- f1 against 2 f1) before choosing where a nonlinearity lives; record what the chosen place cannot reproduce. |
+| The scripted comparison failed on 6 % of its cells although every response at 1, 3 and 10 kHz agreed within 1 dB. | The failing cells were 25-80 dB below the signal: the decaying DC step after each mode write (board high-pass, 1.2 Hz) and the high-pass's leak at low frequencies. | Print the failing cells per band and frame before tuning; low-level cells follow DC steps and leaks, which a response comparison does not see. |
+| Flushing small filter states left the low-pass state frozen at about 5e-13 for ever. | The low-pass state decays only through the band-pass state; flushing the band-pass state alone below 1e-15 cut the path. | Flush coupled states together (their sum below the threshold) and each alone only far below it (1e-30), and test that zero input ends at exactly zero. |
+| A fit reached 0.8 dB rms on its data and still missed the gates by 20 to 45 %. | The residuals weighted the passband bins; the corner and peak are a few bins each, and a model that cannot express them trades them away silently. | Put the gate's own quantities (corner, peak) into the residuals from the start, and check the fit on its own data with the gate's estimator before trusting its rms. |
+| Four filter structures for Model A's level dependence each cost hours of fitting and none generalised. | The data were gathered at one level per setting first; the DC dependence (the main effect) showed only when held DC voices were added. | Before choosing a structure, separate the candidate causes by experiment (DC alone, AC alone, several voices) and look at the trends by eye. |
+| A per-voice rendering trick made every routing trace comparable. | Voices without sync or ring are independent; a chip given only one voice's writes, minus two thirds of a chip given none, is that voice alone. | Use it in test harnesses before the renderer has buses; check that the voices sum to the full render. |
+| Shell edits through heredocs and long pipelines were refused by the worktree guard, and text with the environment-file suffix by a hook. | The guard cannot verify complex commands; the hook matches the suffix anywhere in the command. | Put edits in script files and run them; avoid that suffix in identifiers used on the command line. |
+| Catch2 ran no test for a test name with a comma ("... on a volume write, off it does not"). | A comma separates test specs on Catch2's command line. | Select such tests by tag (or escape the comma) in scripts. |
+| A per-sample filter cost 8.8 ns where its arithmetic is about a dozen operations. | The trapezoidal form's update is a chain of dependent multiply-adds; a loop of one filter waits on it. | Write the per-sample update as its state-space form (next states and outputs as linear forms of the old states and the input, coefficients precomputed at a change): 6.5 ns. |
 
 ## CI: pluginval 1.0.4 crashes at teardown (2026-11-23)
 

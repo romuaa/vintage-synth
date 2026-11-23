@@ -4,12 +4,12 @@ Where the project is, what is parked, what comes next, and the history of what w
 The orchestrator keeps this file current; `CLAUDE.md` links here. Read "Where the project is"
 first when resuming.
 
-## Where the project is (2026-11-20) — read this first when resuming
+## Where the project is (2026-11-22) — read this first when resuming
 
 **Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20; shown as the latest release on GitHub since 2026-11-21, owner's word;
 tag `v0.9.0` at commit `116c5f8`: three zips and `SHA256SUMS.txt`). **M8 is done.**
-**Everything below is merged to `main` except B-Side S3a (parked, see below); no agent or build
-is in flight.** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
+**Everything below is merged to `main` except B-Side S3a, which is in flight again since
+2026-11-22 (see "B-Side S3a, in flight").** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
 x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the repository became public
 ("First CI runs" below).
 
@@ -21,7 +21,7 @@ x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the reposito
   program engine (S2c), band-limited rendering before the filter (S2b-2).
 
 **Repository housekeeping (2026-11-16, owner's word):** all merged branches are deleted, on GitHub
-and locally. Two branches exist: `main` and `study/crossmod-aliasing` (kept and pushed by owner
+and locally. Besides the work in flight two branches exist: `main` and `study/crossmod-aliasing` (kept and pushed by owner
 decision: the Cross Mod aliasing study's experimental code, built against the old `source/dsp/`
 layout, never to be merged as is; the reference for the deferred "Clean" Cross Mod switch).
 GitHub deletes a PR's branch on merge; delete the local branch after each merge too.
@@ -34,11 +34,116 @@ worktrees, gates, model routing, commit rules) and overrides it. If a session di
 repository's file, read it by hand before orchestrating. Checked 2026-11-16: `/orchestrate`
 loads the personal skill and reaches the repository's file through that instruction.
 
-**Owner decision 2026-11-19: Vintage is released first; B-Side is parked.** B-Side work stops
-where it is and continues only after the Vintage release is complete. Nothing is in flight; no
-agent is running.
+**B-Side is resumed (owner's word, 2026-11-22)** after the 0.9.0 release it waited for (owner
+decision 2026-11-19: Vintage first). The owner's three answers on resuming are in
+`docs/decisions.md`, "B-Side resumed: owner decisions" (O1: if the escalated Model A attempt
+fails, a pull request with Model B and the output stage only, plus listening files; O2: a cheap
+rate correction inside 7 ns or decide at S4; O3: S3b may start stacked on the S3a branch).
 
-**B-Side, parked state (resume here after the Vintage release):**
+**B-Side S3a, in flight (2026-11-22):** `bside/s3a-filter` has `main` merged in (the tests give
+the parked figures).
+- **Diagnostic, done** (`tests/bside/trace/FilterDiagnosticTests.cpp`, hidden: run it with
+  `bside_trace "[s3a-diag]"`; it asserts nothing the gates do not and took 249 s under the
+  sanitizers in CI; report
+  and data in the developer cache, `s3a-diag/REPORT.md`): the Model A corner errors are 99 %
+  wrong coefficients, not a missing stage or the estimator. The reference is a two-pole whose
+  two integrators follow the instantaneous node levels (DC acts on the low-pass integrator,
+  swing on the band-pass one, a shared floor near 220 Hz); no law in a followed DC or rms comes
+  closer than 13 to 15 % rms. Limits of the reference itself: cutoff 380 repeats only within
+  3 %; at cutoff 300 to 380 with swing its shape is 1.2 to 2.6 dB away from any two-pole.
+- **Escalated attempt on the Model A filter: failed, closed (2026-11-23).** Build round and fix
+  round by a stronger model; the accuracy gates are not met. Its result, a signal-dependent
+  form as a second entry point (`Filter::processSignalDependent`), is **not part of S3a** and
+  stays on the pushed branch `bside/s3a-modela` (never merged as is). Figures of that form
+  after the fix round: corners within 5 % on 58 % of the fitting and 55 % of the held-out
+  segments (rms 10.3 / 10.7 %); on the gate traces worst corners 18.4 % (resonance), 33.5 %
+  (level), 31.8 % (voices), 6.2 % (cutoff sweep); at rest `a_filter_a` 28 of 32 within 5 %
+  (worst 9.1 %) and `a_modes_a` outside (6.52 % / 1.05 dB); about 35 ns per sample against 7,
+  and it would alias inside its loop. `Filter::process` keeps round 2's fixed form for Model A
+  (committed gates pass; the `a_s3a_*` corners stay reported, up to 74.7 % and 224.5 %).
+  **Owner decision O1 applies: the owner judges the Model A deviation by ear.** Listening
+  files (reference, fixed form, signal-dependent form; six cases with a README) are in the
+  developer cache, `s3a-esc/listen/`. What a further attempt would need: decisions on that
+  branch, "B-Side S3a round 3", rows T12 to T18.
+- **Closing step, done (2026-11-23)** (contract 8.19.3; decisions "B-Side S3a closing step",
+  rows C1 to C13, and "orchestrator's calls"). Built, reviewed independently a third time
+  ("mergeable after small fixes"), fixed. On the branch:
+  - the rate correction (matched poles and a designed output row at no per-sample cost): worst
+    0.19 dB Model B, 0.10 dB Model A against the analog response at every rate (was 3.2 dB);
+    the reviewer's own time-domain measurement gave 0.18 / 0.10 dB. The output row keeps the
+    prototype's phase: within 30 degrees, but for seven named settings at 88.2 and 96 kHz
+    (band-pass and low + band at low cutoffs, at 20 kHz), at most 33.7 degrees, gated at their
+    figure plus 2;
+  - `processWithCutoff` on a table of the mapping (within 0.05 dB and 0.8 degrees), following
+    Model A's damping, band weights and `variation` at the cutoff given;
+  - the Shared topology's DC: Model B equals n Per Note chips (also with signal in the band-
+    and high-pass); Model A a documented, pinned difference of up to 2.7 dB at 16 chips;
+  - tests that can fail (each shown failing on a mutation); the test sources build with GCC 13.
+  **Known deviations left:** Model B's high-pass stop-band floor is about 6 to 7 dB low on
+  noise at mid and full level (a second-order term fitted for it was removed again: right on
+  noise, 6 to 12 dB too much second harmonic on band-pass and pulse tones, aliasing at -36 dB;
+  decisions row C6); Model A's dynamics (above).
+  **Orchestrator's gate on `6a47319`:** the full `scripts/preflight.sh` passed (65m43s: docs,
+  scan, mac, validator, linux, both sanitizer runs). `chip_bench` alone, 96 kHz, three runs:
+  `s3aB` 5.5 to 5.6 ns (budget 7), `s3aA` 7.5 to 7.7, `cutB` 10.4 to 10.6, `cutA` 27.2 to 27.4.
+  **Open, outside S3a:** `ChipRender.cpp` fails one GCC 13 warning (`-Warray-bounds`); GCC 11,
+  the compiler of CI and the local gate, accepts it. To fix in S3b, which reworks that file.
+  **Windows and Linux x86_64, first CI run (45107913251, on `61983f3`):** Windows x64 and
+  ARM64, Linux x86_64 and ARM64, both bundles and six of seven distribution checks passed.
+  **Two jobs did not:** (1) `linux-sanitizers` was cancelled at its 40-minute limit with about
+  27 of 1077 tests left (28 minutes on `main`; S3a's tests add about 8 minutes there): the
+  diagnostic is hidden and the limit is 60 minutes now; (2) the Ubuntu 22.04 distribution
+  check: pluginval ends with a segmentation fault at exit for **both** plugins, after every
+  test passed; Vintage's code and the check are identical to `main`, where the same job
+  passed on 2026-11-20 (the image and its packages are fetched by tag at run time), so the
+  cause is outside this branch. **Second run (45112409601, on `35df64f`, Linux only):** the
+  sanitizer job passed (53 minutes) and Linux ARM64 passed; Linux x86_64 failed in the same
+  way, this time on B-Side in the build job (so the distribution checks had nothing to test).
+  **Diagnosis:** a use-after-free in the validation tool itself at teardown (its bundled
+  framework version; fixed upstream later), on Linux x86_64 in about 6 to 7 % of runs, with
+  any plugin. Pull request 42 (`ci/pluginval-teardown`) runs the tool under a debugger and
+  accepts a crash with that exact signature only; its run 45121955371 is green. Pull request
+  42 is merged and `main` is merged in here. **Third run (45140132683, on `3faf2cc`, Linux
+  only): green.** Linux x86_64, Linux ARM64, the sanitizer job, the bundle and all seven
+  distribution checks passed; every pluginval invocation ended normally (no crash to accept
+  in this run). Windows x64 and ARM64 were confirmed by the first run on `61983f3`; since
+  then only the workflow, one test tag and records changed.
+- **Independent review of round 2, done** (no commits; logs in the developer cache,
+  `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
+  to be fixed after the escalated attempt (they touch the same files):
+  1. The static curves (Model B mixer curve, Model A per-voice bend and mixer, Model A output
+     quintic) run at the internal rate and alias: -67 dB (Model B) and -53 dB (Model A) for a
+     3.85 kHz saw at 88.2 kHz, against budgets of -100 and -80 dB. No contract gate covers it
+     yet. To settle in the S3b contract before the renderer's interface is fixed.
+     **Design study done (2026-11-23, prototypes in the developer cache, `s3b-alias/`):** every
+     stage can meet its budget at every rate with 3 dB to spare. Model B mixer: a linear-phase
+     half-band filter on the mixer sum before the curve (about +0.3 ns in the chain at 96 kHz,
+     13 to 39 samples of latency). Model A voice bend: folded into the renderer (bent steps and
+     bent slope changes; exact, no latency; about +2.5 to 5 ns per voice). Model A filter output
+     function and mixer: the same pre-filter, then the curves at twice the rate (about +7.5 ns,
+     24 to 46 samples). Antiderivative forms and plain 2x oversampling do not reach the budgets.
+     Open: the methods move weak in-band products of bright tones by a few dB (judgement call
+     for the S3b contract); a Model A filter with signal-dependent rates aliases inside its
+     loop and would need the filter itself run at 2x to 4x.
+  2. Rate dependence confirmed (1.94 dB at 88.2 kHz in round 2's metric, 3.31 dB over all modes
+     up to 20 kHz), and a correction at no per-sample cost exists: matched poles and a fitted
+     output row (low-pass 1.79 -> 0.02 dB; the band-pass alone needs a better numerator). This
+     is the cheap correction of owner decision O2.
+  3. Fitting hygiene: the resonance tables were fitted at the gate's own setting (cutoff 1024);
+     harmless for Model B (held out within 0.16 dB), but Model A's committed corner gate
+     (4.97 %) does not generalise (held out 13.4 %).
+  4. `AnalogReferenceTests.cpp` and `ReferenceDataTests.cpp` do not build on GCC 13
+     (a dangling-reference warning; GCC 11, the CI compiler, is clean).
+  5. Model B high-pass and band-pass: the stop-band floor is about 10 dB too low at mid and full
+     level on held-out traces (outliers up to 19.5 %); the committed mode gate passes.
+  6. Shared topology: its DC differs from n Per Note chips (up to +3.4 dB on a volume step,
+     Model B, 16 chips); the header comment claims otherwise and the test is blind to DC.
+  7. Model A `processWithCutoff` keeps the stored Q and band-pass weights and ignores
+     `variation`.
+  8. Test gaps: nothing pins the board low-pass frequency; the volume-DC-off test writes the
+     volume to 0 and so cannot see the volume applied before the high-pass; no cost assertion.
+
+**B-Side, state when parked on 2026-11-19 (the background of the work in flight):**
 - Merged: everything up to and including the render cost step (PR #32) and the alias follow-up
   step (PR #33, 2026-11-19; see History).
 - **S3a is unfinished and unmerged** on the pushed branch `bside/s3a-filter` (contract 8.19.1;
@@ -108,8 +213,8 @@ the orchestrator dispatches it (see "Decisions").
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
-2. **B-Side:** resume from the parked state above, on the owner's word (the Vintage release it
-   waited for is out).
+2. **B-Side:** S3a is in flight (above); then S3b, S4 and B-Side's own release work as listed
+   in the parked state.
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
 equal width, playing from the computer keyboard, a "Clean" Cross Mod switch, **a go-through of the factory

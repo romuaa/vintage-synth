@@ -320,7 +320,8 @@ TEST_CASE ("shape data: pulse with noise leaves the Model B read latch alone (ou
     std::map<int, int> t3;
     for (const auto& s : planNamed ("s_sweep_3_b").samples)
         t3[s.index] = s.value;
-    const auto& lp = planNamed ("s_latch_pn_b");
+    const std::string latchName ("s_latch_pn_b"); // no temporary argument (GCC 13 -Wdangling-reference)
+    const auto& lp = planNamed (latchName);
     INFO (lp.error);
     REQUIRE (lp.error.empty());
     REQUIRE (lp.latch.size() == 60);

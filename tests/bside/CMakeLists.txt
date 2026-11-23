@@ -20,6 +20,8 @@ set(BS_JUCEFREE_SOURCES
     ${PROJECT_SOURCE_DIR}/source/bside/chip/RenderTables.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/CombinedWaveforms.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/CombinedWaveformParams.cpp
+    ${PROJECT_SOURCE_DIR}/source/bside/chip/Filter.cpp
+    ${PROJECT_SOURCE_DIR}/source/bside/chip/OutputStage.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/engine/ProgramEngine.cpp)
 
 add_library(bs_juce_free STATIC ${BS_JUCEFREE_SOURCES})
@@ -58,7 +60,8 @@ add_executable(bside_unit
     unit/ChipRenderStreamTests.cpp
     unit/ChipRenderCostTests.cpp
     unit/ChipRenderDefectTests.cpp
-    unit/ChipRenderExactTests.cpp)
+    unit/ChipRenderExactTests.cpp
+    unit/FilterOutputTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_unit PRIVATE BS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 set_target_properties(bside_unit PROPERTIES COMPILE_WARNING_AS_ERROR ON)
@@ -100,7 +103,8 @@ catch_discover_tests(bside_independent PROPERTIES LABELS bside)
 # Reads the committed files only and never needs the adapter. Tests that need a chip which does not
 # exist yet report themselves skipped (Catch2 SKIP, ctest "Skipped"), never passed. One label only:
 # catch_discover_tests passes PROPERTIES on unquoted, so a label list would be split.
-add_executable(bside_trace trace/ReferenceDataTests.cpp trace/ShapeDataTests.cpp trace/RenderReferenceTests.cpp)
+add_executable(bside_trace trace/ReferenceDataTests.cpp trace/ShapeDataTests.cpp trace/RenderReferenceTests.cpp trace/AnalogReferenceTests.cpp
+    trace/FilterDiagnosticTests.cpp)
 target_link_libraries(bside_trace PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_trace PRIVATE BS_REFERENCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/reference"
     BS_SHAPES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shapes"
