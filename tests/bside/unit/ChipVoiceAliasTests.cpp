@@ -266,12 +266,16 @@ std::vector<double> renderIdeal (Model m, double rate, const Signal& s, const Se
 
 namespace
 {
-/** Diagnosis: the same signal and setting through the chain with every static curve linear (the renderer without the
-    bend, the filter's linear part plus the output function's linear term, the mixer without its curve; no anti-alias
-    stage): the renderer's own aliasing seen through the linear filter, relative to voice 1's fundamental. */
-std::vector<double> renderLinear (Model m, double rate, const Signal& s, const Setting& st)
+/** The reference of statement (c) (docs/architecture.md 8.19.4, after the review): the same chain with its curves
+    evaluated at four times the internal rate through filters of at least 120 dB, test code only. A real chip (Model A
+    bent as in the chain) renders the buses; the filter and the stage run as in ChipVoice (Model A: the same bus
+    pre-filter); the mixer input (Model A: the filter's linear output and low-pass value) is interpolated by two
+    half-band stages of 120 dB, the curves run at 4x, two half-band stages of 120 dB decimate. What remains above the
+    chain's own figure is the curves' aliasing. */
+std::vector<double> renderReference4x (Model m, double rate, const Signal& s, const Setting& st)
 {
     Chip c = makeChip (m, rate);
+    c.renderBendVoices (true);
     for (int k = 0; k < s.voices; ++k)
     {
         OscInput in;
@@ -290,24 +294,67 @@ std::vector<double> renderLinear (Model m, double rate, const Signal& s, const S
     f.setCutoff (static_cast<float> (st.cutoff));
     f.setResonance (st.resonance);
     f.setMode (static_cast<std::uint8_t> (st.mode | 0x0f));
-    const double p1 = f.outputShapeCoefficients().p1;
+    const auto sh = f.outputShapeCoefficients();
     OutputStage o;
     o.prepare (m, rate, false);
     o.setRouting (static_cast<std::uint8_t> (routed));
     o.setModeVolume (static_cast<std::uint8_t> (st.mode | 0x0f));
+    const auto pre = chip::designHalfBand (rate, ChipVoice::kAntiAliasPassHz, ChipVoice::kAntiAliasDeviation);
+    const auto d2 = chip::designHalfBand (2.0 * rate, 20000.0, 1.0e-6), d4 = chip::designHalfBand (4.0 * rate, 20000.0, 1.0e-6);
+    chip::HalfBandFir preAc, preDc, preDi;
+    preAc.prepare (pre);
+    preDc.prepare (pre);
+    preDi.prepare (pre);
+    chip::HalfBandUp upX1, upX2, upL1, upL2; // stage 1 at 2x, stage 2 at 4x (one object per stream: they run in order)
+    chip::HalfBandDown dn2, dn1;
+    upX1.prepare (d2);
+    upL1.prepare (d2);
+    upX2.prepare (d4);
+    upL2.prepare (d4);
+    dn2.prepare (d4);
+    dn1.prepare (d2);
     const int warm = std::max (16384, static_cast<int> (rate * 0.03));
     const int total = warm + kAliasN;
     std::vector<double> fa (static_cast<std::size_t> (total)), da (fa.size()), fe (fa.size()), de (fa.size()), fv (fa.size()), dv (fa.size());
     c.renderBuses ({ fa.data(), da.data(), fe.data(), de.data(), fv.data(), dv.data() }, total);
     std::vector<double> y (static_cast<std::size_t> (kAliasN));
+    const double g = o.gainFactor();
+    auto shape = [&] (double lp) {
+        const double v = lp < sh.lpMin ? sh.lpMin : (lp > sh.lpMax ? sh.lpMax : lp);
+        return g * (((((sh.p5 * v + sh.p4) * v + sh.p3) * v + sh.p2) * v + sh.p1) * v);
+    };
     for (int i = 0; i < total; ++i)
     {
         const auto j = static_cast<std::size_t> (i);
-        o.setVoices (fv[j], dv[j]);
-        double lp = 0.0;
-        const double lin = f.processLinearDouble (o.filterInput (fa[j], fe[j]), lp) + p1 * lp;
+        double x = 0.0, lp = 0.0;
+        if (m == Model::B)
+        {
+            const double lin = f.processLinearDouble (o.filterInput (fa[j], fe[j]), lp);
+            x = g * (lin + o.directSumWith (da[j], de[j], dv[j]));
+        }
+        else
+        {
+            const double in = preAc.process (o.filterInputAc (fa[j], fe[j])) + preDc.process (OutputStage::voiceDc (Model::A) * fv[j]);
+            const double di = preDi.process (o.directSumWith (da[j], de[j], dv[j]));
+            x = g * (f.processLinearDouble (in, lp) + di);
+        }
+        // 4x: two interpolating stages, the curves, two decimating stages
+        double xa = 0.0, xb = 0.0, la = 0.0, lb = 0.0;
+        upX1.process (x, xa, xb);
+        upL1.process (lp, la, lb);
+        double x4[4], l4[4];
+        upX2.process (xa, x4[0], x4[1]);
+        upX2.process (xb, x4[2], x4[3]);
+        upL2.process (la, l4[0], l4[1]);
+        upL2.process (lb, l4[2], l4[3]);
+        double m4[4];
+        for (int k = 0; k < 4; ++k)
+            m4[k] = o.mixerCurve (x4[k] + (m == Model::A ? shape (l4[k]) : 0.0));
+        const double ma = dn2.process (m4[0], m4[1]);
+        const double mb = dn2.process (m4[2], m4[3]);
+        const double out = dn1.process (ma, mb);
         if (i >= warm)
-            y[static_cast<std::size_t> (i - warm)] = lin + o.directSumWith (da[j], de[j], dv[j]);
+            y[static_cast<std::size_t> (i - warm)] = out;
     }
     return y;
 }
@@ -321,64 +368,30 @@ struct GateRow
     std::string what;
 };
 
-/** Whether the row drives a static curve past its limit (Model A's mixer curve below where its quintic turns, or the
-    output function's low-pass value outside its range; Model B's never), simulated without anti-alias stages on the
-    ideal voices: the Filter and OutputStage per internal sample, the voices' sum on their buses. */
-bool reachesLimit (Model m, double rate, const Signal& s, const Setting& st, const std::array<std::vector<double>, 3>& voices)
+/** Which statement of the restated gate a row belongs to (8.19.4, after the review). */
+enum class Statement
 {
-    const int routed = st.routing == 0 ? 0 : (st.routing == 1 ? 1 : 7);
-    Filter f;
-    f.prepare (m, rate, 0.5f);
-    f.setCutoff (static_cast<float> (st.cutoff));
-    f.setResonance (st.resonance);
-    f.setMode (static_cast<std::uint8_t> (st.mode | 0x0f));
-    OutputStage o;
-    o.prepare (m, rate, false);
-    o.setRouting (static_cast<std::uint8_t> (routed));
-    o.setModeVolume (static_cast<std::uint8_t> (st.mode | 0x0f));
-    const auto lim = o.mixerLimits();
-    const auto sh = f.outputShapeCoefficients();
-    const double nd = 3.0 - static_cast<double> (o.filterVoices());
-    const std::size_t n = std::min<std::size_t> (voices[0].size(), 40000);
-    bool reached = false;
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        double fa = 0.0, da = 0.0, fe = 0.0, de = 0.0;
-        for (int k = 0; k < s.voices; ++k)
-        {
-            const bool toFilter = ((routed >> k) & 1) != 0;
-            (toFilter ? fa : da) += voices[static_cast<std::size_t> (k)][i];
-            (toFilter ? fe : de) += 1.0;
-        }
-        double lp = 0.0;
-        const double lin = f.processLinearDouble (o.filterInput (fa, fe), lp);
-        const double x = o.gainFactor() * (lin + f.outputShape (lp) + o.directSumWith (da, de, nd));
-        if (i > 8000 && (x < lim[0] || x > lim[1] || (m == Model::A && (lp < sh.lpMin || lp > sh.lpMax))))
-            reached = true;
-    }
-    return reached;
-}
-
-enum class Stimulus
-{
-    chip,  // the real chain: Chip (its voices bent), filter, stage, anti-alias stages
-    ideal  // ideal band-limited voices into the chain's buses: the static curves and the anti-alias stages alone
+    a, // ideal band-limited voices into the chain's buses: the absolute limit
+    b, // real chips, all direct and low-pass at resonance 0: the absolute limit
+    c  // real chips, every other row: within 1 dB of the 4x reference
 };
 
-/** The gate's rows for one model and rate: the stimulus, the rows selected, printed if asked; the worst row against
-    its limit (the largest db - limit), the rows and failures counted. */
+/** The real chip's rows under (b): all direct, and the low-pass rows at resonance 0 (both cutoffs). */
+bool chipAbsolute (const Signal&, const Setting& st) { return st.routing == 0 || (st.mode == 0x10 && st.resonance == 0); }
+
 struct GateTotals
 {
-    int rows = 0, failures = 0;           // every row; over its limit
-    int limitRows = 0, limitFailures = 0; // rows driving a curve past its limit (reachesLimit); over its limit
-    std::vector<std::string> limitFailed; // those rows
+    int rows[3] {}, failures[3] {};
+    GateRow worst[3] {};
+    double worstMargin[3] { -1e9, -1e9, -1e9 };
+    std::vector<std::string> over; // every row over its limit
 };
 
+/** The rows of one model and rate that `select` keeps, under the statement given; printed if asked. */
 template <class Select>
-GateRow runGate (Model m, double rate, Stimulus stim, Select&& select, GateTotals& t, bool print)
+void runStatement (Model m, double rate, Statement which, Select&& select, GateTotals& t, bool print)
 {
-    GateRow worst;
-    double worstMargin = -1e9;
+    const int w = static_cast<int> (which);
     const int warm = std::max (16384, static_cast<int> (rate * 0.03));
     for (const auto& s : kSignals)
     {
@@ -386,145 +399,110 @@ GateRow runGate (Model m, double rate, Stimulus stim, Select&& select, GateTotal
         bool made = false;
         for (const auto& st : settingsFor (s))
         {
-            if (! select (s, st))
+            const bool absolute = chipAbsolute (s, st);
+            if ((which == Statement::b && ! absolute) || (which == Statement::c && absolute) || ! select (s, st))
                 continue;
-            if (! made)
-            {
-                for (int k = 0; k < s.voices; ++k)
-                    voices[static_cast<std::size_t> (k)] = idealVoice (m, rate, s.reg[static_cast<std::size_t> (k)] * kClock / 16777216.0,
-                                                                       s.wave[static_cast<std::size_t> (k)] == kSquare, 0.3 * k, warm + kAliasN);
-                made = true;
-            }
-            const auto y = stim == Stimulus::chip ? renderSignal (m, rate, s, st) : renderIdeal (m, rate, s, st, voices);
             const double f1 = s.reg[0] * kClock / 16777216.0;
-            const Alias a = aliasOfSpectrum (bhMagnitudes (y), rate, f1 / s.common, f1);
-            const double limit = limitFor (m, s);
-            const bool reached = reachesLimit (m, rate, s, st, voices);
-            ++t.rows;
-            t.limitRows += reached ? 1 : 0;
-            char buf[256];
-            std::snprintf (buf, sizeof (buf), "Model %s %6.0f Hz %s %-30s %-16s %-9s cutoff %4d res %2d: %7.1f dB at %7.1f Hz (limit %.0f)%s", m == Model::A ? "A" : "B", rate,
-                           stim == Stimulus::chip ? "chip " : "ideal", s.name, st.routing == 0 ? "all direct" : (st.routing == 1 ? "voice 1 filtered" : "all filtered"),
-                           st.routing == 0 ? "" : modeName (st.mode), st.cutoff, st.resonance, a.db, a.hz, limit, reached ? " [the mixer's limit reached]" : "");
-            if (a.db > limit)
+            double limit = limitFor (m, s), ref = 0.0;
+            Alias a;
+            if (which == Statement::a)
             {
-                ++t.failures;
-                if (reached)
+                if (! made)
                 {
-                    ++t.limitFailures;
-                    t.limitFailed.push_back (buf);
+                    for (int k = 0; k < s.voices; ++k)
+                        voices[static_cast<std::size_t> (k)] = idealVoice (m, rate, s.reg[static_cast<std::size_t> (k)] * kClock / 16777216.0,
+                                                                           s.wave[static_cast<std::size_t> (k)] == kSquare, 0.3 * k, warm + kAliasN);
+                    made = true;
+                }
+                a = aliasOfSpectrum (bhMagnitudes (renderIdeal (m, rate, s, st, voices)), rate, f1 / s.common, f1);
+            }
+            else
+            {
+                a = aliasOfSpectrum (bhMagnitudes (renderSignal (m, rate, s, st)), rate, f1 / s.common, f1);
+                if (which == Statement::c)
+                {
+                    ref = aliasOfSpectrum (bhMagnitudes (renderReference4x (m, rate, s, st)), rate, f1 / s.common, f1).db;
+                    limit = ref + 1.0;
                 }
             }
+            ++t.rows[w];
+            char buf[300];
+            std::snprintf (buf, sizeof (buf), "(%c) Model %s %6.0f Hz %-30s %-16s %-9s cutoff %4d res %2d: %7.1f dB at %7.1f Hz (limit %.1f%s)", "abc"[w],
+                           m == Model::A ? "A" : "B", rate, s.name, st.routing == 0 ? "all direct" : (st.routing == 1 ? "voice 1 filtered" : "all filtered"),
+                           st.routing == 0 ? "" : modeName (st.mode), st.cutoff, st.resonance, a.db, a.hz, limit, which == Statement::c ? ": the 4x reference + 1 dB" : "");
             if (print)
                 std::printf ("[alias-gate] %s\n", buf);
-            if (a.db - limit > worstMargin)
+            if (a.db > limit)
             {
-                worstMargin = a.db - limit;
-                worst = { a.db, a.hz, limit, buf };
+                ++t.failures[w];
+                t.over.push_back (buf);
+            }
+            if (a.db - limit > t.worstMargin[w])
+            {
+                t.worstMargin[w] = a.db - limit;
+                t.worst[w] = { a.db, a.hz, limit, buf };
             }
         }
     }
-    return worst;
 }
 
-/** The rows a real chip is gated on: all direct, and through the low-pass at cutoff 2047, resonance 0 (where the filter
-    passes voice 1's fundamental and the renderer's own components alike: decisions "B-Side S3b-2" A2). */
-bool chipGated (const Signal&, const Setting& st) { return st.routing == 0 || (st.mode == 0x10 && st.cutoff == 2047 && st.resonance == 0); }
-
-void gateAt (Model m, double rate, bool allIdealRows, bool print, GateTotals& t)
+void report (const GateTotals& t)
 {
-    const auto chipRow = runGate (m, rate, Stimulus::chip, chipGated, t, print);
-    const auto idealRow = runGate (m, rate, Stimulus::ideal, [allIdealRows] (const Signal& s, const Setting& st) {
-        return allIdealRows || st.routing == 0 || st.resonance == 15 || (s.voices == 3 && st.cutoff == 2047);
-    }, t, print);
-    for (const auto* w : { &chipRow, &idealRow })
-        std::printf ("[alias-gate] worst %s\n", w->what.c_str());
+    for (int w = 0; w < 3; ++w)
+        std::printf ("[alias-gate] (%c) %d rows, %d over their limit; closest to it: %s\n", "abc"[w], t.rows[w], t.failures[w], t.worst[w].what.c_str());
+    for (const auto& r : t.over)
+        std::printf ("[alias-gate] NOT MET: %s\n", r.c_str());
 }
 } // namespace
 
-TEST_CASE ("alias gate: the static curves through the chain, the full set of 8.19.4 at every internal rate (hidden; about three minutes)", "[.chain-alias-full]")
+TEST_CASE ("alias gate: the static curves through the chain, the full set of 8.19.4 at every internal rate (hidden; several minutes)", "[.chain-alias-full]")
 {
-    // 8.19.4: one voice (saw and square at 3.85 kHz, saw at 2 and 1 kHz), two voices (saw + saw 3:2, saw + square 5:4 at
-    // 3.85 and 2 kHz), three voices at 3.85 and 2 kHz, full envelope; all direct, voice 1 through the filter, all through
-    // it (low-, band-, high-pass, cutoff 2047 and 1024, resonance 0 and 15); 2^18 samples, 7-term Blackman-Harris,
-    // 20 Hz - 20 kHz, the common fundamental's lines excluded +-10 bins, relative to voice 1's fundamental. Limits:
-    // Model B -103 dB; Model A -99 dB to 2 kHz, -83 dB to 3.85 kHz. Every row is printed ([alias-gate]).
-    // Gated (decisions "B-Side S3b-2" A2): every row with ideal band-limited voices in the chain's buses (Model A's bent
-    // as the renderer's folded bend renders them), which isolates the static curves and their anti-alias stages; and
-    // with real chips (the renderer, its bend, the chain) every row whose filter passes voice 1's fundamental and the
-    // renderer's own components alike (all direct; low-pass at 2047, resonance 0). Reported, not gated: the real chips
-    // through the other filter settings, beside the same signal through the chain with every curve linear (the
-    // renderer's own components weighed by the filter: a high- or band-pass lowers voice 1's fundamental, the resonance
-    // lifts the renderer's components near the corner).
+    // 8.19.4 (after the review): the signal set (one voice: saw and square at 3.85 kHz, saw at 2 and 1 kHz; two voices:
+    // saw + saw 3:2, saw + square 5:4 at 3.85 and 2 kHz; three voices at 3.85 and 2 kHz; full envelope; all direct,
+    // voice 1 through the filter, all through it: low-, band-, high-pass, cutoff 2047 and 1024, resonance 0 and 15) and
+    // the measurement (2^18 samples, 7-term Blackman-Harris, 20 Hz - 20 kHz, the common fundamental's lines excluded
+    // +-10 bins, relative to voice 1's fundamental) under three statements, all asserted: (a) ideal band-limited voices
+    // in the chain's buses, every row, Model B at most -103 dB, Model A at most -99 dB to 2 kHz and -83 dB to 3.85 kHz;
+    // (b) real chips, all direct and low-pass at resonance 0, the same limits; (c) real chips, every other row, within
+    // 1 dB of the chain with its curves at four times the rate (renderReference4x). Every row is printed.
     const auto t0 = std::chrono::steady_clock::now();
     GateTotals t;
     for (const Model m : { Model::B, Model::A })
         for (const auto& rc : rateConfigs())
-            gateAt (m, rc.internalRate, true, true, t);
-    // reported: real chips through every other setting, with the linear chain's figure
-    int reported = 0, overLimit = 0, overLinear = 0;
-    double worstExcess = -1e9;
-    std::string worstExcessRow;
-    for (const Model m : { Model::B, Model::A })
-        for (const auto& rc : rateConfigs())
-            for (const auto& s : kSignals)
-                for (const auto& st : settingsFor (s))
-                {
-                    if (chipGated (s, st))
-                        continue;
-                    const double f1 = s.reg[0] * kClock / 16777216.0;
-                    const Alias a = aliasOfSpectrum (bhMagnitudes (renderSignal (m, rc.internalRate, s, st)), rc.internalRate, f1 / s.common, f1);
-                    const Alias l = aliasOfSpectrum (bhMagnitudes (renderLinear (m, rc.internalRate, s, st)), rc.internalRate, f1 / s.common, f1);
-                    const double limit = limitFor (m, s);
-                    ++reported;
-                    overLimit += a.db > limit ? 1 : 0;
-                    overLinear += a.db > l.db + 1.0 ? 1 : 0;
-                    char buf[256];
-                    std::snprintf (buf, sizeof (buf), "Model %s %6.0f Hz chip %-30s %-16s %-9s cutoff %4d res %2d: %7.1f dB at %7.1f Hz, every curve linear %7.1f dB at %7.1f Hz (limit %.0f)",
-                                   m == Model::A ? "A" : "B", rc.internalRate, s.name, st.routing == 1 ? "voice 1 filtered" : "all filtered", modeName (st.mode), st.cutoff,
-                                   st.resonance, a.db, a.hz, l.db, l.hz, limit);
-                    std::printf ("[alias-reported] %s\n", buf);
-                    if (a.db - std::max (limit, l.db) > worstExcess)
-                    {
-                        worstExcess = a.db - std::max (limit, l.db);
-                        worstExcessRow = buf;
-                    }
-                }
-    const double secs = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
-    std::printf ("[alias-gate] %d gated rows, %d over their limit; %d reported rows (real chips, other filter settings): %d over the limit, %d more than 1 dB above "
-                 "the linear chain; the largest excess over max (limit, linear): %+.1f dB (%s); %.0f s\n",
-                 t.rows, t.failures, reported, overLimit, overLinear, worstExcess, worstExcessRow.c_str(), secs);
-    std::printf ("[alias-gate] rows driving the mixer past its limit: %d, of them over the limit: %d\n", t.limitRows, t.limitFailures);
-    for (const auto& r : t.limitFailed)
-        std::printf ("[alias-gate] NOT MET (the mixer's limit reached): %s\n", r.c_str());
-    CHECK (t.rows == 2 * 7 * (26 + 202));
-    CHECK (t.failures == 0); // the gate as 8.19.4 states it, every row: not met where the mixer's limit is reached (decisions "B-Side S3b-2" A3)
+            for (const Statement w : { Statement::a, Statement::b, Statement::c })
+                runStatement (m, rc.internalRate, w, [] (const Signal&, const Setting&) { return true; }, t, true);
+    report (t);
+    std::printf ("[alias-gate] full set: %.0f s\n", std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count());
+    CHECK (t.rows[0] == 2 * 7 * 202);
+    CHECK (t.rows[1] + t.rows[2] == 2 * 7 * 202);
+    for (int w = 0; w < 3; ++w)
+    {
+        INFO (t.worst[w].what);
+        CHECK (t.failures[w] == 0);
+    }
 }
 
 TEST_CASE ("alias gate: the static curves through the chain, a reduced set in the normal run (88.2 and 96 kHz)", "[chain][alias][gate]")
 {
-    // The hidden full set ("[.chain-alias-full]") reduced to the two lowest internal rates (the narrowest transition bands,
-    // the worst rows of the full set): real chips on their gated rows; ideal voices all direct, every resonance-15 row,
-    // and three voices at cutoff 2047. Rows that drive Model A's mixer past the limit of its curve (three or two voices at
-    // full level through the low-pass at resonance 15) miss the limit (decisions "B-Side S3b-2" A3): reported here, and
-    // asserted (failing) in the full set; every other row is asserted.
+    // The full set (hidden, "[.chain-alias-full]") at the two lowest internal rates (the narrowest transition bands, the
+    // worst rows of the full set), asserted outright: (a) every row; (b) every row; (c) the rows at resonance 15 and the
+    // three-voice rows.
     GateTotals t;
     for (const Model m : { Model::B, Model::A })
         for (const double rate : { 88200.0, 96000.0 })
-            gateAt (m, rate, false, false, t);
-    std::printf ("[alias-gate] reduced set: %d rows, %d over their limit, all of them driving the mixer past its limit (%d such rows)\n", t.rows, t.failures,
-                 t.limitRows);
-    for (const auto& r : t.limitFailed)
-        WARN ("not met, the mixer's limit reached (decisions \"B-Side S3b-2\" A3): " << r);
-    CHECK (t.rows > 300);
-    // every row that does not drive a curve past its limit meets 8.19.4's limit; the ones that do and miss it are the
-    // known shortfall of decisions A3 (reported above; the hidden full set asserts them and fails on them)
-    CHECK (t.failures == t.limitFailures);
-    CHECK (t.limitRows > 0);
+        {
+            runStatement (m, rate, Statement::a, [] (const Signal&, const Setting&) { return true; }, t, false);
+            runStatement (m, rate, Statement::b, [] (const Signal&, const Setting&) { return true; }, t, false);
+            runStatement (m, rate, Statement::c, [] (const Signal& s, const Setting& st) { return st.resonance == 15 || s.voices == 3; }, t, false);
+        }
+    report (t);
+    for (int w = 0; w < 3; ++w)
+    {
+        INFO (t.worst[w].what);
+        CHECK (t.failures[w] == 0);
+        CHECK (t.rows[w] > 50);
+    }
 }
-
-// ---- the anti-alias filters themselves ----
-
 TEST_CASE ("alias: the half-band designs: pass band within 0.01 dB to 20 kHz, stop band at least 40 dB from 8.19.4's edge, the filters realise them", "[chain][alias][halfband]")
 {
     // 8.19.4: a linear-phase half-band FIR at the internal rate, pass band to 20 kHz within 0.01 dB, stop band from
@@ -537,7 +515,7 @@ TEST_CASE ("alias: the half-band designs: pass band within 0.01 dB to 20 kHz, st
         const double rate = rc.internalRate;
         for (const double r : { rate, 2.0 * rate })
         {
-            const HalfBandDesign d = chip::designHalfBand (r, 20000.0, 1.0e-3);
+            const HalfBandDesign d = chip::designHalfBand (r, 20000.0, r > rate ? ChipVoice::kTwiceDeviation : ChipVoice::kAntiAliasDeviation);
             double pass = 0.0, stop = -300.0;
             for (int i = 0; i <= 2000; ++i)
             {
@@ -559,8 +537,8 @@ TEST_CASE ("alias: the half-band designs: pass band within 0.01 dB to 20 kHz, st
             CHECK (std::abs (dc - 1.0) < 1.0e-12);
         }
         // the classes realise the designs
-        const HalfBandDesign pre = chip::designHalfBand (rate, 20000.0, 1.0e-3);
-        const HalfBandDesign twice = chip::designHalfBand (2.0 * rate, 20000.0, 1.0e-3);
+        const HalfBandDesign pre = chip::designHalfBand (rate, 20000.0, ChipVoice::kAntiAliasDeviation);
+        const HalfBandDesign twice = chip::designHalfBand (2.0 * rate, 20000.0, ChipVoice::kTwiceDeviation);
         chip::HalfBandFir fir;
         fir.prepare (pre);
         std::vector<double> h (static_cast<std::size_t> (4 * pre.pairs + 8), 0.0);
@@ -624,8 +602,8 @@ TEST_CASE ("alias: silence in gives exact zeros out after the filters' length; a
     // static DC and the curve's operating point cancel exactly).
     for (const auto& rc : rateConfigs())
     {
-        const HalfBandDesign pre = chip::designHalfBand (rc.internalRate, 20000.0, 1.0e-3);
-        const HalfBandDesign twice = chip::designHalfBand (2.0 * rc.internalRate, 20000.0, 1.0e-3);
+        const HalfBandDesign pre = chip::designHalfBand (rc.internalRate, 20000.0, ChipVoice::kAntiAliasDeviation);
+        const HalfBandDesign twice = chip::designHalfBand (2.0 * rc.internalRate, 20000.0, ChipVoice::kAntiAliasDeviation);
         chip::HalfBandFir fir;
         chip::HalfBandUp up;
         chip::HalfBandDown dn;
@@ -772,8 +750,8 @@ TEST_CASE ("alias: the wanted signal's pass band through the chain: within +-0.0
         for (const auto& rc : rateConfigs())
         {
             const double rate = rc.internalRate;
-            const HalfBandDesign pre = chip::designHalfBand (rate, 20000.0, 1.0e-3);
-            const HalfBandDesign up = chip::designHalfBand (2.0 * rate, 20000.0, 1.0e-3);
+            const HalfBandDesign pre = chip::designHalfBand (rate, 20000.0, ChipVoice::kAntiAliasDeviation);
+            const HalfBandDesign up = chip::designHalfBand (2.0 * rate, 20000.0, ChipVoice::kTwiceDeviation);
             const HalfBandDesign down = up; // the decimator's design is the interpolator's
             auto design = [&] (double hz) { return m == Model::B ? pre.response (hz) : pre.response (hz) * up.response (hz) * down.response (hz); };
             std::vector<double> gain;
@@ -1077,6 +1055,7 @@ TEST_CASE ("alias: the chain's latency is where the signal lands: an impulse thr
                 for (auto& x : v)
                     got = x->renderBusesUntil (want, written ? ~std::uint64_t { 0 } : w);
                 std::array<double, ChipVoice::kBlock> so {}, sl {}, ss {}, out {};
+                std::array<Filter::Shape, ChipVoice::kBlock> sh {};
                 for (int i = 0; i < got; ++i)
                 {
                     const double dc = v[0]->staticFilterBusDc (i);
@@ -1085,9 +1064,10 @@ TEST_CASE ("alias: the chain's latency is where the signal lands: an impulse thr
                         in += x->filterInputAc (i);
                     so[static_cast<std::size_t> (i)] = sf.processLinearDouble (in, sl[static_cast<std::size_t> (i)]);
                     ss[static_cast<std::size_t> (i)] = sf.staticOutput (dc);
+                    sh[static_cast<std::size_t> (i)] = sf.outputShapeCoefficients();
                 }
                 for (auto& x : v)
-                    x->finishShared (sf, so.data(), sl.data(), ss.data(), 2, out.data(), got);
+                    x->finishShared (sh.data(), so.data(), sl.data(), ss.data(), 2, out.data(), got);
                 ys.insert (ys.end(), out.begin(), out.begin() + got);
                 if (! written && v[0]->chip().cycle() == w)
                 {
@@ -1237,4 +1217,502 @@ TEST_CASE ("alias: the voice bend folded into the renderer keeps the harmonics o
             }
     std::printf ("[bend] %d harmonics above -40 dB compared, largest deviation %.3f dB\n", compared, worstAll);
     CHECK (compared > 20);
+}
+
+// ---- after the review of S3b-2: write timing per type, Shared mode writes, the chain with a moving cutoff ----
+
+namespace
+{
+/** One write case of the timing test: a held voice (oscillator 1 frozen by the test bit: a constant), the registers
+    before, the write. */
+struct TimingCase
+{
+    const char* name;
+    std::uint8_t route0, mode0, reg, value;
+    int cutoff;
+    bool volumeDc;
+};
+
+const TimingCase kTimingCases[] { { "volume", 0x00, 0x1f, 0x18, 0x18, 2047, true },
+                                  { "volume, volume DC off", 0x00, 0x1f, 0x18, 0x18, 2047, false },
+                                  { "routing (oscillators 1 and 2 swap buses, no mode selected)", 0x02, 0x0f, 0x17, 0x01, 2047, true },
+                                  { "routing with the counts (oscillator 1 to the filter, no mode selected)", 0x00, 0x0f, 0x17, 0x01, 2047, true },
+                                  { "mode (low-pass to high-pass)", 0x01, 0x1f, 0x18, 0x4f, 1000, true },
+                                  { "resonance (Model A: the output function's gain)", 0x01, 0x1f, 0x17, 0xf1, 2047, true } };
+
+void timingSetup (ChipVoice& v, const TimingCase& c)
+{
+    OscInput in;
+    in.frequency = 0.0;
+    in.pulseWidth = 2048.0f;
+    in.control = ctrl::saw | ctrl::test | ctrl::gate;
+    in.attackDecay = 0x00;
+    in.sustainRelease = 0xf0;
+    v.setOscillator (0, in);
+    v.write (0x15, static_cast<std::uint8_t> (c.cutoff & 7));
+    v.write (0x16, static_cast<std::uint8_t> (c.cutoff >> 3));
+    v.write (0x17, c.route0);
+    v.write (0x18, c.mode0);
+}
+
+/** The centre of a step in y: the centroid of its first difference within +-200 samples of `around`, minus 1/2. */
+double stepCentre (const std::vector<double>& y, double around)
+{
+    double s = 0.0, sw = 0.0;
+    for (int n = static_cast<int> (around) - 200; n <= static_cast<int> (around) + 200; ++n)
+    {
+        const double d = y[static_cast<std::size_t> (n)] - y[static_cast<std::size_t> (n - 1)];
+        s += d * n;
+        sw += d;
+    }
+    return s / sw - 0.5;
+}
+
+/** The mixer curve's input recovered from the output (board filters off, volume DC on: output = n (Y0 + level N (x))),
+    by Newton on OutputStage::mixerCurve (monotonic): a step's centre measured there is not bent by the curve (a step
+    through a curve whose slope changes along it has its centre of gravity moved; Model A's gain moves with a routing
+    write by 13 %). The output is the curve's output decimated, so this is exact for a held input and close to it within
+    the step. */
+std::vector<double> curveInput (Model m, double rate, const TimingCase& c, int chips, std::vector<double> y)
+{
+    OutputStage o;
+    o.prepare (m, rate, true);
+    o.setModeVolume (c.mode0);
+    const double a = o.postScale(), b = o.postOffset();
+    for (double& v : y)
+    {
+        const double target = (v / chips - b) / a;
+        double x = target;
+        for (int k = 0; k < 60; ++k)
+        {
+            const double f = o.mixerCurve (x) - target;
+            const double d = (o.mixerCurve (x + 1e-6) - o.mixerCurve (x - 1e-6)) / 2e-6;
+            if (! (d > 1e-9))
+                break;
+            const double dx = f / d;
+            x -= dx;
+            if (std::abs (dx) < 1e-15)
+                break;
+        }
+        v = x;
+    }
+    return y;
+}
+
+/** n chips, Per Note (each its own filter; only n = 1 here) or Shared (one filter run by this owner as ChipVoice.h
+    "TOPOLOGY" says), the case's write at `w` to every chip (the owner applies cutoff, resonance and mode to its filter at the
+    filter's signal time of the write's sample: filterLagSamples () after it in the output); board filters off; the
+    summed output. */
+std::vector<double> timingRun (Model m, double rate, const TimingCase& c, int chips, bool shared, std::uint64_t w, int total, int& latency)
+{
+    std::vector<std::unique_ptr<ChipVoice>> v;
+    Filter sf;
+    sf.prepare (m, rate, 0.5f);
+    for (int k = 0; k < chips; ++k)
+    {
+        chip::Config cfg;
+        cfg.model = m;
+        cfg.internalRate = rate;
+        cfg.volumeDc = c.volumeDc;
+        v.push_back (std::make_unique<ChipVoice>());
+        v.back()->prepare (cfg);
+        v.back()->boardFiltersEnabled (false);
+        if (! shared)
+            v.back()->setFilter (&sf);
+        timingSetup (*v.back(), c);
+    }
+    latency = v[0]->latencySamples();
+    const int lag = v[0]->filterLagSamples();
+    if (shared)
+    {
+        sf.setCutoff (static_cast<float> (c.cutoff));
+        sf.setResonance (c.route0 >> 4);
+        sf.setMode (c.mode0);
+    }
+    std::vector<double> y;
+    bool written = false;
+    std::int64_t writeSample = -1;
+    while (static_cast<int> (y.size()) < total)
+    {
+        const int want = std::min (ChipVoice::kBlock, total - static_cast<int> (y.size()));
+        std::array<double, ChipVoice::kBlock> out {}, so {}, sl {}, ss {};
+        std::array<Filter::Shape, ChipVoice::kBlock> sh {};
+        if (! shared)
+        {
+            const int got = v[0]->renderUntil (out.data(), want, written ? ~std::uint64_t { 0 } : w);
+            y.insert (y.end(), out.begin(), out.begin() + got);
+        }
+        else
+        {
+            int got = 0;
+            for (auto& x : v)
+                got = x->renderBusesUntil (want, written ? ~std::uint64_t { 0 } : w);
+            for (int i = 0; i < got; ++i)
+            {
+                // the owner's filter takes the write at the filter's signal time of the write's sample
+                const auto b = static_cast<std::int64_t> (y.size()) + i;
+                if (writeSample >= 0 && b - lag == writeSample)
+                {
+                    if (c.reg == 0x18)
+                        sf.setMode (c.value);
+                    if (c.reg == 0x17)
+                        sf.setResonance (c.value >> 4);
+                }
+                const double dc = v[0]->staticFilterBusDc (i);
+                double in = dc;
+                for (auto& x : v)
+                    in += x->filterInputAc (i);
+                so[static_cast<std::size_t> (i)] = sf.processLinearDouble (in, sl[static_cast<std::size_t> (i)]);
+                ss[static_cast<std::size_t> (i)] = sf.staticOutput (dc);
+                sh[static_cast<std::size_t> (i)] = sf.outputShapeCoefficients();
+            }
+            for (auto& x : v)
+                x->finishShared (sh.data(), so.data(), sl.data(), ss.data(), chips, out.data(), got);
+            y.insert (y.end(), out.begin(), out.begin() + got);
+        }
+        if (! written && v[0]->chip().cycle() == w)
+        {
+            writeSample = static_cast<std::int64_t> (v[0]->chip().renderSampleIndex());
+            for (auto& x : v)
+                x->write (c.reg, c.value);
+            written = true;
+        }
+    }
+    return y;
+}
+} // namespace
+
+TEST_CASE ("alias: every write lands where latencySamples () says: volume, routing, mode, resonance, both models, Per Note and Shared (0.02 samples)", "[chain][alias][latency][writes]")
+{
+    // 8.19.4 (after the review): a write's step, the centre of gravity of its first difference, lies within 0.02 internal
+    // samples of (cycle - 1) / cycles per sample + latencySamples () (the analog registers' writes lead an oscillator
+    // write by one cycle, Chip::kAnalogWriteLeadCycles). A held voice (a constant through the chain: the step is the
+    // write's alone, no filter transient: the filter's state does not move for a held input), every internal rate.
+    // Volume (volume DC on and off), routing (oscillator 1, the held voice, to the filter with no mode selected, and the
+    // silent oscillator 2 to the direct bus in the same write: the voice leaves the output while the voice counts, and
+    // with them the mixer's gain, stay: a gain changing with the step would add a product of two steps whose centre is
+    // not the write's), mode (low- to high-pass) and, on Model A, resonance (it scales the output
+    // function; Model B's linear filter keeps a held input's level at every resonance, so it has no step: its timing is
+    // the filter's, pinned in ChipVoiceTests.cpp "the cutoff runs per sample ..."). Per Note, and Shared with two
+    // identical chips for the volume and routing writes (the stage's); Shared mode writes: the next test. The review
+    // found Model A's mode steps 0.31 samples early (the output function's coefficients half a 2x sample early) and
+    // routing steps on Model A up to 31 samples off with the voice counts not delayed; both are caught here.
+    int checked = 0;
+    double worst = 0.0;
+    for (const Model m : { Model::B, Model::A })
+        for (const auto& rc : rateConfigs())
+            for (const auto& c : kTimingCases)
+                for (const int chips : { 1, 2 })
+                {
+                    const bool resonance = c.reg == 0x17 && c.value == 0xf1;
+                    if ((resonance && m == Model::B) || (chips == 2 && (c.reg == 0x18 && c.value == 0x4f)) || (chips == 2 && resonance))
+                        continue;
+                    const double rate = rc.internalRate;
+                    const double cps = 985248.0 / rate;
+                    const auto w = static_cast<std::uint64_t> (0.05 * 985248.0) + 3; // not on a sample boundary
+                    int latency = 0;
+                    auto y = timingRun (m, rate, c, chips, chips > 1, w, static_cast<int> (rate * 0.08), latency);
+                    if (c.reg != 0x18 || c.value != 0x18)
+                        y = curveInput (m, rate, c, chips, y);
+                    const double expect = static_cast<double> (w - 1) / cps + latency;
+                    const double off = stepCentre (y, expect) - expect;
+                    INFO ((m == Model::A ? "Model A " : "Model B ") << rate << " Hz, " << c.name << (chips == 1 ? ", Per Note" : ", Shared")
+                                                                   << ": the step's centre lies " << off << " samples from latencySamples ()'s place");
+                    // the routing write that changes the voice counts moves the gain too: the product of the two steps has its
+                    // centre 0.06 samples late on Model A whatever the timing (measured; Model B's gain moves 0.4 %), so that
+                    // case is held to 0.1 sample: it is there to show that the counts move with the delayed signal (the
+                    // review's mutation moved it by up to 31 samples)
+                    const bool withCounts = c.reg == 0x17 && c.route0 == 0x00;
+                    CHECK (std::abs (off) < (withCounts ? 0.1 : 0.02));
+                    if (! withCounts)
+                        worst = std::max (worst, std::abs (off));
+                    ++checked;
+                }
+    std::printf ("[timing] %d write steps, the largest offset from latencySamples ()'s place %.4f samples\n", checked, worst);
+    CHECK (checked > 100);
+}
+
+TEST_CASE ("alias: a Shared mode write against Per Note: the same outside the write's window, the step at the same place", "[chain][alias][shared][writes]")
+{
+    // ChipVoice.h "TOPOLOGY": the owner of a shared filter applies a mode write to it filterLagSamples () after the write
+    // in the output (the filter's signal time of the write's sample), with a hard switch of its output row, while Per
+    // Note blends the two rows over the write's window (the long kernel, 16 samples). One chip in Shared against Per
+    // Note, the held voice of the timing test, low- to high-pass: identical (to 1e-12) outside the window widened by the stages
+    // after the filter, and the two steps' centres within 0.6 samples (a hard switch at the sample of
+    // the band-limited step's centre). Both models, three rates.
+    for (const Model m : { Model::B, Model::A })
+        for (const double rate : { 88200.0, 96000.0, 192000.0 })
+        {
+            const TimingCase* found = nullptr;
+            for (const auto& k : kTimingCases)
+                if (k.reg == 0x18 && k.value == 0x4f)
+                    found = &k; // the mode write, low- to high-pass
+            REQUIRE (found != nullptr);
+            const TimingCase& c = *found;
+            const auto w = static_cast<std::uint64_t> (0.05 * 985248.0) + 3;
+            int latency = 0;
+            const int total = static_cast<int> (rate * 0.08);
+            const auto pn = timingRun (m, rate, c, 1, false, w, total, latency);
+            const auto sh = timingRun (m, rate, c, 1, true, w, total, latency);
+            const double cps = 985248.0 / rate;
+            const double expect = static_cast<double> (w - 1) / cps + latency;
+            // the stages after the filter: latency = 8 + pre-filter + post; filterLagSamples = 9 + pre-filter
+            const int post = latency - Voice (m, rate, true).v->filterLagSamples() + 1;
+            double outside = 0.0, size = 0.0;
+            for (std::size_t i = 100; i < pn.size(); ++i)
+            {
+                const double d = std::abs (sh[i] - pn[i]);
+                size = std::max (size, std::abs (pn[i] - pn[100]));
+                const double di = static_cast<double> (i);
+                if (di < expect - 10.0 - post || di > expect + 10.0 + post)
+                    outside = std::max (outside, d);
+            }
+            const double cs = stepCentre (sh, expect), cp = stepCentre (pn, expect);
+            INFO ((m == Model::A ? "Model A " : "Model B ") << rate << " Hz: Shared - Per Note outside the window " << outside << " (step " << size
+                                                           << "); step centres Shared " << cs - expect << ", Per Note " << cp - expect);
+            CHECK (size > 1.0e-3);
+            CHECK (outside <= 1.0e-12 * std::max (1.0, size));
+            CHECK (std::abs (cs - cp) < 0.6);
+        }
+}
+
+TEST_CASE ("alias: the chain's output with a moving cutoff equals a twin built from the public pieces", "[chain][alias][cutoff]")
+{
+    // The S3b-1 test of the cutoff's rule compares the filter's output (ChipVoiceTests.cpp); this one compares the whole
+    // chain's output after the filter, through the anti-alias stages, with a twin made of the public pieces: a Chip (its
+    // voices bent, as ChipVoice bends them) rendering the buses, a Filter driven by the rule written out (a cutoff write
+    // takes effect at the filter's signal time of its sample, filterLagSamples () after it in the output; processWith-
+    // Cutoff while the cutoff moved within 256 samples), an OutputStage, and the HalfBand filters of the designs (Model
+    // A: the bus pre-filter, the interpolators, the decimator, the output function's coefficients; Model B: the mixer
+    // FIR), each delay explicit. A saw through the low-pass at resonance 8, one isolated cutoff change, a sweep (a change
+    // every 32 samples), a last change; volume DC on, board filters off. To 1e-9 (compilers may contract differently),
+    // both models, 96 and 88.2 kHz.
+    for (const Model m : { Model::B, Model::A })
+        for (const double rate : { 96000.0, 88200.0 })
+        {
+            Voice p (m, rate, true);
+            ChipVoice& v = *p.v;
+            v.boardFiltersEnabled (false);
+            Chip twin = makeChip (m, rate);
+            twin.renderBendVoices (true);
+            OscInput in;
+            in.frequency = 220.0 * 16777216.0 / 985248.0;
+            in.control = ctrl::saw | ctrl::gate;
+            in.sustainRelease = 0xf0;
+            v.setOscillator (0, in);
+            twin.setOscillator (0, in);
+            auto both = [&] (std::uint8_t reg, std::uint8_t value) {
+                v.write (reg, value);
+                twin.write (reg, value);
+            };
+            both (0x15, 0);
+            both (0x16, 0x40);
+            both (0x17, 0x81);
+            both (0x18, 0x1f);
+            const double cps = static_cast<double> (twin.sampleClock().increment()) / 4294967296.0;
+            struct W
+            {
+                std::uint64_t cycle;
+                std::uint8_t value;
+                std::int64_t sample = 0;
+            };
+            std::vector<W> w;
+            auto at = [cps] (double sample) { return static_cast<std::uint64_t> (sample * cps + 0.37 * cps); };
+            w.push_back ({ at (2000.0), 0x60 });
+            for (int k = 0; k < 60; ++k)
+                w.push_back ({ at (4000.0 + 32.0 * k), static_cast<std::uint8_t> (0x30 + (k * 23) % 160) });
+            w.push_back ({ at (11000.0), 0x90 });
+            const int total = 14000;
+            std::vector<double> y (static_cast<std::size_t> (total), 0.0);
+            std::vector<double> fa (y.size()), da (y.size()), fe (y.size()), de (y.size()), fv (y.size()), dv (y.size());
+            auto busAt = [&] (int k) { return Chip::BusBlock { fa.data() + k, da.data() + k, fe.data() + k, de.data() + k, fv.data() + k, dv.data() + k }; };
+            int done = 0, doneTwin = 0;
+            for (auto& x : w)
+            {
+                done += v.renderUntil (y.data() + done, total - done, x.cycle);
+                doneTwin += twin.renderBusesUntil (busAt (doneTwin), total - doneTwin, x.cycle);
+                REQUIRE (v.chip().cycle() == x.cycle);
+                x.sample = static_cast<std::int64_t> (v.chip().renderSampleIndex());
+                both (0x16, x.value);
+            }
+            v.renderUntil (y.data() + done, total - done, ~std::uint64_t { 0 });
+            twin.renderBusesUntil (busAt (doneTwin), total - doneTwin, ~std::uint64_t { 0 });
+            // the twin
+            Filter rf;
+            rf.prepare (m, rate, 0.5f);
+            rf.setCutoff (512.0f);
+            rf.setResonance (8);
+            rf.setMode (0x1f);
+            OutputStage st;
+            st.prepare (m, rate, true);
+            st.setRouting (0x01);
+            st.setModeVolume (0x1f);
+            const auto pre = chip::designHalfBand (rate, ChipVoice::kAntiAliasPassHz, ChipVoice::kAntiAliasDeviation);
+            const auto twice = chip::designHalfBand (2.0 * rate, ChipVoice::kAntiAliasPassHz, ChipVoice::kTwiceDeviation);
+            chip::HalfBandFir mix, preAc, preDc, preDi;
+            for (auto* f : { &mix, &preAc, &preDc, &preDi })
+                f->prepare (pre);
+            chip::HalfBandUp upX, upL;
+            chip::HalfBandDown dn;
+            upX.prepare (twice);
+            upL.prepare (twice);
+            dn.prepare (twice);
+            const int lag = v.filterLagSamples(), shapeDelay = upX.pairCount() - 1;
+            REQUIRE (lag == Chip::kLatencySamples + 1 + (m == Model::A ? pre.delay() : 0));
+            float cutoff = 512.0f;
+            bool changed = false, moving = false;
+            std::int64_t last = 0;
+            std::size_t next = 0;
+            std::vector<std::array<double, 5>> coef;
+            double worst = 0.0;
+            int movingSamples = 0;
+            for (std::size_t b = 0; b < y.size(); ++b)
+            {
+                const std::int64_t t = static_cast<std::int64_t> (b) - lag;
+                while (next < w.size() && w[next].sample <= t)
+                {
+                    const auto c = static_cast<float> (w[next++].value << 3);
+                    if (! (c < cutoff || c > cutoff))
+                        continue;
+                    cutoff = c;
+                    if (changed && t - last < 256)
+                        moving = true;
+                    last = t;
+                    changed = true;
+                    if (! moving)
+                        rf.setCutoff (cutoff);
+                }
+                if (moving && t - last >= 256)
+                {
+                    moving = false;
+                    rf.setCutoff (cutoff);
+                }
+                movingSamples += moving ? 1 : 0;
+                st.setVoices (fv[b], dv[b]); // the counts do not move here
+                const double g = st.gainFactor();
+                double out = 0.0, lp = 0.0;
+                if (m == Model::B)
+                {
+                    const double fin = st.filterInput (fa[b], fe[b]);
+                    const double lin = moving ? rf.processWithCutoffLinearDouble (fin, cutoff, lp) : rf.processLinearDouble (fin, lp);
+                    const double x = g * (lin + st.directSumWith (da[b], de[b], dv[b]));
+                    if (b == 0)
+                        mix.prime (x);
+                    out = st.postScale() * st.mixerCurve (mix.process (x)) + st.postOffset();
+                }
+                else
+                {
+                    const double ac = st.filterInputAc (fa[b], fe[b]), dc = OutputStage::voiceDc (m) * fv[b], di = st.directSumWith (da[b], de[b], dv[b]);
+                    if (b == 0)
+                    {
+                        preAc.prime (ac);
+                        preDc.prime (dc);
+                        preDi.prime (di);
+                    }
+                    const double pa = preAc.process (ac), pd = preDc.process (dc), pdi = preDi.process (di);
+                    st.setFilterStaticDc (rf.staticOutput (pd));
+                    const double lin = moving ? rf.processWithCutoffLinearDouble (pa + pd, cutoff, lp) : rf.processLinearDouble (pa + pd, lp);
+                    const double x = g * (lin + pdi);
+                    const auto sh = rf.outputShapeCoefficients();
+                    coef.push_back ({ g * sh.p1, g * sh.p2, g * sh.p3, g * sh.p4, g * sh.p5 });
+                    auto shapeAt = [&] (std::size_t back, double l) {
+                        const auto& c = coef[coef.size() > back ? coef.size() - 1 - back : 0];
+                        const double vv = l < sh.lpMin ? sh.lpMin : (l > sh.lpMax ? sh.lpMax : l);
+                        return ((((c[4] * vv + c[3]) * vv + c[2]) * vv + c[1]) * vv + c[0]) * vv;
+                    };
+                    if (b == 0)
+                    {
+                        upX.prime (x);
+                        upL.prime (lp);
+                        dn.prime (st.mixerCurve (x + shapeAt (0, lp)));
+                    }
+                    double l0 = 0.0, l1 = 0.0, p0 = 0.0, p1 = 0.0;
+                    upX.process (x, l0, l1);
+                    upL.process (lp, p0, p1);
+                    // the interpolated low-pass value p0 lies half a sample before p1, which is shapeDelay samples late
+                    const auto d = static_cast<std::size_t> (shapeDelay);
+                    const double s0 = 0.5 * (shapeAt (d, p0) + shapeAt (d + 1, p0)), s1 = shapeAt (d, p1);
+                    const double mm = dn.process (st.mixerCurve (l0 + s0), st.mixerCurve (l1 + s1));
+                    out = st.postScale() * mm + st.postOffset();
+                }
+                worst = std::max (worst, std::abs (out - y[b]));
+            }
+            INFO ((m == Model::A ? "Model A " : "Model B ") << rate << " Hz: " << movingSamples << " samples moving; largest difference from the twin " << worst);
+            CHECK (movingSamples > 2000);
+            CHECK (worst <= 1.0e-9);
+        }
+}
+
+namespace
+{
+/** A Model A chip with its voices bent: oscillator 1 a saw synced by oscillator 3 (sync) or a triangle ring-modulated
+    by it (ring), oscillator 3 a bent saw sounding too; or (glide) oscillator 1 a saw whose frequency moves every 32
+    samples up and down a ramp that crosses converter switches, the pattern repeating. Returns the single sum (bent),
+    n samples after a settling time, and the line spacing of the periodic output. */
+std::vector<double> bentPatch (double rate, int which, int n, double& lineHz)
+{
+    Chip c = makeChip (Model::A, rate);
+    c.renderBendVoices (true);
+    const double src = 17026.0; // about 1 kHz, an exact register value
+    OscInput in;
+    in.pulseWidth = 2048.0f;
+    in.attackDecay = 0x00;
+    in.sustainRelease = 0xf0;
+    in.frequency = src;
+    in.control = ctrl::saw | ctrl::gate;
+    if (which != 2)
+        c.setOscillator (2, in); // the source, a bent saw
+    in.frequency = which == 2 ? src : (which == 0 ? src * 3.137 : src * 2.5); // ring: an exact 5 : 2 (its lines at half the source)
+    in.control = static_cast<std::uint8_t> (which == 0 ? (ctrl::saw | ctrl::sync | ctrl::gate) : (which == 1 ? (ctrl::triangle | ctrl::ring | ctrl::gate) : (ctrl::saw | ctrl::gate)));
+    c.setOscillator (0, in);
+    lineHz = src * 985248.0 / 16777216.0 / (which == 1 ? 2.0 : 1.0); // the source's frequency (ring: half of it)
+    const int warm = 8192;
+    std::vector<double> y;
+    y.reserve (static_cast<std::size_t> (warm + n));
+    std::vector<float> buf (32);
+    int k = 0;
+    while (static_cast<int> (y.size()) < warm + n)
+    {
+        if (which == 2)
+        {
+            // the glide: 64 steps up then 64 down, a step every 32 samples (1 to 3.85 kHz: the converter terms switch)
+            const int phase = k % 128;
+            const double pos = phase < 64 ? phase / 63.0 : (127 - phase) / 63.0;
+            in.frequency = src * (1.0 + 2.85 * pos);
+            c.setOscillator (0, in);
+            ++k;
+        }
+        std::fill (buf.begin(), buf.end(), 0.0f);
+        c.render (buf.data(), 32);
+        for (const float v : buf)
+            y.push_back (static_cast<double> (v));
+    }
+    y.erase (y.begin(), y.begin() + warm);
+    if (which == 2)
+        lineHz = rate / (128.0 * 32.0); // the pattern repeats every 128 x 32 samples (its frequencies are not exact: approximate)
+    return y;
+}
+} // namespace
+
+TEST_CASE ("alias: the bend with sync, ring and a glide across converter switches (Model A)", "[chain][alias][bend]")
+{
+    // Chip.h "BEND": events that the renderer takes away from the line's own sweep (a sync reset, a ring flip, a
+    // frequency write; Model A's converter terms switching with the frequency) carry the bend's slope term too. A bent
+    // saw synced by a bent saw (3.137 : 1), a bent triangle ring-modulated by it (5 : 2), 88.2 / 96 / 192 kHz: aliasing off the
+    // source's lines at most -96 dB re the strongest line (8.4.5, Model A, with sync and ring). The glide is printed (its
+    // output is not periodic: no gate).
+    for (const double rate : { 88200.0, 96000.0, 192000.0 })
+        for (const int which : { 0, 1, 2 })
+        {
+            double lineHz = 0.0;
+            const int n = 1 << 17;
+            const auto y = bentPatch (rate, which, n, lineHz);
+            std::vector<float> yf (y.begin(), y.end());
+            const auto a = offGridAlias (windowedMagnitudes (yf), rate, 20000.0, lineHz, 9.0);
+            const char* name = which == 0 ? "sync" : (which == 1 ? "ring" : "glide");
+            std::printf ("[bend] %s at %.0f Hz: %.1f dB at %.1f Hz\n", name, rate, a.worstDb, a.worstHz);
+            INFO (name << " at " << rate << " Hz: " << a.worstDb << " dB at " << a.worstHz << " Hz");
+            if (which != 2)
+                CHECK (a.worstDb <= -96.0);
+        }
 }

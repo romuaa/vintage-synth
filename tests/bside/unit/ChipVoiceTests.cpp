@@ -555,6 +555,7 @@ SharedResult sharedChips (Model m, int n, bool shared)
         std::vector<double> out;
         auto run = [&] (int samples) {
             std::array<double, ChipVoice::kBlock> so {}, sl {}, ss {}, y {};
+            std::array<Filter::Shape, ChipVoice::kBlock> sh {};
             int done = 0;
             while (done < samples)
             {
@@ -575,9 +576,10 @@ SharedResult sharedChips (Model m, int n, bool shared)
                             in += x->filterInputAc (i);
                         so[static_cast<std::size_t> (i)] = sf.processLinearDouble (in, sl[static_cast<std::size_t> (i)]);
                         ss[static_cast<std::size_t> (i)] = sf.staticOutput (dc);
+                        sh[static_cast<std::size_t> (i)] = sf.outputShapeCoefficients();
                     }
                     for (auto& x : v)
-                        x->finishShared (sf, so.data(), sl.data(), ss.data(), n, y.data(), want);
+                        x->finishShared (sh.data(), so.data(), sl.data(), ss.data(), n, y.data(), want);
                 }
                 out.insert (out.end(), y.begin(), y.begin() + want);
                 done += want;
@@ -715,6 +717,7 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
     }
     std::vector<double> out;
     std::array<double, ChipVoice::kBlock> so {}, sl {}, ss {}, y {};
+            std::array<Filter::Shape, ChipVoice::kBlock> sh {};
     std::size_t next = 0;
     int done = 0;
     while (done < s.samples)
@@ -740,9 +743,10 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
                         in += x->filterInputAc (i);
                     so[static_cast<std::size_t> (i)] = sf.processLinearDouble (in, sl[static_cast<std::size_t> (i)]);
                     ss[static_cast<std::size_t> (i)] = sf.staticOutput (dc);
+                    sh[static_cast<std::size_t> (i)] = sf.outputShapeCoefficients();
                 }
                 for (auto& x : v)
-                    x->finishShared (sf, so.data(), sl.data(), ss.data(), s.n, y.data(), want);
+                    x->finishShared (sh.data(), so.data(), sl.data(), ss.data(), s.n, y.data(), want);
             }
             out.insert (out.end(), y.begin(), y.begin() + want);
             done += want;
@@ -903,15 +907,17 @@ TEST_CASE ("chain: the static DC follows the voice counts with volume DC off (no
     }
 }
 
-TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCutoff while it stands still; cutoff and resonance writes land at their own sample", "[chain][cutoff]")
+TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCutoff while it stands still; cutoff writes land at their own sample", "[chain][cutoff]")
 {
     // A reference computation of the filter from the voice's own filter input at every sample (ChipVoice test aids), the
     // same Filter class, and the rule of ChipVoice.h "TIMING" written out here with its numbers: a cutoff or resonance
     // write made while the chip's sample s is in progress applies from the filter's sample for chip sample s on (output
     // sample s + filterLagSamples ()); a cutoff change less than 256 samples after the previous one runs
     // Filter::processWithCutoff (the cutoff given every sample) from that sample until the cutoff has stood still for
-    // 256 samples, then setCutoff + process. One isolated change, a sweep (a change every 32 samples), resonance writes
-    // inside the sweep and while still, a last isolated change. To 1e-12 (bit for bit on Clang; GCC differed by one
+    // 256 samples, then setCutoff + process. One isolated change, a sweep (a change every 32 samples), a last isolated
+    // change. (S3b-2 review: resonance writes are no longer here: they blend two configurations over the write's
+    // window like volume and mode writes, and are pinned where they land by "every write lands where latencySamples ()
+    // says ..." in ChipVoiceAliasTests.cpp.) To 1e-12 (bit for bit on Clang; GCC differed by one
     // rounding on Model A), both models (volume DC on, no 0x18 write: one configuration). Both paths are taken. Changed in S3b-2: the comparison is on the filter's output, not the
     // chain's (what follows the filter, the anti-alias stages, is pinned by its own tests), and the lag is the filter's
     // (the renderer's latency + 1, plus Model A's bus pre-filter), no longer latencySamples () + 1, which now also counts
@@ -949,11 +955,7 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
         for (int k = 0; k < 60; ++k)
         {
             w.push_back ({ at (4000.0 + 32.0 * k), 0x16, static_cast<std::uint8_t> (0x30 + (k * 23) % 160) });
-            if (k == 30)
-                w.push_back ({ at (4000.0 + 32.0 * k + 5.0), 0x17, 0xc1 });
         }
-        w.push_back ({ at (6200.0), 0x17, 0x51 });
-        w.push_back ({ at (9000.0), 0x17, 0x31 });
         w.push_back ({ at (11000.0), 0x16, 0x90 });
         const int total = 14000;
         // the voice, sample by sample: its filter's input and output at every output sample
