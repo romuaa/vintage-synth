@@ -136,7 +136,9 @@ the parked figures).
   cache, `s3b1/listen/`.
   **S3b-2, the aliasing of the static curves, on `bside/s3b-alias`: built, reviewed
   independently four times, fixed after each; the fourth review found no defect in the
-  code. Gated locally; pull request open.** As built:
+  code. Merged (pull request 44, on the owner's word "merge both when green", 2026-11-24;
+  full local gate on `8405f75`, quick gate and CI run 45274663699 green on `6f5eebf`, after a
+  first run failed to build two test files on Windows).** As built:
   a linear-phase half-band pre-filter before Model B's mixer curve (the curve at the internal
   rate); Model A's voice bend folded into the renderer; Model A's pre-filter on both buses and
   its output function, gain and mixer curve at twice the rate; Model A's mixer curve continued
@@ -198,7 +200,8 @@ the parked figures).
   (O10): Model B is accepted by ear ("practically perfect; some minor audible things, ok");
   Model A opens later but faster than the reference and closes the same way, so the start
   and end of a sweep are cleaner than the reference; no further effort goes into Model A
-  for now beyond finishing what is in flight.** **The cutoff jump at code 512, fixed (scope O9; `bside/modela-cutoff-steps`):** from code
+  for now beyond finishing what is in flight.** **The cutoff jump at code 512, fixed (scope O9; `bside/modela-cutoff-steps`; full local gate
+  passed on the branch with S3b-2 merged in, `69284ce`):** from code
   480 up Model A's cutoff mapping follows the reference (the fall at 511 -> 512 is -15.4 %
   against the reference's -15.0 %; in the owner's one-voice sweep the jump there is -1.44 dB
   in 2 to 5 kHz, was -2.23, reference -1.67; every write at or above 480 within 0.34 dB of
