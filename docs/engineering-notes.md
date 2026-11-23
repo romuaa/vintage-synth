@@ -40,6 +40,10 @@ is a rule, a line here.
   static map; name the argument first (GCC 11, CI's compiler, does not warn).
 - A test that a write does *not* change something needs a companion check that the write still acts
   (a mutation removing the volume passed a DC-only test).
+- Fit and validate a nonlinearity on tones and noise together, and measure its aliasing; a fit to noise
+  floors alone was right there and 6 to 12 dB wrong on tones.
+- A magnitude-only design fixes a response only up to reflecting its zeros: gate the phase too, or a
+  wrong factor (180 degrees off) passes.
 
 ## B-Side S3a closing step (2026-11-23)
 
@@ -49,7 +53,9 @@ is a rule, a line here.
 | Magnitude-fitted numerators per filter mode, summed, missed the low + high notch by far. | A notch is a cancellation between modes; per-mode magnitude fits do not keep the phases it needs. | Design the numerator of each mode combination as a whole (or match complex responses); gate every combination. |
 | A least-squares numerator on a fixed frequency grid was exact in some places and 5 dB off in others. | Where the gated band is narrow (low cutoffs at high rates) the grid leaves one or two points and the system degenerates. | Prefer a closed form with nodes placed relative to the corner and the band edge; never solve on a grid without checking its conditioning. |
 | `processWithCutoff` cost 20 ns instead of 10 after a table was added. | The table was invalidated in the shared coefficient update, so every `setCutoff` (one per 64 samples in the bench) rebuilt it. | Invalidate a cache only on what it depends on; benchmark the path with the writes it will see. |
-| A quadratic on the whole filter output fixed the stop-band floor and broke `a_routing_b`. | The term added harmonics to low-pass tones; the reference's term acts on the band/high part only. | Before placing a nonlinearity, run it against traces of the other modes and of tones, not only the data that motivated it. |
+| A quadratic on the whole filter output fixed the stop-band floor and broke `a_routing_b`. | The term added harmonics to low-pass tones. (Placed on the band/high part instead it passed every committed gate, but the third review showed it wrong there too; next row.) | Before placing a nonlinearity, run it against traces of the other modes and of tones, not only the data that motivated it. |
+| A second-order term fitted on noise floors (held-out error 7.3 -> 0.2 dB) was removed after review. | Noise floors fix the term's size on noise only; on tones it put second harmonics 6 to 12 dB above the reference's (band-pass, pulse), carried a DC that moves with the audio, was n times too large in Shared and aliased at -36 dB against the fundamental (decisions C6). | Fit and validate a nonlinearity on tones and noise together, check it in every topology it runs in, and measure its aliasing against the budget before committing it; let a header claim only what a test measured. |
+| A rate-independent filter met its 0.5 dB magnitude gate with its phase up to 180 degrees off the prototype. | The numerator was designed from the magnitude alone and factored minimum-phase; where the prototype has right-half-plane zeros the reflected factor has the same magnitude and the wrong phase. A mutation swapping b0 and b2 survived every test. | Gate the phase (or the complex response) of a magnitude-designed filter; put the zeros on the prototype's side (decisions C11). |
 | A volume test with held voices passed while the volume was not applied at all. | It checked only that the DC did not move, and the target volume was 0. | Write a non-zero target and check that the write still acts (the audio scales by the volume) next to what must not change. |
 
 ## B-Side S3a: filter and output stage (2026-11-19)

@@ -5,6 +5,19 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3a fix round after the third review (2026-11-23)
+- Model B's band/high second-order term is removed: it matched noise floors but put harmonics on tones that the
+  reference does not have, aliased far above the budget and broke the Shared claim. Model B's filter is linear again;
+  its high-pass stop-band floor on noise at mid and full level stays about 6 to 7 dB low (a recorded known deviation).
+  `s3aB` 5.5 ns at 96 kHz (budget 7).
+- Phase: the filter's numerator keeps the prototype's zeros on their side of the unit circle (was always the
+  minimum-phase factor, up to 180 degrees off). The phase of the linear response is gated at 30 degrees from the
+  prototype over the rate gate's set (seven settings at 88.2 and 96 kHz gated at their own figure + 2, at most 33.7
+  degrees); `processWithCutoff` within 1 degree of `setCutoff`. Magnitudes are unchanged.
+- Tests: the Shared test also runs where the band- and high-pass carry the signal (volume DC on and off); the input
+  guard's threshold is pinned. `Filter.h` documents the table rebuild cost of a resonance or mode write and the
+  subnormal input path; its claims are reduced to what is tested.
+
 ### B-Side S3a closing step (2026-11-23)
 - The filter's response no longer depends on the internal rate: matched poles and a numerator designed per mode
   combination, at no per-sample cost. Within 0.19 dB (Model B) and 0.10 dB (Model A's linear part) of the analog
@@ -14,7 +27,7 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 - Shared topology: every chip's stage gets the filter's static DC in full (`OutputStage::sharedFilterShare`): Model B
   equals n Per Note chips for n = 1 .. 16; Model A's difference (summed distortion) is documented and tested.
 - Model B's band- and high-pass part carries a second-order term (0.10), the reference's stop-band floor at mid and full
-  level (was about 10 dB low; held-out traces now within 0.2 dB).
+  level (was about 10 dB low; held-out traces now within 0.2 dB). Removed again in the fix round above.
 - Tests that can fail: the board low-pass corner, the volume with held voices (DC off and on, applied once), every
   resonance and cutoff law; each shown failing on a mutation. Test sources build with GCC 13.
 - Cost (`chip_bench`, 96 kHz, indicative): `s3aB` 5.9 ns (budget 7), `cutB` 10.4 ns. Open: `ChipRender.cpp` fails GCC
