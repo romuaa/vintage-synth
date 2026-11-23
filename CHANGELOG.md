@@ -5,6 +5,26 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3b-2: aliasing of the static curves (2026-11-23)
+- The chain's static curves run on band-limited signals: Model B's mixer input passes a linear-phase half-band FIR
+  (pass band to 20 kHz within 0.01 dB) before the curve; Model A's two buses pass the same FIR before the filter, and the
+  filter's output function, the mixer gain and the mixer curve run at twice the internal rate between two short
+  half-band filters (`HalfBand.*`, new). In Shared the 2x part runs per chip on its share (the owner hands over the
+  shared filter's linear output and low-pass value: `ChipVoice::finishShared` takes them).
+- Model A's voice bend is folded into the renderer (`Chip::renderBendVoices`, on in `ChipVoice`, off for a bare chip):
+  its steps and slope changes are those of the bent waveform, so the bend no longer folds; `OutputStage::shapeVoice`
+  is gone (`render::bend`).
+- The chain's latency grows by the filters' delay (Model B 8 + 21 samples at 96 kHz, Model A 8 + 21 + 7; at 88.2 kHz
+  8 + 41 and 8 + 41 + 7); writes still land at their cycle in the output.
+- Alias gate of 8.19.4 (decisions "B-Side S3b-2" A2, A3): met on every row whose curves stay inside their limits, at
+  every rate (Model B at worst -111.0 dB with real chips, -126.1 dB with ideal voices; Model A -115.6 / -117.7 dB);
+  not met on 9 rows where two or three full-level voices through Model A's low-pass at resonance 15 drive the mixer past
+  the limit of its curve (-78.9 to -98.3 dB). Real chips through the band- and high-pass are reported: there the
+  renderer's own components, weighed by the filter against voice 1's fundamental, decide the figure.
+- Wanted signal: pass band within 0.023 dB, products of sines within 0.011 dB and harmonics above -40 dB within
+  0.06 dB of the exact curves. Cost: Model B's filter, output stage and pre-filter take 7.6 to 7.8 ns per sample at
+  96 kHz, over the 7 ns budget (not met); Model A's added stages about 13.5 ns plus 4 ns for the bend.
+
 ### B-Side S3b-1: two buses and the whole chain (2026-11-23)
 - The chip renderer delivers its two buses in double precision (`Chip::renderBuses`): the oscillators routed to the
   filter and the others, with each bus's envelope sum and voice count; oscillator 3 can be muted on the direct path.

@@ -48,6 +48,19 @@ is a rule, a line here.
   too and measure what the writes add (the output minus the held states switched by the ideal step).
 - Check a band-limited step's place against the kernel's own step function, not by interpolating where it
   crosses one half (linear interpolation is up to 0.05 sample off).
+- A gate measured relative to a fundamental that a linear filter cuts measures that filter's weighting of whatever
+  else the signal carries: isolate the stage under test (ideal input, or the same chain with the stage linear) before
+  calling a figure its aliasing.
+
+## B-Side S3b-2: aliasing of the static curves (2026-11-23)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| The alias gate of the static curves failed by up to 27 dB through the high- and band-pass with real chips, although the curves were band-limited. | The renderer's own components (within its 8.4.5 budget at its output) pass a high- or band-pass unchanged while voice 1's fundamental, the gate's reference, is cut by up to 46 dB; resonance lifts them near the corner. The same rows with every curve made linear gave the same figures to a fraction of a dB. | Before blaming a stage for aliasing, measure the same signal through the chain with that stage linear; to gate a stage alone, feed it ideal band-limited voices (the renderer's target waveform) through the chain's own entry. |
+| Model A rows at resonance 15 missed the gate by up to 14 dB at twice the rate, and a 100 dB decimator changed nothing. | Three full-level voices through the resonant low-pass drive the mixer past the turning point of its quintic, where the curve is flat: a slope-continuous corner whose products fold at twice the rate itself, before any decimator. | Check whether a curve leaves its fitted range before sizing anti-alias filters (simulate its input range); oversampling a polynomial bounds its products, not those of a limit. |
+| A silence test failed after "the filters' length" although every filter was FIR. | The test waited one delay (the centre tap), but a linear-phase FIR's output depends on its input for twice its delay. | A FIR's memory is its whole length, 2 x its delay: wait that long before expecting a constant out. |
+| The chain's test of a volume step with audio gave zero output. | With volume DC off the volume register scales the post gain, and the register is 0 at power-on. | Write the volume in any chain test that renders audio; a zero output is a set-up error until shown otherwise. |
+| A static DC through a FIR, then a curve, minus the curve at the static operating point, left 1e-17 where 0 was expected. | A FIR's taps sum to 1 only within rounding. | Write half-band filters in the difference form (each pair minus twice the centre, added to the centre): a constant passes exactly, so held DCs cancel exactly. |
 
 ## B-Side S3b-1: two buses and the whole chain (2026-11-23)
 
