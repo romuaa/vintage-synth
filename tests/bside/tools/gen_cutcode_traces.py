@@ -6,14 +6,14 @@ on each file (docs/bside-oracle-adapter.md); the MANIFEST lists them like every 
 
 One noise voice (oscillator 3, frequency 0xffff, sustain 4: a low level), routed to the low-pass, resonance 0, volume 15.
 Every segment holds one cutoff code: one write group, then 16 measured frames after the 8 of settling (0.6 s), so each
-segment's corner is measured like every other corner (AnalogMeasure.h). The codes of one pass: at every multiple of 64
-from 64 to 1984 the three codes b-2, b-1, b (one step inside the stretch below the boundary, then the boundary's step);
-at every odd multiple of 32 from 96 to 2016 the two codes b-1, b (the boundary's step). Every boundary of the converter's
-ladder where it falls back lies at a multiple of 32. The reference's corner at a code varies from segment to segment
-(about 1 to 3 % between the codes 448 and 640, 5 to 25 % below about 450 at this level, where its response bends
-slowly), so the walk is measured more than once and the corner per code is the mean over the passes: two passes over
-every code (up, then down), six more over the codes around 448 .. 640 (each at another place in the file, so each
-pass sees other noise).
+segment's corner is measured like every other corner (AnalogMeasure.h). Only the codes that carry the gate of 8.19.3
+(owner decision O9: the steps from 479 -> 480 up to 1600) are walked. The codes of one pass: at every multiple of 64
+from 512 to 1600 the three codes b-2, b-1, b (one step inside the stretch below the boundary, then the boundary's
+step); at every odd multiple of 32 from 480 to 1568 the two codes b-1, b (the boundary's step). Every boundary of the
+converter's ladder where it falls back lies at a multiple of 32. The reference's corner at a code varies from segment
+to segment (about 1 to 3 % between the codes 480 and 640), so the walk is measured more than once and the corner per
+code is the mean over the passes: two passes over every code (up, then down), six more over the codes 479 .. 640
+(each at another place in the file, so each pass sees other noise).
 
 Every file has the same write cycles (60 segments), so the noise is the same at a segment index in every file. The one
 bypass twin (the first file's writes, the voice not routed) therefore serves every file: with the voice not routed the
@@ -36,14 +36,14 @@ PER_FILE = 60
 
 def pass_codes():
     codes = []
-    for b in range(64, 2017, 32):
+    for b in range(480, 1601, 32):
         codes += [b - 2, b - 1, b] if b % 64 == 0 else [b - 1, b]
     return codes
 
 
 def dense_codes():
     codes = []
-    for b in range(448, 641, 32):
+    for b in range(480, 641, 32):
         codes += [b - 2, b - 1, b] if b % 64 == 0 else [b - 1, b]
     return codes
 
