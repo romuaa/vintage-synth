@@ -228,8 +228,38 @@ std::vector<double> idealVoice (Model m, double rate, double hz, bool square, do
     return x;
 }
 
-/** The chain run on ideal voices (ChipVoice::processBuses), as renderSignal sets it up: the buses of the routing (the
-    oscillators routed, sounding or not, count on the filter bus), envelope sums of the sounding voices. */
+/** The six bus streams a chip renders (Chip::renderBuses) or test code builds from ideal voices. */
+struct BusStreams
+{
+    std::vector<double> fa, da, fe, de, fv, dv;
+};
+
+/** The buses of ideal voices, as renderSignal sets the chip up: the buses of the routing (the oscillators routed,
+    sounding or not, count on the filter bus), envelope sums of the sounding voices. */
+BusStreams idealBuses (const Signal& s, const Setting& st, const std::array<std::vector<double>, 3>& voices)
+{
+    const int routed = st.routing == 0 ? 0 : (st.routing == 1 ? 1 : 7);
+    const std::size_t total = voices[0].size();
+    BusStreams b { std::vector<double> (total, 0.0), std::vector<double> (total, 0.0), std::vector<double> (total, 0.0),
+                   std::vector<double> (total, 0.0), std::vector<double> (total, 0.0), std::vector<double> (total, 0.0) };
+    double nf = 0.0;
+    for (int k = 0; k < 3; ++k)
+        nf += ((routed >> k) & 1) != 0 ? 1.0 : 0.0;
+    for (std::size_t i = 0; i < total; ++i)
+    {
+        for (int k = 0; k < s.voices; ++k)
+        {
+            const bool toFilter = ((routed >> k) & 1) != 0;
+            (toFilter ? b.fa : b.da)[i] += voices[static_cast<std::size_t> (k)][i];
+            (toFilter ? b.fe : b.de)[i] += 1.0;
+        }
+        b.fv[i] = nf;
+        b.dv[i] = 3.0 - nf;
+    }
+    return b;
+}
+
+/** The chain run on ideal voices (ChipVoice::processBuses) with the buses of idealBuses. */
 std::vector<double> renderIdeal (Model m, double rate, const Signal& s, const Setting& st, const std::array<std::vector<double>, 3>& voices)
 {
     Voice p (m, rate, false);
@@ -240,24 +270,10 @@ std::vector<double> renderIdeal (Model m, double rate, const Signal& s, const Se
     const int routed = st.routing == 0 ? 0 : (st.routing == 1 ? 1 : 7);
     v.write (0x17, static_cast<std::uint8_t> ((st.resonance << 4) | routed));
     v.write (0x18, static_cast<std::uint8_t> (st.mode | 0x0f));
-    const std::size_t total = voices[0].size();
-    std::vector<double> fa (total, 0.0), da (total, 0.0), fe (total, 0.0), de (total, 0.0), fv (total, 0.0), dv (total, 0.0);
-    double nf = 0.0;
-    for (int k = 0; k < 3; ++k)
-        nf += ((routed >> k) & 1) != 0 ? 1.0 : 0.0;
-    for (std::size_t i = 0; i < total; ++i)
-    {
-        for (int k = 0; k < s.voices; ++k)
-        {
-            const bool toFilter = ((routed >> k) & 1) != 0;
-            (toFilter ? fa : da)[i] += voices[static_cast<std::size_t> (k)][i];
-            (toFilter ? fe : de)[i] += 1.0;
-        }
-        fv[i] = nf;
-        dv[i] = 3.0 - nf;
-    }
+    BusStreams b = idealBuses (s, st, voices);
+    const std::size_t total = b.fa.size();
     std::vector<double> y (total, 0.0);
-    v.processBuses ({ fa.data(), da.data(), fe.data(), de.data(), fv.data(), dv.data() }, static_cast<int> (total), y.data());
+    v.processBuses ({ b.fa.data(), b.da.data(), b.fe.data(), b.de.data(), b.fv.data(), b.dv.data() }, static_cast<int> (total), y.data());
     const int warm = static_cast<int> (total) - kAliasN;
     y.erase (y.begin(), y.begin() + warm);
     return y;
@@ -271,8 +287,11 @@ namespace
     bent as in the chain) renders the buses; the filter and the stage run as in ChipVoice (Model A: the same bus
     pre-filter); the mixer input (Model A: the filter's linear output and low-pass value) is interpolated by two
     half-band stages of 120 dB, the curves run at 4x, two half-band stages of 120 dB decimate. What remains above the
-    chain's own figure is the curves' aliasing. */
-std::vector<double> renderReference4x (Model m, double rate, const Signal& s, const Setting& st)
+    chain's own figure is the curves' aliasing. With `buses`, those buses replace the chip's (statement (a): ideal
+    voices); with `range`, the mixer input's lowest and highest value at 4x over the measured samples (the pinned
+    rows' check that the input leaves the range the curve was fitted on). */
+std::vector<double> renderReference4x (Model m, double rate, const Signal& s, const Setting& st, const BusStreams* buses = nullptr,
+                                       std::array<double, 2>* range = nullptr)
 {
     Chip c = makeChip (m, rate);
     c.renderBendVoices (true);
@@ -315,9 +334,18 @@ std::vector<double> renderReference4x (Model m, double rate, const Signal& s, co
     dn1.prepare (d2);
     const int warm = std::max (16384, static_cast<int> (rate * 0.03));
     const int total = warm + kAliasN;
-    std::vector<double> fa (static_cast<std::size_t> (total)), da (fa.size()), fe (fa.size()), de (fa.size()), fv (fa.size()), dv (fa.size());
-    c.renderBuses ({ fa.data(), da.data(), fe.data(), de.data(), fv.data(), dv.data() }, total);
+    BusStreams made;
+    if (buses == nullptr)
+    {
+        const auto z = static_cast<std::size_t> (total);
+        made = { std::vector<double> (z), std::vector<double> (z), std::vector<double> (z), std::vector<double> (z), std::vector<double> (z), std::vector<double> (z) };
+        c.renderBuses ({ made.fa.data(), made.da.data(), made.fe.data(), made.de.data(), made.fv.data(), made.dv.data() }, total);
+    }
+    const BusStreams& bs = buses != nullptr ? *buses : made;
+    REQUIRE (bs.fa.size() == static_cast<std::size_t> (total));
+    const auto &fa = bs.fa, &da = bs.da, &fe = bs.fe, &de = bs.de, &fv = bs.fv, &dv = bs.dv;
     std::vector<double> y (static_cast<std::size_t> (kAliasN));
+    double lowest = 1e300, highest = -1e300;
     const double g = o.gainFactor();
     auto shape = [&] (double lp) {
         const double v = lp < sh.lpMin ? sh.lpMin : (lp > sh.lpMax ? sh.lpMax : lp);
@@ -349,13 +377,23 @@ std::vector<double> renderReference4x (Model m, double rate, const Signal& s, co
         upL2.process (lb, l4[2], l4[3]);
         double m4[4];
         for (int k = 0; k < 4; ++k)
-            m4[k] = o.mixerCurve (x4[k] + (m == Model::A ? shape (l4[k]) : 0.0));
+        {
+            const double in4 = x4[k] + (m == Model::A ? shape (l4[k]) : 0.0);
+            if (i >= warm)
+            {
+                lowest = std::min (lowest, in4);
+                highest = std::max (highest, in4);
+            }
+            m4[k] = o.mixerCurve (in4);
+        }
         const double ma = dn2.process (m4[0], m4[1]);
         const double mb = dn2.process (m4[2], m4[3]);
         const double out = dn1.process (ma, mb);
         if (i >= warm)
             y[static_cast<std::size_t> (i - warm)] = out;
     }
+    if (range != nullptr)
+        *range = { lowest, highest };
     return y;
 }
 } // namespace
@@ -368,23 +406,55 @@ struct GateRow
     std::string what;
 };
 
-/** Which statement of the restated gate a row belongs to (8.19.4, after the review). */
+/** Which statement of the restated gate a row belongs to (8.19.4, after the review and after the fix round). */
 enum class Statement
 {
     a, // ideal band-limited voices into the chain's buses: the absolute limit
     b, // real chips, all direct and low-pass at resonance 0: the absolute limit
-    c  // real chips, every other row: within 1 dB of the 4x reference
+    c  // real chips, every other row: the absolute limit or within 1 dB of the 4x reference
 };
 
 /** The real chip's rows under (b): all direct, and the low-pass rows at resonance 0 (both cutoffs). */
 bool chipAbsolute (const Signal&, const Setting& st) { return st.routing == 0 || (st.mode == 0x10 && st.resonance == 0); }
 
+/** The pinned rows (docs/architecture.md 8.19.4, after the fix round; owner decision O6): Model A with its mixer
+    overdriven (two or three full-level voices all through the filter, low-pass at resonance 15), rows that miss (a) or
+    (c) after the smooth continuation of the mixer curve. Each is gated at its measured figure + 1 dB. The list is
+    closed: every other row gets the full limits; a listed row must still miss them (else the entry is stale and the
+    test fails) and its mixer input must leave the range the curve was fitted on (OutputStage::mixerLimits, checked
+    at 4x on the row's own buses), so the list holds nothing else. Model B has no pinned row. Figures: macOS arm64,
+    2026-11-23 (the full set's raw output: ~/Library/Caches/bside-oracle/s3b2/gate-final.txt, outside the repo). */
+struct Pin
+{
+    Statement which;
+    double rate;
+    const char* signal;
+    double figure;
+};
+const Pin kPins[] { { Statement::a, 88200.0, "saw + square 5:4 at 2 kHz", -96.7 }, { Statement::a, 88200.0, "three voices at 2 kHz", -93.4 },
+                    { Statement::a, 96000.0, "saw + square 5:4 at 2 kHz", -96.3 }, { Statement::a, 96000.0, "three voices at 2 kHz", -96.5 },
+                    { Statement::c, 88200.0, "saw + square 5:4 at 2 kHz", -96.3 }, { Statement::c, 88200.0, "three voices at 2 kHz", -91.2 },
+                    { Statement::c, 96000.0, "saw + square 5:4 at 2 kHz", -97.0 }, { Statement::c, 96000.0, "three voices at 2 kHz", -92.1 } };
+constexpr int kPinCount = static_cast<int> (sizeof (kPins) / sizeof (kPins[0]));
+
+/** The pinned row a measurement belongs to, if any: Model A, all through the filter, low-pass 2047 at resonance 15. */
+const Pin* pinFor (Model m, double rate, Statement which, const Signal& s, const Setting& st)
+{
+    if (m != Model::A || st.routing != 2 || st.mode != 0x10 || st.cutoff != 2047 || st.resonance != 15)
+        return nullptr;
+    for (const auto& p : kPins)
+        if (p.which == which && std::abs (p.rate - rate) < 0.5 && std::string (p.signal) == s.name)
+            return &p;
+    return nullptr;
+}
+
 struct GateTotals
 {
-    int rows[3] {}, failures[3] {};
+    int rows[3] {}, failures[3] {}, pinsSeen = 0;
     GateRow worst[3] {};
     double worstMargin[3] { -1e9, -1e9, -1e9 };
-    std::vector<std::string> over; // every row over its limit
+    std::vector<std::string> over;   // every row over its limit (pinned rows: over figure + 1 dB, stale, not overdriven)
+    std::vector<std::string> pinned; // every pinned row measured
 };
 
 /** The rows of one model and rate that `select` keeps, under the statement given; printed if asked. */
@@ -399,11 +469,15 @@ void runStatement (Model m, double rate, Statement which, Select&& select, GateT
         bool made = false;
         for (const auto& st : settingsFor (s))
         {
-            const bool absolute = chipAbsolute (s, st);
-            if ((which == Statement::b && ! absolute) || (which == Statement::c && absolute) || ! select (s, st))
+            const bool absoluteRow = chipAbsolute (s, st);
+            if ((which == Statement::b && ! absoluteRow) || (which == Statement::c && absoluteRow) || ! select (s, st))
                 continue;
             const double f1 = s.reg[0] * kClock / 16777216.0;
-            double limit = limitFor (m, s), ref = 0.0;
+            const double absolute = limitFor (m, s);
+            const Pin* pin = pinFor (m, rate, which, s, st);
+            double limit = absolute;
+            bool refUsed = false;
+            std::array<double, 2> range { 0.0, 0.0 };
             Alias a;
             if (which == Statement::a)
             {
@@ -415,24 +489,50 @@ void runStatement (Model m, double rate, Statement which, Select&& select, GateT
                     made = true;
                 }
                 a = aliasOfSpectrum (bhMagnitudes (renderIdeal (m, rate, s, st, voices)), rate, f1 / s.common, f1);
+                if (pin != nullptr)
+                {
+                    const BusStreams b = idealBuses (s, st, voices);
+                    renderReference4x (m, rate, s, st, &b, &range);
+                }
             }
             else
             {
                 a = aliasOfSpectrum (bhMagnitudes (renderSignal (m, rate, s, st)), rate, f1 / s.common, f1);
-                if (which == Statement::c)
+                // (c) after the fix round: inside the absolute limit, or within 1 dB of the 4x reference
+                if (which == Statement::c && (a.db > absolute || pin != nullptr))
                 {
-                    ref = aliasOfSpectrum (bhMagnitudes (renderReference4x (m, rate, s, st)), rate, f1 / s.common, f1).db;
-                    limit = ref + 1.0;
+                    const double ref = aliasOfSpectrum (bhMagnitudes (renderReference4x (m, rate, s, st, nullptr, &range)), rate, f1 / s.common, f1).db;
+                    limit = std::max (absolute, ref + 1.0);
+                    refUsed = true;
                 }
             }
             ++t.rows[w];
-            char buf[300];
-            std::snprintf (buf, sizeof (buf), "(%c) Model %s %6.0f Hz %-30s %-16s %-9s cutoff %4d res %2d: %7.1f dB at %7.1f Hz (limit %.1f%s)", "abc"[w],
+            bool fail = a.db > limit;
+            char pinNote[200] = "";
+            if (pin != nullptr)
+            {
+                ++t.pinsSeen;
+                OutputStage o;
+                o.prepare (m, rate, false);
+                const auto fitted = o.mixerLimits();
+                const bool overdriven = range[0] < fitted[0] || range[1] > fitted[1];
+                const bool stale = ! fail; // inside the full limits: the entry must come off the list
+                std::snprintf (pinNote, sizeof (pinNote), "; PINNED (O6) at %.1f + 1 dB; mixer input %.2f .. %.2f, fitted %.2f .. %.2f%s%s", pin->figure,
+                               range[0], range[1], fitted[0], fitted[1], stale ? "; STALE: inside the full limits" : "",
+                               overdriven ? "" : "; NOT OVERDRIVEN: may not be pinned");
+                fail = a.db > pin->figure + 1.0 || stale || ! overdriven;
+                limit = pin->figure + 1.0;
+            }
+            char buf[420];
+            std::snprintf (buf, sizeof (buf), "(%c) Model %s %6.0f Hz %-30s %-16s %-9s cutoff %4d res %2d: %7.1f dB at %7.1f Hz (limit %.1f%s)%s", "abc"[w],
                            m == Model::A ? "A" : "B", rate, s.name, st.routing == 0 ? "all direct" : (st.routing == 1 ? "voice 1 filtered" : "all filtered"),
-                           st.routing == 0 ? "" : modeName (st.mode), st.cutoff, st.resonance, a.db, a.hz, limit, which == Statement::c ? ": the 4x reference + 1 dB" : "");
+                           st.routing == 0 ? "" : modeName (st.mode), st.cutoff, st.resonance, a.db, a.hz, limit,
+                           pin != nullptr ? "" : (refUsed && limit > absolute ? ": the 4x reference + 1 dB" : ""), pinNote);
             if (print)
                 std::printf ("[alias-gate] %s\n", buf);
-            if (a.db > limit)
+            if (pin != nullptr)
+                t.pinned.push_back (buf);
+            if (fail)
             {
                 ++t.failures[w];
                 t.over.push_back (buf);
@@ -449,7 +549,10 @@ void runStatement (Model m, double rate, Statement which, Select&& select, GateT
 void report (const GateTotals& t)
 {
     for (int w = 0; w < 3; ++w)
-        std::printf ("[alias-gate] (%c) %d rows, %d over their limit; closest to it: %s\n", "abc"[w], t.rows[w], t.failures[w], t.worst[w].what.c_str());
+        std::printf ("[alias-gate] (%c) %d rows, %d failing; closest to its limit: %s\n", "abc"[w], t.rows[w], t.failures[w], t.worst[w].what.c_str());
+    std::printf ("[alias-gate] pinned rows measured: %d of %d listed\n", t.pinsSeen, kPinCount);
+    for (const auto& r : t.pinned)
+        std::printf ("[alias-gate] PINNED: %s\n", r.c_str());
     for (const auto& r : t.over)
         std::printf ("[alias-gate] NOT MET: %s\n", r.c_str());
 }
@@ -457,14 +560,15 @@ void report (const GateTotals& t)
 
 TEST_CASE ("alias gate: the static curves through the chain, the full set of 8.19.4 at every internal rate (hidden; several minutes)", "[.chain-alias-full]")
 {
-    // 8.19.4 (after the review): the signal set (one voice: saw and square at 3.85 kHz, saw at 2 and 1 kHz; two voices:
-    // saw + saw 3:2, saw + square 5:4 at 3.85 and 2 kHz; three voices at 3.85 and 2 kHz; full envelope; all direct,
-    // voice 1 through the filter, all through it: low-, band-, high-pass, cutoff 2047 and 1024, resonance 0 and 15) and
-    // the measurement (2^18 samples, 7-term Blackman-Harris, 20 Hz - 20 kHz, the common fundamental's lines excluded
-    // +-10 bins, relative to voice 1's fundamental) under three statements, all asserted: (a) ideal band-limited voices
-    // in the chain's buses, every row, Model B at most -103 dB, Model A at most -99 dB to 2 kHz and -83 dB to 3.85 kHz;
-    // (b) real chips, all direct and low-pass at resonance 0, the same limits; (c) real chips, every other row, within
-    // 1 dB of the chain with its curves at four times the rate (renderReference4x). Every row is printed.
+    // 8.19.4 (after the review and after the fix round): the signal set (one voice: saw and square at 3.85 kHz, saw at
+    // 2 and 1 kHz; two voices: saw + saw 3:2, saw + square 5:4 at 3.85 and 2 kHz; three voices at 3.85 and 2 kHz; full
+    // envelope; all direct, voice 1 through the filter, all through it: low-, band-, high-pass, cutoff 2047 and 1024,
+    // resonance 0 and 15) and the measurement (2^18 samples, 7-term Blackman-Harris, 20 Hz - 20 kHz, the common
+    // fundamental's lines excluded +-10 bins, relative to voice 1's fundamental) under three statements, all asserted:
+    // (a) ideal band-limited voices in the chain's buses, every row, Model B at most -103 dB, Model A at most -99 dB to
+    // 2 kHz and -83 dB to 3.85 kHz; (b) real chips, all direct and low-pass at resonance 0, the same limits; (c) real
+    // chips, every other row, the same limits or within 1 dB of the chain with its curves at four times the rate
+    // (renderReference4x). The pinned rows (kPins) at their figure + 1 dB. Every row is printed.
     const auto t0 = std::chrono::steady_clock::now();
     GateTotals t;
     for (const Model m : { Model::B, Model::A })
@@ -475,6 +579,7 @@ TEST_CASE ("alias gate: the static curves through the chain, the full set of 8.1
     std::printf ("[alias-gate] full set: %.0f s\n", std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count());
     CHECK (t.rows[0] == 2 * 7 * 202);
     CHECK (t.rows[1] + t.rows[2] == 2 * 7 * 202);
+    CHECK (t.pinsSeen == kPinCount);
     for (int w = 0; w < 3; ++w)
     {
         INFO (t.worst[w].what);
@@ -485,8 +590,8 @@ TEST_CASE ("alias gate: the static curves through the chain, the full set of 8.1
 TEST_CASE ("alias gate: the static curves through the chain, a reduced set in the normal run (88.2 and 96 kHz)", "[chain][alias][gate]")
 {
     // The full set (hidden, "[.chain-alias-full]") at the two lowest internal rates (the narrowest transition bands, the
-    // worst rows of the full set), asserted outright: (a) every row; (b) every row; (c) the rows at resonance 15 and the
-    // three-voice rows.
+    // worst rows of the full set) under the same rules, the pinned rows included: (a) every row; (b) every row; (c) the
+    // rows at resonance 15 and the three-voice rows.
     GateTotals t;
     for (const Model m : { Model::B, Model::A })
         for (const double rate : { 88200.0, 96000.0 })
@@ -496,6 +601,7 @@ TEST_CASE ("alias gate: the static curves through the chain, a reduced set in th
             runStatement (m, rate, Statement::c, [] (const Signal& s, const Setting& st) { return st.resonance == 15 || s.voices == 3; }, t, false);
         }
     report (t);
+    CHECK (t.pinsSeen == kPinCount);
     for (int w = 0; w < 3; ++w)
     {
         INFO (t.worst[w].what);
@@ -503,6 +609,7 @@ TEST_CASE ("alias gate: the static curves through the chain, a reduced set in th
         CHECK (t.rows[w] > 50);
     }
 }
+
 TEST_CASE ("alias: the half-band designs: pass band within 0.01 dB to 20 kHz, stop band at least 40 dB from 8.19.4's edge, the filters realise them", "[chain][alias][halfband]")
 {
     // 8.19.4: a linear-phase half-band FIR at the internal rate, pass band to 20 kHz within 0.01 dB, stop band from

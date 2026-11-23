@@ -1879,23 +1879,22 @@ void Chip::renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std
 {
     // phaseEnd: the digital phase at the sample's end, cyclesDone = its cycle minus rs.start, cycleNow = that
     // cycle (the chip's cycle() in the general path; the run's own count in renderBatch); converterTerms:
-    // whether the Model A converter terms may switch here (renderBatch has checked that they do not)
+    // whether a combined waveform's step emission may switch here (renderBatch has checked that it does not)
     RenderOsc& v = rs.osc[idx (n)];
     const double slope = renderSlopeU (n);
     const double rate = slope * rs.cps;
     // the digital line at the sample's end (renderDigitalU with the given phase and cycle)
     auto digitalU = [&] { return static_cast<double> (phaseEnd) / kTwo56 + slope * (rs.tEnd - static_cast<double> (cyclesDone)); };
-    // the converter terms follow the frequency, at sample boundaries
-    const int imin = ! converterTerms ? v.imin : v.mode == rmTable ? 0 : (! rtab->dac.ideal && (v.mode == rmTri || v.mode == rmSaw)) ? iminWithHysteresis (rate, v.imin) : 11;
-    if (imin != v.imin)
-    {
-        ++rs.converterSwitches;
-        const double wl = renderValue (n, v.u);
-        const double sl = renderDerivative (n, v.u); // (bent: the slope moves with the value; plain: equal on both sides)
-        v.imin = imin;
-        v.k = static_cast<std::int64_t> (std::floor (v.u / sigmaOf (v.imin)));
-        renderEmit (n, rs.tEnd, renderValue (n, v.u) - wl, (renderDerivative (n, v.u) - sl) * rate);
-    }
+    // No converter-term switch here (S3b-2 closing round; it used to be re-evaluated at every sample end, with a
+    // value and slope step): the set of converter bits (v.imin) depends only on the mode, the DAC, the frequency
+    // and the test bit (renderSlopeU) and the clock. The mode is set only in renderSyncOsc; the increment and the
+    // test bit change only in write (), setOscillator () and powerOnKeepingTime (), each followed by
+    // renderAfterChange, which runs renderSyncOsc for every oscillator; the clock is fixed while rendering. And
+    // renderSyncOsc computes v.imin with the same rule, which is idempotent (iminWithHysteresis (r, c) == c
+    // whenever c came from iminFor (r) or from iminWithHysteresis (r, .)). So between two writes the rule
+    // gives v.imin again at every sample end: the switch was unreachable for every waveform (a bent sawtooth
+    // included; the whole B-Side suite ran with an abort in it and never reached it). Converter switches
+    // happen at writes, in renderSyncOsc, whose renderAfterChange emits the value and slope steps.
     const int tableLevel = converterTerms && v.mode == rmTable ? renderTableLevel (n, v.level) : v.level;
     if (tableLevel != v.level)
     {
