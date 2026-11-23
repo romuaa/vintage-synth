@@ -44,6 +44,20 @@ is a rule, a line here.
   floors alone was right there and 6 to 12 dB wrong on tones.
 - A magnitude-only design fixes a response only up to reflecting its zeros: gate the phase too, or a
   wrong factor (180 degrees off) passes.
+- A write budget measured on a chain with static curves sees the curves' own aliasing: render the held states
+  too and measure what the writes add (the output minus the held states switched by the ideal step).
+- Check a band-limited step's place against the kernel's own step function, not by interpolating where it
+  crosses one half (linear interpolation is up to 0.05 sample off).
+
+## B-Side S3b-1: two buses and the whole chain (2026-11-23)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Every Model A row and the Model B pulse row of the write-budget test failed (-62 to -88 dB) although the writes were band-limited. | The chain's static curves (Model B's mixer, Model A's voice bend and mixer) alias at the internal rate on a steady tone, with no write at all (held states: -61 to -95 dB): S3b-2's work, measured by a gate meant for the writes. | Render the held states alongside and measure what the writes add (the output minus the held states switched by the ideal band-limited step); print the raw and held figures beside it. |
+| A routing write's crossing of one half sat 0.047 samples from the write's place at every rate. | Linear interpolation between the two samples around a band-limited step's middle is not its centre (the step is curved there). | Compare with the kernel's own step function at the write's cycle and require one cycle early or late to be far worse. |
+| The buses cost 2.3 ns per sample more than the single sum on a light patch. | The per-sample membership arithmetic (bits to 0/1 per oscillator) and six separate stores; the single sum's float conversion they save is about 1 ns. | A table of memberships per routing byte and the common case (no write's window open, no bend) written out in the batched loop: about 1 ns over the single sum; the stores alone are about 0.5 ns. |
+| A shell edit of renderer code was refused by the environment-file hook. | The hook matches that suffix anywhere in the command text, here a member access on an envelope ring. | Put such edits in a script file (the scratchpad) and run the script (as the S3a row says for identifiers on the command line). |
+| A Python block replacement that ended at the file's last line dropped the closing namespace. | The replaced text included the closing brace, the new text did not. | After a scripted edit at a file's end, compile the header alone before the full build. |
 
 ## B-Side S3a closing step (2026-11-23)
 

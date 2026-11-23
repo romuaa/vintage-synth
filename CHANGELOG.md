@@ -5,6 +5,20 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3b-1: two buses and the whole chain (2026-11-23)
+- The chip renderer delivers its two buses in double precision (`Chip::renderBuses`): the oscillators routed to the
+  filter and the others, with each bus's envelope sum and voice count; oscillator 3 can be muted on the direct path.
+  A routing write moves an oscillator between the buses at its exact cycle, band-limited. The single-sum render is
+  unchanged.
+- `ChipVoice` (new): one chip's whole chain, the buses -> filter -> output stage, in double up to one shaped
+  conversion to float, Per Note or with a shared filter. Volume and mode writes land at their cycle, band-limited
+  (with volume DC on a volume write is the chip's own step, at its full size); the cutoff runs per sample while it
+  moves. Not wired into the plugin yet (S4).
+- The trace gates now run through the real chain; every earlier analog gate still passes, and the triangle of
+  `a_dac_*` is gated (harmonics within 3 dB). Model A's per-voice bend is applied on the buses; its aliasing and the
+  mixer curves' are the next step's (S3b-2).
+- GCC 13 compiles the chip sources and the B-Side tests with warnings as errors (a bounds warning in the renderer).
+
 ### B-Side S3a fix round after the third review (2026-11-23)
 - Model B's band/high second-order term is removed: it matched noise floors but put harmonics on tones that the
   reference does not have, aliased far above the budget and broke the Shared claim. Model B's filter is linear again;
