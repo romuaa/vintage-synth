@@ -759,7 +759,7 @@ TEST_CASE ("alias gate: the static curves through the chain, the normal run: eve
     const auto t0 = std::chrono::steady_clock::now();
     GateTotals t;
     auto listedSteps = [] (const Signal& s, const Pin* pin) {
-        if (pin == nullptr || s.voices == 1 || pin->worstStep == 0.0)
+        if (pin == nullptr || s.voices == 1 || std::abs (pin->worstStep) < 1e-9)
             return std::vector<double> { 0.0 };
         return std::vector<double> { 0.0, pin->worstStep };
     };
