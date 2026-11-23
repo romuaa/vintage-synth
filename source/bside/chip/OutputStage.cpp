@@ -122,11 +122,16 @@ void OutputStage::update() noexcept
         else if (! (i == 2 && (modeVolume & 0x80) != 0))
             ++nDirect;
     }
+    if (! externalCounts)
+    {
+        cntF = nFilter;
+        cntD = nDirect;
+    }
     envDc = c.envDc;
-    filterBusDc = c.voiceDc * nFilter;
-    staticDirect = c.mixerDc + c.voiceDc * nDirect;
+    filterBusDc = c.voiceDc * cntF;
+    staticDirect = c.mixerDc + c.voiceDc * cntD;
     gain = 1.0
-           / (1.0 + c.gainVoice * (nDirect - 3) + ((modeVolume & 0x10) != 0 ? c.gainLow : 0.0)
+           / (1.0 + c.gainVoice * (cntD - 3.0) + ((modeVolume & 0x10) != 0 ? c.gainLow : 0.0)
               + ((modeVolume & 0x20) != 0 ? c.gainBand : 0.0) + ((modeVolume & 0x40) != 0 ? c.gainHigh : 0.0));
     n2 = c.n2;
     n3 = c.n3;

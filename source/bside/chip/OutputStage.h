@@ -139,6 +139,46 @@ public:
         return volumeDcOn ? offset + level * curve (gain * s) : curve (gain * s) - curveDc;
     }
 
+    // ---- the chain in double precision (ChipVoice, docs/architecture.md 8.19.4; process () is these three in one) ----
+
+    /** The voices on each bus as the renderer counts them (Chip::BusBlock: fractional only across a routing write).
+        From the first call on they replace the counts setRouting and setModeVolume derive from the register bits. */
+    void setVoices (double filterVoices, double directVoices) noexcept
+    {
+        if (! externalCounts || filterVoices < cntF || filterVoices > cntF || directVoices < cntD || directVoices > cntD)
+        {
+            externalCounts = true;
+            cntF = filterVoices;
+            cntD = directVoices;
+            update();
+        }
+    }
+    /** The filter's input (filterBusLevel in double): the bus's audio, its envelope sum and its voices' DC. */
+    double filterInput (double audio, double envelopeSum) const noexcept { return audio + envDc * envelopeSum + filterBusDc; }
+    /** Shared topology: the part of filterInput summed over chips (filterBusAc in double). */
+    double filterInputAc (double audio, double envelopeSum) const noexcept { return audio + envDc * envelopeSum; }
+    /** sharedFilterShare in double. */
+    static double sharedShare (double sharedOut, double filterStaticOut, int chips) noexcept
+    {
+        const double n = chips > 1 ? static_cast<double> (chips) : 1.0;
+        return (sharedOut - filterStaticOut) / n + filterStaticOut;
+    }
+    /** What multiplies the board high-pass's output: 1 with volume DC on (the volume is in the mixer), the volume
+        level with it off (the volume behind the high-pass). */
+    double postGain() const noexcept { return volumeDcOn ? 1.0 : level; }
+    /** The board filters over a mixer value (mixerOutput) and a post gain (postGain): one internal sample of the output
+        in the reference's units. A chain blending configurations across a write passes their blends. */
+    double board (double mix, double post) noexcept
+    {
+        const double in = std::abs (mix) < 1e9 ? mix : 0.0; // a NaN or absurd input does not enter the filters
+        hpY = flush (hpA * hpY + hpA * (in - hpX));
+        hpX = in;
+        const double lpIn0 = post * hpY;
+        const double y = lpG * lpIn0 + lpKeep * lpS;
+        lpS = flush (lpIn * lpIn0 + lpNext * lpS);
+        return y;
+    }
+
     Model model() const noexcept { return mdl; }
     double gainFactor() const noexcept { return gain; }
     double volumeLevel() const noexcept { return level; }
@@ -168,6 +208,8 @@ private:
     double filterStaticDc = 0.0;
 
     int nFilter = 0, nDirect = 3;
+    bool externalCounts = false; // setVoices has been called: cntF, cntD come from the renderer
+    double cntF = 0.0, cntD = 3.0;
     double envDc = 0.0, filterBusDc = 0.0, staticDirect = 0.0;
     double gain = 1.0, level = 0.0, offset = 0.0, curveDc = 0.0;
     bool quintic = false;
