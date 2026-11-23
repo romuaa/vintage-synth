@@ -2095,7 +2095,9 @@ TEST_CASE ("alias: the bend with sync, ring and a glide across converter switche
             double lineHz = 0.0;
             const int n = 1 << 17;
             const auto y = bentPatch (rate, which, n, lineHz);
-            std::vector<float> yf (y.begin(), y.end());
+            std::vector<float> yf (y.size());
+            for (std::size_t i = 0; i < y.size(); ++i)
+                yf[i] = static_cast<float> (y[i]); // spelled out: MSVC warns about double -> float inside the range constructor
             const auto a = offGridAlias (windowedMagnitudes (yf), rate, 20000.0, lineHz, 9.0);
             const char* name = which == 0 ? "sync" : (which == 1 ? "ring" : "glide");
             std::printf ("[bend] %s at %.0f Hz: %.1f dB at %.1f Hz\n", name, rate, a.worstDb, a.worstHz);
