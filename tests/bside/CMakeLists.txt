@@ -32,6 +32,13 @@ target_link_libraries(bs_juce_free PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 set_target_properties(bs_juce_free PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+# GCC contracts multiply-adds across statements (-ffp-contract=fast) and decides per inlined copy, so one inline function
+# compiled in two places can differ by a rounding (a Shared owner's filter step against a voice's: "one chip in Shared is
+# Per Note bit for bit" failed by 5.6e-17 on Linux). Off for the chip code and everything that links it; Clang contracts
+# within one expression only and MSVC not at all. (docs/decisions.md "B-Side S3b-2 review round" R14)
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(bs_juce_free PUBLIC -ffp-contract=off)
+endif()
 
 add_executable(bside_unit
     unit/TableSpecTests.cpp
@@ -93,6 +100,9 @@ target_link_libraries(bs_juce_free_placeholder PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 set_target_properties(bs_juce_free_placeholder PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(bs_juce_free_placeholder PUBLIC -ffp-contract=off)
+endif()
 add_executable(bside_independent unit/IndependentModelTests.cpp)
 target_link_libraries(bside_independent PRIVATE bs_juce_free_placeholder Catch2::Catch2WithMain)
 set_target_properties(bside_independent PROPERTIES COMPILE_WARNING_AS_ERROR ON)
