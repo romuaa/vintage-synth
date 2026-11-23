@@ -1890,6 +1890,7 @@ oscillator goes to the filter bus or the direct bus by its routing bit (oscillat
 its cycle and meets the write-discontinuity budget of 8.4.5; "no waveform selected" fades as
 8.4.4; the filter topology of 8.5; the remaining traces of 8.9.4 (routing, scripted traces);
 the triangle segment of `a_dac_*`; filter sweeps of both models rendered for the owner (8.10).
+**Refined by 8.19.4, which wins where they differ.**
 
 #### 8.19.3 S3a closing step (contract, 2026-11-23; owner decisions O1 and O2 of 2026-11-22)
 What S3a still owes before it merges, after the second independent review and the escalated
@@ -1949,6 +1950,92 @@ attempt on Model A's filter. These win over 8.19.1 where they differ.
 - **Not in this step, moved to S3b (8.19.2):** the aliasing of the static curves (mixer curves,
   Model A's voice bend and filter output function), which need their own contract with the
   renderer's interface.
+
+#### 8.19.4 S3b in two steps (contract, 2026-11-23; refines 8.19.2; owner decision O3 of 2026-11-22)
+S3b is stacked on the S3a branch until S3a has merged (O3). It is split so that the renderer's
+interface is settled before the alias work builds on it. Each step is its own pull request.
+Model A's filter stays the fixed form of 8.19.3: nothing here depends on its corners away from
+the committed `a_filter_a` settings, and no gate of this section is set on them.
+
+**S3b-1: two buses and the whole chain.**
+- **Files:** `source/bside/chip/` (the renderer, `Chip.*`, `OutputStage.*`; `Filter.*` only where
+  the chain needs an entry point, not its laws), a new JUCE-free `ChipVoice` (or the name the
+  code suggests) that owns one `Chip` and one `OutputStage` and borrows a `Filter`; the trace
+  driver and tests; `chip_bench`. Not `tests/bside/unit/IndependentModel.h`; not the plugin
+  (`source/bside/` outside `chip/`): wiring into `Part` is S4.
+- **Renderer interface:** `Chip::render` delivers, per internal sample and in double precision
+  (8.20.1), the **filter bus** and the **direct bus**: each oscillator after its envelope and
+  converter goes to one of them by its routing bit at that cycle (oscillator 3 muted on the
+  direct bus as 8.4.3 row 14), plus what `OutputStage` needs and cannot derive (the envelope sums
+  per bus for the voice DC; counts). The single-sum output of 8.17 stays available for the
+  existing renderer tests, and equals the sum of the two buses to rounding. Latency
+  (`kLatencySamples`), the digital state rules, any-split bit-identity and every alias gate of
+  8.4.5, 8.18.1 and 8.20.1 hold on each bus and on their sum.
+- **Writes:** a routing write moves an oscillator between the buses at its exact cycle as a
+  band-limited step on both buses; a volume write and a mode write land at their cycle. All
+  three meet the write-discontinuity budget of 8.4.5 (at most -90 dB up to 2 kHz, a write every
+  tick), measured on the chain's output before the board filters. A volume write with
+  `volumeDc` on is the chip's own step (sample playback) and is rendered as a band-limited step
+  of the right size, not smoothed away.
+- **"No waveform selected"** holds and fades as 8.4.4 on whichever bus the oscillator is routed
+  to; the constants are fitted to generated data.
+- **The chain** (`ChipVoice::render`): buses -> `Filter` (cutoff per sample where it moves,
+  `processWithCutoff`) -> `OutputStage` -> one shaped conversion to float (8.20.1) where a float
+  is needed; in double up to there. **Shared topology** (8.5): the owner sums the filter buses of
+  n chips into one `Filter` and hands each stage its share (`OutputStage::sharedFilterShare`);
+  tested with 1, 2 and 16 chips against Per Note for Model B (equal) and against the pinned
+  figures of `OutputStage.h` for Model A.
+- **Gates:** the traces S3a had to skip (`a_routing_*`, every scripted trace with mixed routing)
+  within the tolerances of 8.9.4; the triangle segment of `a_dac_*`; every S3a gate still
+  passing through the real chain instead of the test-side sum; Model A's `a_s3a_*` lines stay
+  reported, not gated (8.19.3). Bit-identical for any block split through the whole chain; no
+  allocation; sanitizers; stability as 8.19.1 through the chain.
+- **Cost** (`chip_bench`, as 8.18): the two buses cost at most 1 ns per internal sample over
+  8.18.1's figures per case; chain cases for the S4 gate patch on both models are added and
+  reported with a per-stage breakdown.
+- **Listening:** filter sweeps of both models rendered through the chain for the owner (8.10),
+  outside the repository.
+
+**S3b-2: aliasing of the static curves** (after S3b-1; design study of 2026-11-23, prototypes in
+the developer cache). The static curves run on full-band signals at the internal rate and fold
+(measured as built: Model B mixer -67 dB, Model A voice bend and mixer -53 dB for a 3.85 kHz
+sawtooth at 88.2 kHz). They are part of the output path, so the budgets of 8.4.5 apply to the
+chain's output.
+- **Model B mixer curve:** a linear-phase half-band FIR on the mixer sum before the curve, the
+  curve at the internal rate. Pass band to 20 kHz within 0.01 dB; stop band from
+  max (rate / 2 - (pass edge), (rate - 20 kHz) / 3) with at least 40 dB. Its delay is added to
+  the chip's latency and to the plugin's reported latency (S4).
+- **Model A voice bend:** folded into the renderer: the naive value of each voice becomes f (w)
+  of the waveform before the envelope, every rendered step becomes f (w+) - f (w-) and every
+  slope change f' (w+) s+ - f' (w-) s-. No added latency; `shapeVoice` leaves `OutputStage`.
+  A cheaper form (the slope term only at wraps) may be used if it meets the gate with 3 dB to
+  spare on the real deviation tables.
+- **Model A filter output function and mixer curve:** the same pre-filter on both buses, the
+  filter at the internal rate, then the output function, gain and mixer curve at twice the
+  rate between two short half-band filters. In Shared the 2x part runs per chip on its share.
+- **Gate (both models, every internal rate of 4.4; on the chain's output before the board
+  filters):** signals: one voice, sawtooth and square at 3.85 kHz, sawtooth at 2 kHz and 1 kHz;
+  two voices, sawtooth + sawtooth (3:2) and sawtooth + square (5:4) at 3.85 kHz and at 2 kHz;
+  three voices at 3.85 kHz and 2 kHz; full envelope; routings all direct, voice 1 through the
+  filter, all through the filter (low-pass, band-pass and high-pass, cutoff 2047 and 1024,
+  resonance 0 and 15). Measurement: 2^18 samples, 7-term Blackman-Harris window, 20 Hz - 20 kHz,
+  lines of the common fundamental excluded (+-10 bins), relative to the first voice's
+  fundamental, not bin-centred. **Limits: Model B at most -103 dB; Model A at most -99 dB up to
+  2 kHz and -83 dB up to 3.85 kHz** (the budgets of 8.4.5 with 3 dB to spare).
+- **The wanted signal:** pass band within +-0.05 dB from 20 Hz to 20 kHz; a 6.6 kHz sine and a
+  sine pair: the curves' products within 0.5 dB of the exact curve; sawtooth and square
+  harmonics above -40 dB within 0.5 dB of the exact curve on band-limited voices. **Accepted
+  (orchestrator, review):** weaker in-band products of bright tones (40 to 55 dB below the
+  tone's own harmonics) may move by several dB against the as-built curves; no affordable
+  method keeps them, and the as-built design is itself 3 to 16 dB from the reference there.
+  The committed `a_*` gates keep passing.
+- **Cost:** Model B filter + output stage stay within 7 ns per internal sample at 96 kHz
+  (8.19.1); a rate whose pre-filter cannot fit is reported with its figure (the study: 88.2 kHz
+  needs 51 taps). Model A's added cost (study: about 7.5 ns for the 2x part, 2.5 to 5 ns per
+  bent voice) is reported per stage and goes to the owner's S4 budget question.
+- **Unchanged:** any split bit-identical; silence in gives exact zeros out after the filters'
+  length; no allocation; a routing or volume write enters before the pre-filter or is ramped
+  over its length, and still meets the write budget of S3b-1.
 
 ### 8.20 Alias follow-up step (contract, 2026-11-19; owner decision 2026-11-18: fix, no exemption)
 Fixes known defects 1 and 2 of 8.18.1 in the renderer. Runs beside S3a.
