@@ -1930,6 +1930,22 @@ attempt on Model A's filter. These win over 8.19.1 where they differ.
   low at mid and full level): the cause is located if a fit to newly generated traces finds it
   within this step; otherwise it is recorded as a known deviation with its figures, and a gate
   trace for it is proposed for the next reference regeneration.
+- **After the third review (2026-11-23; these two points win over the ones above):**
+  - **Phase.** The output row keeps the prototype's zeros on their side of the unit circle (a
+    zero of cL + cB s + cH s² in the right half-plane maps outside the circle; the numerator is
+    not made minimum-phase). **Gate:** over the set and band of the rate gate, the phase of
+    `Filter`'s linear response differs from the prototype's by at most 30 degrees; a setting
+    that cannot meet it at no per-sample cost is reported and gated at its figure plus 2
+    degrees. The magnitude gate is unchanged.
+  - **Model B stop band: not located; the second-order term is removed.** A term 0.10 b² on the
+    band- and high-pass part reproduces the floor of noise through the high-pass (held-out mean
+    error 7.3 -> 0.2 dB) and the high-pass triangle's second harmonic, but on the reviewer's
+    tone traces it puts harmonics on band-pass and pulse tones that the reference does not have
+    (second harmonic 6 to 12 dB too high), aliases at -36 dB against the fundamental at 88.2 kHz
+    (budget -100 dB) and breaks the Shared claim (n times too large on the summed signal). So
+    Model B's filter stays linear in S3a; the stop-band floor is a recorded known deviation with
+    both sets of figures, and the gate trace of decisions row C10 stays proposed. A later attempt
+    must fit tones and noise together and meet the alias budget.
 - **Not in this step, moved to S3b (8.19.2):** the aliasing of the static curves (mixer curves,
   Model A's voice bend and filter output function), which need their own contract with the
   renderer's interface.
