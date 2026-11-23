@@ -5,6 +5,17 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3b-2 closing round (2026-11-23)
+- Alias gate (8.19.4): a real-chip row now passes inside its model's absolute limit or within 1 dB of the
+  four-times-the-rate reference. The default test run passes.
+- **Known deviation (owner decision O6):** with Model A's mixer overdriven (two or three full-level voices at 2 kHz
+  through the low-pass at full resonance, 88.2 and 96 kHz internal rate) the static curves fold back to -91.2 to
+  -97.0 dB against the -99 dB limit, up to 18 dB above an ideally oversampled chain. These 8 rows are listed in the
+  test with their measured figures and gated at figure + 1 dB (closed list: a row that improves or that does not
+  overdrive the mixer fails the test). To be revisited with the Model A filter form and the S4 budget.
+- The chip renderer no longer re-evaluates Model A's converter bits at every sample end (the branch was unreachable;
+  they switch at writes). Output unchanged.
+
 ### B-Side S3b-2 review round (2026-11-23)
 - Write timing: Model A's output-function coefficients now follow the interpolated sample they act on (mode steps
   landed 0.31 samples early); resonance writes blend two configurations like mode writes; every volume, routing, mode
@@ -16,7 +27,7 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   Model B's filter, output stage and pre-filter now take 6.3 to 6.4 ns per sample at 96 kHz (budget 7: met).
 - The alias gate restated (8.19.4): met everywhere except Model A driven hard through the resonant low-pass (4 rows
   with ideal voices, -93.4 to -96.7 dB against -99; 38 real-chip rows above the four-times-the-rate reference) and 6 rows
-  within 0.7 dB of the reference; the owner decides.
+  within 0.7 dB of the reference; the owner decided in the closing round (pinned, see above).
 
 ### B-Side S3b-2: aliasing of the static curves (2026-11-23)
 - The chain's static curves run on band-limited signals: Model B's mixer input passes a linear-phase half-band FIR
