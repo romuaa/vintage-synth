@@ -263,6 +263,7 @@ public:
         shapes = &combined::tablesFor (cfg.model, cfg.shapes);
         rtab = &render::tablesFor (cfg.model, cfg.shapes);
         ktab = &render::kernelTables();
+        selectBend();
         reset();
     }
 
@@ -403,9 +404,19 @@ public:
         sample q is (q >= sample ? 1 : 0) + taps[q - (sample + first)] inside the taps, the ring sample q being output
         kLatencySamples + 1 samples after it is completed. */
     void unitStepTaps (double base, std::array<double, render::kKernelTaps>& taps, int& first) const noexcept;
-    /** Test aid: off delivers Model A's voices on the buses without their bend (OutputStage::shapeVoice); then the
-        buses sum to the single sum on Model A too. On by default (no effect on Model B). */
-    void renderBendVoices (bool on) noexcept { renderBend = on; }
+    /** Model A's voice bend (render::bend, docs/architecture.md 8.19.4 S3b-2) folded into the rendering: on, every
+        voice's waveform w after its converter is rendered as the band-limited f (w) before its envelope (its naive
+        values f (w), its steps f (w+) - f (w-), its slope changes f' (w+) s+ - f' (w-) s-; "BEND" at the end of this
+        file), on the buses and in the single sum alike (they share the rings). Off by default: a bare chip renders the
+        converters' output as 8.17 defines it (the renderer's tests); ChipVoice turns it on. No effect on Model B. Set it
+        before rendering (after prepare or reset): samples already in the rings keep the form they were rendered in. The
+        bent tables are built in prepare (and the constructor), so this call never builds anything. */
+    void renderBendVoices (bool on) noexcept
+    {
+        renderBend = on;
+        selectBend();
+    }
+    bool bendsVoices() const noexcept { return bendOn; }
 
     /** Times the renderer had to move a rendered line back onto the digital phase (a band-limited
         correction; a diagnostic for tests: 0 over the tests' random patches and write schedules; writes a
@@ -1093,7 +1104,15 @@ private:
     bool renderCheck = false;
     bool renderBatching = true;
     bool renderMoments = true;
-    bool renderBend = true;
+    bool renderBend = false; // requested (renderBendVoices)
+    bool bendOn = false;     // in effect: requested and Model A (the tables of rtab are the bent ones)
+    void selectBend() noexcept
+    {
+        bendOn = renderBend && cfg.model == Model::A;
+        rtab = &render::tablesFor (cfg.model, cfg.shapes, bendOn);
+    }
+    /** w, or f (w) when the voices are bent (a triangle or saw value from the converter model). */
+    double bent (double w) const noexcept { return bendOn ? render::bend (w) : w; }
     int renderTableLevel (int n, int current) const noexcept; // ChipRender.cpp
     void renderEmit (int n, double t, double dv, double ds) noexcept;
     void renderEmitMoments (int n, double t0, const std::array<double, render::kStepMoments + 1>& moments) noexcept;
@@ -1429,12 +1448,11 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // oscillator 3 not while 0x18 bit 7 mutes it and it is not routed, 8.4.3 row 14), each oscillator's contribution
 // being the one the single sum adds (its ring value times its envelope converter value), plus what OutputStage
 // needs and cannot derive: the sum of the envelope converter values on each bus (the voices' envelope DC) and the
-// number of voices on each bus (the voice DC, the mixer's gain). Model A's voices are bent first (OutputStage::
-// shapeVoice, per voice, from its contribution and envelope value: decisions "B-Side S3a" round 2 row R3; a static
-// curve at the internal rate, whose aliasing is S3b-2's; test aid renderBendVoices). Model B: no bend.
-// THE SUM. Without the bend the buses' sum is the single sum before its float conversion (render() and the buses
-// share every oscillator's rendering, the rings and the digital state; tested within the rounding's 4.75 float
-// steps over random schedules with routing writes); a muted oscillator 3 is on neither bus.
+// number of voices on each bus (the voice DC, the mixer's gain). With renderBendVoices on (ChipVoice), Model A's voices
+// carry their bend, folded into the rings ("BEND" below). Model B: no bend.
+// THE SUM. The buses' sum is the single sum before its float conversion (render() and the buses share every
+// oscillator's rendering, the rings and the digital state, the bend included when it is on; tested within the
+// rounding's 4.75 float steps over random schedules with routing writes); a muted oscillator 3 is on neither bus.
 // A ROUTING WRITE (0x17, 0x18 bit 7, setFilter, powerOnKeepingTime) moves an oscillator between the buses at the
 // write's cycle: its membership of each bus (0 or 1) steps there as a band-limited step on the long kernel
 // (the oscillator's steps' kernel; its stop band keeps a write every tick far below -90 dB), placed in the rings
@@ -1451,4 +1469,24 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // unitStepTaps (the long kernel's unit step as weights on the ring samples), the same arithmetic as the rings.
 // COST. The single sum's path adds one comparison per sample (the route ring's bookkeeping while a write is
 // young); the buses' path writes six values per sample instead of converting one.
+//
+// ==== BEND (renderBendVoices; docs/architecture.md 8.19.4, S3b-2) ====
+//
+// Model A bends each voice's waveform before its envelope (render::bend: f (w) = w + a2 w^2 + a3 w^3, fitted in S3a).
+// Applied to the rendered (band-limited) waveform sample by sample, as S3b-1 did on the buses, the curve folds
+// (-53 dB with the mixer for a 3.85 kHz saw at 88.2 kHz). Folded into the renderer instead, the band-limited waveform
+// of f (w) is rendered directly, the way the renderer renders w: the naive value at a sample's end is f (w); every
+// discontinuity is the step f (w+) - f (w-) and the slope change f' (w+) s+ - f' (w-) s- (s the line's slope in value
+// per sample), on the same kernel at the same time. So:
+// - triangle and saw (the converter model in closed form): renderValue and renderDerivative return f (w) and
+//   f' (w) w' at the line's position; every boundary of the line (a wrap, the fold, a converter bit's edge) gets the
+//   slope term as well as the step, even where w's own slope does not change (the full form of 8.19.4; the cheaper
+//   form with the slope term at the wraps only is not used);
+// - every other waveform is piecewise constant (pulse, noise, combined waveforms, no waveform, per-cycle output):
+//   its values come from the bent tables (render::tablesFor (A, s, true): wave[] and the combined waveforms' cell
+//   values and step moments of f (w)), so its steps are f (w+) - f (w-) and it has no slope.
+// What remains is the curvature of f along a line between two events (the second derivative's jumps at the events),
+// which the first-order correction leaves: measured at the chain's output against the alias gate of 8.19.4
+// (ChipVoiceAliasTests.cpp). The single sum carries the bend too when it is on (the rings are shared); the
+// renderer's own tests run with it off (the default), where nothing changed.
 } // namespace vs::bside::chip

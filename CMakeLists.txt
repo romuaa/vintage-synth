@@ -177,6 +177,21 @@ set_target_properties(VintageUiData PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(VintageSynth PRIVATE VintageUiData)
 
 # ---- Exitium B-Side (docs/architecture.md 8.1) ----
+# bs_chip_fp_rules (target): the ONE place that sets how B-Side's chip code (source/bside/chip/) may round. Every
+# target that compiles those sources or their inline headers calls it: the BSide plugin, bs_test_core, bs_juce_free,
+# bs_juce_free_placeholder. GCC contracts a multiply and an add into one fused operation across statements
+# (-ffp-contract=fast, its default) and decides per inlined copy, so one inline function compiled in two places can
+# round differently: a Shared owner's filter step and a voice's differed by 5.6e-17 on Linux and "one chip in Shared is
+# Per Note bit for bit" failed (docs/decisions.md "B-Side S3b-2 review round" R14). -ffp-contract=off keeps every
+# multiply and add as written. PUBLIC, so code that inlines the chip headers (tests, the plugin's owner of a shared
+# filter) rounds the same way. Clang contracts within one expression only and MSVC not at all: nothing to set there.
+function(bs_chip_fp_rules target)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${target} PUBLIC -ffp-contract=off)
+    endif()
+    message(STATUS "B-Side chip rounding rules (no contraction on GCC): ${target}")
+endfunction()
+
 # BS_SOURCES: the .cpp files of source/bside/. S1c adds source/bside/program/ and source/bside/trace/
 # (JUCE-free), S2 adds source/bside/chip/; they join this list. BS_PLUGIN_SOURCES is what the plugin and
 # bs_test_core (tests/bside) compile; the plugin target never sees a Vintage source and vice versa.
@@ -210,6 +225,7 @@ if(VS_BUILD_BSIDE)
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/ProgramEngine.cpp)
     set(BS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${BS_SOURCES})
     target_sources(BSide PRIVATE ${BS_PLUGIN_SOURCES})
+    bs_chip_fp_rules(BSide)
 
     # Factory programs: presets/bside/factory/*.json, embedded like Vintage's (see above).
     file(GLOB BS_FACTORY_PRESETS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/presets/bside/factory/*.json)

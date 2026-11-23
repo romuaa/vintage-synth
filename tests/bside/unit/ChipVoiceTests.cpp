@@ -7,13 +7,18 @@
 #include "RenderTestSupport.h"
 
 #include "bside/chip/ChipVoice.h"
+#include "bside/chip/HalfBand.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace bs_render_test;
 using vs::bside::chip::ChipVoice;
@@ -198,6 +203,194 @@ TEST_CASE ("chain: bit-identical for any block split and stops that are not writ
             {
                 INFO ("variant " << i);
                 CHECK (sameBits (outs[i], outs[0]));
+            }
+        }
+}
+
+namespace
+{
+/** Bursts of combined writes: every 1500 cycles a resonance, volume, mode, cutoff and routing write at the same cycle
+    and at neighbouring ones (offsets 0, 1, 2, 7 and 40 cycles), each burst's values varied. */
+std::vector<Change> combinedBursts (int bursts)
+{
+    std::vector<Change> v;
+    for (int b = 0; b < bursts; ++b)
+    {
+        const std::uint64_t base = 3000 + static_cast<std::uint64_t> (b) * 1500;
+        const int o = b % 5;
+        const std::uint64_t offs[] { 0, 1, 2, 7, 40 };
+        auto put = [&] (std::uint64_t at, std::uint8_t reg, std::uint8_t value) {
+            Change c;
+            c.cycle = at;
+            c.kind = 0;
+            c.reg = reg;
+            c.value = value;
+            v.push_back (c);
+        };
+        put (base + offs[(o + 0) % 5], 0x17, static_cast<std::uint8_t> (((b * 5) % 16) << 4 | ((b % 3) == 0 ? 0x01 : 0x03)));
+        put (base + offs[(o + 1) % 5], 0x18, static_cast<std::uint8_t> (0x10 << (b % 3) | (8 + b % 8)));
+        put (base + offs[(o + 2) % 5], 0x16, static_cast<std::uint8_t> (0x40 + (b * 37) % 0x80));
+        put (base + offs[(o + 3) % 5], 0x17, static_cast<std::uint8_t> (((b * 3) % 16) << 4 | 0x01));
+        put (base + offs[(o + 4) % 5], 0x18, static_cast<std::uint8_t> (0x10 << ((b + 1) % 3) | 15));
+    }
+    std::stable_sort (v.begin(), v.end(), [] (const Change& a, const Change& b) { return a.cycle < b.cycle; });
+    return v;
+}
+
+/** Per Note with a switch to Shared (setFilter (nullptr), this owner running a filter of its own) for output samples
+    [s1, s2) and back (setFilter (the voice's filter)), the schedule's writes at their cycles, `chunk` samples per call. */
+std::vector<double> renderSwitching (Model m, double rate, const std::vector<Change>& sched, int total, int s1, int s2, int chunk)
+{
+    PerNote p (m, rate, true);
+    ChipVoice& v = *p.v;
+    v.boardFiltersEnabled (false);
+    osc (v, 0, 2000.0 * 16777216.0 / 985248.0, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+    osc (v, 1, 3000.0 * 16777216.0 / 985248.0, 1024.0f, static_cast<std::uint8_t> (ctrl::pulse | ctrl::gate));
+    v.write (0x16, 0x80);
+    v.write (0x17, 0x03);
+    v.write (0x18, 0x1f);
+    Filter owner;
+    owner.prepare (m, rate, 0.5f);
+    owner.setCutoff (1024.0f);
+    owner.setMode (0x1f);
+    std::vector<double> y;
+    std::size_t next = 0;
+    while (static_cast<int> (y.size()) < total)
+    {
+        const int at = static_cast<int> (y.size());
+        if (at == s1)
+            v.setFilter (nullptr);
+        if (at == s2)
+            v.setFilter (p.f.get());
+        const bool shared = at >= s1 && at < s2;
+        const int limit = std::min (total, at < s1 ? s1 : (at < s2 ? s2 : total)) - at;
+        const int want = std::min ({ chunk, limit, ChipVoice::kBlock });
+        const std::uint64_t until = next < sched.size() ? sched[next].cycle : ~std::uint64_t { 0 };
+        std::array<double, ChipVoice::kBlock> out {};
+        int got = 0;
+        if (! shared)
+            got = v.renderUntil (out.data(), want, until);
+        else
+        {
+            got = v.renderBusesUntil (want, until);
+            std::array<double, ChipVoice::kBlock> so {}, sl {}, ss {};
+            std::array<Filter::Shape, ChipVoice::kBlock> sh {};
+            for (int i = 0; i < got; ++i)
+            {
+                const double dc = v.staticFilterBusDc (i);
+                so[static_cast<std::size_t> (i)] = owner.processLinearDouble (v.filterInputAc (i) + dc, sl[static_cast<std::size_t> (i)]);
+                ss[static_cast<std::size_t> (i)] = owner.staticOutput (dc);
+                sh[static_cast<std::size_t> (i)] = owner.outputShapeCoefficients();
+            }
+            v.finishShared (sh.data(), so.data(), sl.data(), ss.data(), 1, out.data(), got);
+        }
+        y.insert (y.end(), out.begin(), out.begin() + got);
+        if (next < sched.size() && v.chip().cycle() == sched[next].cycle)
+            apply (v, sched[next++]);
+    }
+    return y;
+}
+} // namespace
+
+TEST_CASE ("chain: combined writes at the same and neighbouring cycles: any block split bit-identical, also across setFilter (nullptr) and back inside open windows", "[chain][split][shared]")
+{
+    // 8.19.4 after the third review: every write lands where the contract says whatever other writes are pending, and
+    // setFilter is safe at any time. Bursts of resonance, volume, mode, cutoff and routing writes at the same and
+    // neighbouring cycles (combinedBursts), rendered in blocks of 1, 3, 64 and 777 samples: bit for bit the same. Then
+    // the same with a switch to Shared and back placed inside the windows of a burst (and after the third review's
+    // crash case, a switch while a resonance change waits for its place): no crash, every sample finite, bit for bit the
+    // same for every block size. Both models, 88.2 and 96 kHz.
+    for (const Model m : { Model::B, Model::A })
+        for (const double rate : { 88200.0, 96000.0 })
+        {
+            const auto sched = combinedBursts (24);
+            const std::uint64_t endCycle = sched.back().cycle + 4000;
+            std::vector<std::vector<double>> outs;
+            for (const int chunk : { 1, 3, 64, 777 })
+            {
+                PerNote p (m, rate, true);
+                osc (*p.v, 0, 2000.0 * 16777216.0 / 985248.0, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+                outs.push_back (renderSchedule (*p.v, sched, endCycle, chunk));
+            }
+            INFO ((m == Model::A ? "Model A " : "Model B ") << rate << " Hz");
+            for (std::size_t i = 1; i < outs.size(); ++i)
+                CHECK (sameBits (outs[i], outs[0]));
+            // the switch to Shared and back at samples inside bursts' windows (a burst every 1500 cycles: about 137
+            // samples at 88.2 kHz; the third burst's writes start at cycle 6000), and (the third review's crash) at the
+            // first sample of a later burst at which a configuration is open (found with 1-sample blocks)
+            const double cps = 985248.0 / rate;
+            const int total = static_cast<int> (static_cast<double> (endCycle) / cps);
+            int open = -1;
+            {
+                PerNote p (m, rate, true);
+                osc (*p.v, 0, 2000.0 * 16777216.0 / 985248.0, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+                std::size_t nx = 0;
+                double one[1];
+                for (int i = 0; i < total && open < 0;)
+                {
+                    const std::uint64_t until = nx < sched.size() ? sched[nx].cycle : ~std::uint64_t { 0 };
+                    one[0] = 0.0;
+                    i += p.v->renderUntil (one, 1, until);
+                    if (nx < sched.size() && p.v->chip().cycle() == sched[nx].cycle)
+                        apply (*p.v, sched[nx++]);
+                    if (p.v->chip().cycle() > 15000 && p.v->configsActive() >= 2)
+                        open = i;
+                }
+            }
+            REQUIRE (open > 0);
+            // the third review's case exactly: resonance writes only, the switch at the first sample with the write's
+            // configuration open (a resonance change waiting for its place)
+            std::vector<Change> resOnly;
+            for (int k = 0; k < 6; ++k)
+            {
+                Change c;
+                c.cycle = 3000 + static_cast<std::uint64_t> (k) * 1500;
+                c.kind = 0;
+                c.reg = 0x17;
+                c.value = static_cast<std::uint8_t> ((k % 2) == 0 ? 0xf3 : 0x03);
+                resOnly.push_back (c);
+            }
+            int openRes = -1;
+            {
+                PerNote p (m, rate, true);
+                osc (*p.v, 0, 2000.0 * 16777216.0 / 985248.0, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+                p.v->write (0x16, 0x80);
+                p.v->write (0x17, 0x03);
+                p.v->write (0x18, 0x1f);
+                std::size_t nx = 0;
+                double one[1];
+                for (int i = 0; i < total && openRes < 0;)
+                {
+                    const std::uint64_t until = nx < resOnly.size() ? resOnly[nx].cycle : ~std::uint64_t { 0 };
+                    one[0] = 0.0;
+                    i += p.v->renderUntil (one, 1, until);
+                    if (nx < resOnly.size() && p.v->chip().cycle() == resOnly[nx].cycle)
+                        apply (*p.v, resOnly[nx++]);
+                    if (nx > 0 && p.v->configsActive() >= 2)
+                        openRes = i;
+                }
+            }
+            REQUIRE (openRes > 0);
+            struct Sw
+            {
+                const std::vector<Change>* sched;
+                int s1, s2;
+            };
+            for (const Sw& sw0 : { Sw { &sched, static_cast<int> (6001.0 / cps) + 9, static_cast<int> (9002.0 / cps) + 11 },
+                                   Sw { &sched, static_cast<int> (12000.0 / cps) + 12, static_cast<int> (12000.0 / cps) + 14 }, Sw { &sched, open, open + 64 },
+                                   Sw { &resOnly, openRes, openRes + 64 } })
+            {
+                const int s1 = sw0.s1, s2 = sw0.s2;
+                std::vector<std::vector<double>> sw;
+                for (const int chunk : { 1, 3, 64, 777 })
+                    sw.push_back (renderSwitching (m, rate, *sw0.sched, total, s1, s2, chunk));
+                bool finite = true;
+                for (const double v : sw[0])
+                    finite = finite && std::isfinite (v) && std::abs (v) < 10.0;
+                INFO ("Shared over output samples " << s1 << " .. " << s2);
+                CHECK (finite);
+                for (std::size_t i = 1; i < sw.size(); ++i)
+                    CHECK (sameBits (sw[i], sw[0]));
             }
         }
 }
@@ -389,26 +582,1130 @@ WriteAlias chainWrites (Model m, const RateConfig& rc, double hz, bool vdc, std:
         xb[i] = static_cast<float> (yb[s]);
         xd[i] = static_cast<float> (yw[s] - (ya[s] + (yb[s] - ya[s]) * sw));
     }
-    WriteAlias r;
-    const auto magW = windowedMagnitudes (xw);
-    r.raw = offGridAlias (magW, rc.internalRate, rc.band, lineHz, 8.0);
-    const auto ra = offGridAlias (windowedMagnitudes (xa), rc.internalRate, rc.band, lineHz, 8.0);
-    const auto rb = offGridAlias (windowedMagnitudes (xb), rc.internalRate, rc.band, lineHz, 8.0);
-    r.baseline = ra.worstDb > rb.worstDb ? ra : rb;
-    // the difference relative to the output's own strongest line
-    auto magD = windowedMagnitudes (xd);
-    double refW = 0.0, refD = 0.0;
+    // every figure relative to the output's strongest line other than DC (8.19.4 after the round over phases: the main
+    // lobe of the mean, +-8 bins, is not a line of the signal; with volume DC on the output's mean, the mixer's offset,
+    // lies tens of dB above the audio and was taken as the reference before)
     const double binHz = rc.internalRate / static_cast<double> (n);
-    for (std::size_t k = 1; k < magW.size() && static_cast<double> (k) * binHz <= rc.band; ++k)
-    {
+    const auto magW = windowedMagnitudes (xw);
+    double refW = 0.0;
+    for (std::size_t k = 9; k < magW.size() && static_cast<double> (k) * binHz <= rc.band; ++k)
         refW = std::max (refW, magW[k]);
-        refD = std::max (refD, magD[k]);
-    }
-    r.write = offGridAlias (magD, rc.internalRate, rc.band, lineHz, 8.0);
-    r.write.worstDb += 20.0 * std::log10 ((refD + 1e-300) / refW);
+    auto relative = [&] (const std::vector<double>& mag) {
+        AliasResult res = offGridAlias (mag, rc.internalRate, rc.band, lineHz, 8.0);
+        double own = 0.0;
+        for (std::size_t k = 1; k < mag.size() && static_cast<double> (k) * binHz <= rc.band; ++k)
+            own = std::max (own, mag[k]);
+        res.worstDb += 20.0 * std::log10 ((own + 1e-300) / (refW + 1e-300));
+        return res;
+    };
+    WriteAlias r;
+    r.raw = relative (magW);
+    const auto ra = relative (windowedMagnitudes (xa));
+    const auto rb = relative (windowedMagnitudes (xb));
+    r.baseline = ra.worstDb > rb.worstDb ? ra : rb;
+    r.write = relative (windowedMagnitudes (xd));
     return r;
 }
 } // namespace
+
+namespace
+{
+/** One write per tick: at `offset` cycles after the tick, register `reg` takes `even` on even ticks and `odd` on odd
+    ones (0x16 is the cutoff's high byte, 0x17 resonance and routing, 0x18 mode and volume). */
+struct TickWrite
+{
+    int offset;
+    std::uint8_t reg, even, odd;
+};
+
+/** The starting registers of a write case. */
+struct WriteStart
+{
+    std::uint8_t cutoffHi = 0x80, resRoute = 0x01, modeVolume = 0x1f;
+};
+
+struct WriteExcess
+{
+    AliasResult ours, ideal, excess, idealFloor;
+};
+
+constexpr std::uint64_t kWriteStart = 1000;
+
+/** The centre of a write's blend weights (the long kernel's unit step at the write, Chip::unitStepTaps) in filter
+    samples: the place 8.19.4 gives a write. */
+double switchRuleCentre (Chip& c, const Chip::EventTime& t)
+{
+    std::array<double, vs::bside::chip::render::kKernelTaps> taps {};
+    int first = 0;
+    c.unitStepTaps (t.base, taps, first);
+    const auto s0 = static_cast<std::int64_t> (t.sample);
+    auto weight = [&] (std::int64_t q) {
+        const std::int64_t k = q - (s0 + first);
+        return (q >= s0 ? 1.0 : 0.0) + (k >= 0 && k < vs::bside::chip::render::kKernelTaps ? taps[static_cast<std::size_t> (k)] : 0.0);
+    };
+    double centre = 0.0;
+    for (std::int64_t q = s0 + first; q <= s0 + first + vs::bside::chip::render::kKernelTaps; ++q)
+        centre += (weight (q) - weight (q - 1)) * static_cast<double> (q);
+    return centre;
+}
+
+/** Cascaded half-band interpolators (x factor, 120 dB): one input sample gives `factor` outputs. */
+struct Upsampler
+{
+    std::array<vs::bside::chip::HalfBandUp, 6> stage {};
+    int stages = 0;
+    double delayF = 0.0; // in output samples
+    void prepare (double rate, int factor)
+    {
+        stages = 0;
+        delayF = 0.0;
+        for (int f = 2; f <= factor; f *= 2)
+        {
+            stage[static_cast<std::size_t> (stages)].prepare (vs::bside::chip::designHalfBand (rate * f, 20000.0, 1.0e-6));
+            delayF += static_cast<double> (stage[static_cast<std::size_t> (stages)].delay2x()) * (factor / f);
+            ++stages;
+        }
+    }
+    void push (double x, double* out)
+    {
+        std::array<double, 64> a {}, b {};
+        a[0] = x;
+        int n = 1;
+        for (int s = 0; s < stages; ++s)
+        {
+            for (int i = 0; i < n; ++i)
+                stage[static_cast<std::size_t> (s)].process (a[static_cast<std::size_t> (i)], b[static_cast<std::size_t> (2 * i)], b[static_cast<std::size_t> (2 * i + 1)]);
+            n *= 2;
+            a = b;
+        }
+        for (int i = 0; i < n; ++i)
+            out[i] = a[static_cast<std::size_t> (i)];
+    }
+};
+
+/** Cascaded half-band decimators: `factor` inputs give one output. */
+struct Downsampler
+{
+    std::array<vs::bside::chip::HalfBandDown, 6> stage {};
+    int stages = 0;
+    double delayF = 0.0; // in input samples
+    void prepare (double rate, int factor)
+    {
+        stages = 0;
+        delayF = 0.0;
+        for (int f = factor; f >= 2; f /= 2)
+        {
+            stage[static_cast<std::size_t> (stages)].prepare (vs::bside::chip::designHalfBand (rate * f, 20000.0, 1.0e-6));
+            delayF += static_cast<double> (stage[static_cast<std::size_t> (stages)].delay2x()) * (factor / f);
+            ++stages;
+        }
+    }
+    double push (const double* in, int factor)
+    {
+        std::array<double, 64> a {};
+        for (int i = 0; i < factor; ++i)
+            a[static_cast<std::size_t> (i)] = in[i];
+        int n = factor;
+        for (int s = 0; s < stages; ++s)
+        {
+            for (int i = 0; i < n / 2; ++i)
+                a[static_cast<std::size_t> (i)] = stage[static_cast<std::size_t> (s)].process (a[static_cast<std::size_t> (2 * i)], a[static_cast<std::size_t> (2 * i + 1)]);
+            n /= 2;
+        }
+        return a[0];
+    }
+};
+
+/** The chain's output (board filters off) with the case's writes every tick, a saw at `oscF` (register units). */
+std::vector<double> oursWithWrites (Model m, double rate, bool vdc, double oscF, const WriteStart& w0, const std::vector<TickWrite>& ws, int total,
+                                    std::uint64_t tickLen = kTick)
+{
+    PerNote p (m, rate, vdc);
+    ChipVoice& v = *p.v;
+    v.boardFiltersEnabled (false);
+    osc (v, 0, oscF, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+    v.write (0x15, 0);
+    v.write (0x16, w0.cutoffHi);
+    v.write (0x17, w0.resRoute);
+    v.write (0x18, w0.modeVolume);
+    std::vector<double> y (static_cast<std::size_t> (total), 0.0);
+    int done = 0;
+    std::uint64_t tick = 0;
+    std::size_t next = 0;
+    while (done < total)
+    {
+        const std::uint64_t at = kWriteStart + tick * tickLen + static_cast<std::uint64_t> (ws[next].offset);
+        done += v.renderUntil (y.data() + done, total - done, at);
+        if (v.chip().cycle() == at)
+        {
+            const auto& w = ws[next];
+            v.write (w.reg, (tick % 2) == 0 ? w.even : w.odd);
+            if (++next == ws.size())
+            {
+                next = 0;
+                ++tick;
+            }
+        }
+    }
+    return y;
+}
+
+/** The same writes rendered ideally (8.19.4 after the third review): the same chain at `factor` times the internal
+    rate. The chip's buses (writes to it at their cycles; the bus pre-filters of Model A at the internal rate as in the
+    chain), interpolated (120 dB half-bands); the filter and the stage at the high rate, each resonance, mode and volume
+    write applied at the high-rate sample nearest its place (the centre of the chain's blend weights, Chip::unitStepTaps)
+    and each cutoff write at the start of its own internal sample (the contract: "from the write's own sample on");
+    Model B's mixer input through the chain's own pre-filter at the internal rate (decimated, filtered, interpolated
+    again; the post-curve coefficients follow with that delay); the curves at the high rate; decimated back. */
+std::vector<double> idealWithWrites (Model m, double rate, bool vdc, double oscF, const WriteStart& w0, const std::vector<TickWrite>& ws, int total, int factor,
+                                     std::uint64_t tickLen = kTick, double placeShift = 0.0)
+{
+    // the buses and each write's place (in filter samples of the internal rate)
+    Chip c = makeChip (m, rate);
+    c.renderBendVoices (true);
+    {
+        OscInput in;
+        in.frequency = oscF;
+        in.pulseWidth = 2048.0f;
+        in.control = static_cast<std::uint8_t> (ctrl::saw | ctrl::gate);
+        in.attackDecay = 0x00;
+        in.sustainRelease = 0xf0;
+        c.setOscillator (0, in);
+    }
+    c.write (0x15, 0);
+    c.write (0x16, w0.cutoffHi);
+    c.write (0x17, w0.resRoute);
+    c.write (0x18, w0.modeVolume);
+    struct Ev
+    {
+        double place;   // filter sample (fractional) of the internal rate
+        std::uint8_t reg, value;
+    };
+    std::vector<Ev> evs;
+    const auto z = static_cast<std::size_t> (total);
+    std::vector<double> fa (z), da (z), fe (z), de (z), fv (z), dv (z);
+    const Chip::BusBlock all { fa.data(), da.data(), fe.data(), de.data(), fv.data(), dv.data() };
+    int done = 0;
+    std::uint64_t tick = 0;
+    std::size_t next = 0;
+    while (done < total)
+    {
+        const std::uint64_t at = kWriteStart + tick * tickLen + static_cast<std::uint64_t> (ws[next].offset);
+        done += c.renderBusesUntil (all.from (done), total - done, at);
+        if (c.cycle() == at)
+        {
+            const auto& w = ws[next];
+            const std::uint8_t value = (tick % 2) == 0 ? w.even : w.odd;
+            c.write (w.reg, value);
+            const Chip::EventTime t = c.renderEventTime();
+            double place = static_cast<double> (t.sample);
+            if (w.reg != 0x16)
+            {
+                std::array<double, vs::bside::chip::render::kKernelTaps> taps {};
+                int first = 0;
+                c.unitStepTaps (t.base, taps, first);
+                double centre = 0.0, prev = 0.0;
+                for (int k = -1; k <= vs::bside::chip::render::kKernelTaps; ++k)
+                {
+                    const std::int64_t q = static_cast<std::int64_t> (t.sample) + first + k;
+                    const std::int64_t kk = q - (static_cast<std::int64_t> (t.sample) + first);
+                    const double wq = (q >= static_cast<std::int64_t> (t.sample) ? 1.0 : 0.0)
+                                      + (kk >= 0 && kk < vs::bside::chip::render::kKernelTaps ? taps[static_cast<std::size_t> (kk)] : 0.0);
+                    if (k >= 0)
+                        centre += (wq - prev) * static_cast<double> (q);
+                    prev = wq;
+                }
+                place = centre + placeShift;
+            }
+            evs.push_back ({ place, w.reg, value });
+            if (++next == ws.size())
+            {
+                next = 0;
+                ++tick;
+            }
+        }
+    }
+    // the 1x streams into the filter and the direct path
+    OutputStage o1;
+    o1.prepare (m, rate, vdc);
+    o1.setRouting (static_cast<std::uint8_t> (w0.resRoute & 7));
+    o1.setModeVolume (w0.modeVolume);
+    const auto pre = vs::bside::chip::designHalfBand (rate, ChipVoice::kAntiAliasPassHz, ChipVoice::kAntiAliasDeviation);
+    vs::bside::chip::HalfBandFir preAc, preDc, preDi, preMix;
+    preAc.prepare (pre);
+    preDc.prepare (pre);
+    preDi.prepare (pre);
+    preMix.prepare (pre);
+    const double preDelay = m == Model::A ? static_cast<double> (preAc.delay()) : 0.0;
+    // the high-rate parts
+    const double rf = rate * factor;
+    Filter f;
+    f.prepare (m, rf, 0.5f);
+    f.setCutoff (static_cast<float> (w0.cutoffHi << 3));
+    f.setResonance (w0.resRoute >> 4);
+    f.setMode (w0.modeVolume);
+    OutputStage oG, oP; // the stage before the curve (gain) and after it (post coefficients; Model B: later)
+    oG.prepare (m, rf, vdc);
+    oP.prepare (m, rf, vdc);
+    for (auto* o : { &oG, &oP })
+    {
+        o->setRouting (static_cast<std::uint8_t> (w0.resRoute & 7));
+        o->setModeVolume (w0.modeVolume);
+    }
+    const double staticDc = m == Model::A ? OutputStage::voiceDc (Model::A) * fv[0] : oG.staticFilterBusDc();
+    auto refreshDc = [&] (OutputStage& o, const Filter& fl) { o.setFilterStaticDc (fl.staticOutput (staticDc)); };
+    Filter fPost = f; // the filter's static output as the post stage sees it (Model B: delayed with the mixer input)
+    refreshDc (oG, f);
+    refreshDc (oP, fPost);
+    Upsampler upF, upD, upX;
+    upF.prepare (rate, factor);
+    upD.prepare (rate, factor);
+    upX.prepare (rate, factor);
+    Downsampler dnX, dnOut;
+    dnX.prepare (rate, factor);
+    dnOut.prepare (rate, factor);
+    // high-rate sample of filter sample t: the buses show it lag samples later; the interpolator adds its delay
+    const double lag = static_cast<double> (Chip::kLatencySamples + 1) + preDelay;
+    const double postLag = m == Model::B ? dnX.delayF + factor * static_cast<double> (preMix.delay()) + upX.delayF : 0.0;
+    // each event at its high-rate place: a cutoff at the start of its internal sample (an integer high-rate sample); the
+    // others between two high-rate samples: the sample `at` is taken partly (alpha) with the settings before and partly
+    // with those after, outputs and the filter's state alike (exact to first order in 1 / factor of a sample)
+    struct HiEv
+    {
+        std::int64_t at;
+        double alpha;
+        std::uint8_t reg, value;
+        bool post;
+    };
+    std::vector<HiEv> hi;
+    for (const auto& e : evs)
+    {
+        const double base = factor * (e.place + lag) + upF.delayF;
+        if (e.reg == 0x16)
+        {
+            const auto at = static_cast<std::int64_t> (std::floor (base + 0.5));
+            hi.push_back ({ at, 0.0, e.reg, e.value, false });
+            hi.push_back ({ static_cast<std::int64_t> (std::floor (base + postLag + 0.5)), 0.0, e.reg, e.value, true });
+            continue;
+        }
+        for (const bool post : { false, true })
+        {
+            const double pl = base + (post ? postLag : 0.0) + 0.5; // the high-rate sample at.. at + 1 spans pl
+            const double fl = std::floor (pl);
+            hi.push_back ({ static_cast<std::int64_t> (fl), pl - fl, e.reg, e.value, post });
+        }
+    }
+    std::stable_sort (hi.begin(), hi.end(), [] (const HiEv& a, const HiEv& b) { return a.at < b.at; });
+    auto applyEv = [&] (const HiEv& e, Filter& fl, OutputStage& o) {
+        if (e.reg == 0x16)
+            fl.setCutoff (static_cast<float> (e.value << 3));
+        else if (e.reg == 0x17)
+            fl.setResonance (e.value >> 4);
+        else
+        {
+            fl.setMode (e.value);
+            o.setModeVolume (e.value);
+        }
+        refreshDc (o, fl);
+    };
+    std::size_t hn = 0;
+    std::int64_t k = 0;
+    // the post-curve coefficients (scale, offset, gain): memoryless, so applied after the decimation, each change as an
+    // ideal band-limited step (a windowed sine-integral, +-256 samples) at its exact place in output samples
+    struct PostStep
+    {
+        double place;
+        std::array<double, 3> before, after;
+    };
+    std::vector<PostStep> postSteps;
+    {
+        OutputStage o = oP;
+        Filter fl = fPost;
+        auto coef = [&] () { return std::array<double, 3> { o.postScale(), o.postOffset(), o.postGain() }; };
+        for (const auto& e : evs)
+        {
+            const auto before = coef();
+            if (e.reg == 0x16)
+                fl.setCutoff (static_cast<float> (e.value << 3));
+            else if (e.reg == 0x17)
+                fl.setResonance (e.value >> 4);
+            else
+            {
+                fl.setMode (e.value);
+                o.setModeVolume (e.value);
+            }
+            refreshDc (o, fl);
+            const auto after = coef();
+            const double placeOut = e.reg == 0x16 ? std::floor (e.place) : e.place;
+            postSteps.push_back ({ placeOut + lag + (upF.delayF + postLag + dnOut.delayF) / factor, before, after });
+        }
+    }
+    std::vector<double> y (z, 0.0);
+    std::array<double, 64> inF {}, inD {}, xs {}, xs2 {}, ms {};
+    for (std::size_t i = 0; i < z; ++i)
+    {
+        double a = 0.0, d = 0.0;
+        if (m == Model::A)
+        {
+            a = preAc.process (o1.filterInputAc (fa[i], fe[i])) + preDc.process (OutputStage::voiceDc (Model::A) * fv[i]);
+            d = preDi.process (o1.directSumWith (da[i], de[i], dv[i]));
+        }
+        else
+        {
+            a = o1.filterInput (fa[i], fe[i]);
+            d = o1.directSumWith (da[i], de[i], dv[i]);
+        }
+        upF.push (a, inF.data());
+        upD.push (d, inD.data());
+        std::array<double, 64> postAlpha {};
+        std::array<bool, 64> postMixed {};
+        std::vector<std::pair<int, OutputStage>> postOld; // (sample j, the post stage before) for the mixed post samples
+        postOld.clear();
+        for (int j = 0; j < factor; ++j, ++k)
+        {
+            postMixed[static_cast<std::size_t> (j)] = false;
+            double alphaG = 0.0;
+            bool mixG = false;
+            Filter fOld;
+            OutputStage oGOld;
+            while (hn < hi.size() && hi[hn].at <= k)
+            {
+                const auto& e = hi[hn++];
+                if (e.post)
+                {
+                    if (e.reg != 0x16 && e.alpha > 0.0 && ! postMixed[static_cast<std::size_t> (j)] && e.at == k)
+                    {
+                        postOld.push_back ({ j, oP });
+                        postMixed[static_cast<std::size_t> (j)] = true;
+                        postAlpha[static_cast<std::size_t> (j)] = e.alpha;
+                    }
+                    applyEv (e, fPost, oP);
+                    continue;
+                }
+                if (e.reg != 0x16 && e.alpha > 0.0 && ! mixG && e.at == k)
+                {
+                    fOld = f;
+                    oGOld = oG;
+                    mixG = true;
+                    alphaG = e.alpha;
+                }
+                applyEv (e, f, oG);
+            }
+            auto sampleX = [&] (Filter& fl, const OutputStage& o) {
+                double lp = 0.0;
+                const double lin = fl.processLinearDouble (inF[static_cast<std::size_t> (j)], lp);
+                const double g = o.gainFactor();
+                double x = g * (lin + inD[static_cast<std::size_t> (j)]);
+                if (m == Model::A)
+                    x += g * fl.outputShape (lp);
+                return x;
+            };
+            if (! mixG)
+                xs[static_cast<std::size_t> (j)] = sampleX (f, oG);
+            else
+            {
+                // the sample from one state: alphaG of it with the settings before, the rest with those after
+                const double xOld = sampleX (fOld, oGOld);
+                const double xNew = sampleX (f, oG);
+                xs[static_cast<std::size_t> (j)] = xNew + alphaG * (xOld - xNew);
+                const auto sn = f.state(), so = fOld.state();
+                f.setState ({ sn[0] + alphaG * (so[0] - sn[0]), sn[1] + alphaG * (so[1] - sn[1]) });
+            }
+        }
+        if (m == Model::B)
+        {
+            // the chain's pre-filter on the mixer input, at the internal rate
+            upX.push (preMix.process (dnX.push (xs.data(), factor)), xs2.data());
+        }
+        else
+            xs2 = xs;
+        for (int j = 0; j < factor; ++j)
+            ms[static_cast<std::size_t> (j)] = oP.mixerCurve (xs2[static_cast<std::size_t> (j)]); // the curve; its post coefficients below
+        y[i] = dnOut.push (ms.data(), factor);
+    }
+    // the post coefficients per output sample: the first ones, plus each change's band-limited step
+    std::vector<std::array<double, 3>> coef (z);
+    {
+        OutputStage o0;
+        o0.prepare (m, rf, vdc);
+        o0.setRouting (static_cast<std::uint8_t> (w0.resRoute & 7));
+        o0.setModeVolume (w0.modeVolume);
+        Filter f0;
+        f0.prepare (m, rf, 0.5f);
+        f0.setCutoff (static_cast<float> (w0.cutoffHi << 3));
+        f0.setResonance (w0.resRoute >> 4);
+        f0.setMode (w0.modeVolume);
+        refreshDc (o0, f0);
+        const std::array<double, 3> c0 { o0.postScale(), o0.postOffset(), o0.postGain() };
+        for (auto& cc : coef)
+            cc = c0;
+        constexpr double pi = 3.14159265358979323846;
+        constexpr int half = 256;
+        std::vector<double> g (2 * half + 2);
+        for (const auto& ps : postSteps)
+        {
+            // the band-limited unit step at ps.place: the running sum of a Hann-windowed sinc centred there, normalised
+            const auto k0 = static_cast<std::int64_t> (std::floor (ps.place)) - half;
+            double sum = 0.0;
+            for (int kk = 0; kk < 2 * half + 2; ++kk)
+            {
+                const double x = static_cast<double> (k0 + kk) - ps.place;
+                const double sinc = std::abs (x) < 1e-12 ? 1.0 : std::sin (pi * x) / (pi * x);
+                const double win = std::abs (x) < half ? 0.5 + 0.5 * std::cos (pi * x / half) : 0.0;
+                g[static_cast<std::size_t> (kk)] = sinc * win;
+                sum += g[static_cast<std::size_t> (kk)];
+            }
+            double h = 0.0;
+            for (std::int64_t q = std::max<std::int64_t> (0, k0); q < static_cast<std::int64_t> (z); ++q)
+            {
+                const std::int64_t kq = q - k0;
+                if (kq < 2 * half + 2)
+                    h += g[static_cast<std::size_t> (kq)] / sum;
+                else
+                    h = 1.0;
+                auto& cq = coef[static_cast<std::size_t> (q)];
+                for (std::size_t kk = 0; kk < 3; ++kk)
+                    cq[kk] += h * (ps.after[kk] - ps.before[kk]);
+            }
+        }
+    }
+    for (std::size_t i = 0; i < z; ++i)
+        y[i] = (coef[i][0] * y[i] + coef[i][1]) * coef[i][2];
+    return y;
+}
+
+/** Off-line figures (8.4.5's measure on a signal of period two ticks) of ours, the ideal render and their difference
+    (the ideal's level and offset fitted, aligned by the best integer shift), each relative to ours' strongest line
+    other than DC. */
+struct Diff
+{
+    AliasResult a, b, d;
+};
+Diff offLine (const std::vector<double>& yw, const std::vector<double>& yi, double rate, int warm, int n)
+{
+    const std::uint64_t period = 2 * kTick;
+    const double lineHz = 985248.0 / static_cast<double> (period);
+    const double band = 20000.0;
+    const int total = warm + n;
+    auto mismatch = [&] (int shift) {
+        double e = 0.0;
+        for (int i = warm; i < total; i += 7)
+        {
+            const int k = i - shift;
+            if (k < 0 || k >= total)
+                continue;
+            const double d = yw[static_cast<std::size_t> (i)] - yi[static_cast<std::size_t> (k)];
+            e += d * d;
+        }
+        return e;
+    };
+    int best = 0;
+    double be = mismatch (0);
+    for (int sft = -200; sft <= 200; ++sft)
+        if (mismatch (sft) < be)
+        {
+            be = mismatch (sft);
+            best = sft;
+        }
+    // the analysed window of ours, [start, start + n), with its match yi[i - best] inside yi: a negative shift (the
+    // ideal later than ours) moves the window that much earlier (the signal is periodic; warm is far longer than any shift)
+    const int start = warm - std::max (0, -best);
+    double sw = 0.0, si = 0.0, sii = 0.0, swi = 0.0;
+    for (int i = start; i < start + n; ++i)
+    {
+        const double w = yw[static_cast<std::size_t> (i)], v = yi[static_cast<std::size_t> (i - best)];
+        sw += w;
+        si += v;
+        sii += v * v;
+        swi += w * v;
+    }
+    const double cnt = static_cast<double> (n);
+    const double den = sii - si * si / cnt;
+    const double alpha = den > 0.0 ? (swi - sw * si / cnt) / den : 1.0;
+    const double beta = (sw - alpha * si) / cnt;
+    std::vector<float> xw (static_cast<std::size_t> (n)), xi (xw.size()), xd (xw.size());
+    for (std::size_t i = 0; i < xw.size(); ++i)
+    {
+        const auto s = static_cast<std::size_t> (start) + i;
+        const double ideal = alpha * yi[static_cast<std::size_t> (static_cast<std::int64_t> (s) - best)] + beta;
+        xw[i] = static_cast<float> (yw[s]);
+        xi[i] = static_cast<float> (ideal);
+        xd[i] = static_cast<float> (yw[s] - ideal);
+    }
+    const double binHz = rate / static_cast<double> (n);
+    const auto magW = windowedMagnitudes (xw);
+    double refW = 0.0;
+    for (std::size_t q = 9; q < magW.size() && static_cast<double> (q) * binHz <= band; ++q)
+        refW = std::max (refW, magW[q]);
+    auto relative = [&] (const std::vector<double>& mag) {
+        AliasResult res = offGridAlias (mag, rate, band, lineHz, 8.0);
+        double own = 0.0;
+        for (std::size_t q = 1; q < mag.size() && static_cast<double> (q) * binHz <= band; ++q)
+            own = std::max (own, mag[q]);
+        res.worstDb += 20.0 * std::log10 ((own + 1e-300) / (refW + 1e-300));
+        return res;
+    };
+    return { relative (magW), relative (windowedMagnitudes (xi)), relative (windowedMagnitudes (xd)) };
+}
+
+/** A write case against its ideal render at `factor` (and at half of it, for the ideal's own placement error: the
+    difference of the two, less 6 dB, since that error halves with each doubling). */
+WriteExcess writeExcess (Model m, double rate, double hz, bool vdc, const WriteStart& w0, const std::vector<TickWrite>& ws, int factor)
+{
+    const std::uint64_t period = 2 * kTick;
+    const double periods = std::max (1.0, std::round (hz * static_cast<double> (period) / 985248.0));
+    const double lineHz = 985248.0 / static_cast<double> (period);
+    int n = 1 << 14;
+    while (rate / n > lineHz / 20.0)
+        n <<= 1;
+    const int warm = static_cast<int> (0.4 * rate);
+    const int total = warm + n;
+    const double oscF = periods * 16777216.0 / static_cast<double> (period);
+    const auto yw = oursWithWrites (m, rate, vdc, oscF, w0, ws, total);
+    const auto yi = idealWithWrites (m, rate, vdc, oscF, w0, ws, total, factor);
+    const auto yh = idealWithWrites (m, rate, vdc, oscF, w0, ws, total, factor / 2);
+    const Diff d = offLine (yw, yi, rate, warm, n);
+    const Diff f = offLine (yi, yh, rate, warm, n);
+    WriteExcess r;
+    r.ours = d.a;
+    r.ideal = d.b;
+    r.excess = d.d;
+    r.idealFloor = f.d;
+    r.idealFloor.worstDb -= 6.0;
+    return r;
+}
+
+/** The write cases of the gate: resonance alone; resonance followed by a volume, a mode or a cutoff write `gap` cycles
+    later, and the reverse order. Resonance 0 <-> 15 (the low-pass at cutoff 1024, a mode write to the band-pass). */
+struct WriteCase
+{
+    std::string name;
+    WriteStart start;
+    std::vector<TickWrite> writes;
+    bool vdc = true;
+};
+std::vector<WriteCase> writeCases (bool all)
+{
+    std::vector<WriteCase> v;
+    const TickWrite res { 0, 0x17, 0xf1, 0x01 };
+    v.push_back ({ "resonance 0 <-> 15", {}, { res } });
+    // resonance alone through every output (8.19.4 after the round over phases: 0 <-> 15 and 4 <-> 12, low- and
+    // band-pass, volume DC on and off; the fourth review added high-pass and band + high-pass)
+    // (std::uint8_t spelled out per value: MSVC warns about the int inside std::pair's converting constructor)
+    using ModeCase = std::pair<const char*, std::uint8_t>;
+    for (const auto& [mname, mv] : { ModeCase { "low-pass", std::uint8_t { 0x1f } }, ModeCase { "band-pass", std::uint8_t { 0x2f } },
+                                     ModeCase { "high-pass", std::uint8_t { 0x4f } }, ModeCase { "band + high-pass", std::uint8_t { 0x6f } } })
+        for (const bool vdc : { true, false })
+            for (const bool wide : { true, false })
+            {
+                if (mv == 0x1f && vdc && wide)
+                    continue; // the first case above
+                if (! all && (! vdc || (! wide && mv != 0x6f)))
+                    continue; // the normal run: 0 <-> 15 through every output, 4 <-> 12 through band + high-pass
+                WriteStart st;
+                st.modeVolume = mv;
+                st.resRoute = wide ? 0x01 : 0x41;
+                const TickWrite w = wide ? TickWrite { 0, 0x17, 0xf1, 0x01 } : TickWrite { 0, 0x17, 0xc1, 0x41 };
+                v.push_back ({ std::string (wide ? "resonance 0 <-> 15, " : "resonance 4 <-> 12, ") + mname + (vdc ? "" : ", volume DC off"), st, { w }, vdc });
+            }
+    for (const int gap : all ? std::vector<int> { 1, 10, 40, 200 } : std::vector<int> { 10 })
+    {
+        const TickWrite vol { gap, 0x18, 0x1c, 0x1f }, mode { gap, 0x18, 0x2f, 0x1f }, cut { gap, 0x16, 0xa0, 0x80 };
+        for (const auto& [what, w] : { std::pair<const char*, TickWrite> { "volume", vol }, { "mode", mode }, { "cutoff", cut } })
+        {
+            TickWrite later = w, first = res;
+            v.push_back ({ std::string ("resonance, then ") + what + " " + std::to_string (gap) + " cycles later", {}, { res, later } });
+            TickWrite lead = w;
+            lead.offset = 0;
+            first.offset = gap;
+            v.push_back ({ std::string (what) + ", then resonance " + std::to_string (gap) + " cycles later", {}, { lead, first } });
+        }
+    }
+    return v;
+}
+
+void runWriteGate (bool all, const std::vector<double>& rates, const std::vector<double>& hzs, int factor)
+{
+    int gated = 0, reported = 0;
+    for (const Model m : { Model::B, Model::A })
+        for (const double rate : rates)
+            for (const auto& wc : writeCases (all))
+            {
+                double ours = -300.0, ideal = -300.0, excess = -300.0, floorDb = -300.0;
+                for (const double hz : hzs)
+                {
+                    const auto r = writeExcess (m, rate, hz, wc.vdc, wc.start, wc.writes, factor);
+                    ours = std::max (ours, r.ours.worstDb);
+                    ideal = std::max (ideal, r.ideal.worstDb);
+                    excess = std::max (excess, r.excess.worstDb);
+                    floorDb = std::max (floorDb, r.idealFloor.worstDb);
+                }
+                const bool gate = floorDb <= -96.0; // the ideal's own placement error 6 dB below the gate
+                std::printf ("[write-excess] Model %s %6.0f Hz %-52s ours %7.1f, ideal %7.1f, ideal's own floor %7.1f, excess %7.1f dB%s\n",
+                             m == Model::A ? "A" : "B", rate, wc.name.c_str(), ours, ideal, floorDb, excess, gate ? "" : "  (reported: the ideal's floor)");
+                INFO ((m == Model::A ? "Model A " : "Model B ") << rate << " Hz, " << wc.name << ": excess " << excess << " dB, the ideal's floor " << floorDb);
+                if (gate)
+                {
+                    CHECK (excess <= -90.0);
+                    ++gated;
+                }
+                else
+                    ++reported;
+            }
+    std::printf ("[write-excess] %d rows gated, %d reported (the ideal render's floor above -96 dB)\n", gated, reported);
+    CHECK (gated > 0);
+}
+} // namespace
+
+TEST_CASE ("chain: writes every tick against an ideal render: the excess within the write budget (<= -90 dB to 2 kHz), resonance alone and with a volume, mode or cutoff write 10 cycles apart (96 kHz)", "[chain][alias][writes]")
+{
+    // 8.19.4 after the third review: the full set (resonance alone 0 <-> 15 and 4 <-> 12 through the low-, band-, high-
+    // and band + high-pass with volume DC on and off; with a volume, mode or cutoff write at 1, 10, 40 and 200 cycles,
+    // both orders; 88.2, 96 and 192 kHz; voices at 1 and 2 kHz) runs by its tag "[.chain-writes-full]"; here, at 96 kHz,
+    // a voice at 2 kHz, both models, against the ideal render at 32 times the rate: resonance 0 <-> 15 through every
+    // output, 4 <-> 12 through band + high-pass, and the gap of 10 cycles (a player routine's usual spacing).
+    runWriteGate (false, { 96000.0 }, { 2000.0 }, 32);
+}
+
+TEST_CASE ("chain: writes every tick against an ideal render, the full set (hidden; minutes)", "[.chain-writes-full]")
+{
+    runWriteGate (true, { 88200.0, 96000.0, 192000.0 }, { 1000.0, 2000.0 }, 32);
+}
+
+namespace
+{
+/** The place of a resonance write's dynamics, measured on the filter by itself. A voice (Per Note) renders a saw at
+    2 kHz through the low-pass at 1024 with the case's writes, one output sample at a time, recording the filter's input
+    and output (ChipVoice::lastFilterInput / lastFilterOutput) and each write's place (the centre of its blend weights,
+    Chip::unitStepTaps, in filter samples; a cutoff write: its own sample). A twin Filter runs the same input from the
+    same start, the cutoff from its own sample on, the resonance's dynamics changed at the place + delta (the step that
+    contains it mixed from the old and the new resonance, as 8.19.4 defines a change between samples), its output with
+    the new parameters from the start of the write's window (where the voice's newest configuration takes them); the rms
+    of the twin's output minus the voice's from the window's start to 600 samples after the resonance write, for delta on
+    a grid of 0.05 samples from -4 to +4. Returned: the best delta and the rms there, relative to the write's change. */
+struct PlaceFit
+{
+    double delta = 0.0, rmsAtBest = 0.0, rmsAtZero = 0.0, rmsAtTwentieth = 0.0, rmsAtOne = 0.0, change = 0.0;
+};
+PlaceFit placeFit (Model m, double rate, const std::vector<TickWrite>& ws)
+{
+    PerNote p (m, rate, true);
+    ChipVoice& v = *p.v;
+    v.boardFiltersEnabled (false);
+    const double oscF = 2000.0 * 16777216.0 / 985248.0;
+    osc (v, 0, oscF, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+    v.write (0x15, 0);
+    v.write (0x16, 0x80);
+    v.write (0x17, 0x01);
+    v.write (0x18, 0x1f);
+    const int total = static_cast<int> (0.03 * rate) + 2000;
+    std::vector<double> in (static_cast<std::size_t> (total)), out (in.size());
+    struct Ev
+    {
+        double place;
+        std::uint8_t reg, value;
+    };
+    std::vector<Ev> evs;
+    double windowStart = 0.0;
+    std::size_t next = 0;
+    double sink[1];
+    const std::int64_t lag = v.filterLagSamples();
+    for (int i = 0; i < total;)
+    {
+        const std::uint64_t at = next < ws.size() ? kWriteStart + 2000 + static_cast<std::uint64_t> (ws[next].offset) : ~std::uint64_t { 0 };
+        sink[0] = 0.0;
+        const int got = v.renderUntil (sink, 1, at);
+        if (got == 1)
+        {
+            in[static_cast<std::size_t> (i)] = v.lastFilterInput();
+            out[static_cast<std::size_t> (i)] = v.lastFilterOutput();
+            ++i;
+        }
+        if (next < ws.size() && v.chip().cycle() == at)
+        {
+            const auto& w = ws[next++];
+            v.write (w.reg, w.even);
+            const Chip::EventTime t = v.chip().renderEventTime();
+            double place = static_cast<double> (t.sample);
+            if (w.reg == 0x17)
+            {
+                place = switchRuleCentre (v.chip(), t);
+                std::array<double, vs::bside::chip::render::kKernelTaps> taps {};
+                int first = 0;
+                v.chip().unitStepTaps (t.base, taps, first);
+                windowStart = static_cast<double> (static_cast<std::int64_t> (t.sample) + first + lag);
+            }
+            // in the recorded sequence: output sample i ran the filter at filter time i - lag
+            evs.push_back ({ place + static_cast<double> (lag), w.reg, w.even });
+        }
+    }
+    double resAt = 0.0;
+    for (const auto& e : evs)
+        if (e.reg == 0x17)
+            resAt = e.place;
+    auto twin = [&] (double delta) {
+        // two filters switched at the samples either side of the place; their linear outputs and low-pass values mixed by
+        // where the place lies between them (the state is linear, so this is the mixed step of the rule); the output
+        // function of the new parameters on the mixed low-pass value
+        Filter fA, fB;
+        for (Filter* f : { &fA, &fB })
+        {
+            f->prepare (m, rate, 0.5f);
+            f->setCutoff (1024.0f);
+            f->setResonance (0);
+            f->setMode (0x1f);
+        }
+        double alpha = 0.0;
+        int newRes = -1;
+        for (const auto& e : evs)
+            if (e.reg == 0x17)
+                newRes = e.value >> 4;
+        // the output equation of the new parameters at a filter's state (a copy given the new resonance; nothing of
+        // the filter advances): the voice's output from the write's window on
+        auto newOut = [&] (const Filter& f, double x, double& lp) {
+            Filter c = f;
+            c.setResonance (newRes);
+            return c.processLinearDouble (x, lp);
+        };
+        std::vector<double> y (in.size());
+        for (int k = 0; k < total; ++k)
+        {
+            for (const auto& e : evs)
+            {
+                if (e.reg == 0x16 && static_cast<int> (std::llround (e.place)) == k)
+                {
+                    fA.setCutoff (static_cast<float> (e.value << 3));
+                    fB.setCutoff (static_cast<float> (e.value << 3));
+                }
+                if (e.reg == 0x17)
+                {
+                    const double pl = e.place + delta;
+                    if (static_cast<int> (std::floor (pl)) == k)
+                    {
+                        fA.setResonance (e.value >> 4);
+                        alpha = pl - std::floor (pl);
+                    }
+                    if (static_cast<int> (std::floor (pl)) + 1 == k)
+                        fB.setResonance (e.value >> 4);
+                }
+            }
+            double lpA = 0.0, lpB = 0.0;
+            const double x = in[static_cast<std::size_t> (k)];
+            if (static_cast<double> (k) >= windowStart && newRes >= 0 && (fA.resonance() != newRes || fB.resonance() != newRes))
+            {
+                // inside the window, before both filters carry the new resonance: the new output equation at each state
+                const double oA = newOut (fA, x, lpA), oB = newOut (fB, x, lpB);
+                const double lin = oA + alpha * (oB - oA), lp = lpA + alpha * (lpB - lpA);
+                Filter c = fB;
+                c.setResonance (newRes);
+                y[static_cast<std::size_t> (k)] = lin + c.outputShape (lp);
+                double unused = 0.0;
+                fA.processLinearDouble (x, unused);
+                fB.processLinearDouble (x, unused);
+                continue;
+            }
+            const double linA = fA.processLinearDouble (x, lpA);
+            const double linB = fB.processLinearDouble (x, lpB);
+            const double lin = linA + alpha * (linB - linA), lp = lpA + alpha * (lpB - lpA);
+            y[static_cast<std::size_t> (k)] = lin + fB.outputShape (lp);
+        }
+        return y;
+    };
+    const int from = static_cast<int> (windowStart), to = static_cast<int> (resAt) + 600;
+    auto rms = [&] (const std::vector<double>& y) {
+        double e = 0.0;
+        for (int k = from; k < to; ++k)
+        {
+            const double d = y[static_cast<std::size_t> (k)] - out[static_cast<std::size_t> (k)];
+            e += d * d;
+        }
+        return std::sqrt (e / (to - from));
+    };
+    PlaceFit f;
+    {
+        // the change the write makes: the twin without the resonance's dynamics change against the voice
+        double e = 0.0;
+        const auto y = twin (1e6);
+        for (int k = from; k < to; ++k)
+            e += (y[static_cast<std::size_t> (k)] - out[static_cast<std::size_t> (k)]) * (y[static_cast<std::size_t> (k)] - out[static_cast<std::size_t> (k)]);
+        f.change = std::sqrt (e / (to - from));
+    }
+    f.rmsAtZero = rms (twin (0.0));
+    f.rmsAtTwentieth = rms (twin (0.05));
+    f.rmsAtOne = rms (twin (1.0));
+    double best = 1e300;
+    for (int d = -80; d <= 80; ++d)
+    {
+        const double delta = 0.05 * d;
+        const double r = rms (twin (delta));
+        if (r < best)
+        {
+            best = r;
+            f.delta = delta;
+        }
+    }
+    f.rmsAtBest = best;
+    return f;
+}
+} // namespace
+
+TEST_CASE ("chain: the place of a resonance write's dynamics, alone and with a cutoff write 30 cycles before, at or after it (0.1 samples)", "[chain][alias][writes][place]")
+{
+    // 8.19.4 after the third review: the off-line measure cannot see a place error that repeats at every write, so the
+    // place is measured by itself (placeFit, from the write's window on, so a cutoff missing from the newest output
+    // parameters inside the window fails too): the twin's best delta must be within 0.1 samples of 0 (the grid is 0.05),
+    // and at delta 0 the twin must equal the voice to 1e-9 of the write's change (the rule exactly). One sample late
+    // (delta 1) leaves a mismatch of the order of the change: fails both. A cutoff write (1024 -> 1280) 30 cycles before,
+    // at or 30 cycles after the resonance write lands from its own sample on in the twin; the voice must agree (the
+    // third review found it up to 8 samples late inside a resonance window). Both models, 88.2, 96 and 192 kHz.
+    struct C
+    {
+        const char* name;
+        std::vector<TickWrite> ws;
+    };
+    const C cases[] { { "resonance alone", { { 0, 0x17, 0xf1, 0xf1 } } },
+                      { "cutoff 30 cycles before", { { 0, 0x16, 0xa0, 0xa0 }, { 30, 0x17, 0xf1, 0xf1 } } },
+                      { "cutoff at the same cycle", { { 0, 0x16, 0xa0, 0xa0 }, { 0, 0x17, 0xf1, 0xf1 } } },
+                      { "cutoff 30 cycles after", { { 0, 0x17, 0xf1, 0xf1 }, { 30, 0x16, 0xa0, 0xa0 } } } };
+    for (const Model m : { Model::B, Model::A })
+        for (const double rate : { 88200.0, 96000.0, 192000.0 })
+            for (const auto& c : cases)
+            {
+                const auto f = placeFit (m, rate, c.ws);
+                std::printf ("[res-place] Model %s %6.0f Hz %-26s best delta %+.2f samples; rms at 0 %.1e, at 0.05 %.1e, at 1 %.1e; the change %.2e\n", m == Model::A ? "A" : "B", rate,
+                             c.name, f.delta, f.rmsAtZero, f.rmsAtTwentieth, f.rmsAtOne, f.change);
+                INFO ((m == Model::A ? "Model A " : "Model B ") << rate << " Hz, " << c.name << ": best delta " << f.delta << ", rms at 0 " << f.rmsAtZero << " of a change " << f.change);
+                CHECK (std::abs (f.delta) <= 0.1);
+                CHECK (f.rmsAtZero <= 1e-9 * f.change);
+                CHECK (f.change > 1e-4);
+            }
+}
+
+namespace
+{
+/** A write at an absolute chip cycle (dynamics twin tests). */
+struct AtWrite
+{
+    std::uint64_t cycle;
+    std::uint8_t reg, value;
+};
+
+/** The documented capacities (ChipVoice.h "TIMING"), restated here so a change of either is a change of this test. */
+constexpr int kDocPending = 32, kDocStepMix = 4;
+
+struct TwinResult
+{
+    double maxDiff = 0.0, peak = 0.0;
+    int changes = 0, maxPending = 0, overflowed = 0, maxInOneSample = 0;
+    std::uint64_t queueOverflows = 0;
+};
+
+/** The voice (Per Note, a saw at 2 kHz through the low-pass at 1024, board filters off) with resonance writes at the
+    given cycles, rendered one sample at a time (ChipVoice::lastFilterInput / lastFilterOutput), against a twin that runs
+    the documented rule on the recorded input: each resonance change begins at the first sample of its write's window
+    (Chip::unitStepTaps; unchanged values begin nothing) and waits for its place (the centre of the window's weights);
+    at most kDocPending wait, and a further one first applies the oldest at once; the step of a sample holding places is
+    mixed from the parameter sets in turn (at most kDocStepMix; beyond, the last kept one takes the newest resonance);
+    the output is the newest begun resonance's output equation on the one state. */
+TwinResult dynamicsTwin (Model m, double rate, const std::vector<AtWrite>& ws, int samples)
+{
+    PerNote p (m, rate, true);
+    ChipVoice& v = *p.v;
+    v.boardFiltersEnabled (false);
+    osc (v, 0, 2000.0 * 16777216.0 / 985248.0, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+    v.write (0x15, 0);
+    v.write (0x16, 0x80);
+    v.write (0x17, 0x01);
+    v.write (0x18, 0x1f);
+    std::vector<double> in (static_cast<std::size_t> (samples)), out (in.size());
+    struct Ev
+    {
+        std::int64_t begin;
+        double place;
+        int res;
+    };
+    std::vector<Ev> evs;
+    const std::int64_t lag = v.filterLagSamples();
+    std::size_t next = 0;
+    double one[1];
+    for (int i = 0; i < samples;)
+    {
+        const std::uint64_t at = next < ws.size() ? ws[next].cycle : ~std::uint64_t { 0 };
+        one[0] = 0.0;
+        if (v.renderUntil (one, 1, at) == 1)
+        {
+            in[static_cast<std::size_t> (i)] = v.lastFilterInput();
+            out[static_cast<std::size_t> (i)] = v.lastFilterOutput();
+            ++i;
+        }
+        while (next < ws.size() && v.chip().cycle() == ws[next].cycle)
+        {
+            const auto& w = ws[next++];
+            v.write (w.reg, w.value);
+            const Chip::EventTime t = v.chip().renderEventTime();
+            std::array<double, vs::bside::chip::render::kKernelTaps> taps {};
+            int first = 0;
+            v.chip().unitStepTaps (t.base, taps, first);
+            // in the recorded sequence: output sample i ran the filter at filter time i - lag
+            evs.push_back ({ static_cast<std::int64_t> (t.sample) + first + lag, switchRuleCentre (v.chip(), t) + static_cast<double> (lag), w.value >> 4 });
+        }
+    }
+    TwinResult r;
+    r.queueOverflows = v.queueOverflows();
+    Filter dyn;
+    dyn.prepare (m, rate, 0.5f);
+    dyn.setCutoff (1024.0f);
+    dyn.setResonance (0);
+    dyn.setMode (0x1f);
+    Filter outP = dyn;
+    int begun = 0; // the newest begun resonance
+    struct Pending
+    {
+        std::int64_t at;
+        double alpha;
+        int res;
+    };
+    std::vector<Pending> pending;
+    std::size_t nb = 0;
+    for (int k = 0; k < samples; ++k)
+    {
+        while (nb < evs.size() && evs[nb].begin <= k)
+        {
+            const auto& e = evs[nb++];
+            if (e.res == begun)
+                continue;
+            begun = e.res;
+            outP.setResonance (begun);
+            if (static_cast<int> (pending.size()) == kDocPending)
+            {
+                dyn.setResonance (pending.front().res);
+                pending.erase (pending.begin());
+                ++r.overflowed;
+            }
+            const double fl = std::floor (e.place);
+            pending.push_back ({ static_cast<std::int64_t> (fl), e.place - fl, e.res });
+            ++r.changes;
+            r.maxPending = std::max (r.maxPending, static_cast<int> (pending.size()));
+        }
+        const double x = in[static_cast<std::size_t> (k)];
+        double lp = 0.0;
+        const double lin = outP.peekLinearDouble (x, dyn, lp);
+        const double y = lin + outP.outputShape (lp);
+        r.maxDiff = std::max (r.maxDiff, std::abs (y - out[static_cast<std::size_t> (k)]));
+        r.peak = std::max (r.peak, std::abs (y));
+        std::vector<double> alpha;
+        std::vector<int> res;
+        int inSample = 0;
+        while (! pending.empty() && pending.front().at <= k)
+        {
+            const auto pe = pending.front();
+            pending.erase (pending.begin());
+            ++inSample;
+            if (pe.at < k)
+                dyn.setResonance (pe.res);
+            else if (static_cast<int> (alpha.size()) == kDocStepMix)
+                res.back() = pe.res;
+            else
+            {
+                alpha.push_back (pe.alpha);
+                res.push_back (pe.res);
+            }
+        }
+        r.maxInOneSample = std::max (r.maxInOneSample, inSample);
+        if (alpha.empty())
+            dyn.processLinearDouble (x, lp);
+        else
+        {
+            std::array<double, 2> mix { 0.0, 0.0 };
+            Filter f = dyn;
+            double before = 0.0;
+            for (std::size_t j = 0; j <= alpha.size(); ++j)
+            {
+                if (j > 0)
+                    f.setResonance (res[j - 1]);
+                Filter g = f;
+                const double until = j < alpha.size() ? std::max (alpha[j], before) : 1.0;
+                g.processLinearDouble (x, lp);
+                const auto sj = g.state();
+                mix[0] += (until - before) * sj[0];
+                mix[1] += (until - before) * sj[1];
+                before = until;
+            }
+            dyn.setResonance (res.back());
+            dyn.setState (mix);
+        }
+    }
+    return r;
+}
+} // namespace
+
+TEST_CASE ("chain: resonance changes in combination follow the documented rule exactly: several in one sample, two writes 0 to 10 cycles apart, the pending capacity at and beyond its limit", "[chain][writes][place][capacity]")
+{
+    // ChipVoice.h "TIMING" (8.19.4 after the third review) states the rule for resonance changes in combination; a twin
+    // (dynamicsTwin) runs it on the voice's own filter input and must equal the voice's filter output to 1e-12 of its
+    // peak, sample by sample. Cases (each also checked to exercise what it names):
+    // - two resonance writes 0, 1, 3 and 10 cycles apart: the same value twice, two different values, and back to the
+    //   old value (the fourth review's M8: a wrong final resonance after two changes in one sample passed every test);
+    // - k changes placed in one sample with distinct places, k = 4 (the limit kMaxStepMix: every one mixed) and 5, 6
+    //   (beyond: the last kept one takes the newest resonance);
+    // - kMaxPending changes waiting at once (32, the limit: none applied early) and 33 (beyond: the oldest applied at once
+    //   when the 33rd begins), Model B (on Model A the write queue of the same size fills first at that density: its
+    //   bus pre-filter keeps writes waiting 21 samples longer; the write queue's own rule is tested in "a full write
+    //   queue").
+    auto check = [] (Model m, double rate, const std::vector<AtWrite>& ws, const char* what, int samples = 1500) {
+        const auto r = dynamicsTwin (m, rate, ws, samples);
+        INFO ((m == Model::A ? "Model A " : "Model B ") << rate << " Hz, " << what << ": max |voice - twin| " << r.maxDiff << " of peak " << r.peak << ", changes "
+                                                       << r.changes << ", most waiting " << r.maxPending << ", applied early " << r.overflowed << ", most in one sample "
+                                                       << r.maxInOneSample);
+        CHECK (r.maxDiff <= 1e-12 * r.peak);
+        CHECK (r.queueOverflows == 0u);
+        return r;
+    };
+    const std::uint64_t c0 = 6000;
+    for (const Model m : { Model::B, Model::A })
+        for (const double rate : { 88200.0, 96000.0, 192000.0 })
+            for (const std::uint64_t gap : { 0u, 1u, 3u, 10u })
+            {
+                check (m, rate, { { c0, 0x17, 0xf1 }, { c0 + gap, 0x17, 0xf1 } }, "two writes, the same value");
+                const auto d = check (m, rate, { { c0, 0x17, 0x81 }, { c0 + gap, 0x17, 0xf1 } }, "two writes, two values");
+                CHECK (d.changes == 2);
+                const auto b = check (m, rate, { { c0, 0x17, 0xf1 }, { c0 + gap, 0x17, 0x01 } }, "two writes, back to the old value");
+                CHECK (b.changes == 2);
+                if (gap == 0)
+                    CHECK (b.maxInOneSample == 2);
+            }
+    // k changes placed in one sample, distinct places: writes 2 cycles apart at 88.2 kHz (11.2 cycles per sample),
+    // shifted until all k places fall into one sample
+    for (const Model m : { Model::B, Model::A })
+        for (const int k : { 4, 5, 6 })
+        {
+            int found = 0;
+            for (std::uint64_t shift = 0; shift < 12 && found == 0; ++shift)
+            {
+                std::vector<AtWrite> ws;
+                for (int j = 0; j < k; ++j)
+                    ws.push_back ({ c0 + shift + 2 * static_cast<std::uint64_t> (j), 0x17, static_cast<std::uint8_t> (((3 * j + 2) & 15) << 4 | 1) });
+                const auto r = dynamicsTwin (m, 88200.0, ws, 1500);
+                if (r.maxInOneSample == k)
+                {
+                    found = k;
+                    check (m, 88200.0, ws, k == 4 ? "four changes in one sample (the limit)" : "more changes in one sample than the limit");
+                }
+            }
+            INFO ((m == Model::A ? "Model A, " : "Model B, ") << k << " changes: a shift placing them all in one sample");
+            CHECK (found == k);
+        }
+    // the pending capacity: Model B, 96 kHz, a change every 2 cycles (all begun before the first one's place)
+    for (const int count : { kDocPending, kDocPending + 1 })
+    {
+        std::vector<AtWrite> ws;
+        for (int j = 0; j < count; ++j)
+            ws.push_back ({ c0 + 2 * static_cast<std::uint64_t> (j), 0x17, static_cast<std::uint8_t> ((j % 2) == 0 ? 0xf1 : 0x01) });
+        const auto r = check (Model::B, 96000.0, ws, count == kDocPending ? "32 changes waiting (the limit)" : "33 changes (one beyond)");
+        CHECK (r.maxPending == kDocPending);
+        CHECK (r.overflowed == (count > kDocPending ? 1 : 0));
+    }
+}
 
 TEST_CASE ("chain: routing, volume and mode writes every tick meet the write budget before the board filters (<= -90 dB to 2 kHz)", "[chain][alias][writes]")
 {
@@ -425,6 +1722,7 @@ TEST_CASE ("chain: routing, volume and mode writes every tick meet the write bud
                        { "volume 15 <-> 6, volume DC off", false, 0x18, 0x1f, 0x16, ctrl::saw, 0x01, 0x1f },
                        { "mode low-pass <-> high-pass", true, 0x18, 0x1f, 0x4f, ctrl::saw, 0x01, 0x1f },
                        { "mode low-pass <-> band-pass, volume DC off", false, 0x18, 0x1f, 0x2f, ctrl::triangle, 0x01, 0x1f } };
+    // (resonance writes: the next test, against an ideal render; 8.19.4 after the round over phases)
     for (const Model m : { Model::B, Model::A })
         for (const auto& row : rows)
         {
@@ -554,7 +1852,8 @@ SharedResult sharedChips (Model m, int n, bool shared)
         }
         std::vector<double> out;
         auto run = [&] (int samples) {
-            std::array<double, ChipVoice::kBlock> so {}, ss {}, y {};
+            std::array<double, ChipVoice::kBlock> so {}, sl {}, ss {}, y {};
+            std::array<Filter::Shape, ChipVoice::kBlock> sh {};
             int done = 0;
             while (done < samples)
             {
@@ -573,11 +1872,12 @@ SharedResult sharedChips (Model m, int n, bool shared)
                         double in = dc;
                         for (auto& x : v)
                             in += x->filterInputAc (i);
-                        so[static_cast<std::size_t> (i)] = sf.processDouble (in);
+                        so[static_cast<std::size_t> (i)] = sf.processLinearDouble (in, sl[static_cast<std::size_t> (i)]);
                         ss[static_cast<std::size_t> (i)] = sf.staticOutput (dc);
+                        sh[static_cast<std::size_t> (i)] = sf.outputShapeCoefficients();
                     }
                     for (auto& x : v)
-                        x->finishShared (so.data(), ss.data(), n, y.data(), want);
+                        x->finishShared (sh.data(), so.data(), sl.data(), ss.data(), n, y.data(), want);
                 }
                 out.insert (out.end(), y.begin(), y.begin() + want);
                 done += want;
@@ -714,7 +2014,8 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
         x.write (0x18, 0x1f);
     }
     std::vector<double> out;
-    std::array<double, ChipVoice::kBlock> so {}, ss {}, y {};
+    std::array<double, ChipVoice::kBlock> so {}, sl {}, ss {}, y {};
+            std::array<Filter::Shape, ChipVoice::kBlock> sh {};
     std::size_t next = 0;
     int done = 0;
     while (done < s.samples)
@@ -738,11 +2039,12 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
                     double in = dc;
                     for (auto& x : v)
                         in += x->filterInputAc (i);
-                    so[static_cast<std::size_t> (i)] = sf.processDouble (in);
+                    so[static_cast<std::size_t> (i)] = sf.processLinearDouble (in, sl[static_cast<std::size_t> (i)]);
                     ss[static_cast<std::size_t> (i)] = sf.staticOutput (dc);
+                    sh[static_cast<std::size_t> (i)] = sf.outputShapeCoefficients();
                 }
                 for (auto& x : v)
-                    x->finishShared (so.data(), ss.data(), s.n, y.data(), want);
+                    x->finishShared (sh.data(), so.data(), sl.data(), ss.data(), s.n, y.data(), want);
             }
             out.insert (out.end(), y.begin(), y.begin() + want);
             done += want;
@@ -903,15 +2205,21 @@ TEST_CASE ("chain: the static DC follows the voice counts with volume DC off (no
     }
 }
 
-TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCutoff while it stands still; cutoff and resonance writes land at their own sample", "[chain][cutoff]")
+TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCutoff while it stands still; cutoff writes land at their own sample", "[chain][cutoff]")
 {
-    // A reference computation from the same buses (a twin Chip given the same writes), the same Filter and OutputStage
-    // classes, and the rule of ChipVoice.h "TIMING" written out here with its numbers: a cutoff or resonance write made
-    // while the chip's sample s is in progress applies from ring sample s on (output sample s + latency + 1); a cutoff
-    // change less than 256 samples after the previous one runs Filter::processWithCutoff (the cutoff given every
-    // sample) from that sample until the cutoff has stood still for 256 samples, then setCutoff + process. One isolated
-    // change, a sweep (a change every 32 samples), resonance writes inside the sweep and while still, a last isolated
-    // change. Bit for bit, both models (volume DC on, no 0x18 write: one configuration). Both paths are taken.
+    // A reference computation of the filter from the voice's own filter input at every sample (ChipVoice test aids), the
+    // same Filter class, and the rule of ChipVoice.h "TIMING" written out here with its numbers: a cutoff or resonance
+    // write made while the chip's sample s is in progress applies from the filter's sample for chip sample s on (output
+    // sample s + filterLagSamples ()); a cutoff change less than 256 samples after the previous one runs
+    // Filter::processWithCutoff (the cutoff given every sample) from that sample until the cutoff has stood still for
+    // 256 samples, then setCutoff + process. One isolated change, a sweep (a change every 32 samples), a last isolated
+    // change. (S3b-2 review: resonance writes are no longer here: they blend two configurations over the write's
+    // window like volume and mode writes, and are pinned where they land by "every write lands where latencySamples ()
+    // says ..." in ChipVoiceAliasTests.cpp.) To 1e-12 (bit for bit on Clang; GCC differed by one
+    // rounding on Model A), both models (volume DC on, no 0x18 write: one configuration). Both paths are taken. Changed in S3b-2: the comparison is on the filter's output, not the
+    // chain's (what follows the filter, the anti-alias stages, is pinned by its own tests), and the lag is the filter's
+    // (the renderer's latency + 1, plus Model A's bus pre-filter), no longer latencySamples () + 1, which now also counts
+    // the stages after the filter.
     for (const Model m : { Model::B, Model::A })
     {
         const double rate = 96000.0;
@@ -922,23 +2230,17 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
         cfg.variation = 0.5f;
         PerNote p (m, rate, true);
         ChipVoice& v = *p.v;
-        Chip twin;
-        twin.prepare (cfg);
-        auto both = [&] (std::uint8_t reg, std::uint8_t value) {
-            v.write (reg, value);
-            twin.write (reg, value);
-        };
+        auto both = [&] (std::uint8_t reg, std::uint8_t value) { v.write (reg, value); };
         OscInput in;
         in.frequency = 220.0 * 16777216.0 / 985248.0;
         in.control = ctrl::saw | ctrl::gate;
         in.sustainRelease = 0xf0;
         v.setOscillator (0, in);
-        twin.setOscillator (0, in);
         both (0x15, 0);
         both (0x16, 0x40); // cutoff 512
         both (0x17, 0x81); // resonance 8, oscillator 1 to the filter
         both (0x18, 0x1f);
-        const double cps = static_cast<double> (twin.sampleClock().increment()) / 4294967296.0;
+        const double cps = static_cast<double> (v.chip().sampleClock().increment()) / 4294967296.0;
         struct W
         {
             std::uint64_t cycle;
@@ -951,38 +2253,38 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
         for (int k = 0; k < 60; ++k)
         {
             w.push_back ({ at (4000.0 + 32.0 * k), 0x16, static_cast<std::uint8_t> (0x30 + (k * 23) % 160) });
-            if (k == 30)
-                w.push_back ({ at (4000.0 + 32.0 * k + 5.0), 0x17, 0xc1 });
         }
-        w.push_back ({ at (6200.0), 0x17, 0x51 });
-        w.push_back ({ at (9000.0), 0x17, 0x31 });
         w.push_back ({ at (11000.0), 0x16, 0x90 });
         const int total = 14000;
-        // the voice, and the twin's buses
-        std::vector<double> y (static_cast<std::size_t> (total), 0.0);
-        std::vector<double> fa (y.size()), da (y.size()), fe (y.size()), de (y.size()), fv (y.size()), dv (y.size());
-        auto busAt = [&] (int k) { return Chip::BusBlock { fa.data() + k, da.data() + k, fe.data() + k, de.data() + k, fv.data() + k, dv.data() + k }; };
-        int done = 0, doneTwin = 0;
+        // the voice, sample by sample: its filter's input and output at every output sample
+        std::vector<double> y (static_cast<std::size_t> (total), 0.0), fin (y.size(), 0.0), fout (y.size(), 0.0);
+        int done = 0;
+        auto renderTo = [&] (std::uint64_t cycle) {
+            while (done < total)
+            {
+                if (v.renderUntil (y.data() + done, 1, cycle) == 0)
+                    break;
+                fin[static_cast<std::size_t> (done)] = v.lastFilterInput();
+                fout[static_cast<std::size_t> (done)] = v.lastFilterOutput();
+                ++done;
+            }
+        };
         for (auto& x : w)
         {
-            done += v.renderUntil (y.data() + done, total - done, x.cycle);
-            doneTwin += twin.renderBusesUntil (busAt (doneTwin), total - doneTwin, x.cycle);
+            renderTo (x.cycle);
             REQUIRE (v.chip().cycle() == x.cycle);
             x.sample = v.chip().renderSampleIndex();
             both (x.reg, x.value);
         }
-        v.renderUntil (y.data() + done, total - done, ~std::uint64_t { 0 });
-        twin.renderBusesUntil (busAt (doneTwin), total - doneTwin, ~std::uint64_t { 0 });
+        renderTo (~std::uint64_t { 0 });
+        REQUIRE (done == total);
         // the reference computation
         Filter rf;
         rf.prepare (m, rate, 0.5f);
         rf.setCutoff (512.0f);
         rf.setResonance (8);
         rf.setMode (0x1f);
-        OutputStage rs;
-        rs.prepare (m, rate, true);
-        rs.setModeVolume (0x1f);
-        const std::int64_t delay = v.latencySamples() + 1;
+        const std::int64_t delay = v.filterLagSamples();
         std::uint8_t lo = 0, hi = 0x40, resonance = 0x80;
         float cutoff = 512.0f;
         bool changed = false, moving = false;
@@ -1023,28 +2325,76 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
                 moving = false;
                 rf.setCutoff (cutoff);
             }
-            rs.setVoices (fv[b], dv[b]);
-            const double x = rs.filterInput (fa[b], fe[b]);
-            const double fo = moving ? rf.processWithCutoffDouble (x, cutoff) : rf.processDouble (x);
-            expected[b] = rs.board (rs.mixerOutput (fo, da[b], de[b]), rs.postGain());
+            expected[b] = moving ? rf.processWithCutoffDouble (fin[b], cutoff) : rf.processDouble (fin[b]);
             (moving ? movingSamples : stillSamples) += 1;
         }
         INFO ((m == Model::A ? "Model A" : "Model B") << ": " << movingSamples << " samples per sample (moving), " << stillSamples
-                                                      << " still; largest difference from the reference computation " << maxAbsDiff (y, expected));
+                                                      << " still; largest difference from the reference computation " << maxAbsDiff (fout, expected));
         CHECK (movingSamples > 2000);
         CHECK (stillSamples > 8000);
-        CHECK (sameBits (y, expected));
+        CHECK (maxAbsDiff (fout, expected) <= 1.0e-12); // (not bit for bit: GCC may contract the output function's last
+                                                         // multiply-add differently in the two inlined copies; a rule
+                                                         // broken by one sample differs by 1e-6 or more)
     }
+}
+
+TEST_CASE ("chain: at most kMaxConfigs + 1 configurations are blended; a further mode, volume or resonance write in the window retires the oldest at once", "[chain][queue]")
+{
+    // ChipVoice.h "TIMING" (VOLUME and MODE; RESONANCE): every 0x18 write that changes a mode or the volume, and every
+    // resonance write that changes it, opens a configuration over the write's window (the long kernel, 16 samples);
+    // kMaxConfigs (4) earlier configurations plus the current one are blended at once, and one more such write while
+    // all are open retires the oldest at once. Six changing writes at one cycle (the second review's case: resonance;
+    // here mode and resonance alike, both models): the blend reaches kMaxConfigs + 1 = 5 configurations and no more,
+    // every output sample is finite, the windows close (1 configuration) and the voice ends in the last write's
+    // state: its held output equals that of a voice given only the last write.
+    for (const Model m : { Model::B, Model::A })
+        for (const bool resonance : { false, true })
+        {
+            auto run = [&] (bool all, int& most) {
+                PerNote p (m, 96000.0, true);
+                ChipVoice& v = *p.v;
+                v.boardFiltersEnabled (false);
+                osc (v, 0, 0.0, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::test | ctrl::gate)); // a held voice
+                v.write (0x15, 0);
+                v.write (0x16, 0x80);
+                v.write (0x17, 0x01);
+                v.write (0x18, 0x1f);
+                std::vector<double> y (6000, 0.0);
+                int done = v.renderUntil (y.data(), 6000, 40000);
+                const std::uint8_t res[] { 0x31, 0xf1, 0x51, 0xd1, 0x71, 0xb1 }, mode[] { 0x4f, 0x2f, 0x1e, 0x4d, 0x2c, 0x1b };
+                for (int k = all ? 0 : 5; k < 6; ++k)
+                    v.write (resonance ? 0x17 : 0x18, resonance ? res[k] : mode[k]);
+                most = 1;
+                while (done < 6000)
+                {
+                    done += v.renderUntil (y.data() + done, 1, ~std::uint64_t { 0 });
+                    most = std::max (most, v.configsActive());
+                    REQUIRE (std::isfinite (y[static_cast<std::size_t> (done - 1)]));
+                }
+                CHECK (v.configsActive() == 1);
+                return y;
+            };
+            int most = 0, mostOne = 0;
+            const auto y6 = run (true, most);
+            const auto y1 = run (false, mostOne);
+            INFO ((m == Model::A ? "Model A, " : "Model B, ") << (resonance ? "resonance" : "mode and volume") << ": at most " << most
+                                                             << " configurations blended (one write: " << mostOne << "); held output after the windows "
+                                                             << y6.back() << " against the last write alone " << y1.back());
+            CHECK (most == ChipVoice::kMaxConfigs + 1);
+            CHECK (mostOne == 2);
+            CHECK (std::abs (y6.back() - y1.back()) <= 1.0e-9 * std::max (1.0, std::abs (y1.back())));
+        }
 }
 
 TEST_CASE ("chain: a full write queue applies its oldest entry at once, keeping the order and every value", "[chain][queue]")
 {
     // ChipVoice.h "QUEUE": a cutoff write every cycle at 88.2 kHz (about 11 cycles per sample; a write waits about
-    // latency + 1 samples) fills the queue of 32. The rule, written out here: when write k (made while sample s_k is in
-    // progress) finds 32 writes pending, the oldest pending one takes effect at once, i.e. from ring sample
-    // s_k - (latency + 1) on (the next output sample's); every other write from ring sample s_j on. The cutoff in effect
-    // at every output sample is the value of the latest write in effect. Model B; then the same burst with a 0x18 write
-    // at one cycle 40 times: bounded, finite, the blending ends.
+    // the filter's lag, filterLagSamples (), samples) fills the queue of 32. The rule, written out here: when write k
+    // (made while sample s_k is in progress) finds 32 writes pending, the oldest pending one takes effect at once, i.e.
+    // from the filter's sample s_k - lag on (the next output sample's); every other write from the filter's sample s_j
+    // on. The cutoff in effect at every output sample is the value of the latest write in effect. Model B; then the same
+    // burst with a 0x18 write at one cycle 40 times: bounded, finite, the blending ends. (S3b-2: the lag is the filter's,
+    // filterLagSamples (); latencySamples () + 1 was the same number before the anti-alias stages followed the filter.)
     PerNote p (Model::B, 88200.0, true);
     ChipVoice& v = *p.v;
     osc (v, 0, 3000.0, 2048.0f, ctrl::saw | ctrl::gate);
@@ -1052,7 +2402,7 @@ TEST_CASE ("chain: a full write queue applies its oldest entry at once, keeping 
     v.write (0x16, 0x40);
     v.write (0x17, 0x01);
     v.write (0x18, 0x1f);
-    const std::int64_t delay = v.latencySamples() + 1;
+    const std::int64_t delay = v.filterLagSamples();
     struct W
     {
         std::int64_t sample;
@@ -1122,4 +2472,21 @@ TEST_CASE ("chain: a full write queue applies its oldest entry at once, keeping 
         finite = finite && std::isfinite (s) && std::abs (s) < 10.0;
     CHECK (finite);
     CHECK (v.configsActive() == 1);
+}
+
+
+TEST_CASE ("chain: the ideal render's convergence: its own placement error per write case at 8, 16, 32 and 64 times the rate (hidden)", "[.chain-writes-convergence]")
+{
+    // the ideal render's own error (writeExcess: the off-line difference of the render at a factor and at half of it, less
+    // 6 dB) and ours against it, per factor: the gate's 32 times leaves the ideal's error at or below -112 dB on every row
+    // of the normal run (96 kHz, voice at 2 kHz)
+    const auto cases = writeCases (false);
+    for (const Model m : { Model::B, Model::A })
+        for (std::size_t ci = 0; ci < cases.size(); ++ci)
+            for (const int f : { 8, 16, 32, 64 })
+            {
+                const auto r = writeExcess (m, 96000.0, 2000.0, true, cases[ci].start, cases[ci].writes, f);
+                std::printf ("[write-convergence] Model %s %-42s x%2d: ours %.1f, ideal %.1f, the ideal's own error %.1f, excess %.1f dB\n", m == Model::A ? "A" : "B",
+                             cases[ci].name.c_str(), f, r.ours.worstDb, r.ideal.worstDb, r.idealFloor.worstDb, r.excess.worstDb);
+            }
 }

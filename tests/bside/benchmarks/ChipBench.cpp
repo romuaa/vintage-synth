@@ -27,14 +27,29 @@
 // gate's patch (s4gate) with oscillators 1 and 2 through the filter (low-pass, cutoff 1024, resonance 8, volume 15):
 //   chainB, chainA     a cutoff write every tick (the filter runs process: setCutoff once per write)
 //   moveB, moveA       a cutoff write every 64 samples (moving: Filter::processWithCutoff every sample)
+//   plainB, plainA     chainB / chainA without their cutoff writes
+//   resMoveB, resMoveA moveB / moveA with a resonance change every 64 samples (a resonance write with the cutoff moving)
+//   tickB, tickA       moveB / moveA with resonance, mode and volume written with each cutoff (the worst realistic tick)
+//   resB, resA         plainB / plainA with a resonance change every 64 samples (the cost of a write: the difference x 64)
 //   busesB, busesA     the same patch, Chip::renderBusesUntil alone (the buses' share of chainB / chainA)
 // The breakdown per stage: busesX is the renderer with its buses; chainX - busesX the filter, the stage and the voice's
 // per-sample bookkeeping.
+// S3b-2 (8.19.4): the anti-alias stages of the static curves (HalfBand.h, ChipVoice.h "ALIAS"), per internal sample, over
+// the S3a cases' prepared input:
+//   preB               Model B's mixer pre-filter (one half-band FIR at the internal rate) alone
+//   s3bB               s3aB with it, as the chain runs them (filter, gain x sum, FIR, curve, board): the 7 ns budget of
+//                      8.19.1 / 8.19.4 at 96 kHz
+//   preA               Model A's bus pre-filters (the filter bus and the direct sum; the voices' DC held) alone
+//   twoxA              Model A's 2x part alone (two interpolators, output function and mixer curve at 2x, decimator)
+//   s3bA               s3aA with both, as the chain runs them
+//   busesA0            busesA without the voice bend (Chip::renderBendVoices off): busesA - busesA0 is the bend's cost
+//                      in the renderer (S4 gate patch: a pulse, a saw and a combined waveform)
 
 #include "../../support/Env.h"
 #include "bside/chip/Chip.h"
 #include "bside/chip/ChipVoice.h"
 #include "bside/chip/Filter.h"
+#include "bside/chip/HalfBand.h"
 #include "bside/chip/OutputStage.h"
 
 #include <algorithm>
@@ -97,8 +112,9 @@ double nsPerSample (Model m, double rate, Setup&& setup, Tick&& tick, bool digit
         cfg.internalRate = rate;
         c.prepare (cfg);
         setup (c);
-        if (noBendWanted())
-            c.renderBendVoices (false);
+        // the buses carry Model A's voice bend as the chain renders them (S3b-2: folded into the renderer), unless
+        // CHIP_BENCH_NOBEND=1; the single sum is the renderer's unbent output
+        c.renderBendVoices (busesWanted() && ! noBendWanted());
         std::vector<float> out (64, 0.0f);
         const auto samples = static_cast<std::uint64_t> (chipSeconds() * rate);
         std::uint64_t done = 0, ticks = 1;
@@ -189,8 +205,100 @@ double s3aNsPerSample (Model m, double rate, int which)
     (void) keep;
     return best;
 }
+/** ns per internal sample of the S3b-2 stages over the S3a cases' input (see the header): `which` 0 the pre-filter(s)
+    alone, 1 Model A's 2x part alone, 2 filter + stage + anti-alias stages as the chain runs them. */
+double s3bNsPerSample (Model m, double rate, int which)
+{
+    const auto samples = static_cast<std::size_t> (chipSeconds() * rate);
+    std::vector<double> audio (4096), env (4096);
+    for (std::size_t i = 0; i < audio.size(); ++i)
+    {
+        const double t = static_cast<double> (i);
+        audio[i] = std::fmod (t * 0.0123, 1.0) + std::fmod (t * 0.0071, 1.0) + std::fmod (t * 0.0049, 1.0) - 1.5;
+        env[i] = 2.5 + 0.0001 * static_cast<double> (i % 7);
+    }
+    const HalfBandDesign pre = designHalfBand (rate, 20000.0, ChipVoice::kAntiAliasDeviation);
+    const HalfBandDesign twice = designHalfBand (2.0 * rate, 20000.0, ChipVoice::kTwiceDeviation);
+    double best = 1e300;
+    double sink = 0.0;
+    for (int run = 0; run < 5; ++run)
+    {
+        Filter f;
+        f.prepare (m, rate, 0.5f);
+        f.setResonance (8);
+        f.setMode (0x3f);
+        OutputStage o;
+        o.prepare (m, rate, false);
+        o.setRouting (0x03);
+        o.setModeVolume (0x3f);
+        o.setFilterStaticDc (f.staticOutput (o.staticFilterBusDc()));
+        HalfBandFir fir, firAc, firDirect;
+        fir.prepare (pre);
+        firAc.prepare (pre);
+        firDirect.prepare (pre);
+        HalfBandUp upL, upP;
+        HalfBandDown dn;
+        upL.prepare (twice);
+        upP.prepare (twice);
+        dn.prepare (twice);
+        const Filter::Shape sh = f.outputShapeCoefficients();
+        double acc = 0.0;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (std::size_t done = 0; done < samples; done += 64)
+        {
+            f.setCutoff (static_cast<float> (600 + (done / 64) % 1000) + 0.5f);
+            const std::size_t base = done % 4096;
+            const double g = o.gainFactor(), pa = o.postScale(), pb = o.postOffset(), pp = o.postGain();
+            const std::array<double, 5> p { g * sh.p1, g * sh.p2, g * sh.p3, g * sh.p4, g * sh.p5 };
+            auto shape = [&] (double lp) {
+                const double v = lp < sh.lpMin ? sh.lpMin : (lp > sh.lpMax ? sh.lpMax : lp);
+                return ((((p[4] * v + p[3]) * v + p[2]) * v + p[1]) * v + p[0]) * v;
+            };
+            for (std::size_t j = 0; j < 64; ++j)
+            {
+                const double a = audio[(base + j) & 4095], e = env[(base + j) & 4095];
+                if (which == 0)
+                    acc += m == Model::B ? fir.process (a) : firAc.process (a) + firDirect.process (e);
+                else if (which == 1)
+                {
+                    double l0 = 0.0, l1 = 0.0, p0 = 0.0, p1 = 0.0;
+                    upL.process (a, l0, l1);
+                    upP.process (e, p0, p1);
+                    acc += dn.process (o.mixerCurve (l0 + shape (p0)), o.mixerCurve (l1 + shape (p1)));
+                }
+                else if (m == Model::B)
+                {
+                    double lp = 0.0;
+                    const double lin = f.processLinearDouble (o.filterInput (a, e), lp);
+                    const double u = fir.process (g * (lin + o.directSumWith (a, e, 1.0)));
+                    acc += o.board (pa * o.mixerCurve (u) + pb, pp);
+                }
+                else
+                {
+                    double lp = 0.0;
+                    const double in = firAc.process (o.filterInputAc (a, e)) + o.staticFilterBusDc();
+                    const double di = firDirect.process (o.directSumWith (a, e, 1.0));
+                    const double lin = f.processLinearDouble (in, lp);
+                    double l0 = 0.0, l1 = 0.0, p0 = 0.0, p1 = 0.0;
+                    upL.process (g * (lin + di), l0, l1);
+                    upP.process (lp, p0, p1);
+                    const double mm = dn.process (o.mixerCurve (l0 + shape (p0)), o.mixerCurve (l1 + shape (p1)));
+                    acc += o.board (pa * mm + pb, pp);
+                }
+            }
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+        best = std::min (best, std::chrono::duration<double, std::nano> (t1 - t0).count() / static_cast<double> (samples));
+        sink += acc;
+    }
+    volatile double keep = sink;
+    (void) keep;
+    return best;
+}
+
 /** ns per internal sample of the whole chain (ChipVoice, Per Note) on the S4 gate's patch: `which` 0 chain with a
-    cutoff write every tick, 1 a cutoff write every 64 samples (moving), 2 the buses alone. */
+    cutoff write every tick, 1 a cutoff write every 64 samples (moving), 2 the buses alone, 3 the buses alone without
+    Model A's voice bend. */
 double chainNsPerSample (Model m, double rate, int which)
 {
     double best = 1e300;
@@ -221,6 +329,8 @@ double chainNsPerSample (Model m, double rate, int which)
         v->write (0x16, 0x80);
         v->write (0x17, 0x83);
         v->write (0x18, 0x1f);
+        if (which == 3)
+            v->chip().renderBendVoices (false);
         std::vector<double> out (64, 0.0);
         const auto samples = static_cast<std::uint64_t> (chipSeconds() * rate);
         std::uint64_t done = 0, ticks = 1, blocks = 0;
@@ -228,7 +338,7 @@ double chainNsPerSample (Model m, double rate, int which)
         while (done < samples)
         {
             const std::uint64_t until = ticks * kTick;
-            const int got = which == 2 ? v->renderBusesUntil (64, until) : v->renderUntil (out.data(), 64, until);
+            const int got = which == 2 || which == 3 ? v->renderBusesUntil (64, until) : v->renderUntil (out.data(), 64, until);
             done += static_cast<std::uint64_t> (got);
             if (v->chip().cycle() == until)
             {
@@ -239,8 +349,18 @@ double chainNsPerSample (Model m, double rate, int which)
                     v->write (0x16, static_cast<std::uint8_t> (0x60 + (ticks * 7) % 64));
                 ++ticks;
             }
-            if (which == 1 && got == 64)
+            if ((which == 1 || which == 6 || which == 7) && got == 64)
                 v->write (0x16, static_cast<std::uint8_t> (0x60 + (++blocks * 5) % 64));
+            if (which == 6 && got == 64)
+                v->write (0x17, static_cast<std::uint8_t> ((blocks % 2) == 0 ? 0x83 : 0xf3));
+            if (which == 7 && got == 64)
+            {
+                // the worst realistic tick: cutoff (above), resonance, mode and volume at once, the cutoff moving
+                v->write (0x17, static_cast<std::uint8_t> ((blocks % 2) == 0 ? 0x83 : 0xf3));
+                v->write (0x18, static_cast<std::uint8_t> ((blocks % 2) == 0 ? 0x1f : 0x2c));
+            }
+            if (which == 4 && got == 64)
+                v->write (0x17, static_cast<std::uint8_t> ((++blocks % 2) == 0 ? 0x83 : 0xf3)); // a resonance change every 64 samples
         }
         const auto t1 = std::chrono::steady_clock::now();
         best = std::min (best, std::chrono::duration<double, std::nano> (t1 - t0).count() / static_cast<double> (done));
@@ -454,13 +574,35 @@ int main (int argc, char** argv)
                                { "chainA", Model::A, 0, "chain, S4 gate patch, Model A: buses -> filter -> stage" },
                                { "moveB", Model::B, 1, "chainB with a cutoff write every 64 samples (processWithCutoff)" },
                                { "moveA", Model::A, 1, "chainA with a cutoff write every 64 samples (processWithCutoff)" },
+                               { "plainB", Model::B, 5, "chainB without the cutoff writes (the base of resB)" },
+                               { "plainA", Model::A, 5, "chainA without the cutoff writes (the base of resA)" },
+                               { "resB", Model::B, 4, "plainB with a resonance change every 64 samples ((resB - plainB) x 64: one write)" },
+                               { "resA", Model::A, 4, "plainA with a resonance change every 64 samples ((resA - plainA) x 64: one write)" },
+                               { "resMoveB", Model::B, 6, "moveB with a resonance change every 64 samples ((resMoveB - moveB) x 64: one write, cutoff moving)" },
+                               { "resMoveA", Model::A, 6, "moveA with a resonance change every 64 samples ((resMoveA - moveA) x 64: one write, cutoff moving)" },
+                               { "tickB", Model::B, 7, "moveB with resonance, mode and volume written with each cutoff ((tickB - moveB) x 64)" },
+                               { "tickA", Model::A, 7, "moveA with resonance, mode and volume written with each cutoff ((tickA - moveA) x 64)" },
                                { "busesB", Model::B, 2, "the buses alone, S4 gate patch, Model B" },
-                               { "busesA", Model::A, 2, "the buses alone, S4 gate patch, Model A (voice bend included)" } };
+                               { "busesA", Model::A, 2, "the buses alone, S4 gate patch, Model A (voice bend included)" },
+                               { "busesA0", Model::A, 3, "busesA without the voice bend (busesA - busesA0: the bend in the renderer)" } };
     for (const auto& c : chains)
         if (want (c.name))
         {
             for (int i = 0; i < 3; ++i)
                 r[i] = chainNsPerSample (c.model, rates[i], c.which);
+            std::printf ("%-8s %10.1f %10.1f %10.1f   (%s)\n", c.name, r[0], r[1], r[2], c.what);
+        }
+    // S3b-2: the anti-alias stages (8.19.4)
+    const S3aCase s3b[] { { "preB", Model::B, 0, "Model B's mixer pre-filter alone (half-band FIR)" },
+                          { "s3bB", Model::B, 2, "filter + output stage + pre-filter, Model B (budget 7 ns at 96 kHz)" },
+                          { "preA", Model::A, 0, "Model A's bus pre-filters alone (filter bus and direct sum)" },
+                          { "twoxA", Model::A, 1, "Model A's 2x part alone (up x2, output function, mixer curve, down)" },
+                          { "s3bA", Model::A, 2, "filter + output stage + pre-filters + 2x part, Model A (no budget: S4)" } };
+    for (const auto& c : s3b)
+        if (want (c.name))
+        {
+            for (int i = 0; i < 3; ++i)
+                r[i] = s3bNsPerSample (c.model, rates[i], c.which);
             std::printf ("%-8s %10.1f %10.1f %10.1f   (%s)\n", c.name, r[0], r[1], r[2], c.what);
         }
     return 0;

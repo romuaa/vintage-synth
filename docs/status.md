@@ -128,15 +128,79 @@ the parked figures).
   not for `noise` (+1.2 to +2.5 ns at 192 kHz; one attempt, no gain; D20). Recorded, not
   widened. **For the owner's S4 budget question:** Model A's whole chain is about 43 ns per
   internal sample at 96 kHz on the S4 gate's patch (Model B about 27), before S3b-2 adds to
-  it. **Windows and Linux x86_64:** one CI run is dispatched after `main` was merged
-  in; pull request 43 carries its result.
+  it. **Windows and Linux x86_64:** the first CI run (45168692336) failed in one
+  job, Linux ARM64, on a Vintage test that depended on the scheduler (the editor feed's
+  seqlock test; fixed in the test, feed unchanged); the second (45175007274, on `44bc753`)
+  was green on every job. **Merged** (pull request 43, on the owner's word, 2026-11-23).
   **Listening files** (filter sweeps of both models through the chain) are in the developer
   cache, `s3b1/listen/`.
-  **Next: S3b-2**, the aliasing of the static curves (pre-filter before Model B's mixer
-  curve, Model A's bend folded into the renderer, Model A's output function and mixer at
-  twice the rate). Carried over from the review: folding the bend shares the renderer's rings
-  with the single sum; the pre-filter's delay moves the writes and adds to
-  `ChipVoice::latencySamples ()`; the copies made for the `Old` blend need the filters' state.
+  **S3b-2, the aliasing of the static curves, on `bside/s3b-alias`: built, reviewed
+  independently four times, fixed after each; the fourth review found no defect in the
+  code. Gated locally; pull request open.** As built:
+  a linear-phase half-band pre-filter before Model B's mixer curve (the curve at the internal
+  rate); Model A's voice bend folded into the renderer; Model A's pre-filter on both buses and
+  its output function, gain and mixer curve at twice the rate; Model A's mixer curve continued
+  smoothly past the range it was fitted on. The chain's latency is a run-time value
+  (`ChipVoice::latencySamples ()`; Model B 8 + 21 samples at 96 kHz, Model A more).
+  **The reviews found, and the rounds fixed:** Model A's output-function coefficients half a
+  2x sample early (mode writes 0.31 samples early); voice counts not delayed with the
+  pre-filter; a Shared mode write taking effect at the end of the owner's block; resonance
+  writes switching the filter at the window's first sample (up to -78 dB of excess), and a
+  first fix that broke when another write landed inside its window (third review): replaced
+  by one rule, the filter keeps one state and every change of its dynamics lands at its own
+  place (resonance between two samples, cutoff from its own sample on); the excess over an
+  ideal render (the same chain at 32 times the rate) is at most -97.7 dB for resonance
+  alone and combined with volume, mode and cutoff writes at 1 to 200 cycles' distance; a test that passed while hiding failing rows; a
+  test-side reference without Model B's pre-filter; several tests that could not fail.
+  **The alias gate as it stands (8.19.4, restated after the first review):** absolute limits
+  with ideal voices on every row and with real chips on the direct and low-pass rows; real
+  chips elsewhere within 1 dB of the same chain with its curves at four times the rate; every
+  multi-voice row over five constellations of voice phases. Full set: 22456 measurements, no
+  row failing outside the pinned list.
+  **Known deviation, pinned (owner decisions O6 and O8):** Model A with its mixer overdriven
+  (two or three full-level voices through the low-pass at resonance 15): 16 listed rows, the
+  excess over the limit up to 12.4 dB at 88.2 kHz, 11.1 dB at 96 kHz and 0.2 dB at 128 kHz,
+  none above; each row gated two-sided at its worst figure. To revisit with the Model A
+  filter form and the S4 budget.
+  **Orchestrator's gate on `8405f75`:** the full `scripts/preflight.sh` passed (69m11s: docs,
+  scan, mac with 1123 tests, validator 47 of 47 for both plugins, linux, both sanitizer
+  runs). An earlier run of it had failed in the macOS sanitizer step on a read past the end
+  of a buffer in a test's own measuring code (fixed in the test; figures moved by at most
+  0.3 dB). `chip_bench` alone, three runs, 96 kHz: Model B filter + output stage +
+  pre-filter (`s3bB`) 6.3 to 6.4 ns (budget 7); `chainB` 30.6 to 30.9; `chainA` 63.4 to
+  64.2 (S3b-1: about 43); `busesA` 44.1 to 44.4; `moveB` 40.8 to 41.1; `moveA` 93.0 to 93.5.
+  **For the owner's S4 budget question:** Model A's whole chain is about 64 ns per internal
+  sample (the second reviewer: 16 Model A voices at 96 kHz are about 10 % of a core against
+  the 5 % gate). A resonance write costs about 0.4 to 0.6 us with the cutoff still and 2 to
+  3 us with it moving; a full tick of writes 3.5 to 6 us per voice.
+  **The write gate:** 240 rows against an ideal render at 32 times the rate, all inside
+  -90 dB; the thinnest is -90.7 dB (Model B, resonance writes through band + high-pass at
+  88.2 kHz).
+  **Obligations for S4:** the plugin target compiles the chip sources with the contraction
+  rule (`bs_chip_fp_rules`, already applied to `BSide`); a shared filter's owner switches
+  mode and resonance at `ChipVoice::sharedSwitchSample ()` (within half a sample; 0.6 on
+  Model A's output) or blends as `ChipVoice.h` describes to reach 0.02; `ChipVoice::prepare`
+  takes 0.5 to 8 ms (filter design), off the audio thread; the reported latency includes the
+  pre-filters.
+  **Open, small:** GCC 11 ran one statement three times in a range-for of the alias test
+  (written out instead; cause not isolated; the third review found no undefined behaviour
+  in the test's code); one unpinned row of the full set sits at its limit (Model A, 128 kHz,
+  high-pass) and has only been run on this Mac; two bend mutations are reported, not tested;
+  the third and fourth reviewers measured -83 to -86 dB against their own ideal renders on
+  rows that combine a mode write and a cutoff write at resonance 15 (output bit-identical to
+  the merged S3b-1 code; dependent on the reference's timing convention; not established as
+  a defect); two of three cutoff-table rebuilds per resonance write are avoidable.
+- **Model A's filter form, parked (owner decisions O4, O5, O7, O8):** the owner compared the
+  fixed form, the signal-dependent form and three in-between candidates by ear against the
+  reference: none accepted (fixed too soft, signal-dependent too harsh, the best candidate a
+  little better everywhere but still brighter on the resonant sweep, at about ten times the
+  fixed form's cost). The fixed form stays until the S4 budget decision. **Owner, 2026-11-23
+  (O10): Model B is accepted by ear ("practically perfect; some minor audible things, ok");
+  Model A opens later but faster than the reference and closes the same way, so the start
+  and end of a sweep are cleaner than the reference; no further effort goes into Model A
+  for now beyond finishing what is in flight.** In flight: the fix of the fixed form's
+  cutoff jump at code 512 and above on `bside/modela-cutoff-steps` (scope O9; below code 480
+  unchanged, because the low-cutoff region depends on level in the reference itself).
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):

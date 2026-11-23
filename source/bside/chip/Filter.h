@@ -111,23 +111,66 @@ public:
     /** Model A cutoff curve offset 0..1 (8.4.7 Config::variation). Clamped. */
     void setVariation (float value) noexcept;
 
+    // ---- one state, several parameter sets (ChipVoice "TIMING": configurations share the filter's state) ----
+    /** processLinearDouble's output and low-pass value for `in` with THIS filter's parameters (setCutoff, setResonance,
+        setMode) at another filter's state; nothing advances. */
+    double peekLinearDouble (double in, const Filter& stateOf, double& lowPass) const noexcept
+    {
+        const double x = guard (in);
+        lowPass = mdl == Model::A ? lx * x + l1 * stateOf.s1 + l2 * stateOf.s2 : 0.0;
+        return ox * x + o1 * stateOf.s1 + o2 * stateOf.s2;
+    }
+    /** The same for processWithCutoffLinearDouble at a register value (builds this filter's table if needed). */
+    double peekWithCutoffLinearDouble (double in, float registerValue, const Filter& stateOf, double& lowPass) noexcept;
+    /** The state (two values) and setting it (a mixture of steps taken from one state: ChipVoice). */
+    std::array<double, 2> state() const noexcept { return { s1, s2 }; }
+    void setState (const std::array<double, 2>& s) noexcept
+    {
+        s1 = s[0];
+        s2 = s[1];
+    }
+
     /** One internal sample: the selected outputs' sum for this input. */
     float process (float in) noexcept { return static_cast<float> (processDouble (static_cast<double> (in))); }
     /** The same in double precision, input and output (the chain, ChipVoice: 8.20.1). */
     double processDouble (double in) noexcept
     {
-        // the trapezoidal state-variable filter written as its state-space form (identical arithmetic in exact
-        // numbers, a shorter dependency chain per sample): hp = h (x - (k + g) s1 - s2), bp = g hp + s1,
-        // lp = g bp + s2, s1' = 2 bp - s1, s2' = 2 lp - s2, every output a linear form in x, s1, s2
+        // one arithmetic path with processLinearDouble (below), so the split and the whole output agree bit for bit
+        // whatever a compiler contracts
+        double lp = 0.0;
+        const double out = processLinearDouble (in, lp);
+        return mdl == Model::A ? out + shape (lp) : out;
+    }
+
+    /** The same sample split for a chain that applies Model A's static functions at another rate (ChipVoice, S3b-2):
+        returns the output without them (Model B: the whole output) and sets lowPass to the low-pass value they are
+        functions of (0 on Model B); processDouble (x) = processLinearDouble (x, lp) + outputShape (lp), the state advanced alike.
+        The trapezoidal state-variable filter written as its state-space form (identical arithmetic in exact numbers, a
+        shorter dependency chain per sample): every output a linear form in x, s1, s2. */
+    double processLinearDouble (double in, double& lowPass) noexcept
+    {
         const double x = guard (in);
-        double out = ox * x + o1 * s1 + o2 * s2;
-        if (mdl == Model::A)
-            out += shape (lx * x + l1 * s1 + l2 * s2);
+        const double out = ox * x + o1 * s1 + o2 * s2;
+        lowPass = mdl == Model::A ? lx * x + l1 * s1 + l2 * s2 : 0.0; // Model B has no output function
         const double n1 = a1x * x + a11 * s1 + a12 * s2;
         s2 = a2x * x + a21 * s1 + a22 * s2;
         s1 = n1;
         settle();
         return out;
+    }
+    /** Model A's static functions of the low-pass value (0 on Model B). */
+    double outputShape (double lowPass) const noexcept { return mdl == Model::A ? shape (lowPass) : 0.0; }
+    /** Their coefficients: outputShape (lp) = ((((p5 v + p4) v + p3) v + p2) v + p1) v, v = lp limited to [lpMin, lpMax]
+        (all 0 on Model B). The limits do not depend on the mode or the resonance. */
+    struct Shape
+    {
+        double p1 = 0.0, p2 = 0.0, p3 = 0.0, p4 = 0.0, p5 = 0.0, lpMin = -1.0e9, lpMax = 1.0e9;
+    };
+    Shape outputShapeCoefficients() const noexcept
+    {
+        if (mdl != Model::A)
+            return {};
+        return { p1, p2, p3, p4, p5, lpMin, lpMax };
     }
 
     /** One internal sample with a cutoff (register value) that may change every sample, without setCutoff's cost:
@@ -140,6 +183,8 @@ public:
     }
     /** The same in double precision, input and output. */
     double processWithCutoffDouble (double in, float registerValue) noexcept;
+    /** processWithCutoffDouble split as processLinearDouble splits processDouble. */
+    double processWithCutoffLinearDouble (double in, float registerValue, double& lowPass) noexcept;
 
     /** tan (x) for 0 <= x <= 1.42 (cutoffs up to 0.45 x the rate), rational ([5/4] Pade form): relative error
         below 1e-8 up to 0.75 (0.24 x the rate) and below 3e-5 up to 1.42. */

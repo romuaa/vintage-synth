@@ -30,7 +30,8 @@ source/vintage/   this instrument: PluginProcessor.* (VintageSynthProcessor : sh
 source/bside/     Exitium B-Side (second plugin): PluginProcessor.*, engine/TestTonePart (placeholder until
                   S2/S4), params/, presets/ (JUCE-bound; BSideTables = the table validator and sink);
                   program/ProgramHandover.h (table to the audio thread); text/ program/ trace/ are JUCE-free (strict
-                  readers, patch tables, trace formats); chip/ is the chip model (digital core, combined-waveform tables; JUCE-free);
+                  readers, patch tables, trace formats); chip/ is the chip model (digital core, combined-waveform tables, the renderer, Filter, OutputStage,
+                  ChipVoice = one chip's whole chain, HalfBand = the anti-alias filters of its static curves; JUCE-free);
                   engine/ProgramEngine is the patch program engine (JUCE-free). Vintage and B-Side never
                   include each other
 tests/bside/reference/  generated reference data (traces, digital references, audio features);
