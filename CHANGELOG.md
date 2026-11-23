@@ -5,6 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### CI: pluginval teardown crash (2026-11-23)
+
+- Linux x86_64: pluginval 1.0.4 (the newest build that runs on glibc 2.35) crashes in about 6 to 7 % of runs
+  after all tests have completed (a use-after-free in the JUCE 8.0.3 it is built with, fixed in JUCE 04e167d646).
+  `build.yml` (the "pluginval (Linux)" step and the distribution job) and `scripts/linux-check/distro-check.sh` now run
+  it through `scripts/linux-check/pluginval-run.sh`, under gdb (added to the package lists), which accepts that one
+  crash signature and nothing else. Self-test with canned outputs: `scripts/linux-check/pluginval-run-selftest.sh`,
+  run by `scripts/preflight.sh --only docs`. The negative distribution check is unchanged.
+
 ### Release rehearsal and documentation (2026-11-20)
 
 - The release run of the build workflow passed at its first attempt (run 44695944505, all five
