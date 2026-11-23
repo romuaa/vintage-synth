@@ -135,7 +135,8 @@ the parked figures).
   **Listening files** (filter sweeps of both models through the chain) are in the developer
   cache, `s3b1/listen/`.
   **S3b-2, the aliasing of the static curves, on `bside/s3b-alias`: built, reviewed
-  independently three times; a fix round after the third review is in flight.** As built:
+  independently three times, fixed after each; waiting for the orchestrator's gate, a last
+  check of the replaced write mechanism, and the owner.** As built:
   a linear-phase half-band pre-filter before Model B's mixer curve (the curve at the internal
   rate); Model A's voice bend folded into the renderer; Model A's pre-filter on both buses and
   its output function, gain and mixer curve at twice the rate; Model A's mixer curve continued
@@ -144,9 +145,12 @@ the parked figures).
   **The reviews found, and the rounds fixed:** Model A's output-function coefficients half a
   2x sample early (mode writes 0.31 samples early); voice counts not delayed with the
   pre-filter; a Shared mode write taking effect at the end of the owner's block; resonance
-  writes switching the filter at the window's first sample (up to -78 dB of excess; fixed
-  for a resonance write on its own, **not yet in combination with other writes: the third
-  review, in a fix round**); a test that passed while hiding failing rows; a
+  writes switching the filter at the window's first sample (up to -78 dB of excess), and a
+  first fix that broke when another write landed inside its window (third review): replaced
+  by one rule, the filter keeps one state and every change of its dynamics lands at its own
+  place (resonance between two samples, cutoff from its own sample on); the excess over an
+  ideal render (the same chain at 32 times the rate) is at most -97.7 dB for resonance
+  alone and combined with volume, mode and cutoff writes at 1 to 200 cycles' distance; a test that passed while hiding failing rows; a
   test-side reference without Model B's pre-filter; several tests that could not fail.
   **The alias gate as it stands (8.19.4, restated after the first review):** absolute limits
   with ideal voices on every row and with real chips on the direct and low-pass rows; real
