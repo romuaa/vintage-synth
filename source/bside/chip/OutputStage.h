@@ -78,8 +78,15 @@ public:
     {
         if (m == Model::B || ! (e > 1e-4f))
             return u;
-        const double w = static_cast<double> (u) / static_cast<double> (e);
-        return static_cast<float> (static_cast<double> (e) * (w + w * w * (kShapeA2 + w * kShapeA3)));
+        return static_cast<float> (shapeVoice (m, static_cast<double> (u), static_cast<double> (e)));
+    }
+    /** The same in double precision (the renderer's buses, Chip.h "BUSES"). */
+    static double shapeVoice (Model m, double u, double e) noexcept
+    {
+        if (m == Model::B || ! (e > 1e-4))
+            return u;
+        const double w = u / e;
+        return e * (w + w * w * (kShapeA2 + w * kShapeA3));
     }
 
     /** Voices routed to the filter and voices on the direct path (oscillator 3 off taken into account). */

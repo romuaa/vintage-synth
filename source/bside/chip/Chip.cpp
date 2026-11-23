@@ -37,7 +37,10 @@ void Chip::powerOnKeepingTime() noexcept
     regs = {};
     cutoff = 0.0f;
     if (rs.active)
+    {
         renderAfterChange (7); // every accumulator jumps to its power-on value: no sync offset survives
+        renderRouteChange();   // the routing register is 0 again
+    }
 }
 
 void Chip::clearEnvelopeCounters (int n) noexcept
@@ -114,7 +117,11 @@ void Chip::write (std::uint8_t address, std::uint8_t value) noexcept
     if (r >= 3 * reg::oscStride)
     {
         regs[r] = value;
-        return; // filter, routing, mode and volume: analog stages only
+        // filter, routing, mode and volume: analog stages only; the routing (and oscillator 3's mute) moves the
+        // oscillators between the renderer's buses at this cycle (Chip.h "BUSES")
+        if (r == reg::resonanceRouting || r == reg::modeVolume)
+            renderRouteChange();
+        return;
     }
     const int n = r / reg::oscStride;
     const bool renderHook = rs.active;
@@ -202,6 +209,7 @@ void Chip::setFilter (const FilterInput& in) noexcept
     // Bit 3 (external input) is not modelled and always 0 (8.4.1); a trace's write() stores what it wrote.
     regs[reg::resonanceRouting] = static_cast<std::uint8_t> (((in.resonance & 0x0f) << 4) | (in.routing & 0x07));
     regs[reg::modeVolume] = in.modeVolume;
+    renderRouteChange();
 }
 
 std::uint8_t Chip::read (std::uint8_t address) const noexcept
