@@ -96,8 +96,15 @@ the parked figures).
   check: pluginval ends with a segmentation fault at exit for **both** plugins, after every
   test passed; Vintage's code and the check are identical to `main`, where the same job
   passed on 2026-11-20 (the image and its packages are fetched by tag at run time), so the
-  cause is outside this branch and not yet known. A second run (Linux only) follows the fix
-  of (1); pull request 41 carries the results.
+  cause is outside this branch. **Second run (45112409601, on `35df64f`, Linux only):** the
+  sanitizer job passed (53 minutes) and Linux ARM64 passed; Linux x86_64 failed in the same
+  way, this time on B-Side in the build job (so the distribution checks had nothing to test).
+  **Diagnosis:** a use-after-free in the validation tool itself at teardown (its bundled
+  framework version; fixed upstream later), on Linux x86_64 in about 6 to 7 % of runs, with
+  any plugin. Pull request 42 (`ci/pluginval-teardown`) runs the tool under a debugger and
+  accepts a crash with that exact signature only; its run 45121955371 is green. **Linux
+  x86_64 is not confirmed for this branch yet:** after pull request 42 has merged, `main` is
+  merged in here and one Linux run is dispatched.
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
