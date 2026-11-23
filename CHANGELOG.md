@@ -5,6 +5,18 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side: Model A's cutoff no longer jumps at the converter's boundaries (2026-11-23)
+- Model A's cutoff mapping is refitted so that the corner's step at each place where the cutoff converter falls back
+  (every multiple of 32) matches the reference's: within 2 percentage points per code step from code 446 to 1600
+  (was up to 7.3, at 511 -> 512: -22 % against the reference's -15 %). The converter has a fitted weight per bit and
+  the curve 129 points instead of 24; every committed gate still passes.
+- In the owner's one-voice sweep the largest band-level step falls from 2.2 to 1.4 dB (the reference's: 1.7 dB);
+  the jump at 383 -> 384 is made smaller too (the reference has almost none there in the sweep).
+- New reference data: `a_cutcode_*` (the cutoff register walked one code at a time across every boundary, noise at a
+  low level) and `a_cutsweep_a` (the one-voice sweep), with two new gates and a boundary test for
+  `processWithCutoff`. A cutoff every sample (`processWithCutoff`) got cheaper (the converter is a table built at
+  compile time).
+
 ### Tests: the editor feed's seqlock test no longer depends on the scheduler (2026-11-23)
 - "UiFeed: the held-order seqlock never hands out a torn copy" failed once on the Linux ARM64 CI runner: the writer
   thread never paused, so the reader was refused 5 million times and saw no consistent copy (`consistent > 0`). No

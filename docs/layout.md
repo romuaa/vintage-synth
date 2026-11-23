@@ -36,7 +36,9 @@ source/bside/     Exitium B-Side (second plugin): PluginProcessor.*, engine/Test
 tests/bside/reference/  generated reference data (traces, digital references, audio features);
                   regenerated only with the adapter outside the repository, reviewed like a golden
 tests/bside/shapes/  combined-waveform measurements (own MANIFEST); tests/bside/golden/ program-engine
-                  write traces (tools/ derives them); tests/bside/tools/ShapeFit.cpp = bside_shapefit
+                  write traces (tools/ derives them); tests/bside/tools/ShapeFit.cpp = bside_shapefit;
+                  tests/bside/tools/gen_*_traces.py write the analog gate traces (a_s3a_*, a_cutcode_*, a_cutsweep_a);
+                  tests/bside/trace/ the bside_trace gates (AnalogChain.h our chain, AnalogGates.h, SweepSteps.h)
 tests/bside/      bside_unit (JUCE-free, ctest label "bside") always; bside_independent (the independent
                   model against the chip with placeholder shapes; never link it with bs_juce_free); with VS_BUILD_BSIDE also
                   bs_test_core + BSideTests. `bside_unit "[.fuzz-long]"` is the hidden 10^6-case fuzz run
