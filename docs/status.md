@@ -96,15 +96,37 @@ the parked figures).
   check: pluginval ends with a segmentation fault at exit for **both** plugins, after every
   test passed; Vintage's code and the check are identical to `main`, where the same job
   passed on 2026-11-20 (the image and its packages are fetched by tag at run time), so the
+<<<<<<< HEAD
   cause is outside this branch and not yet known. A second run (Linux only) follows the fix
   of (1); pull request 41 carries the results.
-- **S3b, started (2026-11-23; owner decision O3)** on `bside/s3b-chain`, stacked on
-  `bside/s3a-filter` (pull request 41, waiting for the owner). Contract 8.19.4: **S3b-1**, the
-  renderer's two buses in double precision, routing / volume / mode writes at their cycle, the
-  whole chain (`Chip` -> `Filter` -> `OutputStage`), the traces S3a had to skip; then
-  **S3b-2**, the aliasing of the static curves (pre-filter before Model B's mixer curve, Model
-  A's bend folded into the renderer, Model A's output function and mixer at twice the rate).
-  Nothing of S3b merges before S3a has.
+- **S3b (2026-11-23; owner decision O3)** on `bside/s3b-chain`, stacked on `bside/s3a-filter`
+  (pull request 41, waiting for the owner). Contract 8.19.4, two steps, each its own pull
+  request. Nothing of S3b merges before S3a has.
+  **S3b-1, built, reviewed independently, fixed; waiting for the owner:** the renderer's two
+  buses in double precision, routing / volume / mode writes at their cycle, `ChipVoice` (the
+  whole chain `Chip` -> `Filter` -> `OutputStage`, Per Note or with a shared filter), the
+  traces S3a had to skip, now through the real chain. The review found real defects (Shared
+  depended on the owner's block length; write timing a cycle late against the reference; a
+  full write queue reordered writes; tests that could not fail); all fixed, the contract
+  amended (8.19.4, "After the independent review"), decisions D1 to D20.
+  **Orchestrator's gate on `379ffa9`:** the full `scripts/preflight.sh` passed (72m01s: docs,
+  scan, mac, validator 47 of 47 for both plugins, linux, both sanitizer runs). `chip_bench`
+  alone, three runs, 96 kHz: `s3aB` 5.5 to 5.9 ns (budget 7), `chainB` 26.9 to 27.4,
+  `chainA` 42.6 to 45.6, `busesB` 19.9 to 20.6, `busesA` 34.0 to 34.2, `moveB` 34.7 to 36.8,
+  `moveA` 65.4 to 66.5.
+  **Not met:** the buses' cost allowance of 1 ns over the single sum holds for `typical` but
+  not for `noise` (+1.2 to +2.5 ns at 192 kHz; one attempt, no gain; D20). Recorded, not
+  widened. **For the owner's S4 budget question:** Model A's whole chain is about 43 ns per
+  internal sample at 96 kHz on the S4 gate's patch (Model B about 27), before S3b-2 adds to
+  it. **Not run:** Windows and Linux x86_64 (no CI run yet: until pull request 42 has merged
+  a Linux x86_64 run can fail on the validation tool's own crash).
+  **Listening files** (filter sweeps of both models through the chain) are in the developer
+  cache, `s3b1/listen/`.
+  **Next: S3b-2**, the aliasing of the static curves (pre-filter before Model B's mixer
+  curve, Model A's bend folded into the renderer, Model A's output function and mixer at
+  twice the rate). Carried over from the review: folding the bend shares the renderer's rings
+  with the single sum; the pre-filter's delay moves the writes and adds to
+  `ChipVoice::latencySamples ()`; the copies made for the `Old` blend need the filters' state.
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
