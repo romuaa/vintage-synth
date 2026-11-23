@@ -1191,7 +1191,10 @@ std::vector<WriteCase> writeCases (bool all)
     v.push_back ({ "resonance 0 <-> 15", {}, { res } });
     // resonance alone through every output (8.19.4 after the round over phases: 0 <-> 15 and 4 <-> 12, low- and
     // band-pass, volume DC on and off; the fourth review added high-pass and band + high-pass)
-    for (const auto& [mname, mv] : { std::pair<const char*, std::uint8_t> { "low-pass", 0x1f }, { "band-pass", 0x2f }, { "high-pass", 0x4f }, { "band + high-pass", 0x6f } })
+    // (std::uint8_t spelled out per value: MSVC warns about the int inside std::pair's converting constructor)
+    using ModeCase = std::pair<const char*, std::uint8_t>;
+    for (const auto& [mname, mv] : { ModeCase { "low-pass", std::uint8_t { 0x1f } }, ModeCase { "band-pass", std::uint8_t { 0x2f } },
+                                     ModeCase { "high-pass", std::uint8_t { 0x4f } }, ModeCase { "band + high-pass", std::uint8_t { 0x6f } } })
         for (const bool vdc : { true, false })
             for (const bool wide : { true, false })
             {
