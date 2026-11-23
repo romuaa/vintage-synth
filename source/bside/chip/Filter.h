@@ -111,21 +111,23 @@ public:
     /** Model A cutoff curve offset 0..1 (8.4.7 Config::variation). Clamped. */
     void setVariation (float value) noexcept;
 
-    // ---- a parameter change placed between two samples (ChipVoice "TIMING", resonance writes) ----
-    /** processLinearDouble's output and low-pass value for `in` with THIS filter's parameters (as set by setCutoff,
-        setResonance, setMode) at the state a + alpha (b - a) of two other filters; nothing advances. */
-    double peekLinearDouble (double in, const Filter& a, const Filter& b, double alpha, double& lowPass) const noexcept
+    // ---- one state, several parameter sets (ChipVoice "TIMING": configurations share the filter's state) ----
+    /** processLinearDouble's output and low-pass value for `in` with THIS filter's parameters (setCutoff, setResonance,
+        setMode) at another filter's state; nothing advances. */
+    double peekLinearDouble (double in, const Filter& stateOf, double& lowPass) const noexcept
     {
         const double x = guard (in);
-        const double t1 = a.s1 + alpha * (b.s1 - a.s1), t2 = a.s2 + alpha * (b.s2 - a.s2);
-        lowPass = mdl == Model::A ? lx * x + l1 * t1 + l2 * t2 : 0.0;
-        return ox * x + o1 * t1 + o2 * t2;
+        lowPass = mdl == Model::A ? lx * x + l1 * stateOf.s1 + l2 * stateOf.s2 : 0.0;
+        return ox * x + o1 * stateOf.s1 + o2 * stateOf.s2;
     }
-    /** The state a + alpha (b - a) of two other filters taken over (the parameters stay). */
-    void takeStateMix (const Filter& a, const Filter& b, double alpha) noexcept
+    /** The same for processWithCutoffLinearDouble at a register value (builds this filter's table if needed). */
+    double peekWithCutoffLinearDouble (double in, float registerValue, const Filter& stateOf, double& lowPass) noexcept;
+    /** The state (two values) and setting it (a mixture of steps taken from one state: ChipVoice). */
+    std::array<double, 2> state() const noexcept { return { s1, s2 }; }
+    void setState (const std::array<double, 2>& s) noexcept
     {
-        s1 = a.s1 + alpha * (b.s1 - a.s1);
-        s2 = a.s2 + alpha * (b.s2 - a.s2);
+        s1 = s[0];
+        s2 = s[1];
     }
 
     /** One internal sample: the selected outputs' sum for this input. */

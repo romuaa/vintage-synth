@@ -74,7 +74,11 @@ void ChipVoice::prepare (const Config& config) noexcept
 
 void ChipVoice::setFilter (Filter* f) noexcept
 {
+    // safe at any time (8.19.4 after the third review): the configurations keep their own output parameters; dynamics
+    // changes still waiting belong to the filter left and are dropped (the new filter takes the current registers)
     filter = f;
+    dynHead = dynCount = 0;
+    outDiffers = false;
     if (filter != nullptr)
     {
         filter->setCutoff (cutoffValue);
@@ -90,6 +94,8 @@ void ChipVoice::reset() noexcept
     st.reset();
     paramHead = paramCount = configHead = configCount = 0;
     nConfigs = 0;
+    dynHead = dynCount = 0;
+    outDiffers = false;
     overflows = 0;
     cutoffValue = 0.0f;
     lastCutoffChange = 0;
@@ -232,6 +238,8 @@ void ChipVoice::applyParam (const Pending& p, std::int64_t q) noexcept
         if (filter != nullptr)
         {
             filter->setResonance (r >> 4);
+            if (outDiffers)
+                outNow.setResonance (r >> 4);
             for (int i = 0; i < nConfigs; ++i)
                 old[static_cast<std::size_t> (i)].filter.setResonance (r >> 4);
         }
@@ -246,9 +254,12 @@ void ChipVoice::applyParam (const Pending& p, std::int64_t q) noexcept
         moving = true;
     lastCutoffChange = q;
     cutoffChanged = true;
+    // from its own sample on, in the filter (the one state's dynamics) and in every configuration's output parameters
     if (! moving && filter != nullptr)
     {
         filter->setCutoff (cutoffValue);
+        if (outDiffers)
+            outNow.setCutoff (cutoffValue);
         for (int i = 0; i < nConfigs; ++i)
             old[static_cast<std::size_t> (i)].filter.setCutoff (cutoffValue);
     }
@@ -268,11 +279,10 @@ void ChipVoice::beginConfig (const Pending& p) noexcept
         st.setModeVolume (p.value);
         return;
     }
-    if (nConfigs > 0)
-        settleSplit (old[static_cast<std::size_t> (nConfigs - 1)]); // a split runs for the newest transition only
     if (nConfigs == kMaxConfigs)
     {
-        // bounded: the oldest configuration is retired at once
+        // bounded: the oldest configuration's blend ends at once (its output parameters only: the dynamics are the one
+        // state's and keep their places)
         for (int i = 1; i < nConfigs; ++i)
             old[static_cast<std::size_t> (i - 1)] = old[static_cast<std::size_t> (i)];
         --nConfigs;
@@ -280,22 +290,24 @@ void ChipVoice::beginConfig (const Pending& p) noexcept
     Old& o = old[static_cast<std::size_t> (nConfigs)];
     o.stage = st;
     if (filter != nullptr)
-        o.filter = *filter;
+        o.filter = outParams(); // the configuration before the write: its output parameters
     o.sample = p.sample;
     o.first = p.first;
     o.taps = p.taps;
-    o.split = false;
     ++nConfigs;
     if (resonanceWrite)
     {
-        // the copy keeps the old resonance and runs on beside the filter over the window; the blend's weights carry the
-        // change of the output equation (band-limited, as a mode write's). The filter's DYNAMICS change at the write's
-        // place, between two samples: two more copies keep the old resonance and switch at the sample before that place
-        // and the one after, and the new configuration's output is its output equation at the state of their mixture
-        // (exact to first order in the switch time). A switch of the dynamics at one sample (the window's start, before)
-        // moved with the write's position against the sample grid: the write budget against an ideal render saw it as
-        // aliasing (8.19.4 after the round over phases: up to -78 dB). The place: the centre of the blend's weights.
+        // The output equation changes with the blend (band-limited at the write's place, as a mode write's); the
+        // DYNAMICS of the one state change at the write's place itself, which lies between two samples: the step that
+        // contains it is mixed from the old and the new resonance (stepDynamics), exact to first order in the place. The
+        // place: the centre of the blend's weights. Until then the newest output parameters are held apart (outNow).
         resonanceNow = static_cast<std::uint8_t> (p.value & 0xf0);
+        if (! outDiffers)
+        {
+            outNow = *filter;
+            outDiffers = true;
+        }
+        outNow.setResonance (resonanceNow >> 4);
         double centre = 0.0;
         double prev = weightAt (static_cast<std::int64_t> (p.sample) + p.first - 1, p.sample, p.first, p.taps);
         for (int k = 0; k <= render::kKernelTaps; ++k)
@@ -306,36 +318,97 @@ void ChipVoice::beginConfig (const Pending& p) noexcept
             prev = w;
         }
         const double fl = std::floor (centre);
-        o.atFloor = *filter;
-        o.atCeil = *filter;
-        o.switchAt = static_cast<std::int64_t> (fl);
-        o.alpha = centre - fl;
-        o.newResonance = resonanceNow >> 4;
-        o.floorSwitched = false;
-        o.ceilSwitched = false;
-        o.split = ! moving; // a moving cutoff runs processWithCutoff, whose parameters a peek does not see: switch at once
-        filter->setResonance (resonanceNow >> 4);
+        pushDynChange ({ static_cast<std::int64_t> (fl), centre - fl, resonanceNow >> 4 });
     }
     else
     {
         modeVolumeNow = p.value;
         st.setModeVolume (p.value);
         if (filter != nullptr)
-            filter->setMode (p.value);
+        {
+            filter->setMode (p.value); // the output row only: the dynamics do not depend on the mode
+            if (outDiffers)
+                outNow.setMode (p.value);
+        }
     }
     refreshStaticDc();
 }
 
-void ChipVoice::settleSplit (Old& o) noexcept
+void ChipVoice::pushDynChange (const DynChange& d) noexcept
 {
-    if (! o.split)
-        return;
-    if (! o.floorSwitched)
-        o.atFloor.setResonance (o.newResonance);
-    if (! o.ceilSwitched)
-        o.atCeil.setResonance (o.newResonance);
-    filter->takeStateMix (o.atFloor, o.atCeil, o.alpha);
-    o.split = false;
+    if (dynCount == kMaxPending)
+    {
+        // full: the oldest change takes effect at once (cannot happen with fewer than kMaxPending resonance writes
+        // within one write's window; ChipVoice.h "TIMING")
+        filter->setResonance (dyn[static_cast<std::size_t> (dynHead)].resonance);
+        dynHead = (dynHead + 1) % kMaxPending;
+        --dynCount;
+    }
+    dyn[static_cast<std::size_t> ((dynHead + dynCount) % kMaxPending)] = d;
+    ++dynCount;
+}
+
+double ChipVoice::peekConfig (Filter& outputParams, double in, double& lowPass) noexcept
+{
+    return moving ? outputParams.peekWithCutoffLinearDouble (in, cutoffValue, *filter, lowPass) : outputParams.peekLinearDouble (in, *filter, lowPass);
+}
+
+void ChipVoice::stepDynamics (double in, std::int64_t t) noexcept
+{
+    // the changes placed in this sample (a place already passed: at once, which only an overflow can cause)
+    int n = 0;
+    std::array<double, kMaxStepMix> alpha {};
+    std::array<int, kMaxStepMix> res {};
+    while (dynCount > 0 && dyn[static_cast<std::size_t> (dynHead)].at <= t)
+    {
+        const DynChange& d = dyn[static_cast<std::size_t> (dynHead)];
+        if (d.at < t)
+            filter->setResonance (d.resonance);
+        else if (n == kMaxStepMix)
+        {
+            // more than kMaxStepMix changes in one sample: the last kept one takes this one's resonance (its place
+            // stays), so the parameters after the sample are always the newest written
+            res[static_cast<std::size_t> (n - 1)] = d.resonance;
+        }
+        else
+        {
+            alpha[static_cast<std::size_t> (n)] = d.alpha;
+            res[static_cast<std::size_t> (n)] = d.resonance;
+            ++n;
+        }
+        dynHead = (dynHead + 1) % kMaxPending;
+        --dynCount;
+    }
+    double unused = 0.0;
+    if (n == 0)
+        runFilter (*filter, in, unused);
+    else
+    {
+        // the step from one state with each parameter set in turn, weighted by the part of the step it holds: the
+        // parameters before the first change for alpha_1, after change j for alpha_j+1 - alpha_j, the last for 1 - alpha_n
+        stepCopy[0] = *filter;
+        for (int j = 1; j <= n; ++j)
+        {
+            stepCopy[static_cast<std::size_t> (j)] = stepCopy[static_cast<std::size_t> (j - 1)];
+            stepCopy[static_cast<std::size_t> (j)].setResonance (res[static_cast<std::size_t> (j - 1)]);
+        }
+        std::array<double, 2> mix { 0.0, 0.0 };
+        double before = 0.0;
+        for (int j = 0; j <= n; ++j)
+        {
+            const double until = j < n ? std::max (alpha[static_cast<std::size_t> (j)], before) : 1.0;
+            const double w = until - before;
+            before = until;
+            runFilter (stepCopy[static_cast<std::size_t> (j)], in, unused);
+            const auto sj = stepCopy[static_cast<std::size_t> (j)].state();
+            mix[0] += w * sj[0];
+            mix[1] += w * sj[1];
+        }
+        filter->setResonance (res[static_cast<std::size_t> (n - 1)]);
+        filter->setState (mix);
+    }
+    if (dynCount == 0)
+        outDiffers = false; // the filter's parameters are the newest written again
 }
 
 void ChipVoice::refreshStaticDc() noexcept
@@ -346,7 +419,7 @@ void ChipVoice::refreshStaticDc() noexcept
     if (filter == nullptr)
         return;
     const bool a = cfg.model == Model::A;
-    st.setFilterStaticDc (filter->staticOutput (a ? preDcNow : st.staticFilterBusDc()));
+    st.setFilterStaticDc (outParams().staticOutput (a ? preDcNow : st.staticFilterBusDc()));
     for (int i = 0; i < nConfigs; ++i)
     {
         auto& o = old[static_cast<std::size_t> (i)];
@@ -391,7 +464,6 @@ void ChipVoice::advanceTo (std::int64_t q) noexcept
         const Old& o = old[0];
         if (q < static_cast<std::int64_t> (o.sample) + o.first + render::kKernelTaps || q < static_cast<std::int64_t> (o.sample))
             break;
-        settleSplit (old[0]);
         for (int i = 1; i < nConfigs; ++i)
             old[static_cast<std::size_t> (i - 1)] = old[static_cast<std::size_t> (i)];
         --nConfigs;
@@ -403,6 +475,8 @@ void ChipVoice::advanceTo (std::int64_t q) noexcept
         if (filter != nullptr)
         {
             filter->setCutoff (cutoffValue);
+            if (outDiffers)
+                outNow.setCutoff (cutoffValue);
             for (int i = 0; i < nConfigs; ++i)
                 old[static_cast<std::size_t> (i)].filter.setCutoff (cutoffValue);
         }
@@ -486,40 +560,24 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
             refreshStaticDc();
         }
         const double in = modelA ? pAc[j] + pDc[j] : st.filterInput (fa[j], fe[j]);
-        Old* sp = nConfigs > 0 && old[static_cast<std::size_t> (nConfigs - 1)].split ? &old[static_cast<std::size_t> (nConfigs - 1)] : nullptr;
-        if (sp != nullptr && moving)
-        {
-            settleSplit (*sp); // the cutoff started moving inside the window
-            sp = nullptr;
-        }
-        if (sp != nullptr)
-        {
-            if (! sp->floorSwitched && t >= sp->switchAt)
-            {
-                sp->atFloor.setResonance (sp->newResonance);
-                sp->floorSwitched = true;
-            }
-            if (! sp->ceilSwitched && t >= sp->switchAt + 1)
-            {
-                sp->atCeil.setResonance (sp->newResonance);
-                sp->ceilSwitched = true;
-            }
-            // the new configuration: its output equation at the mixture's state; the two copies advance
-            lin = filter->peekLinearDouble (in, sp->atFloor, sp->atCeil, sp->alpha, lp);
-            double unused = 0.0;
-            sp->atFloor.processLinearDouble (in, unused);
-            sp->atCeil.processLinearDouble (in, unused);
-        }
+        if (nConfigs == 0 && ! outDiffers)
+            lin = runFilter (*filter, in, lp); // no write in flight: one step, as always
         else
-            lin = runFilter (*filter, in, lp);
-        for (int k = 0; k < nConfigs; ++k)
         {
-            double lpk = 0.0;
-            linOld[static_cast<std::size_t> (k)] = runFilter (old[static_cast<std::size_t> (k)].filter, in, lpk);
+            // every configuration's output equation at the one state, then the state advances once (its dynamics
+            // changes placed in this sample mixed in)
+            lin = peekConfig (outParams(), in, lp);
+            for (int k = 0; k < nConfigs; ++k)
+            {
+                double lpk = 0.0;
+                linOld[static_cast<std::size_t> (k)] = peekConfig (old[static_cast<std::size_t> (k)].filter, in, lpk);
+            }
+            stepDynamics (in, t);
         }
         lastFilterIn = in;
-        lastFilterOut = lin + filter->outputShape (lp);
-        shapeNow = filter->outputShapeCoefficients();
+        const Filter& cur = outParams();
+        lastFilterOut = lin + cur.outputShape (lp);
+        shapeNow = cur.outputShapeCoefficients();
     }
     else
     {

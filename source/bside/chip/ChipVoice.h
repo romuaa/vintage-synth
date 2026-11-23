@@ -19,8 +19,8 @@
 // - Delays: Model B the FIR's (2 P - 1 samples); Model A the bus FIR's plus the 2x part's (Pu + Pd - 1). Both added to
 //   latencySamples (). Writes that the filter or the stage read land where the delayed signal lands ("TIMING").
 // - Configurations blended across a volume, mode or resonance write (below) are blended BEFORE the anti-alias stages: the filter's
-//   outputs of the configurations (copies of the filter, as before) and their gains are blended linearly at the
-//   mixer's input, and what follows the curve (the volume, Y0, the static DC's subtraction, the post gain) is blended
+//   outputs of the configurations (each configuration's output equation on the filter's one state, "TIMING") and their
+//   gains are blended linearly at the mixer's input, and what follows the curve (the volume, Y0, the static DC's subtraction, the post gain) is blended
 //   as coefficients, delayed with the signal. One set of anti-alias filters serves every configuration (no per-copy
 //   FIR state): exact for a volume write (only post-curve coefficients differ); for a mode write the curve sees the
 //   blend of the two configurations' inputs instead of blending their outputs, a difference of second order in their
@@ -71,9 +71,16 @@
 //   counts per sample (OutputStage::setVoices: the voice DC and the mixer's gain follow, band-limited). Like volume
 //   and mode writes they take effect one cycle before the renderer's convention for an oscillator write, as the
 //   reference shows them (Chip::kAnalogWriteLeadCycles).
+// - ONE STATE (8.19.4 after the third review). Per Note the filter has one state, whatever writes are pending: every
+//   change of its dynamics is applied to that state at its own place (a resonance write at the write's place between
+//   two samples, a cutoff write from its own sample on), and every configuration being blended (below) is only an
+//   output equation (Filter::peekLinearDouble: its parameters at the one state) plus its stage. So no write moves
+//   another: a volume, mode, routing or cutoff write inside a resonance write's window leaves the resonance's place
+//   where it was, and the cutoff reaches the one state at its sample. setFilter is safe at any time (the dynamics
+//   changes still waiting belong to the filter left and are dropped; nothing is run on a missing filter).
 // - VOLUME and MODE (0x18 bits 0..6): band-limited. The configuration before the write (a copy of the stage and, Per
-//   Note, of the filter, which runs on beside the current one on the same input) and the one after it are both
-//   computed over the write's window, and their mixer outputs (and post gains, volume DC off) are blended with the
+//   Note, of the filter's output parameters, evaluated on the one state) and the one after it are both computed over
+//   the write's window, and their mixer outputs (and post gains, volume DC off) are blended with the
 //   long kernel's unit step at the write's position (Chip::unitStepTaps) before the board filters. With volume DC on
 //   a volume write is then the chip's own step (sample playback) at its full size, band-limited, never smoothed.
 //   Capacity: every volume, mode or resonance write that changes something opens a configuration for its window (the
@@ -81,17 +88,23 @@
 //   once, and a further such write while four windows are open retires the oldest at once (a step that is not
 //   band-limited: only with five or more changing volume, mode or resonance writes within 16 samples). Tested ("at
 //   most kMaxConfigs + 1 configurations", six writes at one cycle: five blended, the last write's state reached).
-// - RESONANCE (0x17 bits 4..7), since the S3b-2 review: blended like a mode write (a copy of the filter keeps the old
-//   resonance and runs on beside it over the write's window), so the change of the output equation lands at the
-//   write's place, band-limited (tested to 0.02 samples). The filter's DYNAMICS change at the write's place too, which
-//   lies between two samples: two more copies keep the old resonance and switch at the sample before and the one after
-//   it, and the new configuration's output is its own output equation at the state of their mixture (Filter::
-//   peekLinearDouble; exact to first order in the switch time); when the transition retires, or another configuration
-//   begins, the filter takes the mixture's state (settleSplit). Tested against an ideal render of the same writes at
-//   eight times the rate: the excess at most -95.9 dB, a write every tick (budget -90; switching the dynamics at one
-//   sample left -78.4 dB). With the cutoff moving (processWithCutoff) the dynamics switch at once instead.
+// - RESONANCE (0x17 bits 4..7): its output equation is blended like a mode write's (the configuration before keeps the
+//   old resonance's output parameters), so it lands at the write's place, band-limited (tested to 0.02 samples). Its
+//   DYNAMICS change at the write's place (the centre of the blend's weights), which lies between two samples: the step
+//   of the one state that contains it is mixed from the step with the old parameters (the part of the step before the
+//   place) and with the new (the rest), exact to first order in the place (stepDynamics; the newest output parameters
+//   are held apart, outNow, until then). Several changes placed in one sample mix in turn (up to kMaxStepMix = 4; more
+//   in one sample: the last kept one takes the newest resonance at its place). Capacity: kMaxPending (32) changes may
+//   wait for their place; a further one applies the oldest at once (only with 32 resonance changes inside one window).
+//   They wait in order and never interact with the blend's capacity (kMaxConfigs): retiring a configuration early moves
+//   no dynamics. Tested: the place by itself against a twin filter, to the 0.05-sample grid of the test (a place one
+//   sample off fails); the excess over an ideal render at 32 times the rate for a write every tick, alone and with a
+//   volume, mode or cutoff write 1, 10, 40 or 200 cycles before or after it, both models, 88.2, 96 and 192 kHz (at most
+//   -90 dB up to 2 kHz; the old two-copy placement measured -81 dB with a volume write 10 cycles later).
 // - CUTOFF (0x15, 0x16, setFilter): from the output sample of the write's own sample on (not blended; a cutoff jump is
-//   the filter's own change of state, which the chip makes too). The cutoff runs
+//   the filter's own change of state, which the chip makes too), in the one state's dynamics and in every
+//   configuration's output parameters alike, whatever else is pending (tested 30 cycles before, at and 30 cycles after
+//   a resonance write: the twin with the cutoff at its own sample equals the voice). The cutoff runs
 //   per sample through Filter::processWithCutoff while it moves (a change less than kCutoffSettle samples after the
 //   previous one) and through setCutoff + process once it has stood still for kCutoffSettle samples.
 // - A write before the first render is part of the state the render starts on.
@@ -232,15 +245,15 @@ private:
         std::uint64_t sample = 0;    // the transition to the next configuration (Pending's fields)
         int first = 0;
         std::array<double, render::kKernelTaps> taps {};
-        // a resonance write into the next configuration (Per Note; "TIMING"): its dynamics change at the write's place
-        // between filter samples switchAt and switchAt + 1: two copies run the old resonance and switch at those two
-        // samples, and the next configuration's output is its own output equation at the state of their mixture
-        // (1 - alpha, alpha); the filter takes that state over when the split ends (settleSplit)
-        Filter atFloor, atCeil;
-        std::int64_t switchAt = 0;
+    };
+    /** A change of the filter's dynamics at a place between two samples (a resonance write, "TIMING"): the step from
+        filter sample `at` to `at + 1` is taken partly with the parameters before it (the fraction `alpha` of the step)
+        and partly with the new resonance. */
+    struct DynChange
+    {
+        std::int64_t at = 0;
         double alpha = 0.0;
-        int newResonance = 0;
-        bool split = false, floorSwitched = false, ceilSwitched = false;
+        int resonance = 0;
     };
 
     /** A ring sample is output this many samples after it completes (the renderer's latency + 1). */
@@ -251,8 +264,16 @@ private:
     void applyNow (const Pending& p) noexcept;
     void applyParam (const Pending& p, std::int64_t q) noexcept;
     void beginConfig (const Pending& p) noexcept;
-    /** Ends a resonance write's split: the pending switches done, the filter takes the mixture's state. */
-    void settleSplit (Old& o) noexcept;
+    /** The output parameters of the configuration in effect (the newest written: they differ from the filter's own while a
+        resonance change waits for its place). */
+    const Filter& outParams() const noexcept { return outDiffers ? outNow : *filter; }
+    Filter& outParams() noexcept { return outDiffers ? outNow : *filter; }
+    /** One configuration's linear output and low-pass value at the filter's state (nothing advances). */
+    double peekConfig (Filter& outputParams, double in, double& lowPass) noexcept;
+    /** Advances the filter's state by one sample at filter time t, the dynamics changes placed in that sample mixed in. */
+    void stepDynamics (double in, std::int64_t t) noexcept;
+    /** Appends a dynamics change (beyond kMaxPending: the oldest is applied at once). */
+    void pushDynChange (const DynChange& d) noexcept;
     void refreshStaticDc() noexcept;
     /** Applies what is due at the filter's signal time t (chip sample). */
     void advanceTo (std::int64_t t) noexcept;
@@ -301,9 +322,17 @@ private:
     std::array<Pending, kMaxPending> params {}, configs {};
     int paramHead = 0, paramCount = 0, configHead = 0, configCount = 0;
 
-    // configurations being blended, oldest first (the current one is `st` and `filter`)
+    // configurations being blended, oldest first (the current one is `st` and outParams ()); in Per Note they share the
+    // filter's one state, each with its own output parameters
     std::array<Old, kMaxConfigs> old {};
     int nConfigs = 0;
+    // dynamics changes waiting for their place, in order; the newest written output parameters while any waits
+    std::array<DynChange, kMaxPending> dyn {};
+    int dynHead = 0, dynCount = 0;
+    Filter outNow;
+    bool outDiffers = false;
+    static constexpr int kMaxStepMix = 4; // dynamics changes mixed into one sample's step; more in one sample: see stepDynamics
+    std::array<Filter, kMaxStepMix + 1> stepCopy {};
 
     // the cutoff (register value) and whether it moves
     float cutoffValue = 0.0f;

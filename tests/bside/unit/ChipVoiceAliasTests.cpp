@@ -545,12 +545,12 @@ struct GateTotals
 /** The rows of one model and rate that `select` keeps, under the statement given, each over the phase constellations
     (kPhaseSteps; one for one-voice rows); printed if asked. */
 /** The constellations of the full set: every one of kPhaseSteps (one for a one-voice row). */
-std::vector<double> allSteps (const Signal& s, const Pin*)
+std::vector<double> allSteps (const Signal& s, const Setting&, const Pin*)
 {
     return s.voices == 1 ? std::vector<double> { kPhaseSteps[0] } : std::vector<double> (std::begin (kPhaseSteps), std::end (kPhaseSteps));
 }
 
-template <class Select, class Steps = std::vector<double> (*) (const Signal&, const Pin*)>
+template <class Select, class Steps = std::vector<double> (*) (const Signal&, const Setting&, const Pin*)>
 void runStatement (Model m, double rate, Statement which, Select&& select, GateTotals& t, bool print, Steps&& stepsFor = allSteps)
 {
     const int w = static_cast<int> (which);
@@ -560,9 +560,15 @@ void runStatement (Model m, double rate, Statement which, Select&& select, GateT
     const auto fitted = fittedStage.mixerLimits();
     for (const auto& s : kSignals)
     {
-        std::vector<std::array<std::vector<double>, 3>> voices (sizeof (kPhaseSteps) / sizeof (kPhaseSteps[0])); // per step of kPhaseSteps
+        // the ideal voices per constellation, made when first needed (any step, also one not in kPhaseSteps)
+        std::vector<std::pair<double, std::array<std::vector<double>, 3>>> voices;
+        voices.reserve (8);
         auto voicesAt = [&] (double step) -> std::array<std::vector<double>, 3>& {
-            return voices[static_cast<std::size_t> (std::find (std::begin (kPhaseSteps), std::end (kPhaseSteps), step) - std::begin (kPhaseSteps))];
+            for (auto& v : voices)
+                if (std::abs (v.first - step) < 1e-12)
+                    return v.second;
+            voices.push_back ({ step, {} });
+            return voices.back().second;
         };
         for (const auto& st : settingsFor (s))
         {
@@ -575,7 +581,7 @@ void runStatement (Model m, double rate, Statement which, Select&& select, GateT
             double worstDb = -300.0, worstHz = 0.0, worstStep = 0.0, worstLimit = absolute, maxExcess = -1e9, excessStep = 0.0;
             std::string notOverdriven;
             std::array<double, 2> worstRange { 0.0, 0.0 };
-            for (const double step : stepsFor (s, pin))
+            for (const double step : stepsFor (s, st, pin))
             {
                 auto& vs = voicesAt (step);
                 double limit = absolute;
@@ -753,15 +759,16 @@ TEST_CASE ("alias gate: the static curves through the chain, the normal run: eve
     // sanitizers) holds under the same rules (a) every listed row (88.2, 96 and 128 kHz) in the constellation of its
     // figure and in the common reset, so the two-sided check is exact; (b) a reduced set of the other rows in the common
     // reset: at 88.2 kHz (the narrowest transition band, the worst rows of the full set) statements (a) and (b) every row,
-    // (c) the rows at resonance 15 and the three-voice rows; at 96 and 128 kHz the rows that can drive the mixer past its
-    // fitted range (two or three voices, all through the low-pass at resonance 15), so a listed row taken off the list
-    // fails here too.
+    // (c) the rows at resonance 15; at 96 and 128 kHz the rows that can drive the mixer past its fitted range (two or three
+    // voices, all through the low-pass at resonance 15). Those candidate rows, at every rate here, in every constellation:
+    // removing any single entry from the list fails this run (tried for all 16).
     const auto t0 = std::chrono::steady_clock::now();
     GateTotals t;
-    auto listedSteps = [] (const Signal& s, const Pin* pin) {
-        if (pin == nullptr || s.voices == 1 || std::abs (pin->worstStep) < 1e-9)
-            return std::vector<double> { 0.0 };
-        return std::vector<double> { 0.0, pin->worstStep };
+    // every constellation for a row that can overdrive the mixer (two or three voices, all through the low-pass at
+    // resonance 15: every listed row is one, and an entry taken off the list must fail here), the reset for the others
+    auto listedSteps = [] (const Signal& s, const Setting& st, const Pin*) {
+        const bool candidate = s.voices > 1 && st.routing == 2 && st.mode == 0x10 && st.resonance == 15;
+        return candidate ? allSteps (s, st, nullptr) : std::vector<double> { 0.0 };
     };
     for (const Model m : { Model::B, Model::A })
         for (const double rate : { 88200.0, 96000.0, 128000.0 })
@@ -773,7 +780,7 @@ TEST_CASE ("alias gate: the static curves through the chain, the normal run: eve
                         return true;
                     if (! reduced)
                         return w != Statement::b && s.voices > 1 && st.routing == 2 && st.mode == 0x10 && st.resonance == 15;
-                    return w != Statement::c || st.resonance == 15 || s.voices == 3;
+                    return w != Statement::c || st.resonance == 15;
                 };
             };
             // three calls written out: GCC 11 (Linux) passed Statement::a to all three when this was a range-for over a

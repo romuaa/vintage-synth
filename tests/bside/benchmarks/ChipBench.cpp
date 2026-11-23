@@ -27,6 +27,8 @@
 // gate's patch (s4gate) with oscillators 1 and 2 through the filter (low-pass, cutoff 1024, resonance 8, volume 15):
 //   chainB, chainA     a cutoff write every tick (the filter runs process: setCutoff once per write)
 //   moveB, moveA       a cutoff write every 64 samples (moving: Filter::processWithCutoff every sample)
+//   plainB, plainA     chainB / chainA without their cutoff writes
+//   resB, resA         plainB / plainA with a resonance change every 64 samples (the cost of a write: the difference x 64)
 //   busesB, busesA     the same patch, Chip::renderBusesUntil alone (the buses' share of chainB / chainA)
 // The breakdown per stage: busesX is the renderer with its buses; chainX - busesX the filter, the stage and the voice's
 // per-sample bookkeeping.
@@ -334,7 +336,7 @@ double chainNsPerSample (Model m, double rate, int which)
         while (done < samples)
         {
             const std::uint64_t until = ticks * kTick;
-            const int got = which >= 2 ? v->renderBusesUntil (64, until) : v->renderUntil (out.data(), 64, until);
+            const int got = which == 2 || which == 3 ? v->renderBusesUntil (64, until) : v->renderUntil (out.data(), 64, until);
             done += static_cast<std::uint64_t> (got);
             if (v->chip().cycle() == until)
             {
@@ -347,6 +349,8 @@ double chainNsPerSample (Model m, double rate, int which)
             }
             if (which == 1 && got == 64)
                 v->write (0x16, static_cast<std::uint8_t> (0x60 + (++blocks * 5) % 64));
+            if (which == 4 && got == 64)
+                v->write (0x17, static_cast<std::uint8_t> ((++blocks % 2) == 0 ? 0x83 : 0xf3)); // a resonance change every 64 samples
         }
         const auto t1 = std::chrono::steady_clock::now();
         best = std::min (best, std::chrono::duration<double, std::nano> (t1 - t0).count() / static_cast<double> (done));
@@ -560,6 +564,10 @@ int main (int argc, char** argv)
                                { "chainA", Model::A, 0, "chain, S4 gate patch, Model A: buses -> filter -> stage" },
                                { "moveB", Model::B, 1, "chainB with a cutoff write every 64 samples (processWithCutoff)" },
                                { "moveA", Model::A, 1, "chainA with a cutoff write every 64 samples (processWithCutoff)" },
+                               { "plainB", Model::B, 5, "chainB without the cutoff writes (the base of resB)" },
+                               { "plainA", Model::A, 5, "chainA without the cutoff writes (the base of resA)" },
+                               { "resB", Model::B, 4, "plainB with a resonance change every 64 samples ((resB - plainB) x 64: one write)" },
+                               { "resA", Model::A, 4, "plainA with a resonance change every 64 samples ((resA - plainA) x 64: one write)" },
                                { "busesB", Model::B, 2, "the buses alone, S4 gate patch, Model B" },
                                { "busesA", Model::A, 2, "the buses alone, S4 gate patch, Model A (voice bend included)" },
                                { "busesA0", Model::A, 3, "busesA without the voice bend (busesA - busesA0: the bend in the renderer)" } };

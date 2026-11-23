@@ -521,6 +521,20 @@ double Filter::processWithCutoffLinearDouble (double in, float registerValue, do
     return c.wL * lp + c.wB * bp + c.wH * hp;
 }
 
+double Filter::peekWithCutoffLinearDouble (double in, float registerValue, const Filter& stateOf, double& lowPass) noexcept
+{
+    if (! cutValid)
+        buildCutTable();
+    const Mapped c = cutAt (registerValue);
+    const double x = guard (in);
+    const double kg2 = c.k + c.g;
+    const double hp = (x - kg2 * stateOf.s1 - stateOf.s2) / (1.0 + c.g * kg2);
+    const double bp = c.g * hp + stateOf.s1;
+    const double lp = c.g * bp + stateOf.s2;
+    lowPass = lp;
+    return c.wL * lp + c.wB * bp + c.wH * hp;
+}
+
 Filter::Linear Filter::linearPart() const noexcept
 {
     Linear l { a11, a12, a21, a22, a1x, a2x, ox, o1, o2 };
