@@ -268,6 +268,8 @@ void ChipVoice::beginConfig (const Pending& p) noexcept
         st.setModeVolume (p.value);
         return;
     }
+    if (nConfigs > 0)
+        settleSplit (old[static_cast<std::size_t> (nConfigs - 1)]); // a split runs for the newest transition only
     if (nConfigs == kMaxConfigs)
     {
         // bounded: the oldest configuration is retired at once
@@ -282,12 +284,36 @@ void ChipVoice::beginConfig (const Pending& p) noexcept
     o.sample = p.sample;
     o.first = p.first;
     o.taps = p.taps;
+    o.split = false;
     ++nConfigs;
     if (resonanceWrite)
     {
-        // the copy keeps the old resonance and runs on beside the filter over the window (its poles differ: the two
-        // states part, which the blend's weights confine to the window)
+        // the copy keeps the old resonance and runs on beside the filter over the window; the blend's weights carry the
+        // change of the output equation (band-limited, as a mode write's). The filter's DYNAMICS change at the write's
+        // place, between two samples: two more copies keep the old resonance and switch at the sample before that place
+        // and the one after, and the new configuration's output is its output equation at the state of their mixture
+        // (exact to first order in the switch time). A switch of the dynamics at one sample (the window's start, before)
+        // moved with the write's position against the sample grid: the write budget against an ideal render saw it as
+        // aliasing (8.19.4 after the round over phases: up to -78 dB). The place: the centre of the blend's weights.
         resonanceNow = static_cast<std::uint8_t> (p.value & 0xf0);
+        double centre = 0.0;
+        double prev = weightAt (static_cast<std::int64_t> (p.sample) + p.first - 1, p.sample, p.first, p.taps);
+        for (int k = 0; k <= render::kKernelTaps; ++k)
+        {
+            const std::int64_t q = static_cast<std::int64_t> (p.sample) + p.first + k;
+            const double w = weightAt (q, p.sample, p.first, p.taps);
+            centre += (w - prev) * static_cast<double> (q);
+            prev = w;
+        }
+        const double fl = std::floor (centre);
+        o.atFloor = *filter;
+        o.atCeil = *filter;
+        o.switchAt = static_cast<std::int64_t> (fl);
+        o.alpha = centre - fl;
+        o.newResonance = resonanceNow >> 4;
+        o.floorSwitched = false;
+        o.ceilSwitched = false;
+        o.split = ! moving; // a moving cutoff runs processWithCutoff, whose parameters a peek does not see: switch at once
         filter->setResonance (resonanceNow >> 4);
     }
     else
@@ -298,6 +324,18 @@ void ChipVoice::beginConfig (const Pending& p) noexcept
             filter->setMode (p.value);
     }
     refreshStaticDc();
+}
+
+void ChipVoice::settleSplit (Old& o) noexcept
+{
+    if (! o.split)
+        return;
+    if (! o.floorSwitched)
+        o.atFloor.setResonance (o.newResonance);
+    if (! o.ceilSwitched)
+        o.atCeil.setResonance (o.newResonance);
+    filter->takeStateMix (o.atFloor, o.atCeil, o.alpha);
+    o.split = false;
 }
 
 void ChipVoice::refreshStaticDc() noexcept
@@ -353,6 +391,7 @@ void ChipVoice::advanceTo (std::int64_t q) noexcept
         const Old& o = old[0];
         if (q < static_cast<std::int64_t> (o.sample) + o.first + render::kKernelTaps || q < static_cast<std::int64_t> (o.sample))
             break;
+        settleSplit (old[0]);
         for (int i = 1; i < nConfigs; ++i)
             old[static_cast<std::size_t> (i - 1)] = old[static_cast<std::size_t> (i)];
         --nConfigs;
@@ -447,7 +486,32 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
             refreshStaticDc();
         }
         const double in = modelA ? pAc[j] + pDc[j] : st.filterInput (fa[j], fe[j]);
-        lin = runFilter (*filter, in, lp);
+        Old* sp = nConfigs > 0 && old[static_cast<std::size_t> (nConfigs - 1)].split ? &old[static_cast<std::size_t> (nConfigs - 1)] : nullptr;
+        if (sp != nullptr && moving)
+        {
+            settleSplit (*sp); // the cutoff started moving inside the window
+            sp = nullptr;
+        }
+        if (sp != nullptr)
+        {
+            if (! sp->floorSwitched && t >= sp->switchAt)
+            {
+                sp->atFloor.setResonance (sp->newResonance);
+                sp->floorSwitched = true;
+            }
+            if (! sp->ceilSwitched && t >= sp->switchAt + 1)
+            {
+                sp->atCeil.setResonance (sp->newResonance);
+                sp->ceilSwitched = true;
+            }
+            // the new configuration: its output equation at the mixture's state; the two copies advance
+            lin = filter->peekLinearDouble (in, sp->atFloor, sp->atCeil, sp->alpha, lp);
+            double unused = 0.0;
+            sp->atFloor.processLinearDouble (in, unused);
+            sp->atCeil.processLinearDouble (in, unused);
+        }
+        else
+            lin = runFilter (*filter, in, lp);
         for (int k = 0; k < nConfigs; ++k)
         {
             double lpk = 0.0;

@@ -111,6 +111,23 @@ public:
     /** Model A cutoff curve offset 0..1 (8.4.7 Config::variation). Clamped. */
     void setVariation (float value) noexcept;
 
+    // ---- a parameter change placed between two samples (ChipVoice "TIMING", resonance writes) ----
+    /** processLinearDouble's output and low-pass value for `in` with THIS filter's parameters (as set by setCutoff,
+        setResonance, setMode) at the state a + alpha (b - a) of two other filters; nothing advances. */
+    double peekLinearDouble (double in, const Filter& a, const Filter& b, double alpha, double& lowPass) const noexcept
+    {
+        const double x = guard (in);
+        const double t1 = a.s1 + alpha * (b.s1 - a.s1), t2 = a.s2 + alpha * (b.s2 - a.s2);
+        lowPass = mdl == Model::A ? lx * x + l1 * t1 + l2 * t2 : 0.0;
+        return ox * x + o1 * t1 + o2 * t2;
+    }
+    /** The state a + alpha (b - a) of two other filters taken over (the parameters stay). */
+    void takeStateMix (const Filter& a, const Filter& b, double alpha) noexcept
+    {
+        s1 = a.s1 + alpha * (b.s1 - a.s1);
+        s2 = a.s2 + alpha * (b.s2 - a.s2);
+    }
+
     /** One internal sample: the selected outputs' sum for this input. */
     float process (float in) noexcept { return static_cast<float> (processDouble (static_cast<double> (in))); }
     /** The same in double precision, input and output (the chain, ChipVoice: 8.20.1). */

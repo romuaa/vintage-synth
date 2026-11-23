@@ -82,8 +82,14 @@
 //   band-limited: only with five or more changing volume, mode or resonance writes within 16 samples). Tested ("at
 //   most kMaxConfigs + 1 configurations", six writes at one cycle: five blended, the last write's state reached).
 // - RESONANCE (0x17 bits 4..7), since the S3b-2 review: blended like a mode write (a copy of the filter keeps the old
-//   resonance and runs on beside it over the write's window; their poles differ, so the two states part, which the
-//   blend's weights confine to the window), so the step lands at the write's place (tested to 0.02 samples).
+//   resonance and runs on beside it over the write's window), so the change of the output equation lands at the
+//   write's place, band-limited (tested to 0.02 samples). The filter's DYNAMICS change at the write's place too, which
+//   lies between two samples: two more copies keep the old resonance and switch at the sample before and the one after
+//   it, and the new configuration's output is its own output equation at the state of their mixture (Filter::
+//   peekLinearDouble; exact to first order in the switch time); when the transition retires, or another configuration
+//   begins, the filter takes the mixture's state (settleSplit). Tested against an ideal render of the same writes at
+//   eight times the rate: the excess at most -95.9 dB, a write every tick (budget -90; switching the dynamics at one
+//   sample left -78.4 dB). With the cutoff moving (processWithCutoff) the dynamics switch at once instead.
 // - CUTOFF (0x15, 0x16, setFilter): from the output sample of the write's own sample on (not blended; a cutoff jump is
 //   the filter's own change of state, which the chip makes too). The cutoff runs
 //   per sample through Filter::processWithCutoff while it moves (a change less than kCutoffSettle samples after the
@@ -226,6 +232,15 @@ private:
         std::uint64_t sample = 0;    // the transition to the next configuration (Pending's fields)
         int first = 0;
         std::array<double, render::kKernelTaps> taps {};
+        // a resonance write into the next configuration (Per Note; "TIMING"): its dynamics change at the write's place
+        // between filter samples switchAt and switchAt + 1: two copies run the old resonance and switch at those two
+        // samples, and the next configuration's output is its own output equation at the state of their mixture
+        // (1 - alpha, alpha); the filter takes that state over when the split ends (settleSplit)
+        Filter atFloor, atCeil;
+        std::int64_t switchAt = 0;
+        double alpha = 0.0;
+        int newResonance = 0;
+        bool split = false, floorSwitched = false, ceilSwitched = false;
     };
 
     /** A ring sample is output this many samples after it completes (the renderer's latency + 1). */
@@ -236,6 +251,8 @@ private:
     void applyNow (const Pending& p) noexcept;
     void applyParam (const Pending& p, std::int64_t q) noexcept;
     void beginConfig (const Pending& p) noexcept;
+    /** Ends a resonance write's split: the pending switches done, the filter takes the mixture's state. */
+    void settleSplit (Old& o) noexcept;
     void refreshStaticDc() noexcept;
     /** Applies what is due at the filter's signal time t (chip sample). */
     void advanceTo (std::int64_t t) noexcept;

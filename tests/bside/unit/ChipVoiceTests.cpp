@@ -7,9 +7,11 @@
 #include "RenderTestSupport.h"
 
 #include "bside/chip/ChipVoice.h"
+#include "bside/chip/HalfBand.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -389,35 +391,289 @@ WriteAlias chainWrites (Model m, const RateConfig& rc, double hz, bool vdc, std:
         xb[i] = static_cast<float> (yb[s]);
         xd[i] = static_cast<float> (yw[s] - (ya[s] + (yb[s] - ya[s]) * sw));
     }
-    WriteAlias r;
-    const auto magW = windowedMagnitudes (xw);
-    r.raw = offGridAlias (magW, rc.internalRate, rc.band, lineHz, 8.0);
-    const auto ra = offGridAlias (windowedMagnitudes (xa), rc.internalRate, rc.band, lineHz, 8.0);
-    const auto rb = offGridAlias (windowedMagnitudes (xb), rc.internalRate, rc.band, lineHz, 8.0);
-    r.baseline = ra.worstDb > rb.worstDb ? ra : rb;
-    // the difference relative to the output's own strongest line
-    auto magD = windowedMagnitudes (xd);
-    double refW = 0.0, refD = 0.0;
+    // every figure relative to the output's strongest line other than DC (8.19.4 after the round over phases: the main
+    // lobe of the mean, +-8 bins, is not a line of the signal; with volume DC on the output's mean, the mixer's offset,
+    // lies tens of dB above the audio and was taken as the reference before)
     const double binHz = rc.internalRate / static_cast<double> (n);
-    for (std::size_t k = 1; k < magW.size() && static_cast<double> (k) * binHz <= rc.band; ++k)
-    {
+    const auto magW = windowedMagnitudes (xw);
+    double refW = 0.0;
+    for (std::size_t k = 9; k < magW.size() && static_cast<double> (k) * binHz <= rc.band; ++k)
         refW = std::max (refW, magW[k]);
-        refD = std::max (refD, magD[k]);
-    }
-    r.write = offGridAlias (magD, rc.internalRate, rc.band, lineHz, 8.0);
-    r.write.worstDb += 20.0 * std::log10 ((refD + 1e-300) / refW);
+    auto relative = [&] (const std::vector<double>& mag) {
+        AliasResult res = offGridAlias (mag, rc.internalRate, rc.band, lineHz, 8.0);
+        double own = 0.0;
+        for (std::size_t k = 1; k < mag.size() && static_cast<double> (k) * binHz <= rc.band; ++k)
+            own = std::max (own, mag[k]);
+        res.worstDb += 20.0 * std::log10 ((own + 1e-300) / (refW + 1e-300));
+        return res;
+    };
+    WriteAlias r;
+    r.raw = relative (magW);
+    const auto ra = relative (windowedMagnitudes (xa));
+    const auto rb = relative (windowedMagnitudes (xb));
+    r.baseline = ra.worstDb > rb.worstDb ? ra : rb;
+    r.write = relative (windowedMagnitudes (xd));
     return r;
 }
 } // namespace
 
-TEST_CASE ("chain: routing, volume, mode and resonance writes every tick meet the write budget before the board filters (<= -90 dB to 2 kHz)", "[chain][alias][writes]")
+namespace
+{
+struct ResonanceWrites
+{
+    AliasResult ours, ideal, excess;
+};
+
+/** Resonance writes every tick (8.19.4 after the round over phases): the chain's output before the board filters against
+    the same writes rendered ideally, test-side: the chip's buses (resonance moves nothing there) interpolated to eight
+    times the internal rate by three half-band stages of 120 dB, the filter and the stage run at that rate with each
+    write applied at the 8x sample nearest its time (Chip::kAnalogWriteLeadCycles before the write's cycle, at the bus
+    time of that cycle), the curves at 8x, three half-band stages of 120 dB back. What the chain adds beyond that render
+    (the difference, aligned by the integer shift of best match) is the writes' excess: the budget's measure. */
+ResonanceWrites resonanceWrites (Model m, double rate, double hz, bool vdc, std::uint8_t a, std::uint8_t b, std::uint8_t modeVolume)
+{
+    const std::uint64_t period = 2 * kTick;
+    const double periods = std::max (1.0, std::round (hz * static_cast<double> (period) / 985248.0));
+    const double lineHz = 985248.0 / static_cast<double> (period);
+    const double band = 20000.0;
+    int n = 1 << 14;
+    while (rate / n > lineHz / 20.0)
+        n <<= 1;
+    const int warm = 3 * static_cast<int> (rate);
+    const int total = warm + n;
+    const double oscF = periods * 16777216.0 / static_cast<double> (period);
+    // ours
+    std::vector<std::uint64_t> writes;
+    std::vector<double> yw (static_cast<std::size_t> (total), 0.0);
+    double cps = 1.0;
+    {
+        PerNote p (m, rate, vdc);
+        ChipVoice& v = *p.v;
+        v.boardFiltersEnabled (false);
+        cps = static_cast<double> (v.chip().sampleClock().increment()) / 4294967296.0;
+        osc (v, 0, oscF, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+        v.write (0x15, 0);
+        v.write (0x16, 0x80); // cutoff 1024
+        v.write (0x17, a);
+        v.write (0x18, modeVolume);
+        int done = 0;
+        std::uint64_t index = 0, at = 1000;
+        while (done < total)
+        {
+            done += v.renderUntil (yw.data() + done, total - done, at);
+            if (v.chip().cycle() == at)
+            {
+                v.write (0x17, (index++ % 2) == 0 ? b : a);
+                writes.push_back (at);
+                at += kTick;
+            }
+        }
+    }
+    // ideal: the buses at the internal rate, then 8x
+    Chip c = makeChip (m, rate);
+    c.renderBendVoices (true);
+    {
+        OscInput in;
+        in.frequency = oscF;
+        in.pulseWidth = 2048.0f;
+        in.control = static_cast<std::uint8_t> (ctrl::saw | ctrl::gate);
+        in.attackDecay = 0x00;
+        in.sustainRelease = 0xf0;
+        c.setOscillator (0, in);
+    }
+    c.write (0x17, a);
+    c.write (0x18, modeVolume);
+    const auto z = static_cast<std::size_t> (total);
+    std::vector<double> fa (z), da (z), fe (z), de (z), fv (z), dv (z);
+    c.renderBuses ({ fa.data(), da.data(), fe.data(), de.data(), fv.data(), dv.data() }, total);
+    const double r8 = 8.0 * rate;
+    Filter f;
+    f.prepare (m, r8, 0.5f);
+    f.setCutoff (1024.0f);
+    f.setResonance (a >> 4);
+    f.setMode (modeVolume);
+    OutputStage o;
+    o.prepare (m, r8, vdc);
+    o.setRouting (static_cast<std::uint8_t> (a & 7));
+    o.setModeVolume (modeVolume);
+    using vs::bside::chip::HalfBandUp;
+    using vs::bside::chip::HalfBandDown;
+    const auto d1 = vs::bside::chip::designHalfBand (2.0 * rate, 20000.0, 1.0e-6), d2 = vs::bside::chip::designHalfBand (4.0 * rate, 20000.0, 1.0e-6),
+               d3 = vs::bside::chip::designHalfBand (8.0 * rate, 20000.0, 1.0e-6);
+    HalfBandUp uF1, uF2, uF3, uD1, uD2, uD3;
+    HalfBandDown n1, n2, n3;
+    uF1.prepare (d1); uD1.prepare (d1); n1.prepare (d1);
+    uF2.prepare (d2); uD2.prepare (d2); n2.prepare (d2);
+    uF3.prepare (d3); uD3.prepare (d3); n3.prepare (d3);
+    // the interpolators' delay in 8x samples: bus time t lands at 8x sample 8 t + upDelay
+    const double upDelay = 4.0 * uF1.delay2x() + 2.0 * uF2.delay2x() + uF3.delay2x();
+    // each write: at chip time (cycle - lead) / cps, which the buses show at that time + the renderer's ring lag
+    std::vector<std::int64_t> switchAt;
+    for (const auto w : writes)
+        switchAt.push_back (static_cast<std::int64_t> (std::llround (8.0 * ((static_cast<double> (w) - kReferenceLeadCycles) / cps + Chip::kLatencySamples + 1) + upDelay)));
+    std::vector<double> yi (z, 0.0);
+    std::size_t next = 0;
+    std::int64_t s8 = 0;
+    int writesDone = 0;
+    const double g = o.gainFactor();
+    auto stage8 = [&] (double inF, double di) {
+        if (next < switchAt.size() && s8 == switchAt[next])
+        {
+            f.setResonance (((writesDone++ % 2) == 0 ? b : a) >> 4);
+            ++next;
+        }
+        ++s8;
+        double lp = 0.0;
+        const double lin = f.processLinearDouble (inF, lp);
+        double x = g * (lin + di);
+        if (m == Model::A)
+        {
+            const auto sh = f.outputShapeCoefficients();
+            const double v = lp < sh.lpMin ? sh.lpMin : (lp > sh.lpMax ? sh.lpMax : lp);
+            x += g * (((((sh.p5 * v + sh.p4) * v + sh.p3) * v + sh.p2) * v + sh.p1) * v);
+        }
+        return o.postScale() * o.mixerCurve (x) + o.postOffset();
+    };
+    for (std::size_t i = 0; i < z; ++i)
+    {
+        const double inF = m == Model::A ? o.filterInputAc (fa[i], fe[i]) + OutputStage::voiceDc (Model::A) * fv[i] : o.filterInput (fa[i], fe[i]);
+        const double di = o.directSumWith (da[i], de[i], dv[i]);
+        double f2[2], d2v[2];
+        uF1.process (inF, f2[0], f2[1]);
+        uD1.process (di, d2v[0], d2v[1]);
+        double out2[2];
+        for (int h = 0; h < 2; ++h)
+        {
+            double f4[2], d4[2];
+            uF2.process (f2[h], f4[0], f4[1]);
+            uD2.process (d2v[h], d4[0], d4[1]);
+            double out4[2];
+            for (int q = 0; q < 2; ++q)
+            {
+                double f8[2], d8[2];
+                uF3.process (f4[q], f8[0], f8[1]);
+                uD3.process (d4[q], d8[0], d8[1]);
+                const double e0 = stage8 (f8[0], d8[0]);
+                const double e1 = stage8 (f8[1], d8[1]);
+                out4[q] = n3.process (e0, e1);
+            }
+            out2[h] = n2.process (out4[0], out4[1]);
+        }
+        yi[i] = n1.process (out2[0], out2[1]);
+    }
+    // align: the integer shift of the ideal render that best matches ours over the measured part
+    auto mismatch = [&] (int shift) {
+        double e = 0.0;
+        for (int i = warm; i < total; i += 7)
+        {
+            const int k = i - shift;
+            if (k < 0 || k >= total)
+                continue;
+            const double d = yw[static_cast<std::size_t> (i)] - yi[static_cast<std::size_t> (k)];
+            e += d * d;
+        }
+        return e;
+    };
+    int best = 0;
+    double be = mismatch (0);
+    for (int sft = -80; sft <= 80; ++sft)
+        if (mismatch (sft) < be)
+        {
+            be = mismatch (sft);
+            best = sft;
+        }
+    // the ideal render's level and offset fitted to ours (least squares over the measured part): the stage's post gain and
+    // static offset (volume DC off) are the chain's own constants, not part of a write
+    double sw = 0.0, si = 0.0, sii = 0.0, swi = 0.0;
+    for (int i = warm; i < total; ++i)
+    {
+        const double w = yw[static_cast<std::size_t> (i)], v = yi[static_cast<std::size_t> (i - best)];
+        sw += w;
+        si += v;
+        sii += v * v;
+        swi += w * v;
+    }
+    const double cnt = static_cast<double> (total - warm);
+    const double alpha = (swi - sw * si / cnt) / (sii - si * si / cnt);
+    const double beta = (sw - alpha * si) / cnt;
+    std::vector<float> xw (static_cast<std::size_t> (n)), xi (xw.size()), xd (xw.size());
+    for (std::size_t i = 0; i < xw.size(); ++i)
+    {
+        const std::size_t sIdx = static_cast<std::size_t> (warm) + i;
+        const double ideal = alpha * yi[sIdx - static_cast<std::size_t> (best)] + beta;
+        xw[i] = static_cast<float> (yw[sIdx]);
+        xi[i] = static_cast<float> (ideal);
+        xd[i] = static_cast<float> (yw[sIdx] - ideal);
+    }
+    // every figure relative to the output's strongest line other than DC (the main lobe of the mean, +-8 bins, is not a
+    // line of the signal: with volume DC on the output's mean is the mixer's offset, tens of dB above the audio)
+    const double binHz = rate / static_cast<double> (n);
+    auto relative = [&] (const std::vector<double>& mag, const std::vector<double>& refMag) {
+        double ref = 0.0;
+        for (std::size_t k = 9; k < refMag.size() && static_cast<double> (k) * binHz <= band; ++k)
+            ref = std::max (ref, refMag[k]);
+        AliasResult res = offGridAlias (mag, rate, band, lineHz, 8.0);
+        double own = 0.0;
+        for (std::size_t k = 1; k < mag.size() && static_cast<double> (k) * binHz <= band; ++k)
+            own = std::max (own, mag[k]);
+        res.worstDb += 20.0 * std::log10 ((own + 1e-300) / (ref + 1e-300));
+        return res;
+    };
+    const auto magW = windowedMagnitudes (xw);
+    ResonanceWrites r;
+    r.ours = relative (magW, magW);
+    r.ideal = relative (windowedMagnitudes (xi), magW);
+    r.excess = relative (windowedMagnitudes (xd), magW);
+    return r;
+}
+} // namespace
+
+TEST_CASE ("chain: resonance writes every tick: the excess over an ideal render (8x) meets the write budget (<= -90 dB to 2 kHz)", "[chain][alias][writes]")
+{
+    // 8.19.4 after the round over phases: a resonance write changes the filter itself, so the budget of 8.4.5 applies to
+    // what the chain adds beyond the same writes rendered ideally (resonanceWrites): resonance 0 <-> 15 and 4 <-> 12,
+    // low-pass and band-pass at cutoff 1024, both models, 88.2 and 96 kHz, a voice at 110 Hz, 1 and 2 kHz, a write
+    // every tick. Printed per row: ours, the ideal render, the excess (each the worst off the lines relative to the
+    // output's strongest line).
+    struct Row
+    {
+        const char* name;
+        bool vdc;
+        std::uint8_t a, b, modeVolume;
+    };
+    const Row rows[] { { "resonance 0 <-> 15, low-pass", true, 0x01, 0xf1, 0x1f },
+                       { "resonance 4 <-> 12, low-pass, volume DC off", false, 0x41, 0xc1, 0x1f },
+                       { "resonance 0 <-> 15, band-pass", true, 0x01, 0xf1, 0x2f },
+                       { "resonance 4 <-> 12, band-pass, volume DC off", false, 0x41, 0xc1, 0x2f } };
+    for (const Model m : { Model::B, Model::A })
+        for (const auto& row : rows)
+            for (const double rate : { 88200.0, 96000.0 })
+            {
+                double ours = -300.0, ideal = -300.0, excess = -300.0;
+                for (const double hz : { 110.0, 1000.0, 2000.0 })
+                {
+                    const auto r = resonanceWrites (m, rate, hz, row.vdc, row.a, row.b, row.modeVolume);
+                    INFO ((m == Model::A ? "Model A, " : "Model B, ") << row.name << ", " << rate << " Hz internal, " << hz << " Hz: ours " << r.ours.worstDb
+                                                                     << " dB, the ideal render " << r.ideal.worstDb << " dB, the excess " << r.excess.worstDb << " dB at "
+                                                                     << r.excess.worstHz << " Hz");
+                    CHECK (r.excess.worstDb <= -90.0);
+                    CHECK (r.ours.worstDb > -299.0);
+                    ours = std::max (ours, r.ours.worstDb);
+                    ideal = std::max (ideal, r.ideal.worstDb);
+                    excess = std::max (excess, r.excess.worstDb);
+                }
+                std::printf ("[resonance-writes] Model %s %-45s %6.0f Hz: ours %7.1f dB, ideal %7.1f dB, excess %7.1f dB (budget -90)\n", m == Model::A ? "A" : "B", row.name,
+                             rate, ours, ideal, excess);
+            }
+}
+
+TEST_CASE ("chain: routing, volume and mode writes every tick meet the write budget before the board filters (<= -90 dB to 2 kHz)", "[chain][alias][writes]")
 {
     struct Row
     {
         const char* name;
         bool vdc;
         std::uint8_t reg, a, b, control, route, modeVolume;
-        bool gated = true;
     };
     const Row rows[] { { "routing filter <-> direct (saw)", true, 0x17, 0x40, 0x41, ctrl::saw, 0x00, 0x1f },
                        { "routing filter <-> direct (pulse)", false, 0x17, 0x40, 0x41, ctrl::pulse, 0x00, 0x1f },
@@ -425,13 +681,8 @@ TEST_CASE ("chain: routing, volume, mode and resonance writes every tick meet th
                        { "volume 15 <-> 6, volume DC on (the chip's step)", true, 0x18, 0x1f, 0x16, ctrl::saw, 0x01, 0x1f },
                        { "volume 15 <-> 6, volume DC off", false, 0x18, 0x1f, 0x16, ctrl::saw, 0x01, 0x1f },
                        { "mode low-pass <-> high-pass", true, 0x18, 0x1f, 0x4f, ctrl::saw, 0x01, 0x1f },
-                       { "mode low-pass <-> band-pass, volume DC off", false, 0x18, 0x1f, 0x2f, ctrl::triangle, 0x01, 0x1f },
-                       // resonance writes blend two configurations like mode writes (S3b-2 review round, R4; 8.19.4 after the
-                       // second review: in this test)
-                       { "resonance 0 <-> 15 (low-pass)", true, 0x17, 0x01, 0xf1, ctrl::saw, 0x01, 0x1f },
-                       // reported, NOT gated (docs/decisions.md "B-Side S3b-2 second review round" S7): through the band-pass
-                       // at 2 kHz the writes add -87.5 to -89.5 dB at 88.2 and 96 kHz (budget -90); open for the owner
-                       { "resonance 4 <-> 12 (band-pass), volume DC off", false, 0x17, 0x41, 0xc1, ctrl::saw, 0x01, 0x2f, false } };
+                       { "mode low-pass <-> band-pass, volume DC off", false, 0x18, 0x1f, 0x2f, ctrl::triangle, 0x01, 0x1f } };
+    // (resonance writes: the next test, against an ideal render; 8.19.4 after the round over phases)
     for (const Model m : { Model::B, Model::A })
         for (const auto& row : rows)
         {
@@ -446,15 +697,14 @@ TEST_CASE ("chain: routing, volume, mode and resonance writes every tick meet th
                     INFO ((m == Model::A ? "Model A, " : "Model B, ") << row.name << ", " << rc.internalRate << " Hz internal, " << hz << " Hz: the writes add "
                                                                      << a.write.worstDb << " dB at " << a.write.worstHz << " Hz (output " << a.raw.worstDb
                                                                      << " dB, held states " << a.baseline.worstDb << " dB)");
-                    if (row.gated)
-                        CHECK (a.write.worstDb <= -90.0);
+                    CHECK (a.write.worstDb <= -90.0);
                     CHECK (a.raw.worstDb > -299.0); // something was measured: bins exist between the lines
                     worst = std::max (worst, a.write.worstDb);
                     worstRaw = std::max (worstRaw, a.raw.worstDb);
                     worstBase = std::max (worstBase, a.baseline.worstDb);
                 }
             }
-            WARN ((m == Model::A ? "Model A " : "Model B ") << row.name << (row.gated ? "" : " (reported, not gated)") << " every tick: the writes add at worst " << worst << " dB (budget -90); the output "
+            WARN ((m == Model::A ? "Model A " : "Model B ") << row.name << " every tick: the writes add at worst " << worst << " dB (budget -90); the output "
                                                             << worstRaw << " dB, held without writes " << worstBase << " dB (the static curves, S3b-2)");
         }
 }
@@ -1183,3 +1433,4 @@ TEST_CASE ("chain: a full write queue applies its oldest entry at once, keeping 
     CHECK (finite);
     CHECK (v.configsActive() == 1);
 }
+
