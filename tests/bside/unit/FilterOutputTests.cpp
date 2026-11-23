@@ -687,64 +687,122 @@ TEST_CASE ("output stage: volume DC off, a volume or routing write with held voi
     }
 }
 
-TEST_CASE ("filter and output stage: the Shared topology stays meaningful for 1 to 16 chips", "[filter][output]")
+namespace
 {
-    // OutputStage.h "SHARED": one filter, its input the static DC of one chip plus every chip's filterBusAc; each
-    // chip's stage gets the shared output / n. Identical notes on n chips: Model B (its filter linear, its mixer curve
-    // nearly so) gives n times one chip within 1 %; Model A stays finite, does not fall silent and grows less than n times (its summed
-    // distortion, 8.5).
-    for (const Model m : { Model::A, Model::B })
+/** n chips with identical held routed voices (a 110 Hz triangle on oscillator 1 at envelope `env`, cutoff 900,
+    low + band + high, volume DC on), Per Note (n filters) or Shared (one filter, OutputStage.h "SHARED"): the summed
+    output's DC step on a 0 -> 15 volume write (the mean over ten periods right after against right before, after 1 s),
+    and the rms of the audio before the write at volume 15 (a second run). */
+struct SharedRun
+{
+    double dcStep = 0.0, rms = 0.0;
+};
+SharedRun sharedRun (Model m, int n, bool shared, float env)
+{
+    const double rate = 96000.0, hz = 110.0;
+    SharedRun result;
+    for (const bool audioRun : { false, true })
     {
-        double single = 0.0;
-        for (const int n : { 1, 2, 4, 8, 16 })
+        std::vector<Filter> fs (static_cast<std::size_t> (shared ? 1 : n));
+        for (auto& f : fs)
         {
-            const double rate = 96000.0;
-            Filter f;
             f.prepare (m, rate, 0.5f);
             f.setCutoff (900.0f);
-            f.setMode (0x1f);
-            std::vector<OutputStage> stages (static_cast<std::size_t> (n));
-            for (auto& o : stages)
+        }
+        std::vector<OutputStage> st (static_cast<std::size_t> (n));
+        for (auto& o : st)
+            o.prepare (m, rate, true);
+        auto regs = [&] (std::uint8_t mv) {
+            for (auto& f : fs)
+                f.setMode (mv);
+            for (auto& o : st)
             {
-                o.prepare (m, rate, false);
                 o.setRouting (0x01);
-                o.setModeVolume (0x1f);
-                o.setFilterStaticDc (f.staticOutput (o.staticFilterBusDc()) / n);
+                o.setModeVolume (mv);
+                o.setFilterStaticDc (fs[0].staticOutput (o.staticFilterBusDc()));
             }
-            double phase = 0.0, energy = 0.0;
-            bool finite = true;
-            const int len = static_cast<int> (rate);
+        };
+        regs (audioRun ? 0x7f : 0x70);
+        double phase = 0.0;
+        auto run = [&] (double seconds, double& sumSq) {
+            const int len = static_cast<int> (seconds * rate);
+            double sum = 0.0;
             for (int i = 0; i < len; ++i)
             {
-                phase += 220.0 / rate;
+                phase += hz / rate;
                 phase -= std::floor (phase);
-                const float u = static_cast<float> (phase - 0.5);
-                const float v = OutputStage::shapeVoice (m, u, 1.0f);
-                float in = static_cast<float> (stages[0].staticFilterBusDc());
-                for (auto& o : stages)
-                    in += o.filterBusAc (v, 1.0f);
-                const float shared = f.process (in) / static_cast<float> (n);
+                const auto u = static_cast<float> ((2.0 * std::abs (phase - 0.5) - 0.5) * static_cast<double> (env));
+                const float v = OutputStage::shapeVoice (m, u, env);
                 double y = 0.0;
-                for (auto& o : stages)
-                    y += o.process (shared, 0.0f, 0.0f);
-                finite = finite && std::isfinite (y);
-                if (i > len / 2)
-                    energy += y * y;
+                if (! shared)
+                    for (std::size_t c = 0; c < st.size(); ++c)
+                        y += st[c].process (fs[c].process (st[c].filterBusLevel (v, env)), 0.0f, 0.0f);
+                else
+                {
+                    auto in = static_cast<float> (st[0].staticFilterBusDc());
+                    for (auto& o : st)
+                        in += o.filterBusAc (v, env);
+                    const float share = OutputStage::sharedFilterShare (fs[0].process (in), fs[0].staticOutput (st[0].staticFilterBusDc()), n);
+                    for (auto& o : st)
+                        y += o.process (share, 0.0f, 0.0f);
+                }
+                sum += y;
+                sumSq += y * y;
             }
-            const double rms = std::sqrt (energy / (len / 2));
-            if (n == 1)
-                single = rms;
-            INFO ("model " << (m == Model::A ? "A" : "B") << " chips " << n << ": rms " << rms << " (one chip " << single << ")");
-            CHECK (finite);
-            if (m == Model::B)
-                CHECK (std::abs (rms / (single * n) - 1.0) < 0.01); // measured at most 0.5 %: the mixer curve is not quite linear
-            else
-            {
-                CHECK (rms > 0.3 * single);
-                CHECK (rms < 1.2 * single * n);
-            }
+            return sum / len;
+        };
+        double sq = 0.0;
+        run (1.0, sq);
+        sq = 0.0;
+        const double before = run (10.0 / hz, sq);
+        if (audioRun)
+        {
+            result.rms = std::sqrt (sq / static_cast<int> (10.0 / hz * rate) - before * before);
+            continue;
         }
+        regs (0x7f);
+        result.dcStep = run (10.0 / hz, sq) - before;
     }
+    return result;
+}
+} // namespace
+
+TEST_CASE ("filter and output stage: the Shared topology's DC and audio for 1 to 16 chips (OutputStage.h SHARED)", "[filter][output]")
+{
+    // OutputStage.h "SHARED": n = 1 is Per Note exactly; Model B: the DC step of a volume write with held routed voices
+    // within 0.05 dB of n Per Note chips and the audio's rms within 1 %, n = 1 .. 16; Model A: the documented
+    // property, pinned: at full envelope n = 2 / 4 / 8 / 16 differ from Per Note by -0.1 / +0.6 / +1.9 / +2.7 dB
+    // (+-0.3) and the audio's rms is 1.01 / 0.72 / 0.37 / 0.20 of n Per Note chips' (+-0.05); at half envelope the DC
+    // step differs by at most 0.8 dB.
+    for (const Model m : { Model::B, Model::A })
+        for (const float env : { 1.0f, 0.5f })
+            for (int n = 1; n <= 16; ++n)
+            {
+                if (m == Model::A && n != 1 && n != 2 && n != 4 && n != 8 && n != 16)
+                    continue;
+                const auto pn = sharedRun (m, n, false, env), sh = sharedRun (m, n, true, env);
+                const double dcDb = 20.0 * std::log10 (sh.dcStep / pn.dcStep);
+                const double rmsRatio = sh.rms / pn.rms;
+                INFO ("model " << (m == Model::A ? "A" : "B") << " envelope " << env << " chips " << n << ": DC step per note " << pn.dcStep << ", shared "
+                               << sh.dcStep << " (" << dcDb << " dB); rms per note " << pn.rms << ", shared " << sh.rms);
+                std::printf ("[shared] model %s envelope %.1f chips %2d: DC step per note %+.4f, shared %+.4f (%+.2f dB); rms ratio %.4f\n",
+                             m == Model::A ? "A" : "B", static_cast<double> (env), n, pn.dcStep, sh.dcStep, dcDb, rmsRatio);
+                REQUIRE (std::abs (pn.dcStep) > 1e-3); // the step is there to be compared
+                if (n == 1 || m == Model::B)
+                {
+                    CHECK (std::abs (dcDb) < 0.05);
+                    CHECK (std::abs (rmsRatio - 1.0) < 0.01);
+                }
+                else if (env > 0.75f)
+                {
+                    const double documented = n == 2 ? -0.1 : (n == 4 ? 0.6 : (n == 8 ? 1.9 : 2.7));
+                    const double documentedRms = n == 2 ? 1.01 : (n == 4 ? 0.72 : (n == 8 ? 0.37 : 0.20));
+                    CHECK (std::abs (dcDb - documented) <= 0.3);
+                    CHECK (std::abs (rmsRatio - documentedRms) <= 0.05);
+                }
+                else
+                    CHECK (std::abs (dcDb) <= 0.8);
+            }
 }
 
 TEST_CASE ("output stage: silence after a loud input decays below -120 dB through the board high-pass", "[output][stability]")

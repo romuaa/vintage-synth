@@ -28,11 +28,20 @@
 // - INPUT GUARD: a non-finite or absurd mixer value is replaced by 0 before the board filters, off the per-sample
 //   dependency chain of their states.
 //
-// SHARED (8.5, filter.topology Shared): one Filter per part; its input is the static DC of one chip's filter bus
-// (staticFilterBusDc of the most recent note) plus, over every chip, filterBusAc (the audio and the envelopes' DC
-// of that chip's filter bus); each chip's OutputStage gets the shared output divided by the number of chips n
-// feeding it (setFilterStaticDc gets the filter's static output divided by n too). With n = 1 this is Per Note
-// exactly; Model B is linear, so n chips sound as n Per Note chips; Model A distorts the summed signal (8.5).
+// SHARED (8.5, filter.topology Shared; 8.19.3): one Filter per part; its input is the static DC of one chip's filter
+// bus (staticFilterBusDc of the most recent note) plus, over every chip, filterBusAc (the audio and the envelopes' DC
+// of that chip's filter bus). Each of the n chips feeding it gets sharedFilterShare: the filter's static output of
+// that one chip's static DC in full, plus 1/n of the rest; setFilterStaticDc gets the static output in full. Then
+// (tested, "the Shared topology ..." in FilterOutputTests.cpp):
+// - n = 1 is Per Note exactly;
+// - Model B (linear filter): n chips with identical held routed voices give the output DC of n Per Note chips (a 0 -> 15
+//   volume step with volume DC on: within 0.01 dB for n = 1 .. 16) and their audio (rms within 1 %);
+// - Model A distorts the summed signal (8.5): the envelopes' DC and the audio of all n chips meet its static output
+//   functions together (they saturate), so with identical held routed voices (a 110 Hz triangle, cutoff 900, all three
+//   modes) at full envelope and n = 2 / 4 / 8 / 16 the volume step's DC differs from n Per Note chips' by -0.1 / +0.6 /
+//   +1.9 / +2.7 dB and the audio's rms is 1.01 / 0.72 / 0.37 / 0.20 of theirs; at half envelope the DC step differs by
+//   at most 0.8 dB. A documented property, pinned by that test (+-0.3 dB, +-0.05); it is not a claim that Model A
+//   Shared matches Per Note.
 
 #include "bside/chip/ChipTypes.h"
 
@@ -86,6 +95,13 @@ public:
     }
     /** The filter bus's static DC (no audio, envelopes 0). */
     double staticFilterBusDc() const noexcept { return filterBusDc; }
+    /** Shared topology (see "SHARED"): what one of `chips` chips' stages gets of the shared filter's output, given the
+        filter's static output for one chip's static DC (Filter::staticOutput (staticFilterBusDc ())). */
+    static float sharedFilterShare (float sharedOut, double filterStaticOut, int chips) noexcept
+    {
+        const double n = chips > 1 ? static_cast<double> (chips) : 1.0;
+        return static_cast<float> ((static_cast<double> (sharedOut) - filterStaticOut) / n + filterStaticOut);
+    }
 
     /** One internal sample: the filter's output (render units) and the direct bus (shaped audio and envelope sum).
         Returns the output in the reference's units, after the board filters. */
