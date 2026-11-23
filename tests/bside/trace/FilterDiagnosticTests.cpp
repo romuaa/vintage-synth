@@ -309,7 +309,7 @@ void diagnose (const char* filtered, const char* bypass, Totals& sum)
 }
 } // namespace
 
-TEST_CASE ("s3a diagnostic: Model A corner errors split into chain, estimator shape and coefficients (a_s3a_*)", "[trace][reference][chip][s3a-diag]")
+TEST_CASE ("s3a diagnostic: Model A corner errors split into chain, estimator shape and coefficients (a_s3a_*)", "[.][trace][reference][chip][s3a-diag]")
 {
     // Sanity first: the estimator recovers an exact two-pole's -3 dB point where its shape is benign (Q 0.6 .. 2.5,
     // 1 .. 10 kHz: within 1 %; measured 0.57 % at most, at Q 1.6, 1 kHz). Its bias on low-Q shapes below 1 kHz (up to +10 % at

@@ -42,7 +42,9 @@ rate correction inside 7 ns or decide at S4; O3: S3b may start stacked on the S3
 
 **B-Side S3a, in flight (2026-11-22):** `bside/s3a-filter` has `main` merged in (the tests give
 the parked figures).
-- **Diagnostic, done** (`tests/bside/trace/FilterDiagnosticTests.cpp`, tag `[s3a-diag]`; report
+- **Diagnostic, done** (`tests/bside/trace/FilterDiagnosticTests.cpp`, hidden: run it with
+  `bside_trace "[s3a-diag]"`; it asserts nothing the gates do not and took 249 s under the
+  sanitizers in CI; report
   and data in the developer cache, `s3a-diag/REPORT.md`): the Model A corner errors are 99 %
   wrong coefficients, not a missing stage or the estimator. The reference is a two-pole whose
   two integrators follow the instantaneous node levels (DC acts on the low-pass integrator,
@@ -86,8 +88,16 @@ the parked figures).
   `s3aB` 5.5 to 5.6 ns (budget 7), `s3aA` 7.5 to 7.7, `cutB` 10.4 to 10.6, `cutA` 27.2 to 27.4.
   **Open, outside S3a:** `ChipRender.cpp` fails one GCC 13 warning (`-Warray-bounds`); GCC 11,
   the compiler of CI and the local gate, accepts it. To fix in S3b, which reworks that file.
-  **Windows and Linux x86_64:** one CI run dispatched for the branch; its result is recorded in
-  the pull request "B-Side S3a: Model B filter and the output stage".
+  **Windows and Linux x86_64, first CI run (45107913251, on `61983f3`):** Windows x64 and
+  ARM64, Linux x86_64 and ARM64, both bundles and six of seven distribution checks passed.
+  **Two jobs did not:** (1) `linux-sanitizers` was cancelled at its 40-minute limit with about
+  27 of 1077 tests left (28 minutes on `main`; S3a's tests add about 8 minutes there): the
+  diagnostic is hidden and the limit is 60 minutes now; (2) the Ubuntu 22.04 distribution
+  check: pluginval ends with a segmentation fault at exit for **both** plugins, after every
+  test passed; Vintage's code and the check are identical to `main`, where the same job
+  passed on 2026-11-20 (the image and its packages are fetched by tag at run time), so the
+  cause is outside this branch and not yet known. A second run (Linux only) follows the fix
+  of (1); pull request 41 carries the results.
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
