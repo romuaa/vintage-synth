@@ -18,6 +18,12 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   `a_dac_*` is gated (harmonics within 3 dB). Model A's per-voice bend is applied on the buses; its aliasing and the
   mixer curves' are the next step's (S3b-2).
 - GCC 13 compiles the chip sources and the B-Side tests with warnings as errors (a bounds warning in the renderer).
+- Fix round after the independent review: a shared filter now gives each chip its static output per sample (one
+  chip is exactly Per Note, and the output no longer depends on the owner's block length); routing, mute, volume and
+  mode writes land one cycle earlier, where the reference shows them (within a quarter of a cycle on average); a full
+  write queue keeps the order of the writes; the chain's latency is a run-time value (`latencySamples ()`). The Shared
+  documentation states that Model B equals Per Note for identical voices only (-39 to -32 dB with different notes).
+  New tests pin the volume with volume DC off, the cutoff's per-sample path and the writes' sample, and the static DC.
 
 ### B-Side S3a fix round after the third review (2026-11-23)
 - Model B's band/high second-order term is removed: it matched noise floors but put harmonics on tones that the
