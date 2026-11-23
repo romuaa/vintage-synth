@@ -3,6 +3,15 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## A concurrency test that needs luck with the scheduler (2026-11-23)
+- **What happened:** the seqlock test of the editor feed ran a writer in a tight loop of a million writes and
+  required that the reader had seen at least one consistent copy meanwhile. On this Mac about 0.3 % of the reads
+  succeed; on a CI runner (Linux ARM64) none did, and the test failed with the code correct.
+- **Rule:** a test of two threads may not assert something that only holds when the scheduler interleaves them
+  kindly. Make the interleaving part of the test (a handshake: one side waits for the other's progress, with a
+  deadline that fails rather than hangs), and keep the property under test (here: never a torn copy) asserted on
+  every read.
+
 ## Known traps, the short list
 
 One line per trap; the dated sections below have the cause and the details. `CLAUDE.md` names

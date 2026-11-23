@@ -81,6 +81,12 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   0.06 dB of the exact curves. Cost: Model B's filter, output stage and pre-filter take 7.6 to 7.8 ns per sample at
   96 kHz, over the 7 ns budget (not met); Model A's added stages about 13.5 ns plus 4 ns for the bend.
 
+### Tests: the editor feed's seqlock test no longer depends on the scheduler (2026-11-23)
+- "UiFeed: the held-order seqlock never hands out a torn copy" failed once on the Linux ARM64 CI runner: the writer
+  thread never paused, so the reader was refused 5 million times and saw no consistent copy (`consistent > 0`). No
+  torn copy was handed out; the feed's code is unchanged. The writer now waits every 4096 writes until the reader
+  has taken one more consistent copy (with a 10 s deadline that fails the test instead of hanging it).
+
 ### B-Side S3b-1: two buses and the whole chain (2026-11-23)
 - The chip renderer delivers its two buses in double precision (`Chip::renderBuses`): the oscillators routed to the
   filter and the others, with each bus's envelope sum and voice count; oscillator 3 can be muted on the direct path.
