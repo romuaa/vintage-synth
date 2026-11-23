@@ -43,14 +43,16 @@
 // noise floors alone was tried and removed: it was wrong on tones, aliased and broke Shared). A later attempt must
 // fit tones and noise together and meet the alias budget.
 // MODEL A (all fitted to generated reference data; decisions "B-Side S3a"):
-// - the cutoff register goes through its own converter: d (0..1) is the sum of a fitted weight per set bit, close to
-//   an 11-bit terminated resistor ladder of ratio 2.18, so d falls back at every multiple of 32 (e.g. 511 -> 512 by
-//   5 %); the converter value goes through a fitted curve (ln fc piecewise linear over 129 points of d, about
-//   260 Hz at 0 to 21 kHz at 2047) whose slope at each fall-back sets the corner's step there: within 2 percentage
-//   points of the reference's step per code from code 446 to 1600 (decisions "B-Side Model A cutoff steps"; the
-//   -3 dB point falls by 15 % at 511 -> 512, by 9 % at 1023 -> 1024), and the -3 dB point the shared estimator
-//   (AnalogMeasure.h) finds on the reference's at the a_filter_a settings; `variation` shifts d by +-kVariationShift (0.5: the reference's
-//   curve);
+// - the cutoff register goes through its own converter (a value d, 0..1) and a fitted curve (ln fc piecewise linear in
+//   d, about 260 Hz at 0 to 21 kHz at 2047), fitted so that the -3 dB point the shared estimator (AnalogMeasure.h)
+//   finds lands on the reference's at the a_filter_a settings; `variation` shifts d by +-kVariationShift (0.5: the
+//   reference's curve). Two parts (owner decision O9; decisions "B-Side Model A cutoff steps, scope 512"): codes 0 ..
+//   479 are the S3a form bit for bit (an 11-bit terminated resistor ladder of ratio 2.18, 24 points of d; its fall at
+//   383 -> 384 stays larger than the reference's at full level, recorded open); from code 480 a fitted weight per
+//   bit (d falls back at every multiple of 32, e.g. by 6.0 % at 511 -> 512) and 129 points of d, whose slope at each
+//   fall-back sets the corner's step there: within 2 percentage points of the reference's per code from 479 -> 480
+//   up to 1600 (the -3 dB point falls by 13 % at 511 -> 512, by 9 % at 1023 -> 1024); codes 480 .. 511 take fitted
+//   converter values that join the S3a corner at 479;
 // - Q at resonance 0 depends on the cutoff (0.79 at 250 Hz, 0.55 around 1 to 2 kHz, 0.77 at 21 kHz); resonance
 //   multiplies it by a fitted 16-step law (2.9 x at 15) and lowers the cutoff (to 0.87 x at 15);
 // - the outputs are not the ideal ones: the low-pass output is a static quintic of the low-pass state (the
@@ -192,6 +194,8 @@ public:
     static double modelACutoffConverter (double registerValue) noexcept;
     /** Cutoff in Hz at resonance 0 for a model, register value and variation (tests, diagnostics). */
     static double cutoffCurveHz (Model model, double registerValue, double variation) noexcept;
+    /** The corner at resonance 0 that processWithCutoff uses for a register value, computed on its own path (tests). */
+    double cornerWithCutoffHz (float registerValue) const noexcept;
 
 private:
     /** The mapped trapezoidal parameters and the output weights on its low-, band- and high-pass. */
@@ -235,6 +239,9 @@ private:
     void update() noexcept;
     void buildCutTable() noexcept;
     Mapped cutAt (float registerValue) const noexcept;
+    /** processWithCutoff's register value (clamped, non-finite -> 0) and Model A's ln (corner / Hz) at resonance 0. */
+    static double cutRegister (float registerValue) noexcept;
+    double cutBaseLn (double v) const noexcept;
     static Linear stateSpace (double g, double k, double wL, double wB, double wH) noexcept;
 
     Model mdl = Model::B;

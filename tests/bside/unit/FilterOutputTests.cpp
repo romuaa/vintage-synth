@@ -9,6 +9,7 @@
 
 #include "bside/chip/Filter.h"
 #include "bside/chip/OutputStage.h"
+#include "bside/chip/RenderTables.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -17,6 +18,7 @@
 #include <complex>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <vector>
@@ -320,22 +322,104 @@ TEST_CASE ("filter: after a loud input, silence decays below -120 dB with no lim
     WARN ("slowest decay to within 1e-6 of the static output: " << slowest << " s (allowed 3 s)");
 }
 
+namespace
+{
+/** Model A's corner below code 480 exactly as the S3a form computed it (commit 44bc753, Filter.cpp): the ladder's
+    converter summed bit by bit, interpolated between codes, shifted by variation, ln fc over 24 points. Written with
+    the same expressions in the same order, so it gives the same bits. */
+struct S3aLowLaw
+{
+    static constexpr double kLogFc[24] { 5.566978, 5.601697, 5.794737, 5.830848, 5.952658, 7.166796, 7.832795, 8.205156,
+                                         8.463033, 8.749728, 8.914376, 9.091689, 9.229615, 9.347138, 9.468028, 9.542380,
+                                         9.620053, 9.686958, 9.733824, 9.790228, 9.835870, 9.887333, 9.914261, 9.951000 };
+    vs::bside::chip::render::LadderWeights w = vs::bside::chip::render::ladderWeights (11, 2.1756, true);
+    double converterAt (int v) const
+    {
+        double d = 0.0;
+        for (std::size_t i = 0; i < 11; ++i)
+            if (((v >> i) & 1) != 0)
+                d += w[i];
+        return d;
+    }
+    double converter (double v) const
+    {
+        const int lo = static_cast<int> (std::floor (v));
+        const int hi = std::min (2047, lo + 1);
+        const double f = v - lo;
+        return converterAt (lo) + (converterAt (hi) - converterAt (lo)) * f;
+    }
+    static double lnHz (double d)
+    {
+        const double x = std::clamp (d, 0.0, 1.0) * 23.0;
+        const auto i = static_cast<std::size_t> (std::min (22.0, std::floor (x)));
+        const double f = x - static_cast<double> (i);
+        return kLogFc[i] + (kLogFc[i + 1] - kLogFc[i]) * f;
+    }
+    double hz (double v, double var) const { return std::exp (lnHz (converter (v) + (var - 0.5) * 2.0 * Filter::kVariationShift)); }
+};
+
+bool sameBits (double a, double b)
+{
+    std::uint64_t x = 0, y = 0;
+    std::memcpy (&x, &a, sizeof x);
+    std::memcpy (&y, &b, sizeof y);
+    return x == y;
+}
+} // namespace
+
+TEST_CASE ("filter: Model A below code 480 is the S3a form bit for bit, on setCutoff and on processWithCutoff (8.19.3, O9)", "[filter]")
+{
+    // Owner decision O9: the cutoff-step fix covers code 480 and up only. Every register value from 0 to 479 in steps of
+    // a quarter, at variation 0, 0.37, 0.5 and 1: the corner of setCutoff (cutoffCurveHz, the stored corner after
+    // setCutoff) and the corner processWithCutoff computes on its own path (cornerWithCutoffHz) have exactly the bits of
+    // the S3a law. Any change below 480, in the last bit, on either path, fails.
+    const S3aLowLaw law;
+    int bad = 0, n = 0;
+    std::string first;
+    for (const float var : { 0.0f, 0.37f, 0.5f, 1.0f })
+    {
+        Filter f;
+        f.prepare (Model::A, 96000.0, var);
+        for (int q = 0; q <= 479 * 4; ++q)
+        {
+            const double v = q * 0.25;
+            const double want = law.hz (v, static_cast<double> (var));
+            f.setCutoff (static_cast<float> (v));
+            const bool ok = sameBits (Filter::cutoffCurveHz (Model::A, v, static_cast<double> (var)), want) && sameBits (f.cutoffHz(), want)
+                            && sameBits (f.cornerWithCutoffHz (static_cast<float> (v)), want);
+            ++n;
+            if (! ok && bad++ == 0)
+                first = "register " + std::to_string (v) + " variation " + std::to_string (var);
+        }
+    }
+    INFO ("first difference at " << first);
+    CHECK (bad == 0);
+    std::printf ("[s3a-law] Model A below code 480: %d of %d corners bit-identical to the S3a law on both paths\n", n - bad, n);
+}
+
 TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant fails)", "[filter]")
 {
     // The fitted laws written out here once more (Filter.cpp; decisions "B-Side S3a"), checked through the class's
     // public reports (cutoffCurveHz, cutoffHz, q, prototypeWeights) at every register value, resonance and variation:
     // a change of any constant fails. Model B: the cubic cutoff curve and its 15 Hz floor, the cutoff factor and 1/Q per
-    // resonance step, the three output weights. Model A: the cutoff converter's weight per bit, the curve (ln fc
-    // piecewise linear over 129 points of the converter value, shifted by variation; decisions "B-Side Model A cutoff
-    // steps"), Q at resonance 0 against the corner, the Q factor, cutoff factor and low-pass gain per resonance step,
+    // resonance step, the three output weights. Model A: below code 480 the S3a ladder and curve (24 points), from 480
+    // the converter's weight per bit, the join values of 480 .. 511 and the curve (129 points), shifted by variation
+    // (decisions "B-Side Model A cutoff steps, scope 512"), Q at resonance 0 against the corner, the Q factor, cutoff factor and low-pass gain per resonance step,
     // the band-pass and high-pass weights.
     constexpr double kCubic[4] { 5.25089373e-09, 9.52640664e-05, 6.91631996, -1.13988415 };
     constexpr double kBInvQ[16] { 1.4121, 1.2927, 1.1832, 1.0851, 1.0043, 0.9202, 0.8436, 0.7748, 0.7032, 0.6444, 0.5904, 0.5420, 0.5027, 0.4604, 0.4232, 0.3883 };
     constexpr double kBFcRes[16] { 1.0000, 0.9983, 0.9969, 0.9952, 0.9946, 0.9929, 0.9922, 0.9914, 0.9903, 0.9894, 0.9891, 0.9881, 0.9875, 0.9868, 0.9867, 0.9858 };
-    constexpr double kAConverter[11] { 0.000677536, 0.001300386, 0.002520950, 0.004900252, 0.009531922, 0.017761255, 0.033858608, 0.066655995, 0.128577338, 0.249785711, 0.484430046 };
+    constexpr double kALowRatio = 2.1756; // codes 0 .. 479: the S3a ladder and curve (24 points)
+    constexpr double kALowLogFc[24] { 5.566978, 5.601697, 5.794737, 5.830848, 5.952658, 7.166796, 7.832795, 8.205156, 8.463033, 8.749728, 8.914376, 9.091689,
+                                    9.229615, 9.347138, 9.468028, 9.542380, 9.620053, 9.686958, 9.733824, 9.790228, 9.835870, 9.887333, 9.914261, 9.951000 };
+    constexpr double kAConverter[11] { 0.000677536, 0.001300386, 0.002520950, 0.004900252, 0.009531922, 0.017761255, 0.033858608, 0.066655995, 0.128577338, 0.249785711, 0.484430046 }; // codes 480 ..
+    constexpr double kAJoin[32] { 0.240911853, 0.241217428, 0.241543148, 0.241863281, 0.242177263, 0.242821602, 0.243518500, 0.244224759,
+                                    0.244938928, 0.245641225, 0.246277032, 0.246956046, 0.247648327, 0.248352463, 0.249043992, 0.249737022,
+                                    0.250569272, 0.251478769, 0.252361353, 0.253309033, 0.254243103, 0.255121144, 0.256050282, 0.256960142,
+                                    0.257873241, 0.258717440, 0.259524034, 0.260382270, 0.261217467, 0.262051461, 0.262810122, 0.263677569 };
     constexpr double kALogFc[129] { 5.568762, 5.574051, 5.579520, 5.585102, 5.590843, 5.597733, 5.613662, 5.649298, 5.682199, 5.716583, 5.749633, 5.784669,
-                                    5.799238, 5.805900, 5.812686, 5.818856, 5.825178, 5.834360, 5.857475, 5.879546, 5.900385, 5.921639, 5.943264, 6.093004,
-                                    6.296835, 6.593002, 6.645863, 6.959393, 7.163433, 7.333776, 7.469615, 7.632934, 7.707134, 7.763385, 7.825549, 7.895722,
+                                    5.799238, 5.805900, 5.812686, 5.818856, 5.825178, 5.834360, 5.857475, 5.879546, 5.900385, 5.922892, 5.941360, 6.091184,
+                                    6.310404, 6.519868, 6.735299, 6.941595, 7.168982, 7.329803, 7.469615, 7.632934, 7.707134, 7.763385, 7.825549, 7.895722,
                                     7.971609, 8.049846, 8.133840, 8.205641, 8.261674, 8.308356, 8.349665, 8.391052, 8.431115, 8.474731, 8.529889, 8.591215,
                                     8.647933, 8.694001, 8.733191, 8.769271, 8.802955, 8.836176, 8.869572, 8.900264, 8.930406, 8.958206, 8.986429, 9.018792,
                                     9.051212, 9.083282, 9.114686, 9.142244, 9.167545, 9.191416, 9.213670, 9.234926, 9.255931, 9.277678, 9.300422, 9.323396,
@@ -360,20 +444,26 @@ TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant f
             ++i;
         return kAQ0[i] + (kAQ0[i + 1] - kAQ0[i]) * std::log2 (hz / kAQ0Hz[i]) / std::log2 (kAQ0Hz[i + 1] / kAQ0Hz[i]);
     };
+    const auto lowW = vs::bside::chip::render::ladderWeights (11, kALowRatio, true);
     int bad = 0;
     for (int v = 0; v < 2048; ++v)
     {
+        const bool low = v < 480;
         double conv = 0.0;
         for (int b = 0; b < 11; ++b)
-            conv += ((v >> b) & 1) != 0 ? kAConverter[b] : 0.0;
+            conv += ((v >> b) & 1) != 0 ? (low ? lowW[static_cast<std::size_t> (b)] : kAConverter[b]) : 0.0;
+        if (v >= 480 && v < 512)
+            conv = kAJoin[v - 480];
         bad += near (Filter::modelACutoffConverter (v), conv) ? 0 : 1;
         const double cubic = ((kCubic[0] * v + kCubic[1]) * v + kCubic[2]) * v + kCubic[3];
         bad += near (Filter::cutoffCurveHz (Model::B, v, 0.5), std::max (15.0, cubic)) ? 0 : 1;
         for (const double var : { 0.0, 0.5, 1.0 })
         {
-            const double x = std::clamp (conv + (var - 0.5) * 2.0 * Filter::kVariationShift, 0.0, 1.0) * 128.0;
-            const int i = std::min (127, static_cast<int> (x));
-            bad += near (Filter::cutoffCurveHz (Model::A, v, var), std::exp (kALogFc[i] + (kALogFc[i + 1] - kALogFc[i]) * (x - i))) ? 0 : 1;
+            const double n = low ? 23.0 : 128.0;
+            const double x = std::clamp (conv + (var - 0.5) * 2.0 * Filter::kVariationShift, 0.0, 1.0) * n;
+            const int i = std::min (static_cast<int> (n) - 1, static_cast<int> (x));
+            const double* k = low ? kALowLogFc : kALogFc;
+            bad += near (Filter::cutoffCurveHz (Model::A, v, var), std::exp (k[i] + (k[i + 1] - k[i]) * (x - i))) ? 0 : 1;
         }
     }
     CHECK (bad == 0);
