@@ -305,22 +305,94 @@ TEST_CASE ("filter: after a loud input, silence decays below -120 dB with no lim
 
 TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant fails)", "[filter]")
 {
-    // Model B's floor at register 0
-    CHECK (std::abs (Filter::cutoffCurveHz (Model::B, 0.0, 0.5) - 15.0) < 1e-9);
-    // Model A: the corner falls with resonance (0.871 x at 15) and the low-pass gain rises (1.196 x at 15)
-    Filter a, b;
-    a.prepare (Model::A, 192000.0, 0.5f);
-    b.prepare (Model::A, 192000.0, 0.5f);
-    for (Filter* f : { &a, &b })
+    // The fitted laws written out here once more (Filter.cpp; decisions "B-Side S3a"), checked through the class's
+    // public reports (cutoffCurveHz, cutoffHz, q, prototypeWeights) at every register value, resonance and variation:
+    // a change of any constant fails. Model B: the cubic cutoff curve and its 15 Hz floor, the cutoff factor and 1/Q per
+    // resonance step, the three output weights. Model A: the curve (ln fc piecewise linear over 24 points of the
+    // converter value, shifted by variation), Q at resonance 0 against the corner, the Q factor, cutoff factor and
+    // low-pass gain per resonance step, the band-pass and high-pass weights.
+    constexpr double kCubic[4] { 5.25089373e-09, 9.52640664e-05, 6.91631996, -1.13988415 };
+    constexpr double kBInvQ[16] { 1.4121, 1.2927, 1.1832, 1.0851, 1.0043, 0.9202, 0.8436, 0.7748, 0.7032, 0.6444, 0.5904, 0.5420, 0.5027, 0.4604, 0.4232, 0.3883 };
+    constexpr double kBFcRes[16] { 1.0000, 0.9983, 0.9969, 0.9952, 0.9946, 0.9929, 0.9922, 0.9914, 0.9903, 0.9894, 0.9891, 0.9881, 0.9875, 0.9868, 0.9867, 0.9858 };
+    constexpr double kALogFc[24] { 5.566978, 5.601697, 5.794737, 5.830848, 5.952658, 7.166796, 7.832795, 8.205156, 8.463033, 8.749728, 8.914376, 9.091689,
+                                   9.229615, 9.347138, 9.468028, 9.542380, 9.620053, 9.686958, 9.733824, 9.790228, 9.835870, 9.887333, 9.914261, 9.951000 };
+    constexpr double kAQ0Hz[8] { 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0, 21000.0 };
+    constexpr double kAQ0[8] { 0.79, 0.62, 0.55, 0.55, 0.651, 0.745, 0.764, 0.77 };
+    constexpr double kAQRes[16] { 1.0000, 1.0355, 1.0735, 1.1122, 1.1510, 1.2076, 1.2697, 1.3393, 1.4313, 1.5222, 1.6307, 1.7792, 1.9363, 2.1375, 2.4440, 2.8952 };
+    constexpr double kAFcRes[16] { 1.0000, 0.9944, 0.9814, 0.9792, 0.9746, 0.9672, 0.9571, 0.9526, 0.9397, 0.9322, 0.9257, 0.9117, 0.9067, 0.8981, 0.8847, 0.8710 };
+    constexpr double kALowGain[16] { 1.0000, 1.0087, 1.0170, 1.0263, 1.0397, 1.0483, 1.0587, 1.0711, 1.0803, 1.0925, 1.1118, 1.1231, 1.1414, 1.1638, 1.1806, 1.1958 };
+    auto near = [] (double x, double y) { return std::abs (x - y) <= 1e-9 * std::max (1.0, std::abs (y)); };
+    auto q0 = [&] (double hz) {
+        if (hz <= kAQ0Hz[0])
+            return kAQ0[0];
+        if (hz >= kAQ0Hz[7])
+            return kAQ0[7];
+        int i = 0;
+        while (i < 6 && hz >= kAQ0Hz[i + 1])
+            ++i;
+        return kAQ0[i] + (kAQ0[i + 1] - kAQ0[i]) * std::log2 (hz / kAQ0Hz[i]) / std::log2 (kAQ0Hz[i + 1] / kAQ0Hz[i]);
+    };
+    int bad = 0;
+    for (int v = 0; v < 2048; ++v)
     {
-        f->setCutoff (1024.0f);
-        f->setMode (Filter::kLowPass);
+        const double cubic = ((kCubic[0] * v + kCubic[1]) * v + kCubic[2]) * v + kCubic[3];
+        bad += near (Filter::cutoffCurveHz (Model::B, v, 0.5), std::max (15.0, cubic)) ? 0 : 1;
+        for (const double var : { 0.0, 0.5, 1.0 })
+        {
+            const double x = std::clamp (Filter::modelACutoffConverter (v) + (var - 0.5) * 2.0 * Filter::kVariationShift, 0.0, 1.0) * 23.0;
+            const int i = std::min (22, static_cast<int> (x));
+            bad += near (Filter::cutoffCurveHz (Model::A, v, var), std::exp (kALogFc[i] + (kALogFc[i + 1] - kALogFc[i]) * (x - i))) ? 0 : 1;
+        }
     }
-    b.setResonance (15);
-    CHECK (std::abs (b.cutoffHz() / a.cutoffHz() - 0.8710) < 1e-3);
-    const double g0 = sineGain (a, 192000.0, 200.0, 0.0), g15 = sineGain (b, 192000.0, 200.0, 0.0);
-    WARN ("Model A low-pass gain at 200 Hz, resonance 15 against 0: " << g15 / g0);
-    CHECK (std::abs (g15 / g0 - 1.1958) < 0.02);
+    CHECK (bad == 0);
+    CHECK (near (Filter::kVariationShift, 0.06));
+    for (const Model m : { Model::B, Model::A })
+        for (const std::uint8_t mode : { Filter::kLowPass, Filter::kBandPass, Filter::kHighPass })
+        {
+            Filter f, base;
+            f.prepare (m, 192000.0, 0.5f);
+            base.prepare (m, 192000.0, 0.5f);
+            f.setMode (mode);
+            base.setMode (mode);
+            for (int v = 0; v < 2048; v += 7)
+            {
+                f.setCutoff (static_cast<float> (v));
+                base.setCutoff (static_cast<float> (v));
+                const double hz0 = base.cutoffHz(), invQ0 = 1.0 / base.q();
+                INFO ("model " << (m == Model::A ? "A" : "B") << " mode " << int (mode) << " FC " << v);
+                CHECK (near (hz0, Filter::cutoffCurveHz (m, v, 0.5)));
+                if (m == Model::A)
+                    CHECK (near (base.q(), q0 (hz0)));
+                for (int r = 0; r < 16; ++r)
+                {
+                    f.setResonance (r);
+                    const auto ri = static_cast<std::size_t> (r);
+                    const auto w = f.prototypeWeights();
+                    INFO ("resonance " << r);
+                    if (m == Model::B)
+                    {
+                        CHECK (near (f.cutoffHz(), hz0 * kBFcRes[ri]));
+                        CHECK (near (1.0 / f.q(), kBInvQ[ri]));
+                        CHECK (near (w[0], mode == Filter::kLowPass ? -0.997 : 0.0));
+                        CHECK (near (w[1], mode == Filter::kBandPass ? 1.011 : 0.0));
+                        CHECK (near (w[2], mode == Filter::kHighPass ? -1.025 : 0.0));
+                    }
+                    else
+                    {
+                        CHECK (near (f.cutoffHz(), hz0 * kAFcRes[ri]));
+                        CHECK (near (1.0 / f.q(), invQ0 / kAQRes[ri]));
+                        const double bandRes = 1.0 + 0.42 * (kALowGain[ri] - 1.0);
+                        if (mode == Filter::kLowPass)
+                            CHECK (near (w[0], -0.598556 * 1.10 * kALowGain[ri]));
+                        if (mode == Filter::kBandPass)
+                            CHECK ((near (w[0], 0.157448) && near (w[1], 0.59 * invQ0 * bandRes)));
+                        if (mode == Filter::kHighPass)
+                            CHECK ((near (w[0], 0.014064) && near (w[1], -0.20 * invQ0 * bandRes) && near (w[2], -0.59)));
+                    }
+                }
+                f.setResonance (0);
+            }
+        }
     // a cutoff-only write updates the band-pass gain (it follows Q at resonance 0): the same as a fresh filter
     Filter c, d;
     c.prepare (Model::A, 96000.0, 0.5f);
@@ -601,12 +673,16 @@ TEST_CASE ("filter: every pole inside the unit circle at every register value, r
     WARN ("largest spectral radius: " << largest);
 }
 
-TEST_CASE ("output stage: volume DC off, a volume or routing write with held voices does not move the output's DC", "[output]")
+TEST_CASE ("output stage: a volume write with held voices: volume DC off does not move the output's DC (nor a routing write), on steps it as the mixer does", "[output]")
 {
     // 8.4.4 (orchestrator's reading): with volumeDc off a volume write with held voices changes the DC at the stage's
     // output by less than -60 dBFS, on both paths, and so does a routing write with silent voices. A held triangle
     // (110 Hz, full envelope, through the voice bend) sounds on the direct path or through the low-pass; the DC is the
-    // mean over ten periods, 3 s after the voice starts (the board high-pass has settled) and right after the write. With volumeDc on the same write does step the DC (the reference's behaviour; the gates compare it).
+    // mean over ten periods, 3 s after the voice starts (the board high-pass has settled) and right after the write.
+    // The write goes 15 -> 6 (a target other than 0: a volume applied before the board high-pass, or twice, would step
+    // the DC). With volumeDc on the same write steps the DC as the chip does: the mixer's DC step (OutputStage::
+    // mixerOutput, its mean over the same windows) through the board high-pass (1.196 Hz: the mean of its step response
+    // over the window), within 3 %.
     for (const Model m : { Model::A, Model::B })
         for (const bool routed : { false, true })
             for (const bool vdc : { false, true })
@@ -624,9 +700,9 @@ TEST_CASE ("output stage: volume DC off, a volume or routing write with held voi
                     o.setFilterStaticDc (f.staticOutput (o.staticFilterBusDc()));
                 };
                 setRegs (routed ? 0x01 : 0x00, 0x1f);
-                double phase = 0.0;
+                double phase = 0.0, mixMean = 0.0;
                 auto run = [&] (double seconds, bool measure) {
-                    double sum = 0.0;
+                    double sum = 0.0, mix = 0.0;
                     const int n = static_cast<int> (seconds * rate);
                     for (int i = 0; i < n; ++i)
                     {
@@ -634,22 +710,34 @@ TEST_CASE ("output stage: volume DC off, a volume or routing write with held voi
                         phase -= std::floor (phase);
                         const float u = static_cast<float> (2.0 * std::abs (phase - 0.5) - 0.5); // triangle +-0.5
                         const float v = OutputStage::shapeVoice (m, u, 1.0f);
-                        const float y = o.process (f.process (o.filterBusLevel (routed ? v : 0.0f, routed ? 1.0f : 0.0f)), routed ? 0.0f : v,
-                                                   routed ? 0.0f : 1.0f);
-                        sum += y;
+                        const float fOut = f.process (o.filterBusLevel (routed ? v : 0.0f, routed ? 1.0f : 0.0f));
+                        mix += o.mixerOutput (fOut, routed ? 0.0f : v, routed ? 0.0f : 1.0f);
+                        sum += o.process (fOut, routed ? 0.0f : v, routed ? 0.0f : 1.0f);
                     }
+                    mixMean = mix / n;
                     return measure ? sum / n : 0.0;
                 };
                 // windows of exactly ten periods (90.9 ms): the triangle's own mean is 0 there, so what is left is DC
                 run (3.0, false);
                 const double before = run (10.0 / 110.0, true);
-                setRegs (routed ? 0x01 : 0x00, 0x10); // volume 15 -> 0
+                const double mixBefore = mixMean;
+                setRegs (routed ? 0x01 : 0x00, 0x16); // volume 15 -> 6
                 const double after = run (10.0 / 110.0, true); // right after the write: a DC step would show here
+                const double mixStep = mixMean - mixBefore;
                 const double stepDb = 20.0 * std::log10 (std::abs (after - before) + 1e-12);
-                INFO ("model " << (m == Model::A ? "A" : "B") << (routed ? " low-pass" : " direct") << " volume DC " << vdc << ": DC step "
-                               << stepDb << " dBFS");
+                // the board high-pass's step response a^(k+1), averaged over the window
+                const double hpA = std::exp (-2.0 * kPi * 1.196 / rate);
+                const int window = static_cast<int> (10.0 / 110.0 * rate);
+                const double hpMean = hpA * (1.0 - std::pow (hpA, window)) / (1.0 - hpA) / window;
+                INFO ("model " << (m == Model::A ? "A" : "B") << (routed ? " low-pass" : " direct") << " volume DC " << vdc << ": DC step " << after - before
+                               << " (" << stepDb << " dBFS); the mixer's " << mixStep << " x the high-pass's " << hpMean);
                 if (! vdc)
                     CHECK (stepDb < -60.0);
+                else
+                {
+                    REQUIRE (std::abs (mixStep) > 0.01);
+                    CHECK (std::abs ((after - before) / (mixStep * hpMean) - 1.0) < 0.03);
+                }
             }
     // routing writes with silent voices, volume DC off
     for (const Model m : { Model::A, Model::B })
@@ -803,6 +891,53 @@ TEST_CASE ("filter and output stage: the Shared topology's DC and audio for 1 to
                 else
                     CHECK (std::abs (dcDb) <= 0.8);
             }
+}
+
+TEST_CASE ("output stage: the board low-pass corner is pinned at 15.4 kHz, and its rate dependence reported (8.15.7, 8.19.3)", "[output]")
+{
+    // A small sine on the direct path (Model B, volume 15, volume DC off), steady state: the gain at 15.4 kHz against
+    // 1 kHz is the one-pole low-pass's -3.01 dB (plus its 0.02 dB at 1 kHz) at every internal rate, within 0.1 dB (a
+    // 20 kHz corner would give -2.0 dB). Reported (8.19.3: measured separately): the board low-pass's deviation from the
+    // analog one-pole at 20 kHz per rate (it is the trapezoidal one-pole, prewarped at its corner).
+    auto gain = [] (double rate, double hz) {
+        OutputStage o;
+        o.prepare (Model::B, rate, false);
+        o.setRouting (0);
+        o.setModeVolume (0x0f);
+        o.setFilterStaticDc (0.0);
+        const int settle = static_cast<int> (rate * 0.05), n = static_cast<int> (rate * 0.05);
+        double s = 0.0, c = 0.0, mean = 0.0;
+        std::vector<double> y (static_cast<std::size_t> (n));
+        for (int i = 0; i < settle + n; ++i)
+        {
+            const double out = o.process (0.0f, static_cast<float> (0.01 * std::sin (2.0 * kPi * hz * i / rate)), 0.0f);
+            if (i >= settle)
+            {
+                y[static_cast<std::size_t> (i - settle)] = out;
+                mean += out;
+            }
+        }
+        mean /= n;
+        for (int i = 0; i < n; ++i)
+        {
+            const double ph = 2.0 * kPi * hz * (i + settle) / rate;
+            s += (y[static_cast<std::size_t> (i)] - mean) * std::sin (ph);
+            c += (y[static_cast<std::size_t> (i)] - mean) * std::cos (ph);
+        }
+        return 2.0 * std::sqrt (s * s + c * c) / n;
+    };
+    const double expected = -10.0 * std::log10 (2.0) + 10.0 * std::log10 (1.0 + (1000.0 / 15400.0) * (1000.0 / 15400.0));
+    for (const double rate : kRates)
+    {
+        const double g1k = gain (rate, 1000.0);
+        const double corner = 20.0 * std::log10 (gain (rate, 15400.0) / g1k);
+        const double at20k = 20.0 * std::log10 (gain (rate, 20000.0) / g1k);
+        const double analog20k = -10.0 * std::log10 (1.0 + (20000.0 / 15400.0) * (20000.0 / 15400.0)) + 10.0 * std::log10 (1.0 + (1000.0 / 15400.0) * (1000.0 / 15400.0));
+        std::printf ("[board] rate %6.0f Hz: low-pass at 15.4 kHz %.3f dB (expected %.3f); at 20 kHz %.3f dB, the analog one-pole %.3f dB (%+.2f dB)\n", rate,
+                     corner, expected, at20k, analog20k, at20k - analog20k);
+        INFO ("rate " << rate << ": " << corner << " dB at 15.4 kHz against 1 kHz");
+        CHECK (std::abs (corner - expected) < 0.1);
+    }
 }
 
 TEST_CASE ("output stage: silence after a loud input decays below -120 dB through the board high-pass", "[output][stability]")
