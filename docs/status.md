@@ -135,7 +135,7 @@ the parked figures).
   **Listening files** (filter sweeps of both models through the chain) are in the developer
   cache, `s3b1/listen/`.
   **S3b-2, the aliasing of the static curves, on `bside/s3b-alias`: built, reviewed
-  independently twice, fixed; waiting for the orchestrator's gate and the owner.** As built:
+  independently three times; a fix round after the third review is in flight.** As built:
   a linear-phase half-band pre-filter before Model B's mixer curve (the curve at the internal
   rate); Model A's voice bend folded into the renderer; Model A's pre-filter on both buses and
   its output function, gain and mixer curve at twice the rate; Model A's mixer curve continued
@@ -144,8 +144,9 @@ the parked figures).
   **The reviews found, and the rounds fixed:** Model A's output-function coefficients half a
   2x sample early (mode writes 0.31 samples early); voice counts not delayed with the
   pre-filter; a Shared mode write taking effect at the end of the owner's block; resonance
-  writes switching the filter at the window's first sample (up to -78 dB of excess, now at
-  most -95.9 dB against an ideal render); a test that passed while hiding failing rows; a
+  writes switching the filter at the window's first sample (up to -78 dB of excess; fixed
+  for a resonance write on its own, **not yet in combination with other writes: the third
+  review, in a fix round**); a test that passed while hiding failing rows; a
   test-side reference without Model B's pre-filter; several tests that could not fail.
   **The alias gate as it stands (8.19.4, restated after the first review):** absolute limits
   with ideal voices on every row and with real chips on the direct and low-pass rows; real
@@ -168,8 +169,8 @@ the parked figures).
   takes 0.5 to 8 ms (filter design), off the audio thread; the reported latency includes the
   pre-filters.
   **Open, small:** GCC 11 ran one statement three times in a range-for of the alias test
-  (written out instead; cause not isolated: possibly undefined behaviour in the test rather
-  than the compiler); one unpinned row of the full set sits at its limit (Model A, 128 kHz,
+  (written out instead; cause not isolated; the third review found no undefined behaviour
+  in the test's code); one unpinned row of the full set sits at its limit (Model A, 128 kHz,
   high-pass) and has only been run on this Mac; two bend mutations are reported, not tested.
 - **Model A's filter form, parked (owner decisions O4, O5, O7, O8):** the owner compared the
   fixed form, the signal-dependent form and three in-between candidates by ear against the

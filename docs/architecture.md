@@ -2181,6 +2181,31 @@ chain's output.
     machine (it also runs under the sanitizers, whose CI job has a 60-minute limit); it holds
     every listed row in its worst constellation and in the common reset. The full set over
     all constellations runs by tag before every hand-over.
+- **After the third independent review of S3b-2 (2026-11-23; these win over the bullets above):**
+  - **Writes that change the filter's dynamics, in any combination.** The placement of a
+    resonance write between two samples held for a resonance write on its own only. Found: a
+    volume or mode write whose window opens inside it ended the placement early (excess back
+    at -78.7 dB on Model A with a volume write 10 cycles after the resonance write, the usual
+    order of a player routine); a cutoff write inside it did not reach the two copies (the
+    cutoff up to 8 samples late, the output off by up to -12 dB relative to peak for about 300
+    samples); switching to Shared (`setFilter (nullptr)`) inside it crashed. The rule: every
+    write lands where the contract says **whatever other writes are pending**: cutoff from its
+    own sample on in every copy; resonance and mode dynamics at the write's place; a volume,
+    mode, routing or cutoff write never moves another write. `setFilter` is safe at any time.
+  - **Gates:** the excess over the ideal render at most -90 dB up to 2 kHz for a write every
+    tick, for resonance alone and for resonance followed by a volume write, a mode write and a
+    cutoff write at 1, 10, 40 and 200 cycles, and in the reverse order, both models, 88.2, 96
+    and 192 kHz. The ideal render is the same chain (Model B's pre-filter included) at a rate
+    whose own placement error is at least 6 dB below the gate on every gated row (16 times or
+    more where 8 times is not), and a row whose ideal cannot get there is reported, not gated.
+    **The place of the dynamics is tested by itself:** a change of the place by one sample
+    fails a test (the off-line measure cannot see an error that repeats at every write).
+  - **Simpler if possible:** if these cannot all hold with the two-copy mixture, the mechanism
+    is replaced by one rule for all dynamics changes rather than patched case by case; the
+    cost of a write is reported, the cost per sample with no writes stays as it is (Model B
+    filter + stage + pre-filter within 7 ns at 96 kHz).
+  - **The reduced alias gate** holds every listed row so that removing any single entry fails
+    the default run (found: three of sixteen escaped it).
 
 ### 8.20 Alias follow-up step (contract, 2026-11-19; owner decision 2026-11-18: fix, no exemption)
 Fixes known defects 1 and 2 of 8.18.1 in the renderer. Runs beside S3a.
