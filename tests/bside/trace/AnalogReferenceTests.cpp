@@ -3,12 +3,16 @@
 // DC are in ReferenceDataTests.cpp ("analog tolerances against our chip").
 
 #include "AnalogGates.h"
+#include "SweepSteps.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 namespace tr = vs::bside::trace;
@@ -337,5 +341,139 @@ TEST_CASE ("analog: steps after volume, routing and resonance writes (a_s3a_step
         }
         if (m == 'a')
             std::printf ("[analog] a_s3a_steps_a: worst volume step %.2f dB (allowed 1)\n", worst);
+    }
+}
+
+TEST_CASE ("analog: Model A's corner steps per cutoff code across the converter's boundaries (a_cutcode_*)", "[trace][reference][chip][analog]")
+{
+    // 8.19.3 "Model A's cutoff curve at the converter's boundaries"; decisions "B-Side Model A cutoff steps". The
+    // register walked one code at a time across every multiple of 32 (where the converter falls back), noise at a low
+    // level through the low-pass at resonance 0 (gen_cutcode_traces.py). Per code the corner (AnalogMeasure.h) of
+    // every segment that holds it, ours and the reference's alike, averaged over the passes whose corner the estimator
+    // resolves; per walked pair (c - 1, c) the relative step of that mean. GATED for c in 446 .. 1600: within 2
+    // percentage points of the reference's. REPORTED below 446: there the reference's corner moves by 5 to 25 % from
+    // one segment to the next at a fixed code (its response bends slowly around a level-dependent knee), so its step
+    // per code is not resolved (decisions M5). Above 1600 the corner lies beyond what the estimator resolves (below
+    // 20 kHz). MONOTONIC: wherever the reference's mean rises from c - 1 to c in the gated range by more than 0.5 %
+    // (the resolution of a mean over two passes there: smaller rises and falls at 1471 -> 1472 or 1022 -> 1023 have
+    // either sign from pass to pass), our mapping rises.
+    constexpr double kAllowedPp = 2.0, kRisePct = 0.5;
+    constexpr int kFirstGated = 446, kLastGated = 1600;
+    const std::string bypassName = "a_cutcode_bypass_a";
+    const auto& b = renderedTrace (kDir, bypassName);
+    if (! b.ok)
+        SKIP (b.why);
+    std::map<int, std::vector<double>> ref, ours;
+    for (int file = 0; file < 7; ++file)
+    {
+        const std::string name = "a_cutcode_" + std::to_string (file) + "_a";
+        const auto& f = renderedTrace (kDir, name);
+        REQUIRE (f.ok);
+        std::vector<int> codes;
+        int low = 0;
+        for (const auto& w : f.trace.writes)
+        {
+            if (w.cycle < 1000)
+                continue;
+            if (w.reg == 0x15)
+                low = w.value & 7;
+            else if (w.reg == 0x16)
+                codes.push_back ((static_cast<int> (w.value) << 3) | low);
+        }
+        INFO (name);
+        REQUIRE (codes.size() == 60);
+        REQUIRE (f.reference.segments.size() == 60);
+        REQUIRE (f.ours.segments.size() == 60);
+        REQUIRE (b.reference.segments.size() == 60);
+        for (std::size_t i = 0; i < 60; ++i)
+        {
+            const auto cr = tr::lowpassCorner (tr::filterResponse (f.reference.segments[i], b.reference.segments[i]));
+            const auto co = tr::lowpassCorner (tr::filterResponse (f.ours.segments[i], b.ours.segments[i]));
+            if (cr.found)
+                ref[codes[i]].push_back (cr.hz);
+            if (co.found)
+                ours[codes[i]].push_back (co.hz);
+        }
+    }
+    auto mean = [] (const std::vector<double>& v) {
+        double sum = 0.0;
+        for (const double x : v)
+            sum += x;
+        return sum / static_cast<double> (v.size());
+    };
+    double worst = 0.0;
+    int worstAt = 0, gated = 0, rising = 0, notRising = 0;
+    for (const auto& [c, rv] : ref)
+    {
+        const auto prev = ref.find (c - 1);
+        if (prev == ref.end())
+            continue;
+        const auto oc = ours.find (c), op = ours.find (c - 1);
+        const bool inGate = c >= kFirstGated && c <= kLastGated;
+        INFO ("code " << c);
+        if (inGate)
+            REQUIRE ((oc != ours.end() && op != ours.end()));
+        else if (oc == ours.end() || op == ours.end())
+            continue;
+        const double sr = 100.0 * (mean (rv) / mean (prev->second) - 1.0), so = 100.0 * (mean (oc->second) / mean (op->second) - 1.0);
+        const bool pass = std::abs (so - sr) <= kAllowedPp;
+        std::printf ("[cutcode] %4d -> %4d: reference %+7.2f %% (%zu passes), ours %+7.2f %%: %+6.2f pp%s\n", c - 1, c, sr, rv.size(), so, so - sr,
+                     inGate ? (pass ? "" : "  OUTSIDE") : " (reported: below 446 the reference's step is not resolved)");
+        if (! inGate)
+            continue;
+        ++gated;
+        CHECK (pass);
+        if (std::abs (so - sr) > worst)
+        {
+            worst = std::abs (so - sr);
+            worstAt = c;
+        }
+        if (sr > kRisePct)
+        {
+            ++rising;
+            const bool rises = vs::bside::chip::Filter::cutoffCurveHz (vs::bside::chip::Model::A, c, 0.5)
+                               > vs::bside::chip::Filter::cutoffCurveHz (vs::bside::chip::Model::A, c - 1, 0.5);
+            notRising += rises ? 0 : 1;
+            CHECK (rises);
+        }
+    }
+    std::printf ("[cutcode] %d steps gated (codes %d .. %d): worst %.2f pp at %d (allowed %.1f); our mapping rises at %d of the %d steps where "
+                 "the reference's rises by more than %.1f %%\n",
+                 gated, kFirstGated, kLastGated, worst, worstAt, kAllowedPp, rising - notRising, rising, kRisePct);
+    CHECK (gated == 56); // 19 multiples of 64 (two steps each) and 18 odd multiples of 32 (one step) in 446 .. 1600
+    CHECK (rising >= 7);
+}
+
+TEST_CASE ("analog: Model A's one-voice cutoff sweep has no band-level step the reference lacks (a_cutsweep_a)", "[trace][reference][chip][analog]")
+{
+    // 8.19.3: the owner's one-voice sweep (110 Hz sawtooth, cutoff 200 up to 1900 and back, a write every 10 ms):
+    // SweepSteps.h's step at every write, in 2 .. 5 kHz and 0.8 .. 2 kHz, on our 48 kHz render. Gate: no step larger
+    // than the reference's largest in that band plus 0.5 dB. The reference's largest, measured with the same function
+    // on the adapter's 48 kHz render of this committed trace (adapter and emulator of the MANIFEST; outside the
+    // repository): 1.665 dB at 510 -> 515 (2 .. 5 kHz), 0.897 dB at 257 -> 255 (0.8 .. 2 kHz). Before this step's
+    // mapping ours were 2.233 dB (510 -> 515) and 0.911 dB (382 -> 386).
+    constexpr double kAllowedOverDb = 0.5;
+    struct Band
+    {
+        double lo, hi, referenceDb;
+    };
+    constexpr Band kBands[] { { 2000.0, 5000.0, 1.665 }, { 800.0, 2000.0, 0.897 } };
+    const std::string name = "a_cutsweep_a";
+    const auto& r = renderedTrace (kDir, name);
+    if (! r.ok)
+        SKIP (r.why);
+    for (const auto& band : kBands)
+    {
+        const auto st = sweepSteps (r.trace, r.chain.out, 1.0 / 110.0, band.lo, band.hi);
+        REQUIRE (st.size() > 400);
+        SweepStep largest;
+        for (const auto& s : st)
+            if (std::abs (s.excessDb) > std::abs (largest.excessDb))
+                largest = s;
+        std::printf ("[cutsweep] band %.0f .. %.0f Hz: %zu writes, our largest step %.3f dB at %d -> %d; reference's largest %.3f dB (allowed %.3f)\n",
+                     band.lo, band.hi, st.size(), std::abs (largest.excessDb), largest.from, largest.to, band.referenceDb,
+                     band.referenceDb + kAllowedOverDb);
+        INFO ("band " << band.lo << " .. " << band.hi << " Hz: " << largest.excessDb << " dB at " << largest.from << " -> " << largest.to);
+        CHECK (std::abs (largest.excessDb) <= band.referenceDb + kAllowedOverDb);
     }
 }

@@ -325,14 +325,25 @@ TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant f
     // The fitted laws written out here once more (Filter.cpp; decisions "B-Side S3a"), checked through the class's
     // public reports (cutoffCurveHz, cutoffHz, q, prototypeWeights) at every register value, resonance and variation:
     // a change of any constant fails. Model B: the cubic cutoff curve and its 15 Hz floor, the cutoff factor and 1/Q per
-    // resonance step, the three output weights. Model A: the curve (ln fc piecewise linear over 24 points of the
-    // converter value, shifted by variation), Q at resonance 0 against the corner, the Q factor, cutoff factor and
-    // low-pass gain per resonance step, the band-pass and high-pass weights.
+    // resonance step, the three output weights. Model A: the cutoff converter's weight per bit, the curve (ln fc
+    // piecewise linear over 129 points of the converter value, shifted by variation; decisions "B-Side Model A cutoff
+    // steps"), Q at resonance 0 against the corner, the Q factor, cutoff factor and low-pass gain per resonance step,
+    // the band-pass and high-pass weights.
     constexpr double kCubic[4] { 5.25089373e-09, 9.52640664e-05, 6.91631996, -1.13988415 };
     constexpr double kBInvQ[16] { 1.4121, 1.2927, 1.1832, 1.0851, 1.0043, 0.9202, 0.8436, 0.7748, 0.7032, 0.6444, 0.5904, 0.5420, 0.5027, 0.4604, 0.4232, 0.3883 };
     constexpr double kBFcRes[16] { 1.0000, 0.9983, 0.9969, 0.9952, 0.9946, 0.9929, 0.9922, 0.9914, 0.9903, 0.9894, 0.9891, 0.9881, 0.9875, 0.9868, 0.9867, 0.9858 };
-    constexpr double kALogFc[24] { 5.566978, 5.601697, 5.794737, 5.830848, 5.952658, 7.166796, 7.832795, 8.205156, 8.463033, 8.749728, 8.914376, 9.091689,
-                                   9.229615, 9.347138, 9.468028, 9.542380, 9.620053, 9.686958, 9.733824, 9.790228, 9.835870, 9.887333, 9.914261, 9.951000 };
+    constexpr double kAConverter[11] { 0.000677536, 0.001300386, 0.002520950, 0.004900252, 0.009531922, 0.017761255, 0.033858608, 0.066655995, 0.128577338, 0.249785711, 0.484430046 };
+    constexpr double kALogFc[129] { 5.568762, 5.574051, 5.579520, 5.585102, 5.590843, 5.597733, 5.613662, 5.649298, 5.682199, 5.716583, 5.749633, 5.784669,
+                                    5.799238, 5.805900, 5.812686, 5.818856, 5.825178, 5.834360, 5.857475, 5.879546, 5.900385, 5.921639, 5.943264, 6.093004,
+                                    6.296835, 6.593002, 6.645863, 6.959393, 7.163433, 7.333776, 7.469615, 7.632934, 7.707134, 7.763385, 7.825549, 7.895722,
+                                    7.971609, 8.049846, 8.133840, 8.205641, 8.261674, 8.308356, 8.349665, 8.391052, 8.431115, 8.474731, 8.529889, 8.591215,
+                                    8.647933, 8.694001, 8.733191, 8.769271, 8.802955, 8.836176, 8.869572, 8.900264, 8.930406, 8.958206, 8.986429, 9.018792,
+                                    9.051212, 9.083282, 9.114686, 9.142244, 9.167545, 9.191416, 9.213670, 9.234926, 9.255931, 9.277678, 9.300422, 9.323396,
+                                    9.346121, 9.368434, 9.389309, 9.408517, 9.426244, 9.443287, 9.460551, 9.478162, 9.494880, 9.510347, 9.524757, 9.538788,
+                                    9.553100, 9.567833, 9.582439, 9.596270, 9.609154, 9.621597, 9.633743, 9.645440, 9.656640, 9.666661, 9.675656, 9.685001,
+                                    9.696134, 9.704555, 9.712976, 9.721397, 9.729819, 9.739656, 9.749791, 9.759926, 9.770061, 9.780196, 9.789827, 9.798028,
+                                    9.806229, 9.814430, 9.822632, 9.830833, 9.839762, 9.849009, 9.858256, 9.867504, 9.876751, 9.885423, 9.890262, 9.895100,
+                                    9.899939, 9.904778, 9.909616, 9.915451, 9.922053, 9.928654, 9.935256, 9.941858, 9.948459 };
     constexpr double kAQ0Hz[8] { 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0, 21000.0 };
     constexpr double kAQ0[8] { 0.79, 0.62, 0.55, 0.55, 0.651, 0.745, 0.764, 0.77 };
     constexpr double kAQRes[16] { 1.0000, 1.0355, 1.0735, 1.1122, 1.1510, 1.2076, 1.2697, 1.3393, 1.4313, 1.5222, 1.6307, 1.7792, 1.9363, 2.1375, 2.4440, 2.8952 };
@@ -352,12 +363,16 @@ TEST_CASE ("filter: every resonance and cutoff law is pinned (a wrong constant f
     int bad = 0;
     for (int v = 0; v < 2048; ++v)
     {
+        double conv = 0.0;
+        for (int b = 0; b < 11; ++b)
+            conv += ((v >> b) & 1) != 0 ? kAConverter[b] : 0.0;
+        bad += near (Filter::modelACutoffConverter (v), conv) ? 0 : 1;
         const double cubic = ((kCubic[0] * v + kCubic[1]) * v + kCubic[2]) * v + kCubic[3];
         bad += near (Filter::cutoffCurveHz (Model::B, v, 0.5), std::max (15.0, cubic)) ? 0 : 1;
         for (const double var : { 0.0, 0.5, 1.0 })
         {
-            const double x = std::clamp (Filter::modelACutoffConverter (v) + (var - 0.5) * 2.0 * Filter::kVariationShift, 0.0, 1.0) * 23.0;
-            const int i = std::min (22, static_cast<int> (x));
+            const double x = std::clamp (conv + (var - 0.5) * 2.0 * Filter::kVariationShift, 0.0, 1.0) * 128.0;
+            const int i = std::min (127, static_cast<int> (x));
             bad += near (Filter::cutoffCurveHz (Model::A, v, var), std::exp (kALogFc[i] + (kALogFc[i + 1] - kALogFc[i]) * (x - i))) ? 0 : 1;
         }
     }
@@ -654,6 +669,67 @@ TEST_CASE ("filter: the linear part the rate gate measures is the class's own re
         worst = std::max ({ worst, err / largest, errCut / largest });
     }
     WARN ("largest relative difference between the closed-form response and the impulse response: " << worst << " (allowed 1e-4)");
+}
+
+TEST_CASE ("filter: Model A's processWithCutoff follows the mapping at and around the converter's boundaries (8.19.3)", "[filter][rate]")
+{
+    // The cutoff converter falls back at every multiple of 32 (Filter.cpp kAConverter). processWithCutoff computes the
+    // corner from the register value exactly as setCutoff does and reads only the parameters that depend smoothly on
+    // the corner from its table (Filter.h "processWithCutoff"), so a fall-back is never interpolated across: at every
+    // boundary b (32 .. 2016), at b - 1, b - 0.5, b, b + 0.5 and b + 1 (a Smooth register value between two codes
+    // takes the converter value between theirs), every internal rate of 4.4, every mode sum, resonance 0, 8 and 15 and
+    // variation 0, 0.5 and 1, its linear part matches setCutoff's within 0.05 dB and 1 degree over the rate gate's band.
+    constexpr double kAllowedDb = 0.05, kAllowedDeg = 1.0;
+    Worst worstDb, worstDeg;
+    std::string atDb, atDeg;
+    for (const double rate : kRates)
+    {
+        std::vector<std::complex<double>> unit;
+        for (const double hz : gateGrid())
+            unit.push_back (std::polar (1.0, 2.0 * kPi * hz / rate));
+        for (int mode = 1; mode < 8; ++mode)
+            for (const float var : { 0.0f, 0.5f, 1.0f })
+                for (const int res : { 0, 8, 15 })
+                {
+                    Filter f, other;
+                    for (Filter* x : { &f, &other })
+                    {
+                        x->prepare (Model::A, rate, var);
+                        x->setMode (static_cast<std::uint8_t> (mode << 4));
+                        x->setResonance (res);
+                    }
+                    other.setCutoff (1500.0f);
+                    for (int b = 32; b < 2048; b += 32)
+                        for (const float dv : { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f })
+                        {
+                            const float fc = std::min (2047.0f, static_cast<float> (b) + dv);
+                            f.setCutoff (fc);
+                            const auto lin = f.linearPart();
+                            const auto cut = other.linearPartWithCutoff (fc);
+                            const GateSetting gs (f, rate, unit);
+                            const auto d = gs.deviation (cut, &lin), p = gs.phase (cut, &lin);
+                            char buf[96];
+                            std::snprintf (buf, sizeof buf, "%.0f Hz mode %d FC %g res %d var %g", rate, mode, static_cast<double> (fc), res,
+                                           static_cast<double> (var));
+                            if (d.db > worstDb.db)
+                            {
+                                worstDb = d;
+                                atDb = buf;
+                            }
+                            if (p.db > worstDeg.db)
+                            {
+                                worstDeg = p;
+                                atDeg = buf;
+                            }
+                        }
+                }
+    }
+    INFO ("worst " << worstDb.db << " dB at " << atDb << "; " << worstDeg.db << " deg at " << atDeg);
+    CHECK (worstDb.db <= kAllowedDb);
+    CHECK (worstDeg.db <= kAllowedDeg);
+    std::printf ("[boundaries] Model A processWithCutoff against setCutoff at the converter's boundaries: %.4f dB (%s; allowed %.2f), "
+                 "%.3f deg (%s; allowed %.1f)\n",
+                 worstDb.db, atDb.c_str(), kAllowedDb, worstDeg.db, atDeg.c_str(), kAllowedDeg);
 }
 
 TEST_CASE ("filter: processWithCutoff follows a mode, resonance, rate or variation change after its table was built", "[filter]")
@@ -1286,6 +1362,19 @@ TEST_CASE ("filter: resonance raises the peak at every step, cutoff curves and M
     const double a1023 = Filter::cutoffCurveHz (Model::A, 1023.0, 0.5), a1024 = Filter::cutoffCurveHz (Model::A, 1024.0, 0.5);
     WARN ("Model A cutoff at 1023: " << a1023 << " Hz, at 1024: " << a1024 << " Hz");
     CHECK (a1024 < 0.97 * a1023);
+    // Model A's mapping rises at every code step except at the multiples of 32, where the converter falls back (and the
+    // corner with it; the size of each fall is gated against the reference in AnalogReferenceTests.cpp, a_cutcode_*)
+    int notRising = 0, notFalling = 0;
+    for (int v = 1; v < 2048; ++v)
+    {
+        const double here = Filter::cutoffCurveHz (Model::A, v, 0.5), before = Filter::cutoffCurveHz (Model::A, v - 1, 0.5);
+        if (v % 32 != 0)
+            notRising += here > before ? 0 : 1;
+        else
+            notFalling += here < before ? 0 : 1;
+    }
+    CHECK (notRising == 0);
+    CHECK (notFalling == 0);
     CHECK (Filter::modelACutoffConverter (2047.0) > 0.999);
     CHECK (Filter::modelACutoffConverter (0.0) < 1e-12);
     // variation shifts the Model A curve (up with variation), not Model B's

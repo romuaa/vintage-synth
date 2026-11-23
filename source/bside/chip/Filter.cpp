@@ -4,8 +4,6 @@
 
 #include "bside/chip/Filter.h"
 
-#include "bside/chip/RenderTables.h"
-
 #include <algorithm>
 
 namespace vs::bside::chip
@@ -31,11 +29,30 @@ constexpr double kBLow = -0.997, kBBand = 1.011, kBHigh = -1.025;
 constexpr double kBCutStep = 64.0;
 
 // ---- Model A ----
-constexpr double kALadderRatio = 2.1756; // the cutoff converter: 11-bit terminated ladder (fitted)
-// ln (fc / Hz) at d = i / 23, i = 0 .. 23 (piecewise linear in d)
-constexpr std::array<double, 24> kALogFc { 5.566978, 5.601697, 5.794737, 5.830848, 5.952658, 7.166796, 7.832795, 8.205156,
-                                           8.463033, 8.749728, 8.914376, 9.091689, 9.229615, 9.347138, 9.468028, 9.542380,
-                                           9.620053, 9.686958, 9.733824, 9.790228, 9.835870, 9.887333, 9.914261, 9.951000 };
+// The cutoff converter: d (0..1) = the sum of the weights of the register's set bits (bit 0 first; fitted per bit,
+// close to an 11-bit terminated ladder of ratio 2.18, whose bit boundaries fall back: decisions "B-Side Model A cutoff
+// steps" M2)
+constexpr std::array<double, 11> kAConverter { 0.000677536, 0.001300386, 0.002520950, 0.004900252, 0.009531922, 0.017761255, 0.033858608, 0.066655995, 0.128577338, 0.249785711, 0.484430046 };
+// ln (fc / Hz) at d = i / kALogFcIntervals, i = 0 .. 128 (piecewise linear in d; decisions "B-Side Model A cutoff
+// steps" M3: its slope at each boundary sets the corner's step there)
+constexpr int kALogFcIntervals = 128;
+constexpr std::array<double, 129> kALogFc { 5.568762, 5.574051, 5.579520, 5.585102, 5.590843, 5.597733, 5.613662, 5.649298,
+    5.682199, 5.716583, 5.749633, 5.784669, 5.799238, 5.805900, 5.812686, 5.818856,
+    5.825178, 5.834360, 5.857475, 5.879546, 5.900385, 5.921639, 5.943264, 6.093004,
+    6.296835, 6.593002, 6.645863, 6.959393, 7.163433, 7.333776, 7.469615, 7.632934,
+    7.707134, 7.763385, 7.825549, 7.895722, 7.971609, 8.049846, 8.133840, 8.205641,
+    8.261674, 8.308356, 8.349665, 8.391052, 8.431115, 8.474731, 8.529889, 8.591215,
+    8.647933, 8.694001, 8.733191, 8.769271, 8.802955, 8.836176, 8.869572, 8.900264,
+    8.930406, 8.958206, 8.986429, 9.018792, 9.051212, 9.083282, 9.114686, 9.142244,
+    9.167545, 9.191416, 9.213670, 9.234926, 9.255931, 9.277678, 9.300422, 9.323396,
+    9.346121, 9.368434, 9.389309, 9.408517, 9.426244, 9.443287, 9.460551, 9.478162,
+    9.494880, 9.510347, 9.524757, 9.538788, 9.553100, 9.567833, 9.582439, 9.596270,
+    9.609154, 9.621597, 9.633743, 9.645440, 9.656640, 9.666661, 9.675656, 9.685001,
+    9.696134, 9.704555, 9.712976, 9.721397, 9.729819, 9.739656, 9.749791, 9.759926,
+    9.770061, 9.780196, 9.789827, 9.798028, 9.806229, 9.814430, 9.822632, 9.830833,
+    9.839762, 9.849009, 9.858256, 9.867504, 9.876751, 9.885423, 9.890262, 9.895100,
+    9.899939, 9.904778, 9.909616, 9.915451, 9.922053, 9.928654, 9.935256, 9.941858,
+    9.948459 };
 // Q at resonance 0 against log2 (fc), piecewise linear between these points (held outside)
 constexpr std::array<double, 8> kAQ0Hz { 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0, 21000.0 };
 constexpr std::array<double, 8> kAQ0 { 0.79, 0.62, 0.55, 0.55, 0.651, 0.745, 0.764, 0.77 };
@@ -63,27 +80,24 @@ constexpr double kABand = 0.59, kABandRes = 0.42, kAHigh = -0.59, kAHighBand = -
 constexpr double kACutHz0 = 250.0, kACutLog2Hz0 = 7.965784284662087, kACutPerOctave = 4.0; // log2 (250)
 constexpr int kACutKnots = 27;
 
-const render::LadderWeights& cutoffWeights() noexcept
-{
-    static const render::LadderWeights w = render::ladderWeights (11, kALadderRatio, true);
-    return w;
-}
+/** The converter value of every code, built at compile time (no run-time initialisation; a lookup on the audio thread,
+    cheaper than summing the bits: cutA). */
+constexpr std::array<double, 2048> kAConverterTable = [] {
+    std::array<double, 2048> t {};
+    for (std::size_t v = 0; v < 2048; ++v)
+        for (std::size_t i = 0; i < 11; ++i)
+            if (((v >> i) & 1) != 0)
+                t[v] += kAConverter[i];
+    return t;
+}();
 
-double converterAt (int v) noexcept
-{
-    const auto& w = cutoffWeights();
-    double d = 0.0;
-    for (std::size_t i = 0; i < 11; ++i)
-        if (((v >> i) & 1) != 0)
-            d += w[i];
-    return d;
-}
+double converterAt (int v) noexcept { return kAConverterTable[static_cast<std::size_t> (v)]; }
 
 /** ln (fc / Hz) of Model A's curve at a converter value d (variation included). */
 double modelALnHz (double d) noexcept
 {
-    const double x = std::clamp (d, 0.0, 1.0) * 23.0;
-    const auto i = static_cast<std::size_t> (std::min (22.0, std::floor (x)));
+    const double x = std::clamp (d, 0.0, 1.0) * static_cast<double> (kALogFcIntervals);
+    const auto i = static_cast<std::size_t> (std::min (static_cast<double> (kALogFcIntervals - 1), std::floor (x)));
     const double f = x - static_cast<double> (i);
     return kALogFc[i] + (kALogFc[i + 1] - kALogFc[i]) * f;
 }
@@ -171,7 +185,6 @@ bool reflectZeros (double b0, double b1, double b2, double w, double cL, double 
 
 Filter::Filter() noexcept
 {
-    (void) cutoffWeights(); // the converter weights are built here, never on the audio thread
     prepare (Model::B, 96000.0, 0.5f);
 }
 
@@ -195,7 +208,6 @@ double Filter::cutoffCurveHz (Model model, double registerValue, double variatio
 
 void Filter::prepare (Model model, double internalRate, float variationValue) noexcept
 {
-    (void) cutoffWeights();
     mdl = model;
     rate = internalRate > 1000.0 && std::isfinite (internalRate) ? internalRate : 96000.0;
     variation = std::isfinite (variationValue) ? std::clamp (variationValue, 0.0f, 1.0f) : 0.5f;
