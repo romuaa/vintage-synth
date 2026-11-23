@@ -1950,6 +1950,32 @@ attempt on Model A's filter. These win over 8.19.1 where they differ.
 - **Not in this step, moved to S3b (8.19.2):** the aliasing of the static curves (mixer curves,
   Model A's voice bend and filter output function), which need their own contract with the
   renderer's interface.
+- **Model A's cutoff curve at the converter's boundaries (2026-11-23; owner decision O8 "jumps"):**
+  the owner heard jumps in a cutoff sweep on Model A that the reference does not have. Found:
+  the cutoff converter's ladder falls back at its bit boundaries, and the fixed form maps the
+  converter's value through a logarithmic curve, which turns the fall-back into corner drops of
+  8.4 % at code 383 -> 384 and 17.4 % at 511 -> 512 (heard as -1.5 and -2.3 dB in the 2 to 5 kHz
+  band of a 110 Hz sawtooth). The reference steps at 511 -> 512 only, by less (-1.2 to -1.8 dB).
+  - **Files:** `source/bside/chip/Filter.*` (Model A's cutoff mapping and its table for
+    `processWithCutoff` only), tests, generated reference data. Model B is not touched, nor
+    the filter's structure, the output stage or the signal-dependent form (parked, O8).
+  - **Reference data:** a committed trace that walks the cutoff register one code at a time
+    across every boundary of the ladder that lies in the audible range (and a stretch on each
+    side), at a low level, one voice, resonance 0, measured as the corner per code.
+  - **Gate:** at every code step of that trace, the relative step of our corner is within
+    2 percentage points of the reference's; in the owner's one-voice sweep (110 Hz sawtooth,
+    cutoff 200 to 1900 and back) no band-level step (2 to 5 kHz and 0.8 to 2 kHz, one waveform
+    period after the write against the one before, the sweep's trend removed) exceeds the
+    reference's largest by more than 0.5 dB. The mapping stays monotonic wherever the
+    reference's is.
+  - **Unchanged:** every committed gate (`a_filter_a` corners, `a_modes_a`, the rate gate, the
+    phase gate, `processWithCutoff` against `setCutoff` within 0.05 dB and 1 degree, the
+    reported `a_s3a_*` lines no worse by more than 0.1 dB at rest), stability, any split
+    bit-identical, no allocation; `cutA` within 1 ns of its figure, `setCutoff` no slower than
+    it is. If the corners of `a_filter_a` and the new trace cannot both be met by one curve,
+    the conflict is reported with both figures; neither gate is loosened.
+  - **Listening:** the one-voice and the resonant sweep rendered before and after, outside the
+    repository, for the owner.
 
 #### 8.19.4 S3b in two steps (contract, 2026-11-23; refines 8.19.2; owner decision O3 of 2026-11-22)
 S3b is stacked on the S3a branch until S3a has merged (O3). It is split so that the renderer's
