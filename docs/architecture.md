@@ -2122,6 +2122,44 @@ chain's output.
     a converter switch (no output changes; if the site is unreachable for a bent sawtooth it is
     removed or marked as such in the code) and the cell update of the derivative at an event
     (at most 2.5e-5).
+- **After the second independent review of S3b-2 (2026-11-23; these win over the two bullets above):**
+  - **The overdriven deviation is a class, measured over phases.** The pinned figures of the
+    first closing round held for one constellation of voice phases only: with other phases the
+    pinned rows are up to 6 dB worse, and rows outside the list fail (three voices at 3.85 kHz
+    at 88.2 and 96 kHz: -79.0 and -80.4 dB against -83; three voices at 2 kHz at 128 kHz).
+    The gate therefore runs every multi-voice row over a fixed set of phase constellations
+    that includes all voices at phase 0 (a common reset) and the first round's set, and takes
+    the worst. A row is in the overdriven class when Model A's mixer input leaves the fitted
+    range in that constellation (checked by the test, as before). Rows of the class that miss
+    (a) or (c) are listed with their worst figure over the constellations and gated at that
+    figure + 1 dB; **two-sided:** a listed row that measures more than 2 dB better than its
+    figure, or comes inside the limits, fails as stale. Every row outside the class meets the
+    full limits in every constellation. The records state the real extent: the excess over
+    the limit reaches about 10 dB, at 88.2, 96 and 128 kHz, at 2 kHz and 3.85 kHz.
+  - **Shared, mode and resonance writes:** the 0.02-sample timing is Per Note's. In Shared the
+    owner of the shared filter applies the write; an owner that switches at one sample is up
+    to one sample late as built (measured +1.06). For S3b-2: the documented rule becomes the
+    nearest sample (within 0.5 samples, tested at every rate and several write positions,
+    mode and resonance, both models), and `ChipVoice.h` states what an owner must do to reach
+    0.02 (the write's band-limited weights from `Chip::renderEventTime` / `unitStepTaps`, two
+    filters over the window, a blend of their linear outputs, shapes and low-pass value).
+    **S4 obligation:** the plugin's shared-filter owner does that blend, or records the
+    half-sample deviation.
+  - **Routing write that changes Model A's voice counts:** held to 0.1 samples, not 0.02: the
+    gain step (counts delayed, not filtered) times the smoothed signal step centres 0.06 to
+    0.07 samples late with the timing exact (confirmed by the review at the buses: 0.0000).
+    Model B is held to 0.02 in the same case.
+  - **Bit-identity and contraction of multiply-add:** the option that keeps GCC from fusing
+    across statements applies to the chip sources wherever they are compiled, the B-Side
+    plugin target included, from this step on (one place in the build, not a note for later).
+  - **The reported `a_s3a_voices_a` worst peak** moves from 3.50 to 3.72 dB because one segment
+    became measurable under the smooth continuation; accepted against the 0.1 dB rule above
+    (orchestrator, review): no gated line and no previously measured line moves by more than
+    0.02 dB.
+  - **Also required:** resonance writes in the write-budget test; a unit test of the mixer
+    continuation (continuity of value, slope and curvature at the joins, monotonic, bounded,
+    bit-identical between the joins to the fitted curve); the cost of the continuation outside
+    the joins is stated (about 1 ns per call there, none inside).
 
 ### 8.20 Alias follow-up step (contract, 2026-11-19; owner decision 2026-11-18: fix, no exemption)
 Fixes known defects 1 and 2 of 8.18.1 in the renderer. Runs beside S3a.
