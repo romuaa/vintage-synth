@@ -776,8 +776,11 @@ TEST_CASE ("alias gate: the static curves through the chain, the normal run: eve
                     return w != Statement::c || st.resonance == 15 || s.voices == 3;
                 };
             };
-            for (const Statement w : { Statement::a, Statement::b, Statement::c })
-                runStatement (m, rate, w, keep (w), t, false, listedSteps);
+            // three calls written out: GCC 11 (Linux) passed Statement::a to all three when this was a range-for over a
+            // braced list feeding the lambda-returning `keep` (measured in the container: 18 calls, all (a))
+            runStatement (m, rate, Statement::a, keep (Statement::a), t, false, listedSteps);
+            runStatement (m, rate, Statement::b, keep (Statement::b), t, false, listedSteps);
+            runStatement (m, rate, Statement::c, keep (Statement::c), t, false, listedSteps);
         }
     report (t);
     const double seconds = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
