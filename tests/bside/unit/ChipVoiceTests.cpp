@@ -1107,8 +1107,11 @@ Diff offLine (const std::vector<double>& yw, const std::vector<double>& yi, doub
             be = mismatch (sft);
             best = sft;
         }
+    // the analysed window of ours, [start, start + n), with its match yi[i - best] inside yi: a negative shift (the
+    // ideal later than ours) moves the window that much earlier (the signal is periodic; warm is far longer than any shift)
+    const int start = warm - std::max (0, -best);
     double sw = 0.0, si = 0.0, sii = 0.0, swi = 0.0;
-    for (int i = warm; i < total; ++i)
+    for (int i = start; i < start + n; ++i)
     {
         const double w = yw[static_cast<std::size_t> (i)], v = yi[static_cast<std::size_t> (i - best)];
         sw += w;
@@ -1123,8 +1126,8 @@ Diff offLine (const std::vector<double>& yw, const std::vector<double>& yi, doub
     std::vector<float> xw (static_cast<std::size_t> (n)), xi (xw.size()), xd (xw.size());
     for (std::size_t i = 0; i < xw.size(); ++i)
     {
-        const std::size_t s = static_cast<std::size_t> (warm) + i;
-        const double ideal = alpha * yi[s - static_cast<std::size_t> (best)] + beta;
+        const auto s = static_cast<std::size_t> (start) + i;
+        const double ideal = alpha * yi[static_cast<std::size_t> (static_cast<std::int64_t> (s) - best)] + beta;
         xw[i] = static_cast<float> (yw[s]);
         xi[i] = static_cast<float> (ideal);
         xd[i] = static_cast<float> (yw[s] - ideal);
@@ -1179,12 +1182,29 @@ struct WriteCase
     std::string name;
     WriteStart start;
     std::vector<TickWrite> writes;
+    bool vdc = true;
 };
 std::vector<WriteCase> writeCases (bool all)
 {
     std::vector<WriteCase> v;
     const TickWrite res { 0, 0x17, 0xf1, 0x01 };
     v.push_back ({ "resonance 0 <-> 15", {}, { res } });
+    // resonance alone through every output (8.19.4 after the round over phases: 0 <-> 15 and 4 <-> 12, low- and
+    // band-pass, volume DC on and off; the fourth review added high-pass and band + high-pass)
+    for (const auto& [mname, mv] : { std::pair<const char*, std::uint8_t> { "low-pass", 0x1f }, { "band-pass", 0x2f }, { "high-pass", 0x4f }, { "band + high-pass", 0x6f } })
+        for (const bool vdc : { true, false })
+            for (const bool wide : { true, false })
+            {
+                if (mv == 0x1f && vdc && wide)
+                    continue; // the first case above
+                if (! all && (! vdc || (! wide && mv != 0x6f)))
+                    continue; // the normal run: 0 <-> 15 through every output, 4 <-> 12 through band + high-pass
+                WriteStart st;
+                st.modeVolume = mv;
+                st.resRoute = wide ? 0x01 : 0x41;
+                const TickWrite w = wide ? TickWrite { 0, 0x17, 0xf1, 0x01 } : TickWrite { 0, 0x17, 0xc1, 0x41 };
+                v.push_back ({ std::string (wide ? "resonance 0 <-> 15, " : "resonance 4 <-> 12, ") + mname + (vdc ? "" : ", volume DC off"), st, { w }, vdc });
+            }
     for (const int gap : all ? std::vector<int> { 1, 10, 40, 200 } : std::vector<int> { 10 })
     {
         const TickWrite vol { gap, 0x18, 0x1c, 0x1f }, mode { gap, 0x18, 0x2f, 0x1f }, cut { gap, 0x16, 0xa0, 0x80 };
@@ -1211,14 +1231,14 @@ void runWriteGate (bool all, const std::vector<double>& rates, const std::vector
                 double ours = -300.0, ideal = -300.0, excess = -300.0, floorDb = -300.0;
                 for (const double hz : hzs)
                 {
-                    const auto r = writeExcess (m, rate, hz, true, wc.start, wc.writes, factor);
+                    const auto r = writeExcess (m, rate, hz, wc.vdc, wc.start, wc.writes, factor);
                     ours = std::max (ours, r.ours.worstDb);
                     ideal = std::max (ideal, r.ideal.worstDb);
                     excess = std::max (excess, r.excess.worstDb);
                     floorDb = std::max (floorDb, r.idealFloor.worstDb);
                 }
                 const bool gate = floorDb <= -96.0; // the ideal's own placement error 6 dB below the gate
-                std::printf ("[write-excess] Model %s %6.0f Hz %-42s ours %7.1f, ideal %7.1f, ideal's own floor %7.1f, excess %7.1f dB%s\n",
+                std::printf ("[write-excess] Model %s %6.0f Hz %-52s ours %7.1f, ideal %7.1f, ideal's own floor %7.1f, excess %7.1f dB%s\n",
                              m == Model::A ? "A" : "B", rate, wc.name.c_str(), ours, ideal, floorDb, excess, gate ? "" : "  (reported: the ideal's floor)");
                 INFO ((m == Model::A ? "Model A " : "Model B ") << rate << " Hz, " << wc.name << ": excess " << excess << " dB, the ideal's floor " << floorDb);
                 if (gate)
@@ -1236,9 +1256,11 @@ void runWriteGate (bool all, const std::vector<double>& rates, const std::vector
 
 TEST_CASE ("chain: writes every tick against an ideal render: the excess within the write budget (<= -90 dB to 2 kHz), resonance alone and with a volume, mode or cutoff write 10 cycles apart (96 kHz)", "[chain][alias][writes]")
 {
-    // 8.19.4 after the third review: the full set (every gap of 1, 10, 40 and 200 cycles, both orders, 88.2, 96 and
-    // 192 kHz, voices at 1 and 2 kHz) runs by its tag "[.chain-writes-full]"; here the gap of 10 cycles (a player
-    // routine's usual spacing) at 96 kHz, a voice at 2 kHz, both models, against the ideal render at 32 times the rate.
+    // 8.19.4 after the third review: the full set (resonance alone 0 <-> 15 and 4 <-> 12 through the low-, band-, high-
+    // and band + high-pass with volume DC on and off; with a volume, mode or cutoff write at 1, 10, 40 and 200 cycles,
+    // both orders; 88.2, 96 and 192 kHz; voices at 1 and 2 kHz) runs by its tag "[.chain-writes-full]"; here, at 96 kHz,
+    // a voice at 2 kHz, both models, against the ideal render at 32 times the rate: resonance 0 <-> 15 through every
+    // output, 4 <-> 12 through band + high-pass, and the gap of 10 cycles (a player routine's usual spacing).
     runWriteGate (false, { 96000.0 }, { 2000.0 }, 32);
 }
 
@@ -1454,6 +1476,232 @@ TEST_CASE ("chain: the place of a resonance write's dynamics, alone and with a c
                 CHECK (f.rmsAtZero <= 1e-9 * f.change);
                 CHECK (f.change > 1e-4);
             }
+}
+
+namespace
+{
+/** A write at an absolute chip cycle (dynamics twin tests). */
+struct AtWrite
+{
+    std::uint64_t cycle;
+    std::uint8_t reg, value;
+};
+
+/** The documented capacities (ChipVoice.h "TIMING"), restated here so a change of either is a change of this test. */
+constexpr int kDocPending = 32, kDocStepMix = 4;
+
+struct TwinResult
+{
+    double maxDiff = 0.0, peak = 0.0;
+    int changes = 0, maxPending = 0, overflowed = 0, maxInOneSample = 0;
+    std::uint64_t queueOverflows = 0;
+};
+
+/** The voice (Per Note, a saw at 2 kHz through the low-pass at 1024, board filters off) with resonance writes at the
+    given cycles, rendered one sample at a time (ChipVoice::lastFilterInput / lastFilterOutput), against a twin that runs
+    the documented rule on the recorded input: each resonance change begins at the first sample of its write's window
+    (Chip::unitStepTaps; unchanged values begin nothing) and waits for its place (the centre of the window's weights);
+    at most kDocPending wait, and a further one first applies the oldest at once; the step of a sample holding places is
+    mixed from the parameter sets in turn (at most kDocStepMix; beyond, the last kept one takes the newest resonance);
+    the output is the newest begun resonance's output equation on the one state. */
+TwinResult dynamicsTwin (Model m, double rate, const std::vector<AtWrite>& ws, int samples)
+{
+    PerNote p (m, rate, true);
+    ChipVoice& v = *p.v;
+    v.boardFiltersEnabled (false);
+    osc (v, 0, 2000.0 * 16777216.0 / 985248.0, 2048.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+    v.write (0x15, 0);
+    v.write (0x16, 0x80);
+    v.write (0x17, 0x01);
+    v.write (0x18, 0x1f);
+    std::vector<double> in (static_cast<std::size_t> (samples)), out (in.size());
+    struct Ev
+    {
+        std::int64_t begin;
+        double place;
+        int res;
+    };
+    std::vector<Ev> evs;
+    const std::int64_t lag = v.filterLagSamples();
+    std::size_t next = 0;
+    double one[1];
+    for (int i = 0; i < samples;)
+    {
+        const std::uint64_t at = next < ws.size() ? ws[next].cycle : ~std::uint64_t { 0 };
+        one[0] = 0.0;
+        if (v.renderUntil (one, 1, at) == 1)
+        {
+            in[static_cast<std::size_t> (i)] = v.lastFilterInput();
+            out[static_cast<std::size_t> (i)] = v.lastFilterOutput();
+            ++i;
+        }
+        while (next < ws.size() && v.chip().cycle() == ws[next].cycle)
+        {
+            const auto& w = ws[next++];
+            v.write (w.reg, w.value);
+            const Chip::EventTime t = v.chip().renderEventTime();
+            std::array<double, vs::bside::chip::render::kKernelTaps> taps {};
+            int first = 0;
+            v.chip().unitStepTaps (t.base, taps, first);
+            // in the recorded sequence: output sample i ran the filter at filter time i - lag
+            evs.push_back ({ static_cast<std::int64_t> (t.sample) + first + lag, switchRuleCentre (v.chip(), t) + static_cast<double> (lag), w.value >> 4 });
+        }
+    }
+    TwinResult r;
+    r.queueOverflows = v.queueOverflows();
+    Filter dyn;
+    dyn.prepare (m, rate, 0.5f);
+    dyn.setCutoff (1024.0f);
+    dyn.setResonance (0);
+    dyn.setMode (0x1f);
+    Filter outP = dyn;
+    int begun = 0; // the newest begun resonance
+    struct Pending
+    {
+        std::int64_t at;
+        double alpha;
+        int res;
+    };
+    std::vector<Pending> pending;
+    std::size_t nb = 0;
+    for (int k = 0; k < samples; ++k)
+    {
+        while (nb < evs.size() && evs[nb].begin <= k)
+        {
+            const auto& e = evs[nb++];
+            if (e.res == begun)
+                continue;
+            begun = e.res;
+            outP.setResonance (begun);
+            if (static_cast<int> (pending.size()) == kDocPending)
+            {
+                dyn.setResonance (pending.front().res);
+                pending.erase (pending.begin());
+                ++r.overflowed;
+            }
+            const double fl = std::floor (e.place);
+            pending.push_back ({ static_cast<std::int64_t> (fl), e.place - fl, e.res });
+            ++r.changes;
+            r.maxPending = std::max (r.maxPending, static_cast<int> (pending.size()));
+        }
+        const double x = in[static_cast<std::size_t> (k)];
+        double lp = 0.0;
+        const double lin = outP.peekLinearDouble (x, dyn, lp);
+        const double y = lin + outP.outputShape (lp);
+        r.maxDiff = std::max (r.maxDiff, std::abs (y - out[static_cast<std::size_t> (k)]));
+        r.peak = std::max (r.peak, std::abs (y));
+        std::vector<double> alpha;
+        std::vector<int> res;
+        int inSample = 0;
+        while (! pending.empty() && pending.front().at <= k)
+        {
+            const auto pe = pending.front();
+            pending.erase (pending.begin());
+            ++inSample;
+            if (pe.at < k)
+                dyn.setResonance (pe.res);
+            else if (static_cast<int> (alpha.size()) == kDocStepMix)
+                res.back() = pe.res;
+            else
+            {
+                alpha.push_back (pe.alpha);
+                res.push_back (pe.res);
+            }
+        }
+        r.maxInOneSample = std::max (r.maxInOneSample, inSample);
+        if (alpha.empty())
+            dyn.processLinearDouble (x, lp);
+        else
+        {
+            std::array<double, 2> mix { 0.0, 0.0 };
+            Filter f = dyn;
+            double before = 0.0;
+            for (std::size_t j = 0; j <= alpha.size(); ++j)
+            {
+                if (j > 0)
+                    f.setResonance (res[j - 1]);
+                Filter g = f;
+                const double until = j < alpha.size() ? std::max (alpha[j], before) : 1.0;
+                g.processLinearDouble (x, lp);
+                const auto sj = g.state();
+                mix[0] += (until - before) * sj[0];
+                mix[1] += (until - before) * sj[1];
+                before = until;
+            }
+            dyn.setResonance (res.back());
+            dyn.setState (mix);
+        }
+    }
+    return r;
+}
+} // namespace
+
+TEST_CASE ("chain: resonance changes in combination follow the documented rule exactly: several in one sample, two writes 0 to 10 cycles apart, the pending capacity at and beyond its limit", "[chain][writes][place][capacity]")
+{
+    // ChipVoice.h "TIMING" (8.19.4 after the third review) states the rule for resonance changes in combination; a twin
+    // (dynamicsTwin) runs it on the voice's own filter input and must equal the voice's filter output to 1e-12 of its
+    // peak, sample by sample. Cases (each also checked to exercise what it names):
+    // - two resonance writes 0, 1, 3 and 10 cycles apart: the same value twice, two different values, and back to the
+    //   old value (the fourth review's M8: a wrong final resonance after two changes in one sample passed every test);
+    // - k changes placed in one sample with distinct places, k = 4 (the limit kMaxStepMix: every one mixed) and 5, 6
+    //   (beyond: the last kept one takes the newest resonance);
+    // - kMaxPending changes waiting at once (32, the limit: none applied early) and 33 (beyond: the oldest applied at once
+    //   when the 33rd begins), Model B (on Model A the write queue of the same size fills first at that density: its
+    //   bus pre-filter keeps writes waiting 21 samples longer; the write queue's own rule is tested in "a full write
+    //   queue").
+    auto check = [] (Model m, double rate, const std::vector<AtWrite>& ws, const char* what, int samples = 1500) {
+        const auto r = dynamicsTwin (m, rate, ws, samples);
+        INFO ((m == Model::A ? "Model A " : "Model B ") << rate << " Hz, " << what << ": max |voice - twin| " << r.maxDiff << " of peak " << r.peak << ", changes "
+                                                       << r.changes << ", most waiting " << r.maxPending << ", applied early " << r.overflowed << ", most in one sample "
+                                                       << r.maxInOneSample);
+        CHECK (r.maxDiff <= 1e-12 * r.peak);
+        CHECK (r.queueOverflows == 0u);
+        return r;
+    };
+    const std::uint64_t c0 = 6000;
+    for (const Model m : { Model::B, Model::A })
+        for (const double rate : { 88200.0, 96000.0, 192000.0 })
+            for (const std::uint64_t gap : { 0u, 1u, 3u, 10u })
+            {
+                check (m, rate, { { c0, 0x17, 0xf1 }, { c0 + gap, 0x17, 0xf1 } }, "two writes, the same value");
+                const auto d = check (m, rate, { { c0, 0x17, 0x81 }, { c0 + gap, 0x17, 0xf1 } }, "two writes, two values");
+                CHECK (d.changes == 2);
+                const auto b = check (m, rate, { { c0, 0x17, 0xf1 }, { c0 + gap, 0x17, 0x01 } }, "two writes, back to the old value");
+                CHECK (b.changes == 2);
+                if (gap == 0)
+                    CHECK (b.maxInOneSample == 2);
+            }
+    // k changes placed in one sample, distinct places: writes 2 cycles apart at 88.2 kHz (11.2 cycles per sample),
+    // shifted until all k places fall into one sample
+    for (const Model m : { Model::B, Model::A })
+        for (const int k : { 4, 5, 6 })
+        {
+            int found = 0;
+            for (std::uint64_t shift = 0; shift < 12 && found == 0; ++shift)
+            {
+                std::vector<AtWrite> ws;
+                for (int j = 0; j < k; ++j)
+                    ws.push_back ({ c0 + shift + 2 * static_cast<std::uint64_t> (j), 0x17, static_cast<std::uint8_t> (((3 * j + 2) & 15) << 4 | 1) });
+                const auto r = dynamicsTwin (m, 88200.0, ws, 1500);
+                if (r.maxInOneSample == k)
+                {
+                    found = k;
+                    check (m, 88200.0, ws, k == 4 ? "four changes in one sample (the limit)" : "more changes in one sample than the limit");
+                }
+            }
+            INFO ((m == Model::A ? "Model A, " : "Model B, ") << k << " changes: a shift placing them all in one sample");
+            CHECK (found == k);
+        }
+    // the pending capacity: Model B, 96 kHz, a change every 2 cycles (all begun before the first one's place)
+    for (const int count : { kDocPending, kDocPending + 1 })
+    {
+        std::vector<AtWrite> ws;
+        for (int j = 0; j < count; ++j)
+            ws.push_back ({ c0 + 2 * static_cast<std::uint64_t> (j), 0x17, static_cast<std::uint8_t> ((j % 2) == 0 ? 0xf1 : 0x01) });
+        const auto r = check (Model::B, 96000.0, ws, count == kDocPending ? "32 changes waiting (the limit)" : "33 changes (one beyond)");
+        CHECK (r.maxPending == kDocPending);
+        CHECK (r.overflowed == (count > kDocPending ? 1 : 0));
+    }
 }
 
 TEST_CASE ("chain: routing, volume and mode writes every tick meet the write budget before the board filters (<= -90 dB to 2 kHz)", "[chain][alias][writes]")

@@ -355,16 +355,17 @@ double ChipVoice::peekConfig (Filter& outputParams, double in, double& lowPass) 
 
 void ChipVoice::stepDynamics (double in, std::int64_t t) noexcept
 {
-    // the changes placed in this sample (a place already passed: at once, which only an overflow can cause)
+    // the changes placed in this sample. A change is pushed at the first sample of its write's window, which lies at
+    // least 7 samples before its place (the long kernel's centre), and this runs at every filter sample, so a change's
+    // place is never already behind (`at < t`): checked by a probe over the whole B-Side suite and the full write set
+    // (S3b-2 closing round); were it so, it would simply be mixed into this sample's step.
     int n = 0;
     std::array<double, kMaxStepMix> alpha {};
     std::array<int, kMaxStepMix> res {};
     while (dynCount > 0 && dyn[static_cast<std::size_t> (dynHead)].at <= t)
     {
         const DynChange& d = dyn[static_cast<std::size_t> (dynHead)];
-        if (d.at < t)
-            filter->setResonance (d.resonance);
-        else if (n == kMaxStepMix)
+        if (n == kMaxStepMix)
         {
             // more than kMaxStepMix changes in one sample: the last kept one takes this one's resonance (its place
             // stays), so the parameters after the sample are always the newest written

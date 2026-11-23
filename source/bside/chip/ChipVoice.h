@@ -43,11 +43,15 @@
 //   within 0.45 samples of Per Note's on Model B, 0.56 on Model A's mode writes, whose step the 2x part's interpolated
 //   output function stretches about 1.2 times; identical outside the window). The 0.02-sample timing of 8.19.4 is Per
 //   Note's. To reach it in Shared (S4 OBLIGATION, 8.19.4 after the second review: the plugin's owner does this or records
-//   the half-sample deviation): take the write's place from Chip::renderEventTime () and its band-limited weights from
-//   Chip::unitStepTaps () (as ChipVoice::queue does), run two filters over the write's window (one keeps the old
-//   configuration, one takes the new; their states part for a resonance write, which the weights confine to the
-//   window), and blend per bus sample their linear outputs, their low-pass values and their output functions
-//   (Filter::Shape) with those weights before handing them to finishShared.
+//   the half-sample deviation) by the rule Per Note uses ("TIMING", ONE STATE), not by two filters run apart (that was
+//   the abandoned two-copy scheme: a further write inside the window ended it, -78 dB): take the write's place from
+//   Chip::renderEventTime () and its band-limited weights from Chip::unitStepTaps () (as ChipVoice::queue does); keep
+//   ONE shared filter state; at the write's place, between two bus samples, take the one step that contains it mixed
+//   from the old and the new parameters (the part of the step before the place with the old: Filter::state / setState
+//   on copies of the filter, as ChipVoice::stepDynamics does), the new dynamics after it; over the window blend per bus
+//   sample the old and the new configuration's OUTPUT EQUATIONS on that one state (Filter::peekLinearDouble: linear
+//   output, low-pass value, Filter::Shape) with those weights before handing them to finishShared; a cutoff write
+//   from its own sample on, in the state and in every output equation alike.
 // The voice's own 0x18 still sets its stage (volume, the mixer's gain for the selected modes, oscillator 3's mute).
 // Shared runs no filter copy in the voice. The owner hands over the shared filter's output function per bus sample too
 // (finishShared: its Filter::Shape), so a mode or resonance write inside an owner block takes effect at its sample.
@@ -78,6 +82,11 @@
 //   another: a volume, mode, routing or cutoff write inside a resonance write's window leaves the resonance's place
 //   where it was, and the cutoff reaches the one state at its sample. setFilter is safe at any time (the dynamics
 //   changes still waiting belong to the filter left and are dropped; nothing is run on a missing filter).
+//   Model A: each configuration's LINEAR output is its own output equation on the one state, but its output function
+//   (Filter::Shape) acts on the newest configuration's low-pass value (the 2x part interpolates one low-pass stream;
+//   the old configurations' low-pass values, which differ by their output weights only, are not carried): within the
+//   write's window an old configuration's shaped part is off by the difference of the two low-pass rows on the state.
+//   Bounded by the write gate (resonance and mode writes alone and with other writes, Model A: excess at most -97 dB).
 // - VOLUME and MODE (0x18 bits 0..6): band-limited. The configuration before the write (a copy of the stage and, Per
 //   Note, of the filter's output parameters, evaluated on the one state) and the one after it are both computed over
 //   the write's window, and their mixer outputs (and post gains, volume DC off) are blended with the
@@ -97,7 +106,19 @@
 //   in one sample: the last kept one takes the newest resonance at its place). Capacity: kMaxPending (32) changes may
 //   wait for their place; a further one applies the oldest at once (only with 32 resonance changes inside one window).
 //   They wait in order and never interact with the blend's capacity (kMaxConfigs): retiring a configuration early moves
-//   no dynamics. Tested: the place by itself against a twin filter, to the 0.05-sample grid of the test (a place one
+//   no dynamics. Both limits are tested at and one beyond the limit against a twin of this rule (to 1e-12; "resonance
+//   changes in combination"). What bursts beyond the limits cost (the fourth review, off-line against its ideal render,
+//   a burst every tick): six changing writes within 30 cycles (beyond kMaxConfigs) -80 dB on Model A; forty resonance
+//   writes one per cycle (beyond kMaxPending and kMaxStepMix) -67 dB on Model A, -75.7 dB on Model B; six resonance
+//   writes in one sample -90.4 dB. Inside the limits the gate holds -90 dB.
+//   Cost of a resonance write (chip_bench, 96 kHz, the S4 gate patch): about 0.37 us (Model B) and 0.58 us (Model A)
+//   with the cutoff standing still; with it moving (processWithCutoff) about 2.1 us and 3.3 us, because each step copy
+//   and the filter itself rebuild processWithCutoff's table after setResonance (the table depends on the resonance:
+//   rebuilt about three times per write, 0.6 to 0.85 us each); a tick writing cutoff, resonance, mode and volume at
+//   once with the cutoff moving about 3.5 us and 6.0 us per voice (resB, resA, resMoveB, resMoveA, tickB, tickA). The
+//   rebuilds are not all necessary: the newest output parameters (outNow) already hold the new resonance's table, and
+//   the step copy and the filter could take theirs from it instead of rebuilding (two of the three); not done in S3b-2
+//   (S4 may need it for its budget). Tested: the place by itself against a twin filter, to the 0.05-sample grid of the test (a place one
 //   sample off fails); the excess over an ideal render at 32 times the rate for a write every tick, alone and with a
 //   volume, mode or cutoff write 1, 10, 40 or 200 cycles before or after it, both models, 88.2, 96 and 192 kHz (at most
 //   -90 dB up to 2 kHz; the old two-copy placement measured -81 dB with a volume write 10 cycles later).

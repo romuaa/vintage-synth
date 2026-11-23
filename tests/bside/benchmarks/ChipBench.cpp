@@ -28,6 +28,8 @@
 //   chainB, chainA     a cutoff write every tick (the filter runs process: setCutoff once per write)
 //   moveB, moveA       a cutoff write every 64 samples (moving: Filter::processWithCutoff every sample)
 //   plainB, plainA     chainB / chainA without their cutoff writes
+//   resMoveB, resMoveA moveB / moveA with a resonance change every 64 samples (a resonance write with the cutoff moving)
+//   tickB, tickA       moveB / moveA with resonance, mode and volume written with each cutoff (the worst realistic tick)
 //   resB, resA         plainB / plainA with a resonance change every 64 samples (the cost of a write: the difference x 64)
 //   busesB, busesA     the same patch, Chip::renderBusesUntil alone (the buses' share of chainB / chainA)
 // The breakdown per stage: busesX is the renderer with its buses; chainX - busesX the filter, the stage and the voice's
@@ -347,8 +349,16 @@ double chainNsPerSample (Model m, double rate, int which)
                     v->write (0x16, static_cast<std::uint8_t> (0x60 + (ticks * 7) % 64));
                 ++ticks;
             }
-            if (which == 1 && got == 64)
+            if ((which == 1 || which == 6 || which == 7) && got == 64)
                 v->write (0x16, static_cast<std::uint8_t> (0x60 + (++blocks * 5) % 64));
+            if (which == 6 && got == 64)
+                v->write (0x17, static_cast<std::uint8_t> ((blocks % 2) == 0 ? 0x83 : 0xf3));
+            if (which == 7 && got == 64)
+            {
+                // the worst realistic tick: cutoff (above), resonance, mode and volume at once, the cutoff moving
+                v->write (0x17, static_cast<std::uint8_t> ((blocks % 2) == 0 ? 0x83 : 0xf3));
+                v->write (0x18, static_cast<std::uint8_t> ((blocks % 2) == 0 ? 0x1f : 0x2c));
+            }
             if (which == 4 && got == 64)
                 v->write (0x17, static_cast<std::uint8_t> ((++blocks % 2) == 0 ? 0x83 : 0xf3)); // a resonance change every 64 samples
         }
@@ -568,6 +578,10 @@ int main (int argc, char** argv)
                                { "plainA", Model::A, 5, "chainA without the cutoff writes (the base of resA)" },
                                { "resB", Model::B, 4, "plainB with a resonance change every 64 samples ((resB - plainB) x 64: one write)" },
                                { "resA", Model::A, 4, "plainA with a resonance change every 64 samples ((resA - plainA) x 64: one write)" },
+                               { "resMoveB", Model::B, 6, "moveB with a resonance change every 64 samples ((resMoveB - moveB) x 64: one write, cutoff moving)" },
+                               { "resMoveA", Model::A, 6, "moveA with a resonance change every 64 samples ((resMoveA - moveA) x 64: one write, cutoff moving)" },
+                               { "tickB", Model::B, 7, "moveB with resonance, mode and volume written with each cutoff ((tickB - moveB) x 64)" },
+                               { "tickA", Model::A, 7, "moveA with resonance, mode and volume written with each cutoff ((tickA - moveA) x 64)" },
                                { "busesB", Model::B, 2, "the buses alone, S4 gate patch, Model B" },
                                { "busesA", Model::A, 2, "the buses alone, S4 gate patch, Model A (voice bend included)" },
                                { "busesA0", Model::A, 3, "busesA without the voice bend (busesA - busesA0: the bend in the renderer)" } };
