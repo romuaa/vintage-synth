@@ -2057,6 +2057,51 @@ chain's output.
 - **Unchanged:** any split bit-identical; silence in gives exact zeros out after the filters'
   length; no allocation; a routing or volume write enters before the pre-filter or is ramped
   over its length, and still meets the write budget of S3b-1.
+- **After the independent review of S3b-2 (2026-11-23; these win over the S3b-2 points above):**
+  - **The alias gate, restated.** As first written (every row at an absolute limit relative to
+    the first voice's fundamental at the output) it cannot be met on band-pass, high-pass and
+    high-resonance rows by any treatment of the curves: the filter cuts the reference
+    fundamental by up to 46 dB, or lifts the renderer's own components (inside their budget of
+    8.4.5 on the buses) near its corner. Measured: 467 real-chip rows over the limit with the
+    curves' aliasing at zero. The gate is now three statements, all asserted:
+    (a) **ideal band-limited voices fed into the chain's buses:** the absolute limits (Model B
+    at most -103 dB; Model A at most -99 dB up to 2 kHz and -83 dB up to 3.85 kHz) on every
+    row of the set; (b) **real chips:** the same absolute limits on the all-direct rows and
+    the low-pass rows at resonance 0; (c) **real chips, every other row:** within 1 dB of the
+    same chain with its curves evaluated at four times the rate through filters of at least
+    120 dB (a test-side reference; the excess over it is the curves' aliasing, the only thing
+    this step can change). Measurement and signal set are unchanged.
+  - **No conditional pass.** A test may not pass because its failing rows belong to a class.
+    The default run holds a reduced set (88.2 and 96 kHz) that asserts (a), (b) and (c)
+    outright; the full set is run by tag before every hand-over and its figures are recorded.
+  - **Model A's mixer past the end of its curve.** The curve was clamped flat there, with a
+    jump in curvature; two or three full-level voices at resonance 15 reach it and fold at
+    twice the rate (9 rows, up to 14 dB over). **The continuation is made smooth** (value,
+    slope and curvature continuous at the join, monotonic, bounded), at no cost per sample.
+    The fitted range is not changed: the gated `a_*` traces do not reach the region (their
+    minimum is above it) and keep passing unchanged; the reported `a_s3a_*` lines are
+    compared before and after and may not get worse by more than 0.1 dB. Four times the rate
+    for Model A's curves is not taken (cost; the owner's S4 question). If the smooth
+    continuation does not bring all 9 rows inside the limit, the rows are reported with their
+    figures and the owner decides.
+  - **Pre-filter and 2x half-bands:** the length is designed per rate to the smallest that
+    meets the pass band (0.01 dB to 20 kHz) and the stop band (for a half-band the two are
+    one condition: about 59 dB), instead of one window shape with pairs only added. Model B's
+    budget of 7 ns per internal sample at 96 kHz (filter + output stage + pre-filter) stays.
+  - **Timing of everything that changes with a write:** the output function's coefficients,
+    the gain and the voice counts are delayed exactly with the signal they act on, to the
+    half sample at twice the rate (the interpolated sample takes the interpolated
+    coefficients). A mode, resonance, routing or volume write lands within 0.02 internal
+    samples (centroid of the step) of where `latencySamples ()` says, on both models, Per
+    Note and Shared; tested per write type. Found by the review: Model A's coefficients half a
+    2x sample early (mode writes 0.31 samples early); voice counts not delayed.
+  - **Shared:** `ChipVoice.h` states for the owner that the shared filter's cutoff, resonance
+    and mode take effect `filterLagSamples ()` after the write, and a Shared mode write is
+    tested against Per Note.
+  - **Tests that must exist and fail on their mutation:** a Model A pitch glide and converter
+    switch with the bend on (the slope term); sync and ring with a bent sawtooth; the write
+    timing per type above; the chain's output after the filter with a moving cutoff (the
+    S3b-1 test compared the whole chain; its replacement covers the filter only).
 
 ### 8.20 Alias follow-up step (contract, 2026-11-19; owner decision 2026-11-18: fix, no exemption)
 Fixes known defects 1 and 2 of 8.18.1 in the renderer. Runs beside S3a.
