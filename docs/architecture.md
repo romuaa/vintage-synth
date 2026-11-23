@@ -2160,6 +2160,27 @@ chain's output.
     continuation (continuity of value, slope and curvature at the joins, monotonic, bounded,
     bit-identical between the joins to the fitted curve); the cost of the continuation outside
     the joins is stated (about 1 ns per call there, none inside).
+- **After the round over phases (2026-11-23; orchestrator, review; these win over the bullet above where they differ):**
+  - **The overdriven class as measured over five constellations:** 16 listed rows; the excess
+    over the full limit reaches 12.4 dB at 88.2 kHz and 11.1 dB at 96 kHz (three voices at
+    2 kHz), 0.2 dB at 128 kHz, none above. Owner decision O8: the pin stands.
+  - **Model B rows outside the class that miss (c)** (found: two rows through the band-pass at
+    resonance 15, 0.5 and 0.9 dB over the reference + 1 dB, one constellation each) are not
+    pinned and not accepted: one bounded attempt to bring them inside by the design of Model
+    B's stages within the 7 ns budget, after establishing by measurement what produces the
+    excess. If it fails, the rows are reported and the owner decides.
+  - **Shared, mode write on Model A:** the switch is within 0.5 samples; the output step may
+    reach 0.6 samples, because the 2x part interpolates the output function across the step.
+  - **Resonance writes and the write budget:** a resonance write changes the filter itself, so
+    part of what follows it is the filter's own answer to the change, not a discontinuity.
+    The budget of 8.4.5 applies to the excess over the same write rendered ideally (the chain
+    at eight times the rate or more, band-limited): at most -90 dB up to 2 kHz for that
+    excess, a write every tick, resonance 0 <-> 15 and 4 <-> 12, low-pass and band-pass, both
+    models. A row whose excess is over -90 dB is a defect to fix, not to report.
+  - **Run time:** the alias gate's part of the default run stays under 45 s on the development
+    machine (it also runs under the sanitizers, whose CI job has a 60-minute limit); it holds
+    every listed row in its worst constellation and in the common reset. The full set over
+    all constellations runs by tag before every hand-over.
 
 ### 8.20 Alias follow-up step (contract, 2026-11-19; owner decision 2026-11-18: fix, no exemption)
 Fixes known defects 1 and 2 of 8.18.1 in the renderer. Runs beside S3a.
