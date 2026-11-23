@@ -1996,6 +1996,27 @@ the committed `a_filter_a` settings, and no gate of this section is set on them.
 - **Listening:** filter sweeps of both models rendered through the chain for the owner (8.10),
   outside the repository.
 
+- **After the independent review (2026-11-23; these win over the points above):**
+  - **Shared is exact per sample.** The static output the stages need is taken per internal
+    sample, not per block of the owner: Shared with one chip equals Per Note bit for bit, and
+    Shared output is identical for any block length of the owner, also across routing and mute
+    writes and with `volumeDc` off (tested with n = 1 and 2, two block lengths, routing writes).
+    "Model B Shared equals Per Note" is claimed for identical voices only: with different notes
+    each chip's mixer curve sees its share of the summed filter output, a property of the
+    topology (measured -39 to -30 dB rms against Per Note); the header says so with the figure.
+  - **Write timing follows the reference:** a routing, mute, volume or mode write takes effect
+    at the cycle the reference shows (the first build was about one cycle late), checked on
+    isolated steps against generated traces to a quarter of a cycle.
+  - **The single sum** equals the sum of the two buses plus a muted oscillator 3, which is on
+    neither bus.
+  - **Latency is a run-time value** (`latencySamples()` of the chain, fixed at `prepare`), so
+    S3b-2's rate-dependent pre-filters need no further interface change.
+  - **Cost:** the 1 ns allowance is for the buses without Model A's per-voice bend (the bend is
+    the output stage's work moved into the renderer; it is reported with the chain). A Model B
+    case over 1 ns after one more attempt is reported with its figure, not hidden.
+  - **Tests that can fail:** the volume with `volumeDc` off, `processWithCutoff` while the
+    cutoff moves, the cycle of a cutoff or resonance write and the static DC following the voice
+    counts are each pinned by a test shown to fail on a mutation.
 **S3b-2: aliasing of the static curves** (after S3b-1; design study of 2026-11-23, prototypes in
 the developer cache). The static curves run on full-band signals at the internal rate and fold
 (measured as built: Model B mixer -67 dB, Model A voice bend and mixer -53 dB for a 3.85 kHz
