@@ -682,7 +682,8 @@ TEST_CASE ("output stage: a volume write with held voices: volume DC off does no
     // The write goes 15 -> 6 (a target other than 0: a volume applied before the board high-pass, or twice, would step
     // the DC). With volumeDc on the same write steps the DC as the chip does: the mixer's DC step (OutputStage::
     // mixerOutput, its mean over the same windows) through the board high-pass (1.196 Hz: the mean of its step response
-    // over the window), within 3 %.
+    // over the window), within 3 %. Both ways the audio (its rms once the high-pass has settled again) scales by the
+    // volume's level ratio, within 2 %.
     for (const Model m : { Model::A, Model::B })
         for (const bool routed : { false, true })
             for (const bool vdc : { false, true })
@@ -700,9 +701,9 @@ TEST_CASE ("output stage: a volume write with held voices: volume DC off does no
                     o.setFilterStaticDc (f.staticOutput (o.staticFilterBusDc()));
                 };
                 setRegs (routed ? 0x01 : 0x00, 0x1f);
-                double phase = 0.0, mixMean = 0.0;
+                double phase = 0.0, mixMean = 0.0, rms = 0.0;
                 auto run = [&] (double seconds, bool measure) {
-                    double sum = 0.0, mix = 0.0;
+                    double sum = 0.0, mix = 0.0, sq = 0.0;
                     const int n = static_cast<int> (seconds * rate);
                     for (int i = 0; i < n; ++i)
                     {
@@ -712,17 +713,23 @@ TEST_CASE ("output stage: a volume write with held voices: volume DC off does no
                         const float v = OutputStage::shapeVoice (m, u, 1.0f);
                         const float fOut = f.process (o.filterBusLevel (routed ? v : 0.0f, routed ? 1.0f : 0.0f));
                         mix += o.mixerOutput (fOut, routed ? 0.0f : v, routed ? 0.0f : 1.0f);
-                        sum += o.process (fOut, routed ? 0.0f : v, routed ? 0.0f : 1.0f);
+                        const double y = o.process (fOut, routed ? 0.0f : v, routed ? 0.0f : 1.0f);
+                        sum += y;
+                        sq += y * y;
                     }
                     mixMean = mix / n;
+                    rms = std::sqrt (std::max (0.0, sq / n - (sum / n) * (sum / n)));
                     return measure ? sum / n : 0.0;
                 };
                 // windows of exactly ten periods (90.9 ms): the triangle's own mean is 0 there, so what is left is DC
                 run (3.0, false);
                 const double before = run (10.0 / 110.0, true);
-                const double mixBefore = mixMean;
+                const double mixBefore = mixMean, rmsBefore = rms, levelBefore = o.volumeLevel();
                 setRegs (routed ? 0x01 : 0x00, 0x16); // volume 15 -> 6
                 const double after = run (10.0 / 110.0, true); // right after the write: a DC step would show here
+                run (0.5, false);
+                run (10.0 / 110.0, true); // the audio, once the high-pass has settled again
+                const double rmsRatio = rms / rmsBefore, levelRatio = o.volumeLevel() / levelBefore;
                 const double mixStep = mixMean - mixBefore;
                 const double stepDb = 20.0 * std::log10 (std::abs (after - before) + 1e-12);
                 // the board high-pass's step response a^(k+1), averaged over the window
@@ -731,6 +738,8 @@ TEST_CASE ("output stage: a volume write with held voices: volume DC off does no
                 const double hpMean = hpA * (1.0 - std::pow (hpA, window)) / (1.0 - hpA) / window;
                 INFO ("model " << (m == Model::A ? "A" : "B") << (routed ? " low-pass" : " direct") << " volume DC " << vdc << ": DC step " << after - before
                                << " (" << stepDb << " dBFS); the mixer's " << mixStep << " x the high-pass's " << hpMean);
+                CHECK (std::abs (rmsRatio / levelRatio - 1.0) < 0.02); // the volume scales the audio once, both ways
+                CHECK (levelRatio < 0.6);
                 if (! vdc)
                     CHECK (stepDb < -60.0);
                 else
