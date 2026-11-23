@@ -2170,6 +2170,155 @@ chain's output.
 - **Unchanged:** any split bit-identical; silence in gives exact zeros out after the filters'
   length; no allocation; a routing or volume write enters before the pre-filter or is ramped
   over its length, and still meets the write budget of S3b-1.
+- **After the independent review of S3b-2 (2026-11-23; these win over the S3b-2 points above):**
+  - **The alias gate, restated.** As first written (every row at an absolute limit relative to
+    the first voice's fundamental at the output) it cannot be met on band-pass, high-pass and
+    high-resonance rows by any treatment of the curves: the filter cuts the reference
+    fundamental by up to 46 dB, or lifts the renderer's own components (inside their budget of
+    8.4.5 on the buses) near its corner. Measured: 467 real-chip rows over the limit with the
+    curves' aliasing at zero. The gate is now three statements, all asserted:
+    (a) **ideal band-limited voices fed into the chain's buses:** the absolute limits (Model B
+    at most -103 dB; Model A at most -99 dB up to 2 kHz and -83 dB up to 3.85 kHz) on every
+    row of the set; (b) **real chips:** the same absolute limits on the all-direct rows and
+    the low-pass rows at resonance 0; (c) **real chips, every other row:** within 1 dB of the
+    same chain with its curves evaluated at four times the rate through filters of at least
+    120 dB (a test-side reference; the excess over it is the curves' aliasing, the only thing
+    this step can change). Measurement and signal set are unchanged.
+  - **No conditional pass.** A test may not pass because its failing rows belong to a class.
+    The default run holds a reduced set (88.2 and 96 kHz) that asserts (a), (b) and (c)
+    outright; the full set is run by tag before every hand-over and its figures are recorded.
+  - **Model A's mixer past the end of its curve.** The curve was clamped flat there, with a
+    jump in curvature; two or three full-level voices at resonance 15 reach it and fold at
+    twice the rate (9 rows, up to 14 dB over). **The continuation is made smooth** (value,
+    slope and curvature continuous at the join, monotonic, bounded), at no cost per sample.
+    The fitted range is not changed: the gated `a_*` traces do not reach the region (their
+    minimum is above it) and keep passing unchanged; the reported `a_s3a_*` lines are
+    compared before and after and may not get worse by more than 0.1 dB. Four times the rate
+    for Model A's curves is not taken (cost; the owner's S4 question). If the smooth
+    continuation does not bring all 9 rows inside the limit, the rows are reported with their
+    figures and the owner decides.
+  - **Pre-filter and 2x half-bands:** the length is designed per rate to the smallest that
+    meets the pass band (0.01 dB to 20 kHz) and the stop band (for a half-band the two are
+    one condition: about 59 dB), instead of one window shape with pairs only added. Model B's
+    budget of 7 ns per internal sample at 96 kHz (filter + output stage + pre-filter) stays.
+  - **Timing of everything that changes with a write:** the output function's coefficients,
+    the gain and the voice counts are delayed exactly with the signal they act on, to the
+    half sample at twice the rate (the interpolated sample takes the interpolated
+    coefficients). A mode, resonance, routing or volume write lands within 0.02 internal
+    samples (centroid of the step) of where `latencySamples ()` says, on both models, Per
+    Note and Shared; tested per write type. Found by the review: Model A's coefficients half a
+    2x sample early (mode writes 0.31 samples early); voice counts not delayed.
+  - **Shared:** `ChipVoice.h` states for the owner that the shared filter's cutoff, resonance
+    and mode take effect `filterLagSamples ()` after the write, and a Shared mode write is
+    tested against Per Note.
+  - **Tests that must exist and fail on their mutation:** a Model A pitch glide and converter
+    switch with the bend on (the slope term); sync and ring with a bent sawtooth; the write
+    timing per type above; the chain's output after the filter with a moving cutoff (the
+    S3b-1 test compared the whole chain; its replacement covers the filter only).
+- **After the fix round of S3b-2 (2026-11-23; owner decision O6 "pin"; these win over the bullet above):**
+  - **Statement (c) corrected (orchestrator, review):** a real-chip row passes when it is
+    inside the absolute limit of its model, **or** within 1 dB of the 4x reference. A row that
+    already meets the budget does not also have to match the reference (found: rows at -111
+    to -144 dB up to 0.7 dB above it).
+  - **Model A with the mixer overdriven: a known deviation, pinned (owner, O6).** Rows of the
+    set in which Model A's mixer input leaves the range its curve was fitted on (two or three
+    full-level voices through the filter at resonance 15) and that miss (a) or (c) after the
+    smooth continuation are listed by name in the test with their measured figure, and each is
+    gated at that figure + 1 dB: it fails when it gets worse. The list is closed: a row not on
+    it gets the full limits, and a listed row that comes inside the limits must be taken off
+    the list (the test fails on a stale entry). Measured at the pin: (a) four rows at 88.2 and
+    96 kHz, -93.4 to -96.7 dB against -99 dB; (c) up to 18 dB above the 4x reference at 88.2
+    to 192 kHz. Model B has no pinned row. Four times the rate for Model A's curves is not
+    taken. **Open, to revisit with the Model A filter form (O4, O5) and the S4 budget:** both
+    change the level that reaches the mixer.
+  - **Two bend mutations stay reported, not tested (orchestrator, review):** the slope term at
+    a converter switch (no output changes; if the site is unreachable for a bent sawtooth it is
+    removed or marked as such in the code) and the cell update of the derivative at an event
+    (at most 2.5e-5).
+- **After the second independent review of S3b-2 (2026-11-23; these win over the two bullets above):**
+  - **The overdriven deviation is a class, measured over phases.** The pinned figures of the
+    first closing round held for one constellation of voice phases only: with other phases the
+    pinned rows are up to 6 dB worse, and rows outside the list fail (three voices at 3.85 kHz
+    at 88.2 and 96 kHz: -79.0 and -80.4 dB against -83; three voices at 2 kHz at 128 kHz).
+    The gate therefore runs every multi-voice row over a fixed set of phase constellations
+    that includes all voices at phase 0 (a common reset) and the first round's set, and takes
+    the worst. A row is in the overdriven class when Model A's mixer input leaves the fitted
+    range in that constellation (checked by the test, as before). Rows of the class that miss
+    (a) or (c) are listed with their worst figure over the constellations and gated at that
+    figure + 1 dB; **two-sided:** a listed row that measures more than 2 dB better than its
+    figure, or comes inside the limits, fails as stale. Every row outside the class meets the
+    full limits in every constellation. The records state the real extent: the excess over
+    the limit reaches about 10 dB, at 88.2, 96 and 128 kHz, at 2 kHz and 3.85 kHz.
+  - **Shared, mode and resonance writes:** the 0.02-sample timing is Per Note's. In Shared the
+    owner of the shared filter applies the write; an owner that switches at one sample is up
+    to one sample late as built (measured +1.06). For S3b-2: the documented rule becomes the
+    nearest sample (within 0.5 samples, tested at every rate and several write positions,
+    mode and resonance, both models), and `ChipVoice.h` states what an owner must do to reach
+    0.02 (the write's band-limited weights from `Chip::renderEventTime` / `unitStepTaps`, two
+    filters over the window, a blend of their linear outputs, shapes and low-pass value).
+    **S4 obligation:** the plugin's shared-filter owner does that blend, or records the
+    half-sample deviation.
+  - **Routing write that changes Model A's voice counts:** held to 0.1 samples, not 0.02: the
+    gain step (counts delayed, not filtered) times the smoothed signal step centres 0.06 to
+    0.07 samples late with the timing exact (confirmed by the review at the buses: 0.0000).
+    Model B is held to 0.02 in the same case.
+  - **Bit-identity and contraction of multiply-add:** the option that keeps GCC from fusing
+    across statements applies to the chip sources wherever they are compiled, the B-Side
+    plugin target included, from this step on (one place in the build, not a note for later).
+  - **The reported `a_s3a_voices_a` worst peak** moves from 3.50 to 3.72 dB because one segment
+    became measurable under the smooth continuation; accepted against the 0.1 dB rule above
+    (orchestrator, review): no gated line and no previously measured line moves by more than
+    0.02 dB.
+  - **Also required:** resonance writes in the write-budget test; a unit test of the mixer
+    continuation (continuity of value, slope and curvature at the joins, monotonic, bounded,
+    bit-identical between the joins to the fitted curve); the cost of the continuation outside
+    the joins is stated (about 1 ns per call there, none inside).
+- **After the round over phases (2026-11-23; orchestrator, review; these win over the bullet above where they differ):**
+  - **The overdriven class as measured over five constellations:** 16 listed rows; the excess
+    over the full limit reaches 12.4 dB at 88.2 kHz and 11.1 dB at 96 kHz (three voices at
+    2 kHz), 0.2 dB at 128 kHz, none above. Owner decision O8: the pin stands.
+  - **Model B rows outside the class that miss (c)** (found: two rows through the band-pass at
+    resonance 15, 0.5 and 0.9 dB over the reference + 1 dB, one constellation each) are not
+    pinned and not accepted: one bounded attempt to bring them inside by the design of Model
+    B's stages within the 7 ns budget, after establishing by measurement what produces the
+    excess. If it fails, the rows are reported and the owner decides.
+  - **Shared, mode write on Model A:** the switch is within 0.5 samples; the output step may
+    reach 0.6 samples, because the 2x part interpolates the output function across the step.
+  - **Resonance writes and the write budget:** a resonance write changes the filter itself, so
+    part of what follows it is the filter's own answer to the change, not a discontinuity.
+    The budget of 8.4.5 applies to the excess over the same write rendered ideally (the chain
+    at eight times the rate or more, band-limited): at most -90 dB up to 2 kHz for that
+    excess, a write every tick, resonance 0 <-> 15 and 4 <-> 12, low-pass and band-pass, both
+    models. A row whose excess is over -90 dB is a defect to fix, not to report.
+  - **Run time:** the alias gate's part of the default run stays under 45 s on the development
+    machine (it also runs under the sanitizers, whose CI job has a 60-minute limit); it holds
+    every listed row in its worst constellation and in the common reset. The full set over
+    all constellations runs by tag before every hand-over.
+- **After the third independent review of S3b-2 (2026-11-23; these win over the bullets above):**
+  - **Writes that change the filter's dynamics, in any combination.** The placement of a
+    resonance write between two samples held for a resonance write on its own only. Found: a
+    volume or mode write whose window opens inside it ended the placement early (excess back
+    at -78.7 dB on Model A with a volume write 10 cycles after the resonance write, the usual
+    order of a player routine); a cutoff write inside it did not reach the two copies (the
+    cutoff up to 8 samples late, the output off by up to -12 dB relative to peak for about 300
+    samples); switching to Shared (`setFilter (nullptr)`) inside it crashed. The rule: every
+    write lands where the contract says **whatever other writes are pending**: cutoff from its
+    own sample on in every copy; resonance and mode dynamics at the write's place; a volume,
+    mode, routing or cutoff write never moves another write. `setFilter` is safe at any time.
+  - **Gates:** the excess over the ideal render at most -90 dB up to 2 kHz for a write every
+    tick, for resonance alone and for resonance followed by a volume write, a mode write and a
+    cutoff write at 1, 10, 40 and 200 cycles, and in the reverse order, both models, 88.2, 96
+    and 192 kHz. The ideal render is the same chain (Model B's pre-filter included) at a rate
+    whose own placement error is at least 6 dB below the gate on every gated row (16 times or
+    more where 8 times is not), and a row whose ideal cannot get there is reported, not gated.
+    **The place of the dynamics is tested by itself:** a change of the place by one sample
+    fails a test (the off-line measure cannot see an error that repeats at every write).
+  - **Simpler if possible:** if these cannot all hold with the two-copy mixture, the mechanism
+    is replaced by one rule for all dynamics changes rather than patched case by case; the
+    cost of a write is reported, the cost per sample with no writes stays as it is (Model B
+    filter + stage + pre-filter within 7 ns at 96 kHz).
+  - **The reduced alias gate** holds every listed row so that removing any single entry fails
+    the default run (found: three of sixteen escaped it).
 
 ### 8.20 Alias follow-up step (contract, 2026-11-19; owner decision 2026-11-18: fix, no exemption)
 Fixes known defects 1 and 2 of 8.18.1 in the renderer. Runs beside S3a.

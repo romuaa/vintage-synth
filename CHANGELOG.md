@@ -23,6 +23,104 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   constants. A cutoff every sample (`processWithCutoff`, Model A) got cheaper from code 480 up (29 -> 21 ns in
   `chip_bench`); below 480 it costs what it did.
 
+### B-Side S3b-2 closing round after the fourth review (2026-11-23)
+- Tests: the write gate holds resonance writes alone through the low-, band-, high- and band + high-pass (0 <-> 15 and
+  4 <-> 12, volume DC on and off) besides the combinations: 240 rows in the full set, worst -90.7 dB (Model B, 88.2 kHz,
+  band + high-pass; budget -90); combinations of resonance changes (several in one sample, two writes 0 to 10 cycles
+  apart, the stated capacities at and beyond their limits) equal a twin of the documented rule to 1e-12; a read past
+  the end in the test's measure (found by AddressSanitizer) fixed.
+- Records: the cost of a resonance write with the cutoff moving (about 2 to 3 us; a full tick up to 6 us per voice),
+  the Shared owner's obligation for the one-state rule, the limits with what bursts beyond them cost.
+
+### B-Side S3b-2 round after the third review (2026-11-23)
+- Writes that change the filter's dynamics hold in any combination: per voice the filter keeps one state, each
+  resonance write changes its dynamics at the write's place between two samples and each cutoff write from its own
+  sample on, and the configurations being blended are output equations on that state. A volume or mode write right
+  after a resonance write no longer ends its placement early (it did: -78.7 dB on Model A), a cutoff write inside a
+  resonance write's window lands at its sample (it was up to 8 samples late), and switching a voice to a shared filter
+  at any moment is safe (it crashed inside a resonance write's window).
+- Tests: the excess over an ideal render at 32 times the rate for resonance writes alone and with a volume, mode or
+  cutoff write 1 to 200 cycles before or after, both models, 88.2, 96 and 192 kHz: worst -97.7 dB (budget -90); the
+  place of the dynamics by itself; combined writes bit for bit across any block split and across switches to Shared.
+- The reduced alias gate fails if any single pinned row is taken off the list (all 16 tried).
+
+### B-Side S3b-2 round after phases (2026-11-23)
+- Resonance writes are placed between samples: the filter's dynamics change at the write's place as a mixture of the
+  switch at the sample before and after it, while the output equation follows the band-limited blend. (This held for a
+  resonance write on its own only; replaced after the third review, see there.) Against an ideal
+  render of the same writes at eight times the rate (a write every tick, resonance 0 <-> 15 and 4 <-> 12, low-pass and
+  band-pass, both models, 88.2 and 96 kHz) the excess was up to -78.4 dB and is now at most -95.9 dB (budget -90).
+- The alias gate's four-times-the-rate reference now runs Model B's mixer input through the chain's own pre-filter, as
+  Model A's did: the two Model B rows reported in the second review round equal their reference. Every row of the full
+  set meets its rule; the 16 pinned Model A rows (owner decision O6/O8) are unchanged.
+- The write budget's reference line is the output's strongest line other than DC (with volume DC on the output's mean
+  had been taken as the line, flattering those rows by about 20 dB); every row still meets it.
+- The alias gate's part of the normal test run takes 26 s (was 161 s): every listed row in its worst constellation and
+  the common reset, a reduced set of the others; the full set by its tag.
+
+### B-Side S3b-2 second review round (2026-11-23)
+- Alias gate over voice phases: every multi-voice row runs in five phase constellations (all voices at phase 0
+  among them) and the worst counts. **Known deviation (owner decision O6), its real extent:** with Model A's mixer
+  overdriven (two or three full-level voices through the low-pass at full resonance) the static curves fold back up to
+  12.4 dB over the limit at 88.2 kHz, 11.1 dB at 96 kHz and 0.2 dB at 128 kHz internal rate, at 2 kHz and at
+  3.85 kHz, depending on the voices' phases. 16 such rows are listed in the test with their worst figures and gated at
+  figure + 1 dB, two-sided (a row more than 2 dB better, or inside the limits, fails as stale).
+- Two Model B rows through the resonant band-pass seemed to exceed the four-times-the-rate reference + 1 dB by 0.5 and
+  0.9 dB in one phase constellation; the round after phases found the reference at fault (see there).
+- Shared: the owner of a shared filter switches a mode or resonance write at the nearest sample
+  (`ChipVoice::sharedSwitchSample`, new): within 0.5 samples of Per Note's band-limited step (was up to 1.06). The
+  0.02-sample timing remains Per Note's; `ChipVoice.h` states what an owner must do to reach it (S4).
+- GCC's contraction of multiply-adds is off for the chip code in every target that compiles it, the B-Side plugin
+  included, set in one place in the build.
+- The mixer curve's continuation has its own unit test; at most five configurations are blended at once (tested).
+  (Resonance writes: see the round after phases.)
+
+### B-Side S3b-2 closing round (2026-11-23)
+- Alias gate (8.19.4): a real-chip row now passes inside its model's absolute limit or within 1 dB of the
+  four-times-the-rate reference. (The figures below held for one phase constellation; see the second review round.)
+- **Known deviation (owner decision O6):** with Model A's mixer overdriven (two or three full-level voices at 2 kHz
+  through the low-pass at full resonance, 88.2 and 96 kHz internal rate) the static curves fold back to -91.2 to
+  -97.0 dB against the -99 dB limit, up to 18 dB above an ideally oversampled chain. These 8 rows are listed in the
+  test with their measured figures and gated at figure + 1 dB (closed list: a row that improves or that does not
+  overdrive the mixer fails the test). To be revisited with the Model A filter form and the S4 budget.
+- The chip renderer no longer re-evaluates Model A's converter bits at every sample end (the branch was unreachable;
+  they switch at writes). Output unchanged.
+
+### B-Side S3b-2 review round (2026-11-23)
+- Write timing: Model A's output-function coefficients now follow the interpolated sample they act on (mode steps
+  landed 0.31 samples early); resonance writes blend two configurations like mode writes; every volume, routing, mode
+  and resonance write lands within 0.0005 samples of where `latencySamples ()` says, Per Note, and volume and routing
+  writes in Shared too (tested per type, both models); a routing write that changes Model A's voice counts within 0.1
+  samples (the gain's step times the signal's). (Corrected in the second review round: Shared mode and resonance
+  writes were up to 1.06 samples late, now within 0.5.) A shared filter's owner hands over its output function per
+  sample.
+- Model A's mixer curve continues smoothly past its fitted range (no flat clamp); the gated reference traces are
+  unchanged. Model A's 2x half-bands are about 100 dB; every half-band has the fewest pairs that meet the pass band.
+  Model B's filter, output stage and pre-filter now take 6.3 to 6.4 ns per sample at 96 kHz (budget 7: met).
+- The alias gate restated (8.19.4): met everywhere except Model A driven hard through the resonant low-pass (4 rows
+  with ideal voices, -93.4 to -96.7 dB against -99; 38 real-chip rows above the four-times-the-rate reference) and 6 rows
+  within 0.7 dB of the reference; the owner decided in the closing round (pinned, see above).
+
+### B-Side S3b-2: aliasing of the static curves (2026-11-23)
+- The chain's static curves run on band-limited signals: Model B's mixer input passes a linear-phase half-band FIR
+  (pass band to 20 kHz within 0.01 dB) before the curve; Model A's two buses pass the same FIR before the filter, and the
+  filter's output function, the mixer gain and the mixer curve run at twice the internal rate between two short
+  half-band filters (`HalfBand.*`, new). In Shared the 2x part runs per chip on its share (the owner hands over the
+  shared filter's linear output and low-pass value: `ChipVoice::finishShared` takes them).
+- Model A's voice bend is folded into the renderer (`Chip::renderBendVoices`, on in `ChipVoice`, off for a bare chip):
+  its steps and slope changes are those of the bent waveform, so the bend no longer folds; `OutputStage::shapeVoice`
+  is gone (`render::bend`).
+- The chain's latency grows by the filters' delay (Model B 8 + 21 samples at 96 kHz, Model A 8 + 21 + 7; at 88.2 kHz
+  8 + 41 and 8 + 41 + 7); writes still land at their cycle in the output.
+- Alias gate of 8.19.4 (decisions "B-Side S3b-2" A2, A3): met on every row whose curves stay inside their limits, at
+  every rate (Model B at worst -111.0 dB with real chips, -126.1 dB with ideal voices; Model A -115.6 / -117.7 dB);
+  not met on 9 rows where two or three full-level voices through Model A's low-pass at resonance 15 drive the mixer past
+  the limit of its curve (-78.9 to -98.3 dB). Real chips through the band- and high-pass are reported: there the
+  renderer's own components, weighed by the filter against voice 1's fundamental, decide the figure.
+- Wanted signal: pass band within 0.023 dB, products of sines within 0.011 dB and harmonics above -40 dB within
+  0.06 dB of the exact curves. Cost: Model B's filter, output stage and pre-filter take 7.6 to 7.8 ns per sample at
+  96 kHz, over the 7 ns budget (not met); Model A's added stages about 13.5 ns plus 4 ns for the bend.
+
 ### Tests: the editor feed's seqlock test no longer depends on the scheduler (2026-11-23)
 - "UiFeed: the held-order seqlock never hands out a torn copy" failed once on the Linux ARM64 CI runner: the writer
   thread never paused, so the reader was refused 5 million times and saw no consistent copy (`consistent > 0`). No

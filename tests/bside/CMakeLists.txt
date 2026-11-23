@@ -22,6 +22,7 @@ set(BS_JUCEFREE_SOURCES
     ${PROJECT_SOURCE_DIR}/source/bside/chip/CombinedWaveformParams.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/Filter.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/OutputStage.cpp
+    ${PROJECT_SOURCE_DIR}/source/bside/chip/HalfBand.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/ChipVoice.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/engine/ProgramEngine.cpp)
 
@@ -31,6 +32,7 @@ target_link_libraries(bs_juce_free PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 set_target_properties(bs_juce_free PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+bs_chip_fp_rules(bs_juce_free) # the chip code's rounding rules (top-level CMakeLists.txt, the one place)
 
 add_executable(bside_unit
     unit/TableSpecTests.cpp
@@ -64,6 +66,7 @@ add_executable(bside_unit
     unit/ChipRenderExactTests.cpp
     unit/ChipBusTests.cpp
     unit/ChipVoiceTests.cpp
+    unit/ChipVoiceAliasTests.cpp
     unit/FilterOutputTests.cpp unit/S3aCutoffLaw.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_unit PRIVATE BS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
@@ -91,6 +94,7 @@ target_link_libraries(bs_juce_free_placeholder PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 set_target_properties(bs_juce_free_placeholder PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+bs_chip_fp_rules(bs_juce_free_placeholder)
 add_executable(bside_independent unit/IndependentModelTests.cpp)
 target_link_libraries(bside_independent PRIVATE bs_juce_free_placeholder Catch2::Catch2WithMain)
 set_target_properties(bside_independent PROPERTIES COMPILE_WARNING_AS_ERROR ON)
@@ -151,6 +155,7 @@ if(VS_BUILD_BSIDE)
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)
     set_target_properties(bs_test_core PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+    bs_chip_fp_rules(bs_test_core)
 
     # BSideTests: the processor shell (parameters, state, presets, bypass, guard, arpeggiator through the
     # test tone, real-time safety). The JUCE-free test executables (bside_unit: chip, program, trace) are

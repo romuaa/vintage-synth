@@ -12,7 +12,8 @@
 // - PER VOICE (recordChip, when no sync or ring bit is ever written, so the voices do not interact): voice k is
 //   rendered by a chip given only voice k's register writes (and the filter's), minus two thirds of a chip given
 //   none (the two other voices' identical power-on output). The buses are then exact, every routing included,
-//   and each voice gets its own bend (OutputStage::shapeVoice) before it joins its bus, as the renderer of S3b will.
+//   and each voice gets its own bend (render::shapeVoice, per sample) before it joins its bus (S3b-2 folds the bend into the
+//   renderer; this harness keeps the per-sample form of S3a).
 // - SINGLE SUM (otherwise): per internal sample the sum goes to the bus of the voices that sound (envelope
 //   counter above 0); voices sounding on different paths make the sample *ambiguous*: its sum goes to the direct
 //   path, it is counted, and a gate leaves out every segment or frame that holds such a sample.
@@ -237,7 +238,7 @@ inline ChainRender runChain (const ChipRecord& rec, const ChainOptions& o = {})
                 envD += e;
             if (rec.perVoice)
             {
-                const float a = OutputStage::shapeVoice (rec.model, rec.voice[v][j], e);
+                const auto a = static_cast<float> (render::shapeVoice (rec.model, static_cast<double> (rec.voice[v][j]), static_cast<double> (e)));
                 if (routed)
                     aF += a;
                 else if (! off)
@@ -260,7 +261,7 @@ inline ChainRender runChain (const ChipRecord& rec, const ChainOptions& o = {})
                     ++sounding;
                     eOne = envTable[rec.counters[j][v]];
                 }
-            const float a = sounding == 1 ? OutputStage::shapeVoice (rec.model, rec.voice[0][j], eOne) : rec.voice[0][j];
+            const float a = sounding == 1 ? static_cast<float> (render::shapeVoice (rec.model, static_cast<double> (rec.voice[0][j]), static_cast<double> (eOne))) : rec.voice[0][j];
             if (bus == 1)
                 aF = a;
             else if (bus != 2)

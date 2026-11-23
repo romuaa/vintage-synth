@@ -224,7 +224,10 @@ TEST_CASE ("buses: each oscillator on the bus its routing bit names, oscillator 
     // Every routing byte (three bits) with and without the mute, set before the render. Each voice alone is measured
     // from single sums (a chip given only that voice's setup, minus two thirds of a chip given none: the other voices'
     // identical power-on output); the buses must hold exactly the voices their routing names, with their envelope
-    // values and counts. Model B, and Model A without its bend (with it, the bus carries each voice bent: checked too).
+    // values and counts. Model B, and Model A without its bend (with it, the bus carries each voice bent: checked too,
+    // against single sums of chips that bend their voices: the bend is in the renderer since S3b-2, so a voice alone is
+    // bent in the single sum as on the buses; before, the bus was compared with OutputStage::shapeVoice of the unbent
+    // voice sample by sample, which the band-limited bend no longer equals).
     for (const Model m : { Model::B, Model::A })
     {
         const double rate = 96000.0;
@@ -237,20 +240,25 @@ TEST_CASE ("buses: each oscillator on the bus its routing bit names, oscillator 
             if (only < 0 || only == 2)
                 setOsc (c, 2, 11223.0, 0.0f, ctrl::triangle | ctrl::gate);
         };
-        auto single = [&] (int only) {
+        auto single = [&] (int only, bool bend) {
             Chip c = makeChip (m, rate);
+            c.renderBendVoices (bend);
             if (only >= -1)
                 setup (c, only);
             return renderSamples (c, n);
         };
-        const auto none = single (-2);
-        std::array<std::vector<double>, 3> voice;
-        for (int k = 0; k < 3; ++k)
+        std::array<std::array<std::vector<double>, 3>, 2> voices; // [bent][voice]
+        for (const bool bend : { false, true })
         {
-            const auto v = single (k);
-            voice[static_cast<std::size_t> (k)].resize (static_cast<std::size_t> (n));
-            for (std::size_t i = 0; i < v.size(); ++i)
-                voice[static_cast<std::size_t> (k)][i] = static_cast<double> (v[i]) - 2.0 / 3.0 * static_cast<double> (none[i]);
+            const auto none = single (-2, bend);
+            for (int k = 0; k < 3; ++k)
+            {
+                const auto v = single (k, bend);
+                auto& to = voices[bend ? 1 : 0][static_cast<std::size_t> (k)];
+                to.resize (static_cast<std::size_t> (n));
+                for (std::size_t i = 0; i < v.size(); ++i)
+                    to[i] = static_cast<double> (v[i]) - 2.0 / 3.0 * static_cast<double> (none[i]);
+            }
         }
         // each voice's envelope value: the filter bus's envelope sum with only that voice routed
         std::array<std::vector<double>, 3> env;
@@ -289,7 +297,7 @@ TEST_CASE ("buses: each oscillator on the bus its routing bit names, oscillator 
                     {
                         const auto ki = static_cast<std::size_t> (k);
                         const double e = env[ki][i];
-                        const double x = bend ? vs::bside::chip::OutputStage::shapeVoice (m, voice[ki][i], e) : voice[ki][i];
+                        const double x = voices[bend ? 1 : 0][ki][i];
                         if (((route >> k) & 1) != 0)
                         {
                             ef += x;

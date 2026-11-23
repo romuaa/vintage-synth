@@ -123,8 +123,30 @@ struct RenderTables
     std::array<StepTable, kTableCombinations> steps {};
 };
 
-/** The tables of a chip model with a shape set (built once per process on first use, thread-safe). */
-const RenderTables& tablesFor (Model m, ShapeSet s);
+/** Model A's voice bend (docs/decisions.md "B-Side S3a" round 2 R3; folded into the renderer by S3b-2, docs/architecture.md
+    8.19.4): each voice's waveform after its converter, w (render units, minus the converter's centre), becomes
+    f (w) = w + kBendA2 w^2 + kBendA3 w^3 before its envelope multiplies it (the bend's relative strength does not depend
+    on the envelope level, measured). Fitted with the mixer and the filter's static functions (OutputStage.cpp). Model B
+    has no bend. f is increasing over every value a converter gives (|w| <= 0.5: f' >= 0.75). */
+constexpr double kBendA2 = -0.175104, kBendA3 = -0.097759;
+constexpr double bend (double w) noexcept { return w + w * w * (kBendA2 + w * kBendA3); }
+/** f' (w). */
+constexpr double bendSlope (double w) noexcept { return 1.0 + w * (2.0 * kBendA2 + 3.0 * kBendA3 * w); }
+/** The bend of one voice's contribution u = e w at envelope value e: e f (u / e) on Model A (u itself below e = 1e-4),
+    u on Model B. For harnesses that bend recorded voices sample by sample (the S3a test-side chain); the renderer folds
+    the bend into its steps instead (Chip::renderBendVoices). */
+inline double shapeVoice (Model m, double u, double e) noexcept
+{
+    if (m == Model::B || ! (e > 1e-4))
+        return u;
+    return e * bend (u / e);
+}
+
+/** The tables of a chip model with a shape set (built once per process on first use, thread-safe). `bent`: Model A's
+    tables with every converter value w replaced by bend (w) (wave[] and the combined waveforms' values and moments; the
+    converter model itself is unchanged), the renderer's tables for a chip that bends its voices (Chip::renderBendVoices);
+    Model B's are its plain tables. */
+const RenderTables& tablesFor (Model m, ShapeSet s, bool bent = false);
 
 /** Both BLEP kernels laid out for the renderer (render cost step, docs/decisions.md "B-Side render cost
     step"): per table point k (0 .. kKernelResolution, kKernelResolution + 1 points over one sample), the

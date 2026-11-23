@@ -212,7 +212,7 @@ std::vector<OperatingPoint> operatingPoints (const Rendered& r)
                 ++voices;
                 const float e = envTable[rec.counters[j][v]];
                 env += e;
-                audio += ch::OutputStage::shapeVoice (rec.model, rec.voice[v][j], e);
+                audio += static_cast<float> (ch::render::shapeVoice (rec.model, static_cast<double> (rec.voice[v][j]), static_cast<double> (e)));
             }
             const double x = stage.filterBusLevel (audio, env);
             s1 += x;
