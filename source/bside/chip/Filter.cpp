@@ -27,6 +27,10 @@ constexpr std::array<double, 16> kBFcRes { 1.0000, 0.9983, 0.9969, 0.9952, 0.994
                                            0.9903, 0.9894, 0.9891, 0.9881, 0.9875, 0.9868, 0.9867, 0.9858 };
 // outputs (render units, against the direct path): low-pass and high-pass inverted
 constexpr double kBLow = -0.997, kBBand = 1.011, kBHigh = -1.025;
+// the band- and high-pass part b of the output carries kBBandHighQuad x b^2 (Filter.h "MODEL B"): fitted to the stop
+// band of noise through the high-pass and band-pass at cutoffs 300, 1024, 1700 and sustain 3, 8, 15 (generated
+// traces, closing step), validated on cutoffs 600 and 1300 at sustain 5, 11, 15: floor within 0.2 dB on average
+constexpr double kBBandHighQuad = 0.10;
 // processWithCutoff's table: a knot every kBCutStep register units, 0 .. 2048
 constexpr double kBCutStep = 64.0;
 
@@ -210,7 +214,8 @@ Filter::Mapped Filter::mapMatched (double fc, double damping, double cL, double 
     // 1 - a2 without cancellation (expm1, 1 - cos as 2 sin^2), so a corner of 15 Hz at 384 kHz stays exact
     const double theta = 2.0 * kPi * fc / sampleRate;
     const double sigma = 0.5 * damping * theta;
-    const double r = std::exp (-sigma);
+    const double oneMinusR = -std::expm1 (-sigma);
+    const double r = 1.0 - oneMinusR; // exp (-sigma)
     const double disc = 1.0 - 0.25 * damping * damping;
     double a1 = 0.0, pSum = 0.0;
     if (disc >= 0.0)
@@ -218,7 +223,6 @@ Filter::Mapped Filter::mapMatched (double fc, double damping, double cL, double 
         const double psi = theta * std::sqrt (disc);
         const double sh = std::sin (0.5 * psi);
         const double oneMinusCos = 2.0 * sh * sh;
-        const double oneMinusR = -std::expm1 (-sigma);
         a1 = -2.0 * r * (1.0 - oneMinusCos);
         pSum = oneMinusR * oneMinusR + 2.0 * r * oneMinusCos;
     }
@@ -230,7 +234,7 @@ Filter::Mapped Filter::mapMatched (double fc, double damping, double cL, double 
     }
     const double a2 = r * r;
     const double mSum = 1.0 - a1 + a2;
-    const double oneMinusA2 = -std::expm1 (-2.0 * sigma);
+    const double oneMinusA2 = oneMinusR * (1.0 + r); // 1 - exp (-2 sigma)
     Mapped m {};
     m.g = std::sqrt (pSum / mSum);
     m.k = 2.0 * oneMinusA2 / (mSum * m.g);
@@ -363,6 +367,11 @@ void Filter::update() noexcept
     ox = l.ox;
     o1 = l.o1;
     o2 = l.o2;
+    const Linear bhRow = stateSpace (m.g, m.k, 0.0, m.wB, m.wH);
+    bhx = bhRow.ox;
+    bh1 = bhRow.o1;
+    bh2 = bhRow.o2;
+    bhQuad = mdl == Model::B ? kBBandHighQuad : 0.0;
     lx = lpRow.ox;
     l1 = lpRow.o1;
     l2 = lpRow.o2;
@@ -445,9 +454,12 @@ float Filter::processWithCutoff (float in, float registerValue) noexcept
     s1 = bp + c.g * hp;
     s2 = lp + c.g * bp;
     settle();
-    double out = c.wL * lp + c.wB * bp + c.wH * hp;
+    const double bh = c.wB * bp + c.wH * hp;
+    double out = c.wL * lp + bh;
     if (mdl == Model::A)
         out += shape (lp);
+    else
+        out += kBBandHighQuad * bh * bh;
     return static_cast<float> (out);
 }
 

@@ -556,8 +556,8 @@ TEST_CASE ("filter: Model A's linear response does not depend on the internal ra
 TEST_CASE ("filter: the linear part the rate gate measures is the class's own response (impulse at sample points)", "[filter][rate]")
 {
     // Filter::response (linearPart ()) and (linearPartWithCutoff (FC)) against the DFT of the class's impulse response
-    // through process and processWithCutoff (amplitude 1e-6 on Model A, where its static functions are linear to
-    // 1e-7), at 6 frequencies, random settings over every rate, mode, resonance and the register range (corners from
+    // through process and processWithCutoff (amplitude 1e-6, where Model A's static functions and Model B's band/high
+    // quadratic are linear to 1e-7), at 6 frequencies, random settings over every rate, mode, resonance and the register range (corners from
     // 15 Hz: 1 s of response, -150 dB of decay at the slowest). Relative to the largest magnitude: below 1e-4.
     bst::Rng r (41);
     double worst = 0.0;
@@ -582,7 +582,7 @@ TEST_CASE ("filter: the linear part the rate gate measures is the class's own re
         g.setResonance (res);
         g.setCutoff (stored);
         const auto cut = g.linearPartWithCutoff (fc);
-        const float amp = m == Model::A ? 1e-6f : 1.0f;
+        const float amp = 1e-6f; // both models' static terms are negligible at this level
         const int n = static_cast<int> (rate);
         double largest = 0.0, err = 0.0, errCut = 0.0;
         for (const double hz : { 20.0, 200.0, 1000.0, 4000.0, 12000.0, 20000.0 })
@@ -633,6 +633,49 @@ TEST_CASE ("filter: processWithCutoff follows a mode, resonance, rate or variati
         f.setCutoff (300.0f); // the stored cutoff does not enter
         CHECK (same (f.linearPartWithCutoff (900.0f), fresh (192000.0, 0.0f, 0x60, 13)));
     }
+}
+
+TEST_CASE ("filter: Model B's band- and high-pass part carries its second-order term, the low-pass part none", "[filter]")
+{
+    // Filter.h "MODEL B": two tones above the corner (9 and 10 kHz, cutoff 1024 = 7.2 kHz) through the high-pass and
+    // the band-pass: their difference tone (1 kHz) at the output is kBBandHighQuad (0.10) x the two tones' output
+    // amplitudes (the band/high part b carries 0.10 b^2), within 3 %, through process and processWithCutoff. Through
+    // the low-pass with tones below the corner (300 and 400 Hz) the difference tone (100 Hz) is absent: below 1e-5 of
+    // the tones (the float output's rounding; a 0.10 quadratic there would give 0.04).
+    auto amplitude = [] (const std::vector<double>& y, double hz, double rate) {
+        std::complex<double> acc = 0.0;
+        for (std::size_t i = 0; i < y.size(); ++i)
+            acc += y[i] * std::polar (1.0, -2.0 * kPi * hz * static_cast<double> (i) / rate);
+        return 2.0 * std::abs (acc) / static_cast<double> (y.size());
+    };
+    const double rate = 96000.0;
+    for (const bool perSample : { false, true })
+        for (const std::uint8_t mode : { Filter::kHighPass, Filter::kBandPass, Filter::kLowPass })
+        {
+            const bool low = mode == Filter::kLowPass;
+            const double f1 = low ? 300.0 : 9000.0, f2 = low ? 400.0 : 10000.0;
+            Filter f;
+            f.prepare (Model::B, rate, 0.5f);
+            f.setMode (mode);
+            f.setCutoff (1024.0f);
+            std::vector<double> y;
+            const int settle = 9600, n = 96000; // 1 s: every tone a whole number of periods
+            for (int i = 0; i < settle + n; ++i)
+            {
+                const double t = static_cast<double> (i) / rate;
+                const auto x = static_cast<float> (0.4 * std::sin (2.0 * kPi * f1 * t) + 0.4 * std::sin (2.0 * kPi * f2 * t));
+                const float out = perSample ? f.processWithCutoff (x, 1024.0f) : f.process (x);
+                if (i >= settle)
+                    y.push_back (out);
+            }
+            const double a1 = amplitude (y, f1, rate), a2 = amplitude (y, f2, rate), d = amplitude (y, f2 - f1, rate);
+            INFO ((perSample ? "processWithCutoff" : "process") << " mode " << int (mode) << ": tones " << a1 << ", " << a2 << ", difference tone " << d
+                                                               << " (0.10 x a1 a2 = " << 0.10 * a1 * a2 << ")");
+            if (low)
+                CHECK (d < 1e-5 * a1);
+            else
+                CHECK (std::abs (d / (0.10 * a1 * a2) - 1.0) < 0.03);
+        }
 }
 
 TEST_CASE ("filter: every pole inside the unit circle at every register value, resonance, variation and rate", "[filter][stability]")

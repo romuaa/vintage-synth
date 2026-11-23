@@ -27,7 +27,11 @@
 //   at DC and at half the rate. A true notch (Model B low + high: no band term, zeros on the axis) instead puts its
 //   zeros on the unit circle at the prototype's notch frequency. A few transcendental functions per update.
 // MODEL B is close to linear in the register: fc = a cubic in FC (fitted, 220 Hz at 32 to 14.6 kHz at 2047),
-// Q = 0.71 at resonance 0 and a fitted 16-step law up to 2.6, and three linear outputs.
+// Q = 0.71 at resonance 0 and a fitted 16-step law up to 2.6, and three linear outputs, plus one static term: the
+// band- and high-pass part b of the output carries kBBandHighQuad x b^2 (0.10). It is the stop band's floor of those
+// two modes at mid and full level (their pass band's intermodulation, about 10 dB above the mixer curve's own); fitted
+// to generated noise traces, validated on held-out ones (decisions "B-Side S3a closing step"). The low-pass part has
+// none (a quadratic there would add harmonics to tones the reference does not have), and the term carries no DC.
 // MODEL A (all fitted to generated reference data; decisions "B-Side S3a"):
 // - the cutoff register goes through its own converter, an 11-bit terminated resistor ladder of ratio 2.18
 //   (RenderTables.h ladderWeights; it makes the steps at the bit boundaries, e.g. 1023 -> 1024 falls by 8 %),
@@ -101,6 +105,11 @@ public:
         double out = ox * x + o1 * s1 + o2 * s2;
         if (mdl == Model::A)
             out += shape (lx * x + l1 * s1 + l2 * s2);
+        else
+        {
+            const double bh = bhx * x + bh1 * s1 + bh2 * s2; // the band- and high-pass part of the output
+            out += bhQuad * bh * bh;
+        }
         const double n1 = a1x * x + a11 * s1 + a12 * s2;
         s2 = a2x * x + a21 * s1 + a22 * s2;
         s1 = n1;
@@ -140,7 +149,8 @@ public:
     std::array<double, 3> prototypeWeights() const noexcept { return { protoL, protoB, protoH }; }
 
     /** The linear part of the filter exactly as the per-sample code runs it (tests): states s' = A s + a x, output
-        o x + c s (Model A: its static functions counted with their linear term). */
+        o x + c s (Model A: its static functions counted with their linear term; Model B: without its band/high
+        quadratic, which has no linear term). */
     struct Linear
     {
         double a11, a12, a21, a22, a1x, a2x, ox, o1, o2;
@@ -223,6 +233,8 @@ private:
     // the state-space form (update): next states, the linear output and the low-pass output
     double a1x = 0.0, a11 = 1.0, a12 = 0.0, a2x = 0.0, a21 = 0.0, a22 = 1.0;
     double ox = 0.0, o1 = 0.0, o2 = 0.0, lx = 0.0, l1 = 0.0, l2 = 1.0;
+    // Model B: the band- and high-pass part of the output row and its second-order term (see "MODEL B")
+    double bhx = 0.0, bh1 = 0.0, bh2 = 0.0, bhQuad = 0.0;
     // processWithCutoff: {g' / tan (pi fc / rate), k', wL, wB, wH} per knot (see "processWithCutoff")
     std::array<std::array<double, 5>, kCutKnots> cutTable {};
     bool cutValid = false;
