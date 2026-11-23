@@ -116,23 +116,18 @@ public:
     /** The same in double precision, input and output (the chain, ChipVoice: 8.20.1). */
     double processDouble (double in) noexcept
     {
-        // the trapezoidal state-variable filter written as its state-space form (identical arithmetic in exact
-        // numbers, a shorter dependency chain per sample): hp = h (x - (k + g) s1 - s2), bp = g hp + s1,
-        // lp = g bp + s2, s1' = 2 bp - s1, s2' = 2 lp - s2, every output a linear form in x, s1, s2
-        const double x = guard (in);
-        double out = ox * x + o1 * s1 + o2 * s2;
-        if (mdl == Model::A)
-            out += shape (lx * x + l1 * s1 + l2 * s2);
-        const double n1 = a1x * x + a11 * s1 + a12 * s2;
-        s2 = a2x * x + a21 * s1 + a22 * s2;
-        s1 = n1;
-        settle();
-        return out;
+        // one arithmetic path with processLinearDouble (below), so the split and the whole output agree bit for bit
+        // whatever a compiler contracts
+        double lp = 0.0;
+        const double out = processLinearDouble (in, lp);
+        return mdl == Model::A ? out + shape (lp) : out;
     }
 
     /** The same sample split for a chain that applies Model A's static functions at another rate (ChipVoice, S3b-2):
         returns the output without them (Model B: the whole output) and sets lowPass to the low-pass value they are
-        functions of; processDouble (x) = processLinearDouble (x, lp) + outputShape (lp), the state advanced alike. */
+        functions of; processDouble (x) = processLinearDouble (x, lp) + outputShape (lp), the state advanced alike.
+        The trapezoidal state-variable filter written as its state-space form (identical arithmetic in exact numbers, a
+        shorter dependency chain per sample): every output a linear form in x, s1, s2. */
     double processLinearDouble (double in, double& lowPass) noexcept
     {
         const double x = guard (in);

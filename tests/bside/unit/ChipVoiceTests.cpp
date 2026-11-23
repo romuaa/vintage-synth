@@ -911,8 +911,8 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
     // sample s + filterLagSamples ()); a cutoff change less than 256 samples after the previous one runs
     // Filter::processWithCutoff (the cutoff given every sample) from that sample until the cutoff has stood still for
     // 256 samples, then setCutoff + process. One isolated change, a sweep (a change every 32 samples), resonance writes
-    // inside the sweep and while still, a last isolated change. Bit for bit, both models (volume DC on, no 0x18 write:
-    // one configuration). Both paths are taken. Changed in S3b-2: the comparison is on the filter's output, not the
+    // inside the sweep and while still, a last isolated change. To 1e-12 (bit for bit on Clang; GCC differed by one
+    // rounding on Model A), both models (volume DC on, no 0x18 write: one configuration). Both paths are taken. Changed in S3b-2: the comparison is on the filter's output, not the
     // chain's (what follows the filter, the anti-alias stages, is pinned by its own tests), and the lag is the filter's
     // (the renderer's latency + 1, plus Model A's bus pre-filter), no longer latencySamples () + 1, which now also counts
     // the stages after the filter.
@@ -1032,7 +1032,9 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
                                                       << " still; largest difference from the reference computation " << maxAbsDiff (fout, expected));
         CHECK (movingSamples > 2000);
         CHECK (stillSamples > 8000);
-        CHECK (sameBits (fout, expected));
+        CHECK (maxAbsDiff (fout, expected) <= 1.0e-12); // (not bit for bit: GCC may contract the output function's last
+                                                         // multiply-add differently in the two inlined copies; a rule
+                                                         // broken by one sample differs by 1e-6 or more)
     }
 }
 
