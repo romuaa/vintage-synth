@@ -7,8 +7,11 @@
 # One container per distribution checks every bundle given (both plugins): the packages are installed
 # once. For each bundle:
 # pass: print glibc and the `ldd` of the plugin binary (fail on "not found"), run pluginval
-#       (strictness 10, no GUI tests) under xvfb.
-# fail: the negative test. The distribution is older than the documented glibc floor, so the
+#       (strictness 10, no GUI tests) under xvfb, through pluginval-run.sh (gdb; accepts one known
+#       teardown crash of pluginval 1.0.4, see that script). gdb is in the package list of each entry.
+# fail: the negative test (runs pluginval directly, not through the wrapper: there is no gdb in that
+#       container, and the wrapper could only accept a crash after all tests had completed, which
+#       cannot happen when nothing loads). The distribution is older than the documented glibc floor, so the
 #       plugin must fail to load with a "GLIBC_x.y not found" error; the check succeeds only
 #       if it does, and fails if the plugin unexpectedly loads.
 # The exit status is 0 only if every bundle passed its check; a failing bundle does not stop the others.
@@ -75,7 +78,7 @@ check_bundle() {
   echo "::endgroup::"
 
   # TODO: enable editor tests when the custom editor (M7) is merged and a display is available on the runner.
-  xvfb-run -a "$pluginval" --strictness-level 10 --validate-in-process --skip-gui-tests "$bundle"
+  xvfb-run -a sh "$(dirname "$0")/pluginval-run.sh" "$pluginval" --strictness-level 10 --validate-in-process --skip-gui-tests "$bundle"
 }
 
 status=0

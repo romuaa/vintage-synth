@@ -387,10 +387,14 @@ jobs:
           echo "$PLUGINVAL_SHA256_LINUX  pv.zip" | sha256sum -c -
           unzip -q pv.zip
           chmod +x pluginval
+          # pluginval 1.0.4 crashes at teardown in about 6 to 7 % of runs (JUCE 8.0.3 use-after-free, fixed
+          # upstream in JUCE 04e167d646); the wrapper runs it under gdb and accepts that one signature
+          # only. Delete it when a pluginval Linux build with JUCE 9.0.2 or newer runs on glibc 2.35.
+          command -v gdb >/dev/null || sudo apt-get install -y -qq gdb
           pairs=("VintageSynth|$BUNDLE_VINTAGE")
           [[ "$RELEASE_BUILD" == true ]] || pairs+=("BSide|$BUNDLE_BSIDE")
           for pair in "${pairs[@]}"; do
-            xvfb-run -a ./pluginval --strictness-level 10 --validate-in-process \
+            xvfb-run -a sh scripts/linux-check/pluginval-run.sh ./pluginval --strictness-level 10 --validate-in-process \
               --skip-gui-tests "build/${pair%%|*}_artefacts/Release/VST3/${pair#*|}"
           done
 
@@ -440,32 +444,32 @@ jobs:
             image: "ubuntu:22.04"
             pm: apt
             expect: pass
-            pkgs: "libasound2 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4 xvfb xauth"
+            pkgs: "libasound2 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4 xvfb xauth gdb"
           - name: ubuntu-26.04
             image: "ubuntu:26.04"
             pm: apt
             expect: pass
-            pkgs: "libasound2t64 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4t64 xvfb xauth"
+            pkgs: "libasound2t64 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4t64 xvfb xauth gdb"
           - name: debian-12
             image: "debian:bookworm-slim"
             pm: apt
             expect: pass
-            pkgs: "libasound2 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4 xvfb xauth"
+            pkgs: "libasound2 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4 xvfb xauth gdb"
           - name: debian-13
             image: "debian:trixie-slim"
             pm: apt
             expect: pass
-            pkgs: "libasound2t64 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4t64 xvfb xauth"
+            pkgs: "libasound2t64 libfreetype6 libfontconfig1 libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1 libxrender1 libxcomposite1 libxi6 libcurl4t64 xvfb xauth gdb"
           - name: fedora-45
             image: "fedora:45"
             pm: dnf
             expect: pass
-            pkgs: "alsa-lib freetype fontconfig libX11 libXext libXrandr libXinerama libXcursor libXrender libXcomposite libXi libcurl xorg-x11-server-Xvfb xauth"
+            pkgs: "alsa-lib freetype fontconfig libX11 libXext libXrandr libXinerama libXcursor libXrender libXcomposite libXi libcurl xorg-x11-server-Xvfb xauth gdb"
           - name: arch-20261108
             image: "archlinux:base-20261108.0.623074"
             pm: pacman
             expect: pass
-            pkgs: "alsa-lib freetype2 fontconfig libx11 libxext libxrandr libxinerama libxcursor libxrender libxcomposite libxi curl xorg-server-xvfb xorg-xauth"
+            pkgs: "alsa-lib freetype2 fontconfig libx11 libxext libxrandr libxinerama libxcursor libxrender libxcomposite libxi curl xorg-server-xvfb xorg-xauth gdb"
           # NEGATIVE: glibc 2.31 < 2.35. The plugin is EXPECTED to be refused; the job is green only if it is.
           - name: negative-debian-11-glibc-2.31
             image: "debian:bullseye-slim"

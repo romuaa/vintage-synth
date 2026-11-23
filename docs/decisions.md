@@ -196,6 +196,17 @@ output convention (8.15.7, 1.0 = its 16-bit full scale).
 | 18 | **What the single-sum harness can and cannot render** (until S3b). | `AnalogChain.h` sends the sum to the path of the voices that sound (envelope counter above 0); every voice's DC is exact per voice. Ambiguous samples (voices sounding on both paths) are counted and exclude a segment or frame. Skipped: `a_routing_a`, `a_routing_b` (8 of 10 segments each); the first 2 frames of `a_modes_*` (the power-on envelopes of voices 1 and 2 releasing on the direct path). **Round 2:** a trace without sync or ring writes is now rendered per voice (row R9), so `a_routing_*` are compared; the single sum remains the fallback for the others. |
 | 19 | **Voice DC gate on Model B: reported, not gated.** | 8.9.4's row is Model A's. Model B's steps (-27 to -42 dBFS) lie within 13 dB of the reference's high-pass residual (-46.4 dBFS, 8.15.6), so the first frame after a write differs by up to 3.6 dB (frames 121, 241, 321, 401 of `a_voice_dc_b`: +1.5, -2.7, +1.8, +3.6 dB; the others within 0.3 dB). The write `18 10` in both traces changes only the mode (volume 0 before and after) and is not a volume step. |
 | 20 | **Distortion gate scope.** | Gated: Model A `a_distortion_a` s00..s02 (drive 1, 2, 3 voices), harmonics 2..5 against the fundamental from the segment spectra (`toneLevelDb`), +-3 dB. Reported: s03 (three voices at sustain 8) and Model B (all within 2.2 dB). |
+
+## CI: the validation tool's teardown crash (2026-11-23, review)
+
+Code: `scripts/linux-check/pluginval-run.sh`, its self-test and samples, the Linux steps of `.github/workflows/build.yml`. Trap: `docs/engineering-notes.md`.
+
+| # | Point | Reading taken (reason) |
+|---|---|---|
+| 1 | **A SIGSEGV of pluginval 1.0.4 on Linux x86_64 is accepted only on the exact signature:** no failure marker in the output, every started test completed and the last completed is "Fuzz parameters", backtrace frame #0 the `IEventHandler` map `operator[]` and frame #1 `RunLoop::Impl::registerEventHandler`, no frame mentioning `Exitium`. Any other signal, a crash during a test, another backtrace or a missing gdb fails the run. | The crash is a known use-after-free in the JUCE 8.0.3 inside pluginval (fixed upstream in JUCE 04e167d646) that happens after all tests have run and after our plugin is unloaded; without this, most CI runs fail by chance (two plugins, eight environments). The narrow signature keeps a real crash of our plugin, or an incomplete run, a failure. The final test name is hard-coded on purpose: a new pluginval that adds a later test makes the check stricter, not looser. **(review)** |
+| 2 | **Alternative considered, not taken: build pluginval from pinned source with the fixed JUCE.** | It needs a new build job and an unpinned dependency in its own build (pluginval's submodules, toolchain), a supply-chain and maintenance decision left to the owner. The wrapper is temporary and says when to delete it (a pluginval Linux build with JUCE 9.0.2 or newer that runs on glibc 2.35). **(review)** |
+| 3 | **The negative distribution check (glibc 2.31) runs pluginval directly, not through the wrapper.** | It asserts a loader refusal; no gdb is installed in that container and the wrapper could only accept a crash after a full run. **(review)** |
+
 ## M8 packaging of the first release (2026-11-19, all review)
 
 Contract: `docs/architecture.md` section 10. Code: `scripts/package-release.sh`, `resources/release/`, the release part of `.github/workflows/build.yml`, the `mac` step of `scripts/preflight.sh`.
