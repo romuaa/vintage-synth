@@ -5,9 +5,22 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3b-2 round after the third review (2026-11-23)
+- Writes that change the filter's dynamics hold in any combination: per voice the filter keeps one state, each
+  resonance write changes its dynamics at the write's place between two samples and each cutoff write from its own
+  sample on, and the configurations being blended are output equations on that state. A volume or mode write right
+  after a resonance write no longer ends its placement early (it did: -78.7 dB on Model A), a cutoff write inside a
+  resonance write's window lands at its sample (it was up to 8 samples late), and switching a voice to a shared filter
+  at any moment is safe (it crashed inside a resonance write's window).
+- Tests: the excess over an ideal render at 32 times the rate for resonance writes alone and with a volume, mode or
+  cutoff write 1 to 200 cycles before or after, both models, 88.2, 96 and 192 kHz: worst -97.7 dB (budget -90); the
+  place of the dynamics by itself; combined writes bit for bit across any block split and across switches to Shared.
+- The reduced alias gate fails if any single pinned row is taken off the list (all 16 tried).
+
 ### B-Side S3b-2 round after phases (2026-11-23)
 - Resonance writes are placed between samples: the filter's dynamics change at the write's place as a mixture of the
-  switch at the sample before and after it, while the output equation follows the band-limited blend. Against an ideal
+  switch at the sample before and after it, while the output equation follows the band-limited blend. (This held for a
+  resonance write on its own only; replaced after the third review, see there.) Against an ideal
   render of the same writes at eight times the rate (a write every tick, resonance 0 <-> 15 and 4 <-> 12, low-pass and
   band-pass, both models, 88.2 and 96 kHz) the excess was up to -78.4 dB and is now at most -95.9 dB (budget -90).
 - The alias gate's four-times-the-rate reference now runs Model B's mixer input through the chain's own pre-filter, as
