@@ -91,7 +91,7 @@ const std::vector<double>& gateGrid()
 
 struct Worst
 {
-    double db = 0.0;
+    double db = 0.0; // or degrees (phase)
     double hz = 0.0;
 };
 
@@ -133,6 +133,23 @@ struct GateSetting
             const double ref = other != nullptr ? std::abs (Filter::responseAt (*other, z)) : std::abs (proto[j]);
             const double d = std::abs (20.0 * std::log10 (std::abs (Filter::responseAt (l, z)) / ref));
             if (! (d <= w.db)) // NaN counts as the worst
+            {
+                w.db = std::isfinite (d) ? d : 1e9;
+                w.hz = gateGrid()[index[j]];
+            }
+        }
+        return w;
+    }
+    /** |arg (H / reference)| in degrees, worst over the gated points; reference: the prototype, or `other`. */
+    Worst phase (const Filter::Linear& l, const Filter::Linear* other = nullptr) const
+    {
+        Worst w;
+        for (std::size_t j = 0; j < index.size(); ++j)
+        {
+            const auto z = unit[index[j]];
+            const auto ref = other != nullptr ? Filter::responseAt (*other, z) : proto[j];
+            const double d = std::abs (std::arg (Filter::responseAt (l, z) / ref)) * 180.0 / kPi;
+            if (! (d <= w.db))
             {
                 w.db = std::isfinite (d) ? d : 1e9;
                 w.hz = gateGrid()[index[j]];
@@ -470,16 +487,40 @@ TEST_CASE ("filter: the rational tan, and a cutoff every sample (processWithCuto
 
 namespace
 {
+/** The phase gate's exceptions (8.19.3 "Phase": a setting that cannot meet 30 degrees at no per-sample cost is gated
+    at its figure plus 2 degrees). Seven settings, all at 88.2 and 96 kHz, all at 20 kHz (the band's top, where the
+    prototype is just above the gate's -20 dB), low cutoffs, in the two modes whose prototype has its zero at infinity
+    next to a band term (band-pass; low + band), both models. The magnitude design fixes the numerator's zeros there
+    (Filter.h "RATE"); of its two factors the one on the prototype's side is the nearer (the other is about 180 degrees
+    off), so a smaller figure needs another magnitude design or a third coefficient (per-sample cost). Figure + 2,
+    rounded up to a tenth; the figure is the worst over every resonance, cutoff and variation of the setting. */
+double phaseAllowed (Model m, double rate, int mode)
+{
+    constexpr double kAllowedPhase = 30.0;
+    const bool r88 = rate < 90000.0, r96 = rate > 90000.0 && rate < 100000.0;
+    if (m == Model::B && mode == 2)
+        return r88 ? 35.5 : (r96 ? 32.7 : kAllowedPhase); // 33.42 deg at FC 244 res 2; 30.62 at 96 kHz (20 kHz)
+    if (m == Model::B && mode == 3 && r88)
+        return 33.8; // 31.79 deg at FC 312 res 0 (20 kHz); 29.25 at 96 kHz: within 30
+    if (m == Model::A && mode == 2)
+        return r88 ? 35.7 : (r96 ? 32.9 : kAllowedPhase); // 33.67 deg at FC 672 res 15 var 0.5; 30.83 at 96 kHz (20 kHz)
+    if (m == Model::A && mode == 3)
+        return r88 ? 35.0 : (r96 ? 32.3 : kAllowedPhase); // 32.99 deg at FC 308 res 1 var 1; 30.26 at 96 kHz (20 kHz)
+    return kAllowedPhase;
+}
+
 // For every internal rate of 4.4, mode combination 1..7, resonance 0..15, cutoff 0, 4, ..., 2044, 2047 (Model A at
-// variation 0, 0.5 and 1): the magnitude of the filter's linear part (Filter::linearPart, the per-sample code's own
+// variation 0, 0.5 and 1): the response of the filter's linear part (Filter::linearPart, the per-sample code's own
 // coefficients; that this is the class's response is the next test's) against its analog prototype (corner, Q and
 // weights as the class reports them), 20 Hz .. 20 kHz where the prototype is above -20 dB of its largest value:
-// at most 0.5 dB. processWithCutoff's linear part (Filter::linearPartWithCutoff) at the same cutoff, on a filter
-// whose stored cutoff is elsewhere, against setCutoff's: at most 0.1 dB. Prints the worst per model, rate and mode.
+// magnitude within 0.5 dB, phase within 30 degrees (phaseAllowed: the named exceptions). processWithCutoff's linear
+// part (Filter::linearPartWithCutoff) at the same cutoff, on a filter whose stored cutoff is elsewhere, against
+// setCutoff's: magnitude within 0.1 dB, phase within 1 degree (measured at most 0.8: Model A, 88.2 kHz). Prints the worst per model, rate and mode.
 void rateGate (Model m)
 {
-    constexpr double kAllowed = 0.5, kAllowedCut = 0.1;
-    double worstAll = 0.0, worstCutAll = 0.0;
+    constexpr double kAllowed = 0.5, kAllowedCut = 0.1, kAllowedCutPhase = 1.0;
+    double worstAll = 0.0, worstCutAll = 0.0, worstPhaseAll = 0.0, worstCutPhaseAll = 0.0;
+    std::string atPhaseAll;
     for (const double rate : kRates)
     {
         std::vector<std::complex<double>> unit;
@@ -487,8 +528,8 @@ void rateGate (Model m)
             unit.push_back (std::polar (1.0, 2.0 * kPi * hz / rate));
         for (int mode = 1; mode < 8; ++mode)
         {
-            Worst worst, worstCut;
-            std::string at, atCut;
+            Worst worst, worstCut, worstPhase, worstCutPhase;
+            std::string at, atCut, atPhase, atCutPhase;
             for (const float var : { 0.0f, 0.5f, 1.0f })
             {
                 if (m == Model::B && var > 0.0f)
@@ -510,45 +551,60 @@ void rateGate (Model m)
                         const auto lin = f.linearPart();
                         const auto cut = other.linearPartWithCutoff (fc);
                         const GateSetting gs (f, rate, unit);
-                        const auto d = gs.deviation (lin);
-                        const auto c = gs.deviation (cut, &lin);
-                        char buf[96];
-                        if (d.db > worst.db)
-                        {
-                            worst = d;
-                            std::snprintf (buf, sizeof buf, "FC %g res %d var %g at %.0f Hz", static_cast<double> (fc), res, static_cast<double> (var), d.hz);
-                            at = buf;
-                        }
-                        if (c.db > worstCut.db)
-                        {
-                            worstCut = c;
-                            std::snprintf (buf, sizeof buf, "FC %g res %d var %g at %.0f Hz", static_cast<double> (fc), res, static_cast<double> (var), c.hz);
-                            atCut = buf;
-                        }
+                        auto keep = [&] (const Worst& d, Worst& w, std::string& where) {
+                            if (d.db > w.db)
+                            {
+                                w = d;
+                                char buf[96];
+                                std::snprintf (buf, sizeof buf, "FC %g res %d var %g at %.0f Hz", static_cast<double> (fc), res, static_cast<double> (var), d.hz);
+                                where = buf;
+                            }
+                        };
+                        keep (gs.deviation (lin), worst, at);
+                        keep (gs.deviation (cut, &lin), worstCut, atCut);
+                        keep (gs.phase (lin), worstPhase, atPhase);
+                        keep (gs.phase (cut, &lin), worstCutPhase, atCutPhase);
                     }
                 }
             }
+            const double allowedPhase = phaseAllowed (m, rate, mode);
             INFO ("model " << (m == Model::A ? "A" : "B") << " rate " << rate << " mode " << modeName (mode) << ": " << worst.db << " dB at " << at
-                           << "; processWithCutoff " << worstCut.db << " dB at " << atCut);
+                           << "; processWithCutoff " << worstCut.db << " dB at " << atCut << "; phase " << worstPhase.db << " deg at " << atPhase
+                           << " (allowed " << allowedPhase << "); processWithCutoff phase " << worstCutPhase.db << " deg at " << atCutPhase);
             CHECK (worst.db <= kAllowed);
             CHECK (worstCut.db <= kAllowedCut);
+            CHECK (worstPhase.db <= allowedPhase);
+            CHECK (worstCutPhase.db <= kAllowedCutPhase);
             worstAll = std::max (worstAll, worst.db);
             worstCutAll = std::max (worstCutAll, worstCut.db);
+            worstCutPhaseAll = std::max (worstCutPhaseAll, worstCutPhase.db);
+            if (worstPhase.db > worstPhaseAll)
+            {
+                worstPhaseAll = worstPhase.db;
+                atPhaseAll = std::to_string (static_cast<int> (rate)) + " Hz " + modeName (mode) + " " + atPhase;
+            }
             std::printf ("[rate] model %s %6.0f Hz %-9s worst %.3f dB (%s); processWithCutoff %.3f dB (%s)\n", m == Model::A ? "A" : "B", rate,
                          modeName (mode), worst.db, at.c_str(), worstCut.db, atCut.c_str());
+            std::printf ("[rate] model %s %6.0f Hz %-9s phase %.2f deg (%s; allowed %.1f); processWithCutoff phase %.3f deg (%s)\n",
+                         m == Model::A ? "A" : "B", rate, modeName (mode), worstPhase.db, atPhase.c_str(), allowedPhase, worstCutPhase.db, atCutPhase.c_str());
         }
     }
     std::printf ("[rate] model %s, worst over every setting: %.3f dB (allowed %.1f); processWithCutoff against setCutoff %.3f dB (allowed %.1f)\n",
                  m == Model::A ? "A" : "B", worstAll, kAllowed, worstCutAll, kAllowedCut);
+    std::printf ("[rate] model %s, phase: worst %.2f deg (%s; allowed 30 but for the named exceptions); processWithCutoff against setCutoff "
+                 "%.3f deg (allowed %.1f)\n",
+                 m == Model::A ? "A" : "B", worstPhaseAll, atPhaseAll.c_str(), worstCutPhaseAll, kAllowedCutPhase);
 }
 } // namespace
 
-TEST_CASE ("filter: Model B's response does not depend on the internal rate: within 0.5 dB of the analog prototype (8.19.3)", "[filter][rate]")
+TEST_CASE ("filter: Model B's response does not depend on the internal rate: within 0.5 dB and 30 degrees of the analog prototype (8.19.3)",
+           "[filter][rate]")
 {
     rateGate (Model::B);
 }
 
-TEST_CASE ("filter: Model A's linear response does not depend on the internal rate: within 0.5 dB of the analog prototype (8.19.3)", "[filter][rate]")
+TEST_CASE ("filter: Model A's linear response does not depend on the internal rate: within 0.5 dB and 30 degrees of the analog prototype (8.19.3)",
+           "[filter][rate]")
 {
     rateGate (Model::A);
 }
@@ -556,8 +612,8 @@ TEST_CASE ("filter: Model A's linear response does not depend on the internal ra
 TEST_CASE ("filter: the linear part the rate gate measures is the class's own response (impulse at sample points)", "[filter][rate]")
 {
     // Filter::response (linearPart ()) and (linearPartWithCutoff (FC)) against the DFT of the class's impulse response
-    // through process and processWithCutoff (amplitude 1e-6, where Model A's static functions and Model B's band/high
-    // quadratic are linear to 1e-7), at 6 frequencies, random settings over every rate, mode, resonance and the register range (corners from
+    // through process and processWithCutoff (amplitude 1e-6, where Model A's static functions are linear to 1e-7), at
+    // 6 frequencies, random settings over every rate, mode, resonance and the register range (corners from
     // 15 Hz: 1 s of response, -150 dB of decay at the slowest). Relative to the largest magnitude: below 1e-4.
     bst::Rng r (41);
     double worst = 0.0;
@@ -633,49 +689,6 @@ TEST_CASE ("filter: processWithCutoff follows a mode, resonance, rate or variati
         f.setCutoff (300.0f); // the stored cutoff does not enter
         CHECK (same (f.linearPartWithCutoff (900.0f), fresh (192000.0, 0.0f, 0x60, 13)));
     }
-}
-
-TEST_CASE ("filter: Model B's band- and high-pass part carries its second-order term, the low-pass part none", "[filter]")
-{
-    // Filter.h "MODEL B": two tones above the corner (9 and 10 kHz, cutoff 1024 = 7.2 kHz) through the high-pass and
-    // the band-pass: their difference tone (1 kHz) at the output is kBBandHighQuad (0.10) x the two tones' output
-    // amplitudes (the band/high part b carries 0.10 b^2), within 3 %, through process and processWithCutoff. Through
-    // the low-pass with tones below the corner (300 and 400 Hz) the difference tone (100 Hz) is absent: below 1e-5 of
-    // the tones (the float output's rounding; a 0.10 quadratic there would give 0.04).
-    auto amplitude = [] (const std::vector<double>& y, double hz, double rate) {
-        std::complex<double> acc = 0.0;
-        for (std::size_t i = 0; i < y.size(); ++i)
-            acc += y[i] * std::polar (1.0, -2.0 * kPi * hz * static_cast<double> (i) / rate);
-        return 2.0 * std::abs (acc) / static_cast<double> (y.size());
-    };
-    const double rate = 96000.0;
-    for (const bool perSample : { false, true })
-        for (const std::uint8_t mode : { Filter::kHighPass, Filter::kBandPass, Filter::kLowPass })
-        {
-            const bool low = mode == Filter::kLowPass;
-            const double f1 = low ? 300.0 : 9000.0, f2 = low ? 400.0 : 10000.0;
-            Filter f;
-            f.prepare (Model::B, rate, 0.5f);
-            f.setMode (mode);
-            f.setCutoff (1024.0f);
-            std::vector<double> y;
-            const int settle = 9600, n = 96000; // 1 s: every tone a whole number of periods
-            for (int i = 0; i < settle + n; ++i)
-            {
-                const double t = static_cast<double> (i) / rate;
-                const auto x = static_cast<float> (0.4 * std::sin (2.0 * kPi * f1 * t) + 0.4 * std::sin (2.0 * kPi * f2 * t));
-                const float out = perSample ? f.processWithCutoff (x, 1024.0f) : f.process (x);
-                if (i >= settle)
-                    y.push_back (out);
-            }
-            const double a1 = amplitude (y, f1, rate), a2 = amplitude (y, f2, rate), d = amplitude (y, f2 - f1, rate);
-            INFO ((perSample ? "processWithCutoff" : "process") << " mode " << int (mode) << ": tones " << a1 << ", " << a2 << ", difference tone " << d
-                                                               << " (0.10 x a1 a2 = " << 0.10 * a1 * a2 << ")");
-            if (low)
-                CHECK (d < 1e-5 * a1);
-            else
-                CHECK (std::abs (d / (0.10 * a1 * a2) - 1.0) < 0.03);
-        }
 }
 
 TEST_CASE ("filter: every pole inside the unit circle at every register value, resonance, variation and rate", "[filter][stability]")
@@ -829,17 +842,30 @@ TEST_CASE ("output stage: a volume write with held voices: volume DC off does no
 
 namespace
 {
-/** n chips with identical held routed voices (a 110 Hz triangle on oscillator 1 at envelope `env`, cutoff 900,
-    low + band + high, volume DC on), Per Note (n filters) or Shared (one filter, OutputStage.h "SHARED"): the summed
-    output's DC step on a 0 -> 15 volume write (the mean over ten periods right after against right before, after 1 s),
-    and the rms of the audio before the write at volume 15 (a second run). */
+/** One condition of the Shared test: n chips with identical held routed voices (oscillator 1 at envelope `level`: a
+    triangle or a sawtooth of +-0.5 at `hz`), a cutoff, resonance and mode, volume DC on or off. */
+struct SharedCase
+{
+    const char* name;
+    float level;
+    bool saw;
+    double hz;
+    float cutoff;
+    int res;
+    std::uint8_t mode;
+    bool vdc;
+};
+/** Per Note (n filters) or Shared (one filter, OutputStage.h "SHARED"): the summed output's DC step on a 0 -> 15
+    volume write (the mean over ten periods right after against right before, after 1 s), and in a second run at
+    volume 15 the output's mean and the rms of its audio over ten periods after 1 s. */
 struct SharedRun
 {
-    double dcStep = 0.0, rms = 0.0;
+    double dcStep = 0.0, mean = 0.0, rms = 0.0;
 };
-SharedRun sharedRun (Model m, int n, bool shared, float env)
+SharedRun sharedRun (Model m, int n, bool shared, const SharedCase& sc)
 {
-    const double rate = 96000.0, hz = 110.0;
+    const double rate = 96000.0, hz = sc.hz;
+    const float env = sc.level;
     SharedRun result;
     for (const bool audioRun : { false, true })
     {
@@ -847,11 +873,12 @@ SharedRun sharedRun (Model m, int n, bool shared, float env)
         for (auto& f : fs)
         {
             f.prepare (m, rate, 0.5f);
-            f.setCutoff (900.0f);
+            f.setCutoff (sc.cutoff);
+            f.setResonance (sc.res);
         }
         std::vector<OutputStage> st (static_cast<std::size_t> (n));
         for (auto& o : st)
-            o.prepare (m, rate, true);
+            o.prepare (m, rate, sc.vdc);
         auto regs = [&] (std::uint8_t mv) {
             for (auto& f : fs)
                 f.setMode (mv);
@@ -862,7 +889,7 @@ SharedRun sharedRun (Model m, int n, bool shared, float env)
                 o.setFilterStaticDc (fs[0].staticOutput (o.staticFilterBusDc()));
             }
         };
-        regs (audioRun ? 0x7f : 0x70);
+        regs (audioRun ? static_cast<std::uint8_t> (sc.mode | 0x0f) : sc.mode);
         double phase = 0.0;
         auto run = [&] (double seconds, double& sumSq) {
             const int len = static_cast<int> (seconds * rate);
@@ -871,7 +898,8 @@ SharedRun sharedRun (Model m, int n, bool shared, float env)
             {
                 phase += hz / rate;
                 phase -= std::floor (phase);
-                const auto u = static_cast<float> ((2.0 * std::abs (phase - 0.5) - 0.5) * static_cast<double> (env));
+                const double wave = sc.saw ? phase - 0.5 : 2.0 * std::abs (phase - 0.5) - 0.5;
+                const auto u = static_cast<float> (wave * static_cast<double> (env));
                 const float v = OutputStage::shapeVoice (m, u, env);
                 double y = 0.0;
                 if (! shared)
@@ -897,10 +925,11 @@ SharedRun sharedRun (Model m, int n, bool shared, float env)
         const double before = run (10.0 / hz, sq);
         if (audioRun)
         {
+            result.mean = before;
             result.rms = std::sqrt (sq / static_cast<int> (10.0 / hz * rate) - before * before);
             continue;
         }
-        regs (0x7f);
+        regs (static_cast<std::uint8_t> (sc.mode | 0x0f));
         result.dcStep = run (10.0 / hz, sq) - before;
     }
     return result;
@@ -909,31 +938,51 @@ SharedRun sharedRun (Model m, int n, bool shared, float env)
 
 TEST_CASE ("filter and output stage: the Shared topology's DC and audio for 1 to 16 chips (OutputStage.h SHARED)", "[filter][output]")
 {
-    // OutputStage.h "SHARED": n = 1 is Per Note exactly; Model B: the DC step of a volume write with held routed voices
-    // within 0.05 dB of n Per Note chips and the audio's rms within 1 %, n = 1 .. 16; Model A: the documented
-    // property, pinned: at full envelope n = 2 / 4 / 8 / 16 differ from Per Note by -0.1 / +0.6 / +1.9 / +2.7 dB
-    // (+-0.3) and the audio's rms is 1.01 / 0.72 / 0.37 / 0.20 of n Per Note chips' (+-0.05); at half envelope the DC
-    // step differs by at most 0.8 dB.
+    // OutputStage.h "SHARED": n = 1 is Per Note exactly; Model B (a linear filter): n Shared chips give the output of n
+    // Per Note chips, n = 1 .. 16, in every condition below: with volume DC on, the DC step of a volume write with held
+    // routed voices within 0.05 dB; with it off (no step: OutputStage.h), the output's mean within 0.05 dB or 1e-6;
+    // the audio's rms within 1 %. The conditions: a 110 Hz triangle, cutoff 900, all three modes, full and half
+    // envelope; and where the band- and high-pass carry the signal, a 220 Hz sawtooth through the high-pass at a low
+    // cutoff (64: about 440 Hz) and through the band-pass (cutoff 300: about 2 kHz), resonance 8, volume DC on and
+    // off. Model A: the documented property, pinned (first condition only): at full envelope n = 2 / 4 / 8 / 16
+    // differ from Per Note by -0.1 / +0.6 / +1.9 / +2.7 dB (+-0.3) and the audio's rms is 1.01 / 0.72 / 0.37 / 0.20
+    // of n Per Note chips' (+-0.05); at half envelope the DC step differs by at most 0.8 dB.
+    const SharedCase cases[] { { "triangle all modes", 1.0f, false, 110.0, 900.0f, 0, 0x70, true },
+                               { "triangle all modes", 0.5f, false, 110.0, 900.0f, 0, 0x70, true },
+                               { "sawtooth high-pass", 1.0f, true, 220.0, 64.0f, 8, Filter::kHighPass, true },
+                               { "sawtooth high-pass", 1.0f, true, 220.0, 64.0f, 8, Filter::kHighPass, false },
+                               { "sawtooth band-pass", 1.0f, true, 220.0, 300.0f, 8, Filter::kBandPass, true },
+                               { "sawtooth band-pass", 1.0f, true, 220.0, 300.0f, 8, Filter::kBandPass, false } };
     for (const Model m : { Model::B, Model::A })
-        for (const float env : { 1.0f, 0.5f })
+        for (const auto& sc : cases)
             for (int n = 1; n <= 16; ++n)
             {
-                if (m == Model::A && n != 1 && n != 2 && n != 4 && n != 8 && n != 16)
+                const bool firstCondition = ! sc.saw;
+                if (m == Model::A && ((n != 1 && n != 2 && n != 4 && n != 8 && n != 16) || (! firstCondition && n != 1)))
                     continue;
-                const auto pn = sharedRun (m, n, false, env), sh = sharedRun (m, n, true, env);
+                const auto pn = sharedRun (m, n, false, sc), sh = sharedRun (m, n, true, sc);
                 const double dcDb = 20.0 * std::log10 (sh.dcStep / pn.dcStep);
+                const double meanDb = 20.0 * std::log10 (sh.mean / pn.mean);
                 const double rmsRatio = sh.rms / pn.rms;
-                INFO ("model " << (m == Model::A ? "A" : "B") << " envelope " << env << " chips " << n << ": DC step per note " << pn.dcStep << ", shared "
-                               << sh.dcStep << " (" << dcDb << " dB); rms per note " << pn.rms << ", shared " << sh.rms);
-                std::printf ("[shared] model %s envelope %.1f chips %2d: DC step per note %+.4f, shared %+.4f (%+.2f dB); rms ratio %.4f\n",
-                             m == Model::A ? "A" : "B", static_cast<double> (env), n, pn.dcStep, sh.dcStep, dcDb, rmsRatio);
-                REQUIRE (std::abs (pn.dcStep) > 1e-3); // the step is there to be compared
+                const char* mn = m == Model::A ? "A" : "B";
+                INFO ("model " << mn << " " << sc.name << " envelope " << sc.level << " volume DC " << sc.vdc << " chips " << n << ": DC step per note "
+                               << pn.dcStep << ", shared " << sh.dcStep << " (" << dcDb << " dB); mean per note " << pn.mean << ", shared " << sh.mean
+                               << "; rms per note " << pn.rms << ", shared " << sh.rms);
+                std::printf ("[shared] model %s %-18s envelope %.1f volume DC %d chips %2d: DC step per note %+.4f, shared %+.4f (%+.3f dB); mean per "
+                             "note %+.3e, shared %+.3e; rms ratio %.5f\n",
+                             mn, sc.name, static_cast<double> (sc.level), sc.vdc ? 1 : 0, n, pn.dcStep, sh.dcStep, dcDb, pn.mean, sh.mean, rmsRatio);
+                REQUIRE (pn.rms > 1e-3); // there is audio to compare
+                if (sc.vdc)
+                    REQUIRE (std::abs (pn.dcStep) > 1e-3); // the step is there to be compared
                 if (n == 1 || m == Model::B)
                 {
-                    CHECK (std::abs (dcDb) < 0.05);
+                    if (sc.vdc)
+                        CHECK (std::abs (dcDb) < 0.05);
+                    else
+                        CHECK ((std::abs (meanDb) < 0.05 || std::abs (sh.mean - pn.mean) < 1e-6));
                     CHECK (std::abs (rmsRatio - 1.0) < 0.01);
                 }
-                else if (env > 0.75f)
+                else if (sc.level > 0.75f)
                 {
                     const double documented = n == 2 ? -0.1 : (n == 4 ? 0.6 : (n == 8 ? 1.9 : 2.7));
                     const double documentedRms = n == 2 ? 1.01 : (n == 4 ? 0.72 : (n == 8 ? 0.37 : 0.20));
@@ -1042,6 +1091,37 @@ TEST_CASE ("filter and output stage: a NaN or infinite input does not poison the
             CHECK (std::isfinite (z));
             CHECK (std::isfinite (y));
         }
+}
+
+TEST_CASE ("filter: the input guard's threshold is 1e6 (Filter.h INPUT GUARD)", "[filter][stability]")
+{
+    // An input of magnitude 1e6 or more is taken as 0: the filter then gives, sample for sample, exactly what a twin
+    // fed 0 gives. Just below (0.99e6) it is an input like any other: the states and the output follow it.
+    for (const Model m : { Model::A, Model::B })
+        for (const float sign : { 1.0f, -1.0f })
+            for (const float x : { 1.0e6f, 4.0e6f, 0.99e6f })
+            {
+                Filter f, twin;
+                for (Filter* g : { &f, &twin })
+                {
+                    g->prepare (m, 96000.0, 0.5f);
+                    g->setCutoff (1000.0f);
+                    g->setMode (0x70);
+                    for (int i = 0; i < 100; ++i)
+                        g->process (0.3f);
+                }
+                float diff = 0.0f;
+                for (int i = 0; i < 200; ++i)
+                {
+                    const float a = f.process (i == 0 ? sign * x : 0.0f), b = twin.process (0.0f);
+                    diff = std::max (diff, std::abs (a - b));
+                }
+                INFO ("model " << (m == Model::A ? "A" : "B") << " input " << sign * x << ": largest difference from the twin " << diff);
+                if (x >= 1.0e6f)
+                    CHECK (! (diff > 0.0f));
+                else
+                    CHECK (diff > 1.0f);
+            }
 }
 
 TEST_CASE ("filter and output stage: bit-identical for any block split", "[filter][output][split]")

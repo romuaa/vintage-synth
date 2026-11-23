@@ -27,10 +27,6 @@ constexpr std::array<double, 16> kBFcRes { 1.0000, 0.9983, 0.9969, 0.9952, 0.994
                                            0.9903, 0.9894, 0.9891, 0.9881, 0.9875, 0.9868, 0.9867, 0.9858 };
 // outputs (render units, against the direct path): low-pass and high-pass inverted
 constexpr double kBLow = -0.997, kBBand = 1.011, kBHigh = -1.025;
-// the band- and high-pass part b of the output carries kBBandHighQuad x b^2 (Filter.h "MODEL B"): fitted to the stop
-// band of noise through the high-pass and band-pass at cutoffs 300, 1024, 1700 and sustain 3, 8, 15 (generated
-// traces, closing step), validated on cutoffs 600 and 1300 at sustain 5, 11, 15: floor within 0.2 dB on average
-constexpr double kBBandHighQuad = 0.10;
 // processWithCutoff's table: a knot every kBCutStep register units, 0 .. 2048
 constexpr double kBCutStep = 64.0;
 
@@ -110,6 +106,67 @@ double modelBCubic (double v) noexcept { return ((kBCubic[0] * v + kBCubic[1]) *
 
 /** The corner the discrete filter is designed for: never at or above 0.45 x the rate. */
 double designCorner (double hz, double sampleRate) noexcept { return std::min (hz, 0.45 * sampleRate); }
+
+/** The roots of b0 z^2 + b1 z + b2 when they are real (false otherwise, or when b0 is 0). */
+bool realRoots (double b0, double b1, double b2, double& za, double& zb) noexcept
+{
+    const double disc = b1 * b1 - 4.0 * b0 * b2;
+    if (disc < 0.0 || ! (std::abs (b0) > 0.0))
+        return false;
+    const double q = -0.5 * (b1 + (b1 < 0.0 ? -1.0 : 1.0) * std::sqrt (disc)); // no cancellation
+    za = q / b0;
+    zb = std::abs (q) > 0.0 ? b2 / q : 0.0;
+    return true;
+}
+
+/** PHASE (Filter.h "RATE"): whether the numerator b0 + b1 z^-1 + b2 z^-2, as factored with |b0| >= |b2|, is to be
+    replaced by its reflection (b0 and b2 swapped) to put its zeros on the side of the unit circle where the matched
+    images of the prototype numerator's zeros lie (cL + cB s + cH s^2, s in units of the corner; w = 2 pi fc / rate).
+    Zeros in the right half-plane: none -> keep (both zeros inside or on the circle); two (a pair, or two real) -> swap
+    (both outside); one (real, the other real in the left half-plane, at the origin or at infinity) -> of the two
+    factors keep the one whose zeros lie nearer the images exp (s w) of the prototype's (infinity: -1), so that only
+    the zero of the right-half-plane one is outside. */
+bool reflectZeros (double b0, double b1, double b2, double w, double cL, double cB, double cH) noexcept
+{
+    int rightHalf = 0;
+    double sOut = 0.0, tOther = 0.0, logOther = 0.0; // the right-half-plane zero; the matched image of the other one
+    if (std::abs (cH) > 0.0)
+    {
+        if (cL / cH < 0.0) // two real zeros of opposite signs
+        {
+            const double disc = std::sqrt (cB * cB - 4.0 * cH * cL);
+            const double ra = (-cB + disc) / (2.0 * cH), rb = (-cB - disc) / (2.0 * cH);
+            rightHalf = 1;
+            sOut = std::max (ra, rb);
+            logOther = std::max (std::min (ra, rb) * w, -700.0);
+            tOther = std::exp (logOther);
+        }
+        else if (cB / cH < 0.0) // the zeros' sum -cB / cH is positive
+        {
+            rightHalf = std::abs (cL) > 0.0 ? 2 : 1;
+            sOut = -cB / cH;
+            tOther = 1.0; // cL = 0: a zero at the origin
+        }
+    }
+    else if (std::abs (cB) > 0.0 && -cL / cB > 0.0)
+    {
+        rightHalf = 1;
+        sOut = -cL / cB;
+        tOther = -1.0; // the other zero is at infinity: half the rate
+    }
+    if (rightHalf != 1)
+        return rightHalf == 2;
+    double za = 0.0, zb = 0.0, ya = 0.0, yb = 0.0;
+    if (! realRoots (b0, b1, b2, za, zb) || ! realRoots (b2, b1, b0, ya, yb))
+        return false;
+    const double logOut = std::min (sOut * w, 700.0), tOut = std::exp (logOut);
+    auto cost = [=] (double x, double y) {
+        const double lx = std::log (std::abs (x) + 1e-300), ly = std::log (std::abs (y) + 1e-300);
+        auto d = [] (double z, double lz, double t, double lt) { return std::abs (lz - lt) + ((z < 0.0) != (t < 0.0) ? 100.0 : 0.0); };
+        return std::min (d (x, lx, tOut, logOut) + d (y, ly, tOther, logOther), d (y, ly, tOut, logOut) + d (x, lx, tOther, logOther));
+    };
+    return cost (ya, yb) < cost (za, zb);
+}
 } // namespace
 
 Filter::Filter() noexcept
@@ -280,7 +337,9 @@ Filter::Mapped Filter::mapMatched (double fc, double damping, double cL, double 
         const double bb1 = (rhs[0] * m2[1] - m2[0] * rhs[1]) / det;
         const double bb2 = (m1[0] * rhs[1] - m1[1] * rhs[0]) / det;
         // factor: b0 + b1 + b2 = r0, b0 - b1 + b2 = r1 (signs: the prototype's at DC and at half the rate),
-        // b0 b2 = -B2 / 4; minimum phase (|b0| >= |b2|). A discriminant below 0 (a double zero rounded) is taken as 0.
+        // b0 b2 = -B2 / 4. Of the two factors (b0, b2 swapped: every zero reflected through the unit circle, the same
+        // magnitude) the one with |b0| >= |b2| first; then the zeros are put on the prototype's side (zerosSide).
+        // A discriminant below 0 (a double zero rounded) is taken as 0.
         const double xn = 0.5 * sampleRate / fc, xn2 = xn * xn;
         const double reNyq = (cL - cH * xn2) * (1.0 - xn2) + cB * damping * xn2;
         const double r0 = (cL < 0.0 ? -1.0 : 1.0) * std::sqrt (std::max (bb0, 0.0));
@@ -291,6 +350,8 @@ Filter::Mapped Filter::mapMatched (double fc, double damping, double cL, double 
         const double t1 = 0.5 * (sum02 + sq), t2 = 0.5 * (sum02 - sq);
         b0 = std::abs (t1) >= std::abs (t2) ? t1 : t2;
         b2 = std::abs (t1) >= std::abs (t2) ? t2 : t1;
+        if (reflectZeros (b0, b1, b2, 2.0 * kPi * fc / sampleRate, cL, cB, cH))
+            std::swap (b0, b2);
     }
     m.wL = (b0 + b1 + b2) / pSum;
     m.wB = 2.0 * (b0 - b2) / (mSum * m.g);
@@ -367,11 +428,6 @@ void Filter::update() noexcept
     ox = l.ox;
     o1 = l.o1;
     o2 = l.o2;
-    const Linear bhRow = stateSpace (m.g, m.k, 0.0, m.wB, m.wH);
-    bhx = bhRow.ox;
-    bh1 = bhRow.o1;
-    bh2 = bhRow.o2;
-    bhQuad = mdl == Model::B ? kBBandHighQuad : 0.0;
     lx = lpRow.ox;
     l1 = lpRow.o1;
     l2 = lpRow.o2;
@@ -454,12 +510,9 @@ float Filter::processWithCutoff (float in, float registerValue) noexcept
     s1 = bp + c.g * hp;
     s2 = lp + c.g * bp;
     settle();
-    const double bh = c.wB * bp + c.wH * hp;
-    double out = c.wL * lp + bh;
+    double out = c.wL * lp + c.wB * bp + c.wH * hp;
     if (mdl == Model::A)
         out += shape (lp);
-    else
-        out += kBBandHighQuad * bh * bh;
     return static_cast<float> (out);
 }
 

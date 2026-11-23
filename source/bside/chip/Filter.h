@@ -23,15 +23,25 @@
 // - NUMERATOR: the three outputs' weights realise any second-order numerator. It is designed per mode combination
 //   from the prototype's magnitude in closed form: its squared magnitude, a quadratic in sin^2 (w / 2), takes the
 //   prototype's DC gain exactly (so the static output is unchanged) and its magnitude at two nodes, min (fc, n2 / 2)
-//   and n2 = min (20 kHz, 0.4 x rate); it is then factored into a minimum-phase numerator with the prototype's signs
-//   at DC and at half the rate. A true notch (Model B low + high: no band term, zeros on the axis) instead puts its
-//   zeros on the unit circle at the prototype's notch frequency. A few transcendental functions per update.
+//   and n2 = min (20 kHz, 0.4 x rate); it is then factored into a numerator with the prototype's signs at DC and at
+//   half the rate.
+// - PHASE: of the two factors with that magnitude (one is the other with every zero reflected through the unit
+//   circle) the one is kept whose zeros lie on the side of the circle where the matched images exp (s T) of the
+//   prototype numerator's zeros (cL + cB s + cH s^2) lie: no zero in the right half-plane -> zeros inside; two (a
+//   pair or two real) -> outside; one (real) -> only that one outside (the factor whose zeros lie nearer the images).
+//   The numerator is therefore not always minimum-phase. Tested ([rate]): the phase of the linear response is within
+//   30 degrees of the prototype's over the magnitude gate's set and band, except seven settings at 88.2 and 96 kHz
+//   gated at their own figure + 2 (at most 33.7 degrees; all at 20 kHz, the band's top, low cutoffs: band-pass and
+//   low + band of both models; the magnitude design leaves no freedom there at no per-sample cost;
+//   FilterOutputTests.cpp phaseAllowed lists them).
+// - A true notch (Model B low + high: no band term, zeros on the axis) instead puts its zeros on the unit circle at
+//   the prototype's notch frequency. A few transcendental functions per update.
 // MODEL B is close to linear in the register: fc = a cubic in FC (fitted, 220 Hz at 32 to 14.6 kHz at 2047),
-// Q = 0.71 at resonance 0 and a fitted 16-step law up to 2.6, and three linear outputs, plus one static term: the
-// band- and high-pass part b of the output carries kBBandHighQuad x b^2 (0.10). It is the stop band's floor of those
-// two modes at mid and full level (their pass band's intermodulation, about 10 dB above the mixer curve's own); fitted
-// to generated noise traces, validated on held-out ones (decisions "B-Side S3a closing step"). The low-pass part has
-// none (a quadratic there would add harmonics to tones the reference does not have), and the term carries no DC.
+// Q = 0.71 at resonance 0 and a fitted 16-step law up to 2.6, and three linear outputs: the filter is linear.
+// KNOWN DEVIATION (decisions "B-Side S3a closing step" C6): on noise at mid and full level the reference's high-pass
+// stop band has a floor about 6 to 7 dB above this filter's (its cause is not located; a second-order term fitted on
+// noise floors alone was tried and removed: it was wrong on tones, aliased and broke Shared). A later attempt must
+// fit tones and noise together and meet the alias budget.
 // MODEL A (all fitted to generated reference data; decisions "B-Side S3a"):
 // - the cutoff register goes through its own converter, an 11-bit terminated resistor ladder of ratio 2.18
 //   (RenderTables.h ladderWeights; it makes the steps at the bit boundaries, e.g. 1023 -> 1024 falls by 8 %),
@@ -51,13 +61,19 @@
 //   the static functions' linear term, so the linear part is the designed one and the outputs keep their meaning.
 // processWithCutoff (a cutoff every sample) reads the mapped parameters from a table over the cutoff (Model B: the
 // register, a knot every 64; Model A: log2 of the corner at resonance 0, four knots per octave, on the Q law's own
-// knots), g' stored against tan (pi fc / rate), linear in between: within 0.1 dB of setCutoff + process (tested).
-// The table depends on the rate, the resonance and the mode only; it is rebuilt (about 30 designs, bounded) at the
-// first processWithCutoff after one of them changed.
-// INPUT GUARD. A non-finite or absurd input is replaced by 0 before it reaches the states (off the per-sample
-// dependency chain), so the states can never become non-finite.
+// knots), g' stored against tan (pi fc / rate), linear in between: its complex response within 0.1 dB and 1 degree of
+// setCutoff + process (tested, FilterOutputTests.cpp). The table depends on the rate, the resonance and the mode
+// only; it is rebuilt (27 or 33 designs, bounded) at the first processWithCutoff after one of them changed.
+// INPUT GUARD. A non-finite input or one of magnitude 1e6 or more is replaced by 0 before it reaches the states (off
+// the per-sample dependency chain), so the states can never become non-finite (tested at the threshold). A
+// subnormal input is not flushed: it reaches the output through the direct term ox x (the states flush below 1e-15);
+// callers run with denormals disabled (juce::ScopedNoDenormals on the audio thread).
 // THREAD AND COST. setCutoff / setResonance / setMode / setVariation redo the mapping (an exp, two sines, a few
-// square roots); process() costs about a dozen multiplications (Model B) or two dozen (Model A) per sample.
+// square roots, and up to four logarithms and two exponentials for the zeros' side); process() costs about a dozen
+// multiplications (Model B) or two dozen (Model A) per sample. processWithCutoff rebuilds its table at its first call
+// after a resonance, mode or rate change (with the write's own update about 0.6 microseconds on Model B and 0.85 on
+// Model A, measured at 96 kHz on the development machine): a resonance or mode write every sample therefore costs that
+// every sample; write them only when they change.
 
 #include "bside/chip/ChipTypes.h"
 
@@ -105,11 +121,6 @@ public:
         double out = ox * x + o1 * s1 + o2 * s2;
         if (mdl == Model::A)
             out += shape (lx * x + l1 * s1 + l2 * s2);
-        else
-        {
-            const double bh = bhx * x + bh1 * s1 + bh2 * s2; // the band- and high-pass part of the output
-            out += bhQuad * bh * bh;
-        }
         const double n1 = a1x * x + a11 * s1 + a12 * s2;
         s2 = a2x * x + a21 * s1 + a22 * s2;
         s1 = n1;
@@ -149,8 +160,7 @@ public:
     std::array<double, 3> prototypeWeights() const noexcept { return { protoL, protoB, protoH }; }
 
     /** The linear part of the filter exactly as the per-sample code runs it (tests): states s' = A s + a x, output
-        o x + c s (Model A: its static functions counted with their linear term; Model B: without its band/high
-        quadratic, which has no linear term). */
+        o x + c s (Model A: its static functions counted with their linear term; Model B: the whole filter). */
     struct Linear
     {
         double a11, a12, a21, a22, a1x, a2x, ox, o1, o2;
@@ -233,8 +243,6 @@ private:
     // the state-space form (update): next states, the linear output and the low-pass output
     double a1x = 0.0, a11 = 1.0, a12 = 0.0, a2x = 0.0, a21 = 0.0, a22 = 1.0;
     double ox = 0.0, o1 = 0.0, o2 = 0.0, lx = 0.0, l1 = 0.0, l2 = 1.0;
-    // Model B: the band- and high-pass part of the output row and its second-order term (see "MODEL B")
-    double bhx = 0.0, bh1 = 0.0, bh2 = 0.0, bhQuad = 0.0;
     // processWithCutoff: {g' / tan (pi fc / rate), k', wL, wB, wH} per knot (see "processWithCutoff")
     std::array<std::array<double, 5>, kCutKnots> cutTable {};
     bool cutValid = false;
