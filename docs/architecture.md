@@ -2043,6 +2043,26 @@ attempt on Model A's filter. These win over 8.19.1 where they differ.
     steps of `main` (383 -> 384: -1.42 dB against the reference's -0.49 dB in 2 to 5 kHz at
     full level), and the reference's steps at 255 -> 256 and 319 -> 320 stay missing.
   - **Committed data:** the noise walk only where it carries gate (2); the sweep's trace.
+- **After the review of scope "512" (2026-11-23; orchestrator, review; wins over the bullet above where they differ):**
+  - **The fall at 511 -> 512 follows the reference, not the sweep gate.** As built it was set
+    to -13.1 % so that the lower band of the sweep passed (0.48 dB against 0.5), below every
+    noise measurement of the reference (-15.0 % in the committed walk; -15.5, -17.7 and
+    -17.9 % on held-out walks at three levels), and it fails gate (2) on held-out data (+2.5
+    points). It is put on the refitted curve (about -15.4 %).
+  - **One named exception to gate (3):** the write 510 -> 515 (and 515 -> 510) in the 0.8 to
+    2 kHz band, where the reference does not move (+0.07 dB) and ours does (about -0.46 dB,
+    a miss of about 0.53 dB) for any fall between -11 and -15 %. The cause is the level
+    dependence of Model A's corner (at full level the reference's corner at 511 is about 40 %
+    above ours, so that band lies below it), parked with O8. The write is gated at its
+    measured miss + 0.05 dB in that band, named in the test and in the records; every other
+    write keeps 0.5 dB, and the four-write sums containing it keep 0.7 dB if they meet it and
+    are otherwise named the same way.
+  - **"Below 480" means register values up to and including 479.0;** between 479 and 480 the
+    corner is interpolated between the two parts (at most 0.31 % from `main`'s).
+  - **Tests:** bit-identity below 480 at arbitrary fractional register values and variations,
+    not only quarter steps; the slope over the join (codes 480 to 511) is checked against the
+    committed walk's two ends (479 -> 480 and 510 -> 511 steps and the rise between them
+    within the range the reference shows across levels: +18 to +43 %).
 
 #### 8.19.4 S3b in two steps (contract, 2026-11-23; refines 8.19.2; owner decision O3 of 2026-11-22)
 S3b is stacked on the S3a branch until S3a has merged (O3). It is split so that the renderer's
