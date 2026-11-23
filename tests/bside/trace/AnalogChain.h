@@ -1,10 +1,14 @@
 #pragma once
 
-// Test support (S3a, docs/architecture.md 8.19.1): a trace rendered through our whole analog chain
-// (Chip::render -> Filter -> OutputStage, board filters included) at an internal rate, decimated to the 48 kHz
-// signal the reference's .bsspec describes (8.9.4: 192 kHz internal, one linear-phase decimator).
+// Test support (S3a, docs/architecture.md 8.19.1; S3b-1, 8.19.4): a trace rendered through our whole analog chain
+// at an internal rate, decimated to the 48 kHz signal the reference's .bsspec describes (8.9.4: 192 kHz internal,
+// one linear-phase decimator).
 //
-// Until the renderer has two buses (S3b) Chip::render gives one sum of the three voices. Two ways around it:
+// renderChain (S3b-1, the gates): the real chain, chip::ChipVoice (the renderer's two buses -> Filter -> OutputStage,
+// every write at its cycle), at the bottom of this file.
+//
+// renderChainTestSide (S3a's harness, kept for the diagnostics): Chip::render gave one sum of the three voices
+// before S3b. Two ways around it:
 // - PER VOICE (recordChip, when no sync or ring bit is ever written, so the voices do not interact): voice k is
 //   rendered by a chip given only voice k's register writes (and the filter's), minus two thirds of a chip given
 //   none (the two other voices' identical power-on output). The buses are then exact, every routing included,
@@ -19,6 +23,7 @@
 // JUCE-free; allocates (offline test code).
 
 #include "bside/chip/Chip.h"
+#include "bside/chip/ChipVoice.h"
 #include "bside/chip/Filter.h"
 #include "bside/chip/OutputStage.h"
 #include "bside/chip/RenderTables.h"
@@ -29,6 +34,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace vs::bside::test
@@ -292,8 +298,81 @@ inline ChainRender runChain (const ChipRecord& rec, const ChainOptions& o = {})
     return r;
 }
 
-inline ChainRender renderChain (const trace::Trace& t, const ChainOptions& o = {})
+/** The test-side chain of S3a (per voice or single sum, see the header): kept for the diagnostics that compare
+    against it (FilterDiagnosticTests.cpp) and for the record. */
+inline ChainRender renderChainTestSide (const trace::Trace& t, const ChainOptions& o = {})
 {
     return runChain (recordChip (t, o.rate), o);
+}
+
+namespace detail
+{
+/** Decimates the chain's internal-rate output (chip time: sample j at the start of internal sample j) to the 48 kHz
+    signal the reference's .bsspec describes (as runChain). */
+inline std::vector<float> decimate (const std::vector<double>& internal, double rate, std::size_t n48)
+{
+    const int factor = static_cast<int> (std::lround (rate / 48000.0));
+    const auto h = decimatorTaps (factor);
+    const std::size_t half = (h.size() - 1) / 2;
+    std::vector<float> out (n48, 0.0f);
+    for (std::size_t i = 0; i < n48; ++i)
+    {
+        const std::size_t centre = static_cast<std::size_t> (factor) * i;
+        double acc = 0.0;
+        for (std::size_t k = 0; k < h.size(); ++k)
+        {
+            const std::ptrdiff_t idx = static_cast<std::ptrdiff_t> (centre) + static_cast<std::ptrdiff_t> (half) - static_cast<std::ptrdiff_t> (k);
+            const std::size_t ii = idx < 0 ? 0 : static_cast<std::size_t> (idx); // before 0: the first sample (8.15.7)
+            if (ii < internal.size())
+                acc += h[k] * internal[ii];
+        }
+        out[i] = static_cast<float> (acc);
+    }
+    return out;
+}
+} // namespace detail
+
+/** A trace through the real chain (docs/architecture.md 8.19.4: chip::ChipVoice, Per Note, its own Filter): every
+    write at its exact cycle through ChipVoice::write, the output in double at the internal rate, its latency
+    (kLatencySamples) removed, decimated to 48 kHz. Nothing is ambiguous: the renderer has both buses. */
+inline ChainRender renderChain (const trace::Trace& t, const ChainOptions& o = {})
+{
+    using namespace vs::bside::chip;
+    Config cfg;
+    cfg.model = t.model == trace::Model::A ? Model::A : Model::B;
+    cfg.clockHz = t.clockHz;
+    cfg.internalRate = o.rate;
+    cfg.variation = o.variation;
+    cfg.volumeDc = o.volumeDc;
+    auto voice = std::make_unique<ChipVoice>();
+    voice->prepare (cfg);
+    Filter filter;
+    filter.prepare (cfg.model, o.rate, o.variation);
+    voice->setFilter (&filter);
+    const int factor = static_cast<int> (std::lround (o.rate / 48000.0));
+    const std::size_t n48 = static_cast<std::size_t> (trace::specSampleCount (t));
+    const std::size_t taps = static_cast<std::size_t> (192 * factor - 1);
+    const std::size_t lat = static_cast<std::size_t> (ChipVoice::kLatencySamples);
+    const std::size_t total = static_cast<std::size_t> (factor) * n48 + (taps - 1) / 2 + 8 + lat;
+    std::vector<double> y (total, 0.0);
+    std::size_t done = 0, next = 0;
+    while (done < total)
+    {
+        const std::uint64_t target = next < t.writes.size() ? t.writes[next].cycle : ~std::uint64_t { 0 };
+        done += static_cast<std::size_t> (voice->renderUntil (y.data() + done, static_cast<int> (std::min<std::size_t> (total - done, 4096)), target));
+        while (next < t.writes.size() && voice->chip().cycle() == t.writes[next].cycle)
+        {
+            voice->write (t.writes[next].reg, t.writes[next].value);
+            ++next;
+        }
+    }
+    y.erase (y.begin(), y.begin() + static_cast<std::ptrdiff_t> (lat));
+    ChainRender r;
+    r.internal.assign (y.size(), 0.0f);
+    for (std::size_t i = 0; i < y.size(); ++i)
+        r.internal[i] = static_cast<float> (y[i]);
+    r.out = detail::decimate (y, o.rate, n48);
+    r.ambiguous.assign (n48, 0);
+    return r;
 }
 } // namespace vs::bside::test
