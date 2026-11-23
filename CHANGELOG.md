@@ -5,6 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3b-2 closing round after the fourth review (2026-11-23)
+- Tests: the write gate holds resonance writes alone through the low-, band-, high- and band + high-pass (0 <-> 15 and
+  4 <-> 12, volume DC on and off) besides the combinations: 240 rows in the full set, worst -90.7 dB (Model B, 88.2 kHz,
+  band + high-pass; budget -90); combinations of resonance changes (several in one sample, two writes 0 to 10 cycles
+  apart, the stated capacities at and beyond their limits) equal a twin of the documented rule to 1e-12; a read past
+  the end in the test's measure (found by AddressSanitizer) fixed.
+- Records: the cost of a resonance write with the cutoff moving (about 2 to 3 us; a full tick up to 6 us per voice),
+  the Shared owner's obligation for the one-state rule, the limits with what bursts beyond them cost.
+
 ### B-Side S3b-2 round after the third review (2026-11-23)
 - Writes that change the filter's dynamics hold in any combination: per voice the filter keeps one state, each
   resonance write changes its dynamics at the write's place between two samples and each cutoff write from its own

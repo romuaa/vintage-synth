@@ -86,6 +86,8 @@ is a rule, a line here.
 | A resonance write placed between samples by two filter copies held alone and broke as soon as a volume write followed it 10 cycles later. | The placement lived in the configuration being blended; the next configuration ended it, a cutoff write did not reach the copies, and a missing filter crashed it. | Keep one state and apply every change of its dynamics at its own place; let configurations differ only in what they read from that state. |
 | An ideal render showed -80 dB near 20 kHz on a volume write at every oversampling factor. | Memoryless coefficient steps applied hard at the high rate and then decimated. | In an ideal render apply memoryless coefficient changes as band-limited steps at their exact place after the decimation; check that the ideal converges with the factor. |
 | A test of a write's place passed with the place three samples off. | An off-line (aliasing) measure only sees errors that vary from write to write. | Test a place by itself against a twin that runs the rule with a trial offset, and fit the offset. |
+| A test aligning two renders by a best shift read one sample past the end of one of them, only under AddressSanitizer. | The analysed window was fixed while the shift could be negative. | Derive the window from the shift (move it, do not pad), and run new measurement code under the sanitizers before handing over. |
+| Capacity constants (32 waiting, 4 per sample) could be changed without any test failing. | Nothing reached the limits, and no test knew what the output must be there. | Test each stated capacity at and one beyond the limit against a twin of the documented rule. |
 
 ## B-Side S3b-1: two buses and the whole chain (2026-11-23)
 
