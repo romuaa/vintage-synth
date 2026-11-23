@@ -98,6 +98,16 @@ dated log below has the reasons.
 - **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new
   judgement call there (with the reason), and mark the ones the user should review.
 
+## CI: the validation tool's teardown crash (2026-11-23, review)
+
+Code: `scripts/linux-check/pluginval-run.sh`, its self-test and samples, the Linux steps of `.github/workflows/build.yml`. Trap: `docs/engineering-notes.md`.
+
+| # | Point | Reading taken (reason) |
+|---|---|---|
+| 1 | **A SIGSEGV of pluginval 1.0.4 on Linux x86_64 is accepted only on the exact signature:** no failure marker in the output, every started test completed and the last completed is "Fuzz parameters", backtrace frame #0 the `IEventHandler` map `operator[]` and frame #1 `RunLoop::Impl::registerEventHandler`, no frame mentioning `Exitium`. Any other signal, a crash during a test, another backtrace or a missing gdb fails the run. | The crash is a known use-after-free in the JUCE 8.0.3 inside pluginval (fixed upstream in JUCE 04e167d646) that happens after all tests have run and after our plugin is unloaded; without this, most CI runs fail by chance (two plugins, eight environments). The narrow signature keeps a real crash of our plugin, or an incomplete run, a failure. The final test name is hard-coded on purpose: a new pluginval that adds a later test makes the check stricter, not looser. **(review)** |
+| 2 | **Alternative considered, not taken: build pluginval from pinned source with the fixed JUCE.** | It needs a new build job and an unpinned dependency in its own build (pluginval's submodules, toolchain), a supply-chain and maintenance decision left to the owner. The wrapper is temporary and says when to delete it (a pluginval Linux build with JUCE 9.0.2 or newer that runs on glibc 2.35). **(review)** |
+| 3 | **The negative distribution check (glibc 2.31) runs pluginval directly, not through the wrapper.** | It asserts a loader refusal; no gdb is installed in that container and the wrapper could only accept a crash after a full run. **(review)** |
+
 ## M8 packaging of the first release (2026-11-19, all review)
 
 Contract: `docs/architecture.md` section 10. Code: `scripts/package-release.sh`, `resources/release/`, the release part of `.github/workflows/build.yml`, the `mac` step of `scripts/preflight.sh`.

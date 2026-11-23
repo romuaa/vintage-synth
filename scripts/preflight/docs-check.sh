@@ -14,6 +14,7 @@
 #      (`__pycache__/`, `*.pyc`, `*.pyo`) is tracked; no tracked file, text or binary, contains an
 #      absolute home path (macOS, Windows or Linux user directory followed by a user name).
 #   5. Shell scripts pass `bash -n` (and shellcheck at error severity, when it is installed).
+#   6. The self-test of the pluginval teardown-crash wrapper (scripts/linux-check/pluginval-run-selftest.sh).
 set -uo pipefail
 
 here=$(cd -P "$(dirname "$0")" && pwd)
@@ -231,6 +232,13 @@ while IFS= read -r -d '' f; do
   fi
 done < "$tmp/files"
 ok "$sh_n shell scripts pass the syntax check"
+
+# 6. pluginval wrapper decision logic ----------------------------------------------------------
+if sh scripts/linux-check/pluginval-run-selftest.sh >"$tmp/pv-selftest" 2>&1; then
+  ok "pluginval-run.sh self-test ($(grep -c '^ok ' "$tmp/pv-selftest") cases)"
+else
+  fail "pluginval-run-selftest.sh: $(grep -E '^FAIL' "$tmp/pv-selftest" | head -n 3 | tr '\n' ' ')"
+fi
 
 if [[ $fails -gt 0 ]]; then
   echo "docs-check: $fails check(s) FAILED" >&2

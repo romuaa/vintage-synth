@@ -37,6 +37,12 @@ is a rule, a line here.
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
 
+## CI: pluginval 1.0.4 crashes at teardown (2026-11-23)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| pluginval on Linux x86_64 failed with exit 139 in about 6 to 7 % of runs, after every test had completed (sometimes before, sometimes after its final "SUCCESS" line); with two plugins and eight environments per CI run most runs failed by chance. | A use-after-free in the JUCE 8.0.3 VST3 host code that pluginval 1.0.4 is built with: at shutdown the main thread's dispatch loop calls an fd callback (`LinuxEventLoop::registerFdCallback`, `RunLoop::Impl::registerEventHandler`) that indexes the event-handler map (`unordered_map<int, vector<IEventHandler*>>::operator[]`) after it is gone. Fixed upstream in JUCE commit 04e167d646; our plugin's library is already unloaded. A newer pluginval needs a newer glibc than our 2.35 floor. | Linux x86_64 runs pluginval through `scripts/linux-check/pluginval-run.sh` (under gdb), which accepts a SIGSEGV only on the exact signature (no failure marker, every started test completed and the last is "Fuzz parameters", frame #0 the `IEventHandler` map `operator[]` from frame #1 `registerEventHandler`, no `Exitium` frame) and fails on everything else, also when gdb is missing. Its decision logic has a self-test in the `docs` step of the local gate. Delete wrapper, samples and calls when a pluginval Linux build with JUCE 9.0.2 or newer runs on glibc 2.35. Never widen the accepted signature to make a run green. |
+
 ## First Windows and Linux x86_64 CI run (2026-11-20)
 
 | Problem | Cause | Fix / rule |

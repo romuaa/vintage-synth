@@ -14,7 +14,7 @@
 #
 # Steps, in run order (cheap and fast-failing first):
 #   docs           brand-name deny-list, no Claude-Session trailers, workflow YAML + trigger policy + JSON + CI plan table,
-#                  shell syntax                                       (scripts/preflight/docs-check.sh)
+#                  shell syntax, pluginval-wrapper self-test          (scripts/preflight/docs-check.sh)
 #   scan           Trivy (vuln, secret, misconfig; HIGH/CRITICAL fail) from its pinned container image,
 #                  scanning a read-only snapshot of the tracked files (same settings as security.yml)
 #   mac            macOS universal Release build of both plugins, warnings as errors, lipo check of
