@@ -312,13 +312,16 @@ TEST_CASE ("buses: each oscillator on the bus its routing bit names, oscillator 
     }
 }
 
-TEST_CASE ("buses: a routing write moves the oscillator between the buses as a band-limited step at its exact cycle, kLatencySamples late", "[render][buses][timing]")
+TEST_CASE ("buses: a routing write moves the oscillator between the buses as a band-limited step one cycle before its cycle, kLatencySamples late", "[render][buses][timing]")
 {
     // Oscillator 1 frozen on a constant (frequency 0, saw at the power-on accumulator), its envelope held at full
     // level; oscillators 2 and 3 silent. Its routing is toggled at random cycles; the filter bus's voice count is the
-    // band-limited membership: the long kernel's step at the write's cycle, kLatencySamples late (resolved to one
-    // cycle), and the filter bus's audio is that membership times the voice's value. The direct bus is its complement
-    // at every sample.
+    // band-limited membership: the long kernel's step one cycle before the write's cycle (the reference's convention
+    // for the analog registers' writes, Chip::kAnalogWriteLeadCycles, pinned here as the number 1: measured on
+    // isolated routing steps against generated traces, ChipVoiceTests.cpp kReferenceLeadCycles), kLatencySamples late
+    // (resolved to one cycle), and the filter bus's audio is that membership times the voice's value. The direct bus
+    // is its complement at every sample. Changed 2026-11-23: the step was expected at the write's cycle itself (the
+    // oscillator writes' convention, about one cycle after the reference's).
     for (const Model m : { Model::B, Model::A })
         for (const double rate : { 88200.0, 192000.0, 384000.0 })
         {
@@ -377,8 +380,9 @@ TEST_CASE ("buses: a routing write moves the oscillator between the buses as a b
             };
             // the voice's constant value: the filter bus after the first write has settled (oscillator 1 alone on it)
             const double x = all.fa[static_cast<std::size_t> (static_cast<double> (writeCycle[0]) / cps) + Chip::kLatencySamples + 12];
-            const double exact = model (0.0), early = model (-1.0), late = model (1.0);
-            INFO ((m == Model::A ? "Model A" : "Model B") << ", " << rate << " Hz: max deviation " << exact << " (one cycle early " << early << ", late " << late << ")");
+            const double exact = model (-1.0), early = model (-2.0), late = model (0.0);
+            INFO ((m == Model::A ? "Model A" : "Model B") << ", " << rate << " Hz: max deviation " << exact << " (one cycle early " << early
+                                                          << ", at the write's own cycle " << late << ")");
             CHECK (exact < 1.0e-6); // the kernel's Hermite read against the table's own interpolation
             CHECK (early > 100.0 * exact); // the comparison resolves one cycle
             CHECK (late > 100.0 * exact);

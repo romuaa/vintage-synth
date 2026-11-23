@@ -8,17 +8,31 @@
 // TOPOLOGY (8.5). Per Note: the voice drives the filter it was lent from its own registers (cutoff, resonance, mode)
 // and runs it (renderUntil). Shared: the owner runs one Filter for n chips: each voice renders its buses
 // (renderBusesUntil), the owner sums filterInputAc over the chips plus one chip's staticFilterBusDc into the shared
-// filter, and hands each voice the filter's output (finishShared), which takes its share
-// (OutputStage::sharedShare: the static output of one chip's static DC in full, 1/n of the rest). The owner then sets
-// the shared filter's cutoff, resonance and mode itself (the most recent note's); the voice's own 0x18 still sets its
-// stage (volume, the mixer's gain for the selected modes, oscillator 3's mute).
+// filter, PER BUS SAMPLE, and hands each voice the filter's output and, per sample too, the filter's static output
+// for that one chip's static DC (finishShared); each voice takes its share (OutputStage::sharedShare: the static
+// output in full, 1/n of the rest) and subtracts the static output with volume DC off, both per sample, so Shared
+// output does not depend on the owner's block length, also across routing and mute writes. The owner sets the shared
+// filter's cutoff, resonance and mode itself (the most recent note's); the voice's own 0x18 still sets its stage
+// (volume, the mixer's gain for the selected modes, oscillator 3's mute). Shared runs no filter copy in the voice.
+// - n = 1 is Per Note bit for bit (tested, routing and mute writes, volume DC on and off).
+// - Model B with n chips equals n Per Note chips for IDENTICAL voices only (tested, n = 1, 2, 16). With different
+//   notes it does not: each chip's mixer curve sees its share of the summed filter output, not its own filter's
+//   output (a property of the topology, 8.5). Measured (2026-11-23, Model B, 96 kHz, oscillators 1 and 2 of each chip
+//   on different notes and waveforms, all routed to the filter, low-pass at 900, resonance 4): the difference from
+//   Per Note is -38.8 dB (n = 2) and -31.8 dB (n = 16) rms re Per Note's audio; with mixed routings -32 / -30 dB.
+//   Pinned for n = 2 by "the Shared topology with different notes" (ChipVoiceTests.cpp).
 //
-// TIMING. Audio, envelopes and voice counts reach the stage kLatencySamples late (the renderer's latency, 8.17); every
-// register write that the filter or the stage reads is applied at the same place in the output, so a write lands at
-// its cycle there (Chip::renderEventTime):
+// LATENCY. latencySamples (), fixed at prepare: today the renderer's (Chip::kLatencySamples); a stage before the
+// filter that adds delay (S3b-2) adds it there, so no interface changes.
+//
+// TIMING. Audio, envelopes and voice counts reach the stage latencySamples () late (the renderer's latency, 8.17);
+// every register write that the filter or the stage reads is applied at the same place in the output, so a write
+// lands at its cycle there (Chip::renderEventTime):
 // - ROUTING (0x17 bits 0..2) and oscillator 3's mute (0x18 bit 7): in the renderer, a band-limited step of each
 //   oscillator's bus membership, of the voice counts and of the envelope sums (Chip.h "BUSES"); the stage takes the
-//   counts per sample (OutputStage::setVoices: the voice DC and the mixer's gain follow, band-limited).
+//   counts per sample (OutputStage::setVoices: the voice DC and the mixer's gain follow, band-limited). Like volume
+//   and mode writes they take effect one cycle before the renderer's convention for an oscillator write, as the
+//   reference shows them (Chip::kAnalogWriteLeadCycles).
 // - VOLUME and MODE (0x18 bits 0..6): band-limited. The configuration before the write (a copy of the stage and, Per
 //   Note, of the filter, which runs on beside the current one on the same input) and the one after it are both
 //   computed over the write's window, and their mixer outputs (and post gains, volume DC off) are blended with the
@@ -31,8 +45,13 @@
 //   per sample through Filter::processWithCutoff while it moves (a change less than kCutoffSettle samples after the
 //   previous one) and through setCutoff + process once it has stood still for kCutoffSettle samples.
 // - A write before the first render is part of the state the render starts on.
-// Writes pending in the output are held in a queue of kMaxPending; a write beyond it is applied at once (bounded; not
-// reached by a write every sample).
+// QUEUE. Writes pending in the output wait in two queues of kMaxPending (cutoff and resonance; 0x18), in order. A
+// write waits about latencySamples () + 1 samples, so a queue fills only with more than kMaxPending writes in that
+// time (a cutoff write every few cycles at the lowest rates; any number of writes at one cycle). A write that finds
+// its queue full first applies the OLDEST pending entry at once, as if its sample had come (the order and every
+// value are kept; that one entry lands up to latencySamples () + 1 samples early; a 0x18 entry only opens its
+// blending window early, where its weight is still 0, so it lands exactly), then waits in the queue itself. Tested
+// ("a full write queue").
 //
 // SPLITS. The output does not depend on how render calls are split: the renderer's buses do not (Chip), and every
 // decision here is taken per output sample from the sample index and the queued writes.
@@ -56,9 +75,12 @@ public:
     static constexpr int kMaxPending = 32;
     /** A cutoff that changes again within this many samples counts as moving (processWithCutoff). */
     static constexpr int kCutoffSettle = 256;
-    static constexpr int kLatencySamples = Chip::kLatencySamples;
 
     ChipVoice() noexcept;
+
+    /** The chain's delay against chip time, in internal samples: output sample m holds the signal at the start of
+        internal sample m - latencySamples (). Fixed at prepare (today the renderer's, Chip::kLatencySamples). */
+    int latencySamples() const noexcept { return latency; }
 
     /** The chip's configuration (model, clock, rate, resolution, volume DC, variation); resets everything. A Filter
         lent with setFilter is prepared for the same model, rate and variation by its owner. */
@@ -88,9 +110,11 @@ public:
     double filterInputAc (int i) const noexcept;
     /** The static DC of this chip's filter bus (its voices' DC) at bus sample i: the owner adds one chip's. */
     double staticFilterBusDc (int i) const noexcept;
-    /** Shared, second half: the shared filter's output for the buses of the last renderBusesUntil (n samples), the
-        number of chips feeding it and the filter's static output for one chip's static DC; output ADDED to out. */
-    void finishShared (const double* sharedFilterOut, int chips, double filterStaticOut, double* out, int n) noexcept;
+    /** Shared, second half, for the buses of the last renderBusesUntil (n samples): per bus sample i the shared
+        filter's output sharedFilterOut[i] and its static output for the static DC the owner fed in at that sample,
+        filterStaticOut[i] = Filter::staticOutput (that chip's staticFilterBusDc (i)); the number of chips feeding it.
+        Output ADDED to out. */
+    void finishShared (const double* sharedFilterOut, const double* filterStaticOut, int chips, double* out, int n) noexcept;
 
     Chip& chip() noexcept { return c; }
     const Chip& chip() const noexcept { return c; }
@@ -102,6 +126,10 @@ public:
     int configsActive() const noexcept { return nConfigs + 1; }
     /** Test aid: whether the last sample ran the filter per sample (processWithCutoff). */
     bool cutoffMoving() const noexcept { return moving; }
+    /** Test aid: the cutoff (register value) in effect at the last output sample. */
+    float cutoffInEffect() const noexcept { return cutoffValue; }
+    /** Test aid: how many writes found their queue full (QUEUE above) since prepare or reset. */
+    std::uint64_t queueOverflows() const noexcept { return overflows; }
 
 private:
     struct Pending
@@ -128,8 +156,9 @@ private:
     void refreshStaticDc() noexcept;
     /** Applies what is due at ring sample q (the output sample q + kLatencySamples + 1). */
     void advanceTo (std::int64_t q) noexcept;
-    /** One output sample from bus sample i (Per Note when sharedOut is null). */
-    double chainSample (int i, std::int64_t q, const double* sharedOut, int chips, double filterStaticOut) noexcept;
+    /** One output sample from bus sample i (Per Note when sharedOut is null; Shared: the shared filter's output and its
+        static output at that sample). */
+    double chainSample (int i, std::int64_t q, const double* sharedOut, const double* sharedStaticOut, int chips) noexcept;
     double runFilter (Filter& f, double in) const noexcept;
     static double weightAt (std::int64_t q, std::uint64_t sample, int first, const std::array<double, render::kKernelTaps>& taps) noexcept;
     Chip::BusBlock block() noexcept;
@@ -139,6 +168,8 @@ private:
     Filter* filter = nullptr;
     Config cfg {};
     bool board = true;
+    int latency = Chip::kLatencySamples;
+    std::uint64_t overflows = 0;
 
     // the buses of the current inner block
     std::array<double, kBlock> fa {}, da {}, fe {}, de {}, fv {}, dv {};

@@ -334,7 +334,8 @@ inline std::vector<float> decimate (const std::vector<double>& internal, double 
 
 /** A trace through the real chain (docs/architecture.md 8.19.4: chip::ChipVoice, Per Note, its own Filter): every
     write at its exact cycle through ChipVoice::write, the output in double at the internal rate, its latency
-    (kLatencySamples) removed, decimated to 48 kHz. Nothing is ambiguous: the renderer has both buses. */
+    (ChipVoice::latencySamples) removed, decimated to 48 kHz. Nothing is ambiguous: the renderer has both buses (the
+    result's ambiguous flags are all 0 and ambiguousSamples is 0 by construction). */
 inline ChainRender renderChain (const trace::Trace& t, const ChainOptions& o = {})
 {
     using namespace vs::bside::chip;
@@ -352,7 +353,7 @@ inline ChainRender renderChain (const trace::Trace& t, const ChainOptions& o = {
     const int factor = static_cast<int> (std::lround (o.rate / 48000.0));
     const std::size_t n48 = static_cast<std::size_t> (trace::specSampleCount (t));
     const std::size_t taps = static_cast<std::size_t> (192 * factor - 1);
-    const std::size_t lat = static_cast<std::size_t> (ChipVoice::kLatencySamples);
+    const std::size_t lat = static_cast<std::size_t> (voice->latencySamples());
     const std::size_t total = static_cast<std::size_t> (factor) * n48 + (taps - 1) / 2 + 8 + lat;
     std::vector<double> y (total, 0.0);
     std::size_t done = 0, next = 0;

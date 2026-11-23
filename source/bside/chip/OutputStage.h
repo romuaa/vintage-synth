@@ -33,7 +33,11 @@
 // of that chip's filter bus). Each of the n chips feeding it gets sharedFilterShare: the filter's static output of
 // that one chip's static DC in full, plus 1/n of the rest; setFilterStaticDc gets the static output in full. Then
 // (tested, "the Shared topology ..." in FilterOutputTests.cpp):
-// - n = 1 is Per Note exactly;
+// - n = 1 is Per Note exactly (through ChipVoice bit for bit, the static output taken per sample: ChipVoice.h);
+// - the claim below is for IDENTICAL voices only: with different notes per chip, each chip's mixer curve sees its share
+//   of the summed filter output instead of its own filter's output, and Model B's Shared differs from Per Note by
+//   -38.8 dB (n = 2) to -31.8 dB (n = 16) rms re Per Note's audio (all voices to the filter; mixed routings -32 to
+//   -30 dB; measured 2026-11-23, figures and the pinning test in ChipVoice.h "TOPOLOGY");
 // - Model B (its filter is linear): n chips with identical held routed voices give the output of n Per Note chips,
 //   n = 1 .. 16: with volume DC on the DC step of a 0 -> 15 volume write within 0.05 dB, with it off the output's
 //   mean within 0.05 dB (or 1e-6), and the audio's rms within 1 %; tested with a 110 Hz triangle (cutoff 900, all
@@ -157,11 +161,12 @@ public:
     double filterInput (double audio, double envelopeSum) const noexcept { return audio + envDc * envelopeSum + filterBusDc; }
     /** Shared topology: the part of filterInput summed over chips (filterBusAc in double). */
     double filterInputAc (double audio, double envelopeSum) const noexcept { return audio + envDc * envelopeSum; }
-    /** sharedFilterShare in double. */
+    /** sharedFilterShare in double; one chip gets the filter's output itself (bit for bit Per Note). */
     static double sharedShare (double sharedOut, double filterStaticOut, int chips) noexcept
     {
-        const double n = chips > 1 ? static_cast<double> (chips) : 1.0;
-        return (sharedOut - filterStaticOut) / n + filterStaticOut;
+        if (chips <= 1)
+            return sharedOut;
+        return (sharedOut - filterStaticOut) / static_cast<double> (chips) + filterStaticOut;
     }
     /** What multiplies the board high-pass's output: 1 with volume DC on (the volume is in the mixer), the volume
         level with it off (the volume behind the high-pass). */

@@ -2461,7 +2461,8 @@ void Chip::renderRouteChange() noexcept
         renderStartSample();
     if (rs.sample >= rs.routeBusyUntil)
         rs.routeRing.fill (rs.route); // the samples before this one hold the routing they were completed with
-    const double tw = static_cast<double> (cycleCount - rs.start);
+    // kAnalogWriteLeadCycles before the write's cycle (Chip.h); at most two samples before the sample's end (base <= 2)
+    const double tw = static_cast<double> (cycleCount - rs.start) - kAnalogWriteLeadCycles;
     const double base = std::fmin (std::fmax ((rs.tEnd - tw) * rs.samplesPerCycle, 0.0), 2.0);
     for (int n = 0; n < 3; ++n)
     {
@@ -2486,17 +2487,20 @@ Chip::EventTime Chip::renderEventTime() noexcept
     if (! rs.inProgress)
         renderStartSample();
     t.sample = rs.sample;
-    t.base = std::fmin (std::fmax ((rs.tEnd - static_cast<double> (cycleCount - rs.start)) * rs.samplesPerCycle, 0.0), 2.0);
+    // as renderRouteChange places a routing write: kAnalogWriteLeadCycles before the current cycle
+    const double tw = static_cast<double> (cycleCount - rs.start) - kAnalogWriteLeadCycles;
+    t.base = std::fmin (std::fmax ((rs.tEnd - tw) * rs.samplesPerCycle, 0.0), 2.0);
     t.beforeStart = false;
     return t;
 }
 
-void Chip::unitStepTaps (double base, std::array<double, render::kKernelTaps>& taps, int& first) noexcept
+void Chip::unitStepTaps (double base, std::array<double, render::kKernelTaps>& taps, int& first) const noexcept
 {
-    // addStep into an empty ring at sample kRing (its taps start at slot kRing + 1 - c - z), read back
+    // addStep into an empty ring at sample kRing (its taps start at slot kRing + 1 - c - z), read back; the tables
+    // cached at prepare (no static guard per write)
     std::array<double, kRing> ring {};
     const double b = std::fmin (std::fmax (base, 0.0), 2.0);
-    addStep<Kernel::longKernel> (render::kernelTables(), ring, static_cast<std::uint64_t> (kRing), b, 1.0, 0.0);
+    addStep<Kernel::longKernel> (*ktab, ring, static_cast<std::uint64_t> (kRing), b, 1.0, 0.0);
     const int c = static_cast<int> (std::ceil (b));
     first = 1 - c - render::kLongZeroCrossings;
     for (int j = 0; j < render::kKernelTaps; ++j)

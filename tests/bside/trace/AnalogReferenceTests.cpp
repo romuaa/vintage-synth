@@ -70,9 +70,8 @@ TEST_CASE ("analog: the filter modes and their sums within the scripted-trace to
 
 TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace tolerance (a_routing_*)", "[trace][reference][chip][analog]")
 {
-    // The per-voice harness (AnalogChain.h) renders each voice alone (no sync or ring in these traces), so the two
-    // buses are exact: every routing of the three voices and oscillator 3 off, the scripted tolerance over every
-    // frame.
+    // Through the real chain (AnalogChain.h renderChain: ChipVoice, the renderer's two buses), every routing of the
+    // three voices and oscillator 3 off, each routing write at its cycle: the scripted tolerance over every frame.
     // Model B is gated; Model A is reported, NOT inside the tolerance (decisions "B-Side S3a" round 2: its
     // filter's dependence on the level and the routed DC is not modelled; cutoff 300 here).
     for (const char* name : { "a_routing_a", "a_routing_b" })
@@ -81,7 +80,6 @@ TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace toler
         const auto& r = renderedTrace (kDir, traceName);
         if (! r.ok)
             SKIP (r.why);
-        REQUIRE (r.chain.ambiguousSamples == 0);
         const auto res = tr::compareScripted (r.reference, r.ours);
         const bool gate = std::string (name).back() == 'b';
         std::printf ("[analog] %s: outliers %.2f %% (allowed 5), mean %.2f dB (allowed 1), level %.2f dB (allowed 0.5), largest cell %.1f dB%s\n", name,
@@ -249,7 +247,6 @@ TEST_CASE ("analog: Model A held-tone distortion and two-tone products at held-o
     const auto& d = renderedTrace (kDir, distName);
     if (! d.ok)
         SKIP (d.why);
-    REQUIRE (d.chain.ambiguousSamples == 0);
     const double f1 = 985248.0 * std::round (160.0 * 16777216.0 / 985248.0) / 16777216.0;
     const double f2 = 985248.0 * std::round (211.0 * 16777216.0 / 985248.0) / 16777216.0;
     const std::size_t segs = d.reference.segments.size();

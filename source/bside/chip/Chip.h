@@ -343,6 +343,12 @@ public:
     using ShortBlep = vs::dsp::BlepTable;
     using LongBlep = vs::dsp::BasicBlepTable<render::kLongZeroCrossings, render::kLongBetaTenths, double>;
     static constexpr int kLatencySamples = LongBlep::kZeroCrossings;
+    /** How much earlier than an oscillator write a write of the analog stages' registers takes effect, in cycles: a
+        routing write (0x17 bits 0..2, oscillator 3's mute 0x18 bit 7) on the buses, and a volume or mode write where a
+        stage after the renderer places it (renderEventTime). Measured against the reference on isolated steps
+        (2026-11-23, both models, 192 and 384 kHz): the oscillator writes' convention put these 0.7 to 1.7 cycles
+        (mean 0.9 to 1.2) after the reference's, while pulse-width writes sit within 0.2 cycles of it ("BUSES"). */
+    static constexpr double kAnalogWriteLeadCycles = 1.0;
 
     /** Renders whole internal samples and ADDS them to out[0 .. n): per oscillator the band-limited
         waveform after the waveform converter (DAC), times the envelope converter, summed over the three
@@ -379,10 +385,10 @@ public:
     void renderBuses (const BusBlock& out, int numInternalSamples) noexcept;
 
     /** Where the current cycle lies in the rendered timeline, for a stage after the renderer that must place a change
-        of its own (a volume or mode write) where the renderer places a write: the index of the sample in progress
-        (started here if none is) and the time from the change to that sample's end, in samples (0 .. 2; the BLEP
-        convention of the rings, "BUSES"). `beforeStart`: render has not run since reset, so the change is part of the
-        state the first samples start on. */
+        of its own (a volume or mode write) where the renderer places a routing write: the index of the sample in
+        progress (started here if none is) and the time from the change to that sample's end, in samples (0 .. 2; the
+        BLEP convention of the rings, "BUSES"), the change kAnalogWriteLeadCycles before the current cycle.
+        `beforeStart`: render has not run since reset, so the change is part of the state the first samples start on. */
     struct EventTime
     {
         std::uint64_t sample = 0;
@@ -396,7 +402,7 @@ public:
     /** The long kernel's band-limited unit step at `base` (EventTime) as weights on the rings' samples: the weight of
         sample q is (q >= sample ? 1 : 0) + taps[q - (sample + first)] inside the taps, the ring sample q being output
         kLatencySamples + 1 samples after it is completed. */
-    static void unitStepTaps (double base, std::array<double, render::kKernelTaps>& taps, int& first) noexcept;
+    void unitStepTaps (double base, std::array<double, render::kKernelTaps>& taps, int& first) const noexcept;
     /** Test aid: off delivers Model A's voices on the buses without their bend (OutputStage::shapeVoice); then the
         buses sum to the single sum on Model A too. On by default (no effect on Model B). */
     void renderBendVoices (bool on) noexcept { renderBend = on; }
@@ -1430,9 +1436,12 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // share every oscillator's rendering, the rings and the digital state; tested within the rounding's 4.75 float
 // steps over random schedules with routing writes); a muted oscillator 3 is on neither bus.
 // A ROUTING WRITE (0x17, 0x18 bit 7, setFilter, powerOnKeepingTime) moves an oscillator between the buses at the
-// write's exact cycle: its membership of each bus (0 or 1) steps there as a band-limited step on the long kernel
+// write's cycle: its membership of each bus (0 or 1) steps there as a band-limited step on the long kernel
 // (the oscillator's steps' kernel; its stop band keeps a write every tick far below -90 dB), placed in the rings
-// like every other step, so it is kLatencySamples late as the audio is. The voice counts and envelope sums carry
+// like every other step, so it is kLatencySamples late as the audio is. "There" is kAnalogWriteLeadCycles (one cycle)
+// before where an oscillator write at the same cycle lands, as the reference shows the analog registers' writes
+// (measured on isolated routing, mute, volume and mode steps against generated traces; within a quarter of a cycle
+// on average after the lead, both models, 192 and 384 kHz). The voice counts and envelope sums carry
 // the same memberships, so the voice DC steps band-limited too. Kept as: the routing byte now (`route`), a ring of
 // the byte each sample was completed with (written only for kRing samples after a change; before that every ring
 // sample holds `route`), and per oscillator a ring of the band-limited part of each membership (devF, devD), zero

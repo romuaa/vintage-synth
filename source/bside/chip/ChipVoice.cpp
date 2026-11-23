@@ -23,6 +23,7 @@ void ChipVoice::prepare (const Config& config) noexcept
 {
     cfg = config;
     c.prepare (cfg);
+    latency = Chip::kLatencySamples; // the renderer's; a delaying stage before the filter adds its own here
     st = OutputStage {};
     st.prepare (cfg.model, cfg.internalRate, cfg.volumeDc);
     reset();
@@ -46,6 +47,7 @@ void ChipVoice::reset() noexcept
     st.reset();
     paramHead = paramCount = configHead = configCount = 0;
     nConfigs = 0;
+    overflows = 0;
     cutoffValue = 0.0f;
     lastCutoffChange = 0;
     cutoffChanged = false;
@@ -111,15 +113,22 @@ void ChipVoice::queue (std::uint8_t reg, std::uint8_t value, float cutoffNew) no
         return;
     }
     p.sample = t.sample;
-    Chip::unitStepTaps (t.base, p.taps, p.first);
+    c.unitStepTaps (t.base, p.taps, p.first);
     const bool config = reg == reg::modeVolume;
     auto& q = config ? configs : params;
     int& head = config ? configHead : paramHead;
     int& count = config ? configCount : paramCount;
     if (count == kMaxPending)
     {
-        applyNow (p); // bounded: a write beyond the queue applies at once
-        return;
+        // full (ChipVoice.h "QUEUE"): the oldest entry is applied at once, as if its sample had come; order and values kept
+        ++overflows;
+        const Pending& oldest = q[static_cast<std::size_t> (head)];
+        if (config)
+            beginConfig (oldest);
+        else
+            applyParam (oldest, static_cast<std::int64_t> (oldest.sample));
+        head = (head + 1) % kMaxPending;
+        --count;
     }
     q[static_cast<std::size_t> ((head + count) % kMaxPending)] = p;
     ++count;
@@ -137,7 +146,8 @@ void ChipVoice::applyNow (const Pending& p) noexcept
         {
             auto& o = old[static_cast<std::size_t> (i)];
             o.stage.setModeVolume (p.value);
-            o.filter.setMode (p.value);
+            if (filter != nullptr)
+                o.filter.setMode (p.value); // Shared: the copies are never run
         }
         refreshStaticDc();
         return;
@@ -161,9 +171,11 @@ void ChipVoice::applyParam (const Pending& p, std::int64_t q) noexcept
             return;
         resonanceNow = r;
         if (filter != nullptr)
+        {
             filter->setResonance (r >> 4);
-        for (int i = 0; i < nConfigs; ++i)
-            old[static_cast<std::size_t> (i)].filter.setResonance (r >> 4);
+            for (int i = 0; i < nConfigs; ++i)
+                old[static_cast<std::size_t> (i)].filter.setResonance (r >> 4);
+        }
         refreshStaticDc();
         return;
     }
@@ -175,10 +187,9 @@ void ChipVoice::applyParam (const Pending& p, std::int64_t q) noexcept
         moving = true;
     lastCutoffChange = q;
     cutoffChanged = true;
-    if (! moving)
+    if (! moving && filter != nullptr)
     {
-        if (filter != nullptr)
-            filter->setCutoff (cutoffValue);
+        filter->setCutoff (cutoffValue);
         for (int i = 0; i < nConfigs; ++i)
             old[static_cast<std::size_t> (i)].filter.setCutoff (cutoffValue);
     }
@@ -217,7 +228,7 @@ void ChipVoice::beginConfig (const Pending& p) noexcept
 void ChipVoice::refreshStaticDc() noexcept
 {
     // with volume DC off the stage subtracts what the filter makes of its bus's static DC (OutputStage "volumeDc off");
-    // Shared: the owner's figure (finishShared)
+    // Shared: the owner's figure, per sample (chainSample)
     if (filter == nullptr)
         return;
     st.setFilterStaticDc (filter->staticOutput (st.staticFilterBusDc()));
@@ -274,9 +285,11 @@ void ChipVoice::advanceTo (std::int64_t q) noexcept
     {
         moving = false;
         if (filter != nullptr)
+        {
             filter->setCutoff (cutoffValue);
-        for (int i = 0; i < nConfigs; ++i)
-            old[static_cast<std::size_t> (i)].filter.setCutoff (cutoffValue);
+            for (int i = 0; i < nConfigs; ++i)
+                old[static_cast<std::size_t> (i)].filter.setCutoff (cutoffValue);
+        }
     }
 }
 
@@ -285,7 +298,7 @@ double ChipVoice::runFilter (Filter& f, double in) const noexcept
     return moving ? f.processWithCutoffDouble (in, cutoffValue) : f.processDouble (in);
 }
 
-double ChipVoice::chainSample (int i, std::int64_t q, const double* sharedOut, int chips, double filterStaticOut) noexcept
+double ChipVoice::chainSample (int i, std::int64_t q, const double* sharedOut, const double* sharedStaticOut, int chips) noexcept
 {
     const auto j = static_cast<std::size_t> (i);
     advanceTo (q);
@@ -300,7 +313,14 @@ double ChipVoice::chainSample (int i, std::int64_t q, const double* sharedOut, i
     }
     double fo = 0.0;
     if (sharedOut != nullptr)
-        fo = OutputStage::sharedShare (sharedOut[j], filterStaticOut, chips);
+    {
+        // Shared: the static output of this sample (the owner's, for the static DC it fed in), set where it changes
+        const double so = sharedStaticOut[j];
+        st.setFilterStaticDc (so);
+        for (int k = 0; k < nConfigs; ++k)
+            old[static_cast<std::size_t> (k)].stage.setFilterStaticDc (so);
+        fo = OutputStage::sharedShare (sharedOut[j], so, chips);
+    }
     else
         fo = runFilter (*filter, st.filterInput (fa[j], fe[j]));
     double mix = st.mixerOutput (fo, da[j], de[j]);
@@ -346,7 +366,7 @@ int ChipVoice::renderUntil (double* out, int maxSamples, std::uint64_t untilCycl
         blockStart = c.renderSampleIndex();
         const int n = c.renderBusesUntil (block(), want, untilCycle);
         for (int i = 0; i < n; ++i)
-            out[done + i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingDelay, nullptr, 1, 0.0);
+            out[done + i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingDelay, nullptr, nullptr, 1);
         done += n;
         if (n < want)
             break;
@@ -370,7 +390,7 @@ int ChipVoice::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle
         blockStart = c.renderSampleIndex();
         const int n = c.renderBusesUntil (block(), want, untilCycle);
         for (int i = 0; i < n; ++i)
-            out[done + i] += rounding.next (chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingDelay, nullptr, 1, 0.0));
+            out[done + i] += rounding.next (chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingDelay, nullptr, nullptr, 1));
         done += n;
         if (n < want)
             break;
@@ -395,12 +415,9 @@ double ChipVoice::staticFilterBusDc (int i) const noexcept
     return OutputStage::voiceDc (cfg.model) * fv[static_cast<std::size_t> (i)];
 }
 
-void ChipVoice::finishShared (const double* sharedFilterOut, int chips, double filterStaticOut, double* out, int n) noexcept
+void ChipVoice::finishShared (const double* sharedFilterOut, const double* filterStaticOut, int chips, double* out, int n) noexcept
 {
-    st.setFilterStaticDc (filterStaticOut);
-    for (int k = 0; k < nConfigs; ++k)
-        old[static_cast<std::size_t> (k)].stage.setFilterStaticDc (filterStaticOut);
     for (int i = 0; i < n && i < kBlock; ++i)
-        out[i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingDelay, sharedFilterOut, chips, filterStaticOut);
+        out[i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingDelay, sharedFilterOut, filterStaticOut, chips);
 }
 } // namespace vs::bside::chip
