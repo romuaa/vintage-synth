@@ -343,6 +343,12 @@ public:
     using ShortBlep = vs::dsp::BlepTable;
     using LongBlep = vs::dsp::BasicBlepTable<render::kLongZeroCrossings, render::kLongBetaTenths, double>;
     static constexpr int kLatencySamples = LongBlep::kZeroCrossings;
+    /** How much earlier than an oscillator write a write of the analog stages' registers takes effect, in cycles: a
+        routing write (0x17 bits 0..2, oscillator 3's mute 0x18 bit 7) on the buses, and a volume or mode write where a
+        stage after the renderer places it (renderEventTime). Measured against the reference on isolated steps
+        (2026-11-23, both models, 192 and 384 kHz): the oscillator writes' convention put these 0.7 to 1.7 cycles
+        (mean 0.9 to 1.2) after the reference's, while pulse-width writes sit within 0.2 cycles of it ("BUSES"). */
+    static constexpr double kAnalogWriteLeadCycles = 1.0;
 
     /** Renders whole internal samples and ADDS them to out[0 .. n): per oscillator the band-limited
         waveform after the waveform converter (DAC), times the envelope converter, summed over the three
@@ -356,6 +362,50 @@ public:
         (or at its last cycle), the sample stays in progress: a write made now lands at its exact cycle,
         and the next render call completes the sample. untilCycle below cycle() renders nothing. */
     int renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noexcept;
+
+    /** The renderer's two buses and what the output stage needs with them (docs/architecture.md 8.19.4; see "BUSES" at
+        the end of this file), one value per internal sample in double precision, WRITTEN (not added) at [0 .. n). */
+    struct BusBlock
+    {
+        double* filterAudio = nullptr;    // the oscillators routed to the filter (register 0x17 bits 0..2)
+        double* directAudio = nullptr;    // the others; oscillator 3 not when 0x18 bit 7 mutes it (8.4.3 row 14)
+        double* filterEnvelope = nullptr; // the sum of the envelope converter values (RenderTables envelope[]) on each bus
+        double* directEnvelope = nullptr;
+        double* filterVoices = nullptr;   // how many voices are on each bus (fractional only across a routing write)
+        double* directVoices = nullptr;
+        /** The same block from sample k on. */
+        BusBlock from (int k) const noexcept
+        {
+            return { filterAudio + k, directAudio + k, filterEnvelope + k, directEnvelope + k, filterVoices + k, directVoices + k };
+        }
+    };
+    /** As renderUntil, with the two buses instead of the single sum (which then is not produced; the digital state and
+        every oscillator's rendering are the same, and the buses sum to the single sum: "BUSES"). */
+    int renderBusesUntil (const BusBlock& out, int maxSamples, std::uint64_t untilCycle) noexcept;
+    void renderBuses (const BusBlock& out, int numInternalSamples) noexcept;
+
+    /** Where the current cycle lies in the rendered timeline, for a stage after the renderer that must place a change
+        of its own (a volume or mode write) where the renderer places a routing write: the index of the sample in
+        progress (started here if none is) and the time from the change to that sample's end, in samples (0 .. 2; the
+        BLEP convention of the rings, "BUSES"), the change kAnalogWriteLeadCycles before the current cycle.
+        `beforeStart`: render has not run since reset, so the change is part of the state the first samples start on. */
+    struct EventTime
+    {
+        std::uint64_t sample = 0;
+        double base = 0.0;
+        bool beforeStart = true;
+    };
+    EventTime renderEventTime() noexcept;
+    /** The index of the next sample render completes (the one in progress, if any); the buses' sample i of a call
+        started here is sample renderSampleIndex() + i. */
+    std::uint64_t renderSampleIndex() const noexcept { return rs.sample; }
+    /** The long kernel's band-limited unit step at `base` (EventTime) as weights on the rings' samples: the weight of
+        sample q is (q >= sample ? 1 : 0) + taps[q - (sample + first)] inside the taps, the ring sample q being output
+        kLatencySamples + 1 samples after it is completed. */
+    void unitStepTaps (double base, std::array<double, render::kKernelTaps>& taps, int& first) const noexcept;
+    /** Test aid: off delivers Model A's voices on the buses without their bend (OutputStage::shapeVoice); then the
+        buses sum to the single sum on Model A too. On by default (no effect on Model B). */
+    void renderBendVoices (bool on) noexcept { renderBend = on; }
 
     /** Times the renderer had to move a rendered line back onto the digital phase (a band-limited
         correction; a diagnostic for tests: 0 over the tests' random patches and write schedules; writes a
@@ -899,6 +949,9 @@ private:
         std::uint64_t quietSince = 0; // from this sample on no step was emitted and value and level kept still
         std::array<double, kRing> buf {}; // double: a nearly silent shape on a large offset keeps its detail
         std::array<float, kRing> env {};
+        // the band-limited part of the bus membership across a routing write ("BUSES"): added to the naive membership
+        // of the route ring's sample, zero outside a write's window
+        std::array<double, kRing> devF {}, devD {};
     };
     /** The digital events of one piece (renderPieceOpen .. renderPieceClose), per oscillator. */
     static constexpr int kPieceEventCap = 80; // per oscillator and piece (<= 32 resets + 32 pull-downs, ...)
@@ -934,24 +987,32 @@ private:
 
         void addRaw (int n, double t, double off) noexcept
         {
+            if (n < 0 || n > 2)
+                return; // never (0..2 by construction); bounds the index for GCC 13 -Warray-bounds
             auto& c = rawCount[static_cast<std::size_t> (n)];
             if (c < kPieceEventCap)
                 raw[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, off, false };
         }
         void addJump (int n, double t, double off, std::uint8_t kind) noexcept
         {
+            if (n < 0 || n > 2)
+                return; // never (0..2 by construction); bounds the index for GCC 13 -Warray-bounds
             auto& c = jumpCount[static_cast<std::size_t> (n)];
             if (c < kPieceEventCap)
                 jumps[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, off, kind };
         }
         void addHeld (int n, double t, std::uint16_t v) noexcept
         {
+            if (n < 0 || n > 2)
+                return; // never (0..2 by construction); bounds the index for GCC 13 -Warray-bounds
             auto& c = heldCount[static_cast<std::size_t> (n)];
             if (c < kPieceEventCap)
                 held[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, v };
         }
         void addFlip (int n, double t, bool top) noexcept
         {
+            if (n < 0 || n > 2)
+                return; // never (0..2 by construction); bounds the index for GCC 13 -Warray-bounds
             auto& c = flipCount[static_cast<std::size_t> (n)];
             if (c < kPieceEventCap)
                 flips[static_cast<std::size_t> (n)][static_cast<std::size_t> (c++)] = { t, top };
@@ -982,6 +1043,11 @@ private:
         std::uint64_t converterSwitches = 0; // changes of the set of Model A converter bits rendered (diagnostic)
         std::uint64_t levelSwitches = 0;     // switches of how a combined waveform's steps are emitted (diagnostic)
         render::OutputRounding rounding {}; // the output's noise-shaped conversion to float (RenderTables.h)
+        // the buses ("BUSES"): the routing byte (0x17 bits 0..2, 0x18 bit 7 as bit 3) now and per ring sample, written
+        // only while a write is younger than the ring (before that, every ring sample holds `route`)
+        std::uint8_t route = 0;
+        std::array<std::uint8_t, kRing> routeRing {};
+        std::uint64_t routeBusyUntil = 0; // from this sample on every ring sample holds `route` and devF / devD are 0
     };
 
     void renderActivate() noexcept;
@@ -989,10 +1055,27 @@ private:
     void renderPieceOpen() noexcept;
     void renderPieceAdvance (std::uint64_t cycles) noexcept;
     void renderPieceClose (bool toSampleEnd) noexcept;
-    double renderFinishSample() noexcept;
+    void renderFinishSample() noexcept;
     void renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std::uint64_t cyclesDone, std::uint64_t cycleNow, bool converterTerms) noexcept;
     double renderOutput() noexcept;
-    int renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noexcept;
+    /** The buses' sample i from the oscillators' contributions x (after the envelope) and envelope values e read from the
+        output slot; completes the sample like renderOutput. */
+    void renderOutputBuses (const BusBlock& b, int i, const std::array<double, 3>& x, const std::array<double, 3>& e) noexcept;
+    /** The route ring's bookkeeping at a sample's end (renderOutput, renderOutputBuses); returns the output slot's byte. */
+    std::uint8_t renderRouteAtOutput (std::size_t outSlot) noexcept;
+    void renderRouteKeep (std::size_t outSlot) noexcept;
+    /** The buses' six values from the contributions, the envelope values and a routing byte; with devSlot, the
+        band-limited memberships of that ring slot are added and cleared. */
+    void renderBusMix (const std::array<double, 3>& x, const std::array<double, 3>& e, std::uint8_t route, const std::size_t* devSlot, double* v) noexcept;
+    std::uint8_t routeByte() const noexcept
+    {
+        return static_cast<std::uint8_t> ((regs[reg::resonanceRouting] & 0x07) | ((regs[reg::modeVolume] & 0x80) != 0 ? 0x08 : 0x00));
+    }
+    void renderRouteChange() noexcept;
+    template <class Out>
+    int renderUntilImpl (Out& out, int maxSamples, std::uint64_t untilCycle) noexcept;
+    template <class Out>
+    int renderBatch (Out& out, int offset, int maxSamples, std::uint64_t untilCycle) noexcept;
     void renderBeforeChange() noexcept;
     void renderAfterChange (int testSetMask) noexcept;
     void renderSyncOsc (int n) noexcept;
@@ -1010,6 +1093,7 @@ private:
     bool renderCheck = false;
     bool renderBatching = true;
     bool renderMoments = true;
+    bool renderBend = true;
     int renderTableLevel (int n, int current) const noexcept; // ChipRender.cpp
     void renderEmit (int n, double t, double dv, double ds) noexcept;
     void renderEmitMoments (int n, double t0, const std::array<double, render::kStepMoments + 1>& moments) noexcept;
@@ -1244,10 +1328,11 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 //
 // WHAT IS RENDERED. Per oscillator: the band-limited waveform after the waveform converter, minus the
 // converter's mid-scale (d (0) + d (4095)) / 2, times the envelope converter's output for the sample's
-// envelope counter; render() adds the sum of the three oscillators. Of 8.4.4 this is "oscillator output ->
-// waveform DAC -> x envelope (envelope DAC)" and a plain sum. NOT yet (S3): the routing bits and the
-// filter, oscillator 3 off, the mixer's voice DC (chip.volume_dc), the volume, the board filters, the
-// output scale; the analog fade of a deselected output is rendered as the digital core holds and fades it.
+// envelope counter; render() adds the sum of the three oscillators, renderBuses() delivers them on the two buses
+// ("BUSES" below). Of 8.4.4 this is "oscillator output -> waveform DAC -> x envelope (envelope DAC) -> filter or
+// direct (routing bits)". The filter, the mixer's voice DC, the volume, the board filters and the output scale are
+// Filter, OutputStage and ChipVoice (S3); the analog fade of a deselected output is rendered as the digital core
+// holds and fades it.
 //
 // THE LINES. Every oscillator is a straight line in phase between events: u (t), in periods, through the
 // digital accumulator (u = digital phase + offU, offU being non-zero only after a sync reset, see below).
@@ -1336,4 +1421,34 @@ void Chip::advanceCycles (std::uint64_t n, Sink& sink) noexcept
 // for random write sequences, both models, every block split and internal rate).
 // REAL TIME: no allocation, no locks, no exceptions; every loop is bounded (32 cycles per piece, 80
 // events per oscillator and piece, 4 096 events per sweep as a backstop; a batch by its block).
+//
+// ==== BUSES (renderBuses, renderBusesUntil; docs/architecture.md 8.19.4, S3b-1) ====
+//
+// WHAT. Per internal sample, in double precision (8.20.1: no float rounding before the chain's one shaped
+// conversion), the FILTER BUS (the oscillators whose bit in 0x17 bits 0..2 is set) and the DIRECT BUS (the others;
+// oscillator 3 not while 0x18 bit 7 mutes it and it is not routed, 8.4.3 row 14), each oscillator's contribution
+// being the one the single sum adds (its ring value times its envelope converter value), plus what OutputStage
+// needs and cannot derive: the sum of the envelope converter values on each bus (the voices' envelope DC) and the
+// number of voices on each bus (the voice DC, the mixer's gain). Model A's voices are bent first (OutputStage::
+// shapeVoice, per voice, from its contribution and envelope value: decisions "B-Side S3a" round 2 row R3; a static
+// curve at the internal rate, whose aliasing is S3b-2's; test aid renderBendVoices). Model B: no bend.
+// THE SUM. Without the bend the buses' sum is the single sum before its float conversion (render() and the buses
+// share every oscillator's rendering, the rings and the digital state; tested within the rounding's 4.75 float
+// steps over random schedules with routing writes); a muted oscillator 3 is on neither bus.
+// A ROUTING WRITE (0x17, 0x18 bit 7, setFilter, powerOnKeepingTime) moves an oscillator between the buses at the
+// write's cycle: its membership of each bus (0 or 1) steps there as a band-limited step on the long kernel
+// (the oscillator's steps' kernel; its stop band keeps a write every tick far below -90 dB), placed in the rings
+// like every other step, so it is kLatencySamples late as the audio is. "There" is kAnalogWriteLeadCycles (one cycle)
+// before where an oscillator write at the same cycle lands, as the reference shows the analog registers' writes
+// (measured on isolated routing, mute, volume and mode steps against generated traces; within a quarter of a cycle
+// on average after the lead, both models, 192 and 384 kHz). The voice counts and envelope sums carry
+// the same memberships, so the voice DC steps band-limited too. Kept as: the routing byte now (`route`), a ring of
+// the byte each sample was completed with (written only for kRing samples after a change; before that every ring
+// sample holds `route`), and per oscillator a ring of the band-limited part of each membership (devF, devD), zero
+// outside a write's window. The write does not end the piece: every oscillator's rendering is the one without it.
+// EVENT TIME. A stage after the renderer that changes something of its own at a write (a volume or mode write:
+// ChipVoice) places it with renderEventTime() (the sample in progress and the BLEP convention's `base`) and
+// unitStepTaps (the long kernel's unit step as weights on the ring samples), the same arithmetic as the rings.
+// COST. The single sum's path adds one comparison per sample (the route ring's bookkeeping while a write is
+// young); the buses' path writes six values per sample instead of converting one.
 } // namespace vs::bside::chip

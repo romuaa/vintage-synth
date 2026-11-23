@@ -4,11 +4,13 @@
 // is exactly what stepping gives (tested).
 
 #include "bside/chip/Chip.h"
+#include "bside/chip/OutputStage.h"
 
 #include <algorithm>
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 namespace vs::bside::chip
 {
@@ -725,6 +727,7 @@ void Chip::renderActivate() noexcept
 {
     rs = RenderState {};
     rs.active = true;
+    rs.route = routeByte();
     rs.cps = static_cast<double> (clock.increment()) / kTwo32;
     rs.samplesPerCycle = 1.0 / rs.cps;
     renderStartSample();
@@ -1841,7 +1844,7 @@ void Chip::renderPieceClose (bool toSampleEnd) noexcept
 
 // ---- the end of a sample ----
 
-double Chip::renderFinishSample() noexcept
+void Chip::renderFinishSample() noexcept
 {
     if (rs.pieceOpen)
         renderPieceClose (true);
@@ -1860,7 +1863,6 @@ double Chip::renderFinishSample() noexcept
 
     if (renderCheck)
         renderCheckSample();
-    return renderOutput();
 }
 
 void Chip::renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std::uint64_t cyclesDone, std::uint64_t cycleNow, bool converterTerms) noexcept
@@ -1952,7 +1954,53 @@ void Chip::renderFinishOsc (int n, std::size_t slot, std::uint64_t phaseEnd, std
 // runs on its lower 55 bits alone, phase + increment x cycles modulo 2^55. Under renderCheckStates, and for a
 // pulling oscillator whose top bit may stay up, the digital core is advanced sample by sample instead.
 
-int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noexcept
+namespace
+{
+/** Each oscillator's membership of the filter and the direct bus and the voice counts, per routing byte (0x17 bits
+    0..2; bit 3: oscillator 3 muted on the direct bus, 8.4.3 row 14). */
+struct Members
+{
+    std::array<double, 3> f, d;
+    double nf, nd;
+};
+constexpr std::array<Members, 16> makeMembers() noexcept
+{
+    std::array<Members, 16> t {};
+    for (int r = 0; r < 16; ++r)
+    {
+        auto& m = t[static_cast<std::size_t> (r)];
+        m.nf = m.nd = 0.0;
+        for (int n = 0; n < 3; ++n)
+        {
+            const bool routed = ((r >> n) & 1) != 0;
+            const bool direct = ! routed && ! (n == 2 && (r & 0x08) != 0);
+            m.f[static_cast<std::size_t> (n)] = routed ? 1.0 : 0.0;
+            m.d[static_cast<std::size_t> (n)] = direct ? 1.0 : 0.0;
+            m.nf += routed ? 1.0 : 0.0;
+            m.nd += direct ? 1.0 : 0.0;
+        }
+    }
+    return t;
+}
+constexpr std::array<Members, 16> kMembers = makeMembers();
+} // namespace
+
+namespace
+{
+/** What render delivers: the single sum, converted to float and added (render, renderUntil) ... */
+struct FloatOut
+{
+    float* p;
+};
+/** ... or the two buses in double (renderBuses, renderBusesUntil). */
+struct BusOut
+{
+    Chip::BusBlock b;
+};
+} // namespace
+
+template <class Out>
+int Chip::renderBatch (Out& out, int offset, int maxSamples, std::uint64_t untilCycle) noexcept
 {
     if (! renderBatching || maxSamples <= 0 || mustStep())
         return 0;
@@ -2032,7 +2080,8 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
     }
 
     const std::uint64_t c0 = cycleCount;
-    if (line[0].constant && line[1].constant && line[2].constant && ! renderCheck)
+    // (a routing write younger than the route ring: the per-sample loop below, which keeps the ring)
+    if (line[0].constant && line[1].constant && line[2].constant && ! renderCheck && rs.sample >= rs.routeBusyUntil)
     {
         // nothing sounds that moves: every sample is the same sum (renderOutput's order); the ring and the rest
         // of the render state are brought to where the general path would leave them below
@@ -2058,21 +2107,48 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
             cum += cyc;
             return true;
         };
-        // the rounding shapes the sum until it has stood still for its settle count; from then on it is
-        // rounded plainly (a silent chip's loop)
-        bool stopped = false;
-        while (! settled && done < maxSamples)
+        if constexpr (std::is_same_v<Out, BusOut>)
         {
-            if (! take())
+            // the buses: the same values every sample (the route ring is uniform and no write's window is open)
+            (void) plain;
+            (void) settled;
+            std::array<double, 3> x {}, e {};
+            for (int n = 0; n < 3; ++n)
             {
-                stopped = true;
-                break;
+                x[idx (n)] = line[idx (n)].contribution;
+                e[idx (n)] = static_cast<double> (line[idx (n)].level);
             }
-            out[done++] += rs.rounding.next (sum);
-            settled = rs.rounding.settled();
+            double v[6] {};
+            renderBusMix (x, e, rs.route, nullptr, v);
+            while (done < maxSamples && take())
+            {
+                const auto j = static_cast<std::size_t> (offset + done++);
+                out.b.filterAudio[j] = v[0];
+                out.b.directAudio[j] = v[1];
+                out.b.filterEnvelope[j] = v[2];
+                out.b.directEnvelope[j] = v[3];
+                out.b.filterVoices[j] = v[4];
+                out.b.directVoices[j] = v[5];
+            }
         }
-        while (! stopped && done < maxSamples && take())
-            out[done++] += plain;
+        else
+        {
+            // the rounding shapes the sum until it has stood still for its settle count; from then on it is
+            // rounded plainly (a silent chip's loop)
+            bool stopped = false;
+            while (! settled && done < maxSamples)
+            {
+                if (! take())
+                {
+                    stopped = true;
+                    break;
+                }
+                out.p[offset + done++] += rs.rounding.next (sum);
+                settled = rs.rounding.settled();
+            }
+            while (! stopped && done < maxSamples && take())
+                out.p[offset + done++] += plain;
+        }
         if (done == 0)
             return 0;
         rs.sample += static_cast<std::uint64_t> (done);
@@ -2101,6 +2177,8 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
 
     std::uint64_t cum = 0;
     int done = 0;
+    const bool bendBus = renderBend && cfg.model == Model::A;
+    const Members& mem = kMembers[static_cast<std::size_t> (rs.route & 0x0f)]; // no write inside a batch
     while (done < maxSamples)
     {
         const ChipClock keep = clock;
@@ -2184,22 +2262,62 @@ int Chip::renderBatch (float* out, int maxSamples, std::uint64_t untilCycle) noe
         if (renderCheck)
             renderCheckSample();
         const auto outSlot = static_cast<std::size_t> ((rs.sample + static_cast<std::uint64_t> (kRing - kLatency - 1)) % static_cast<std::uint64_t> (kRing));
-        double y = 0.0;
-        for (int n = 0; n < 3; ++n)
+        if constexpr (std::is_same_v<Out, BusOut>)
         {
-            RenderOsc& v = rs.osc[idx (n)];
-            if (line[idx (n)].constant)
-                y += line[idx (n)].contribution;
-            else
+            std::array<double, 3> x {}, e {};
+            for (int n = 0; n < 3; ++n)
             {
-                y += static_cast<double> (v.env[outSlot]) * v.buf[outSlot];
-                v.buf[outSlot] = 0.0;
-                v.env[outSlot] = 0.0f;
+                RenderOsc& v = rs.osc[idx (n)];
+                if (line[idx (n)].constant)
+                {
+                    x[idx (n)] = line[idx (n)].contribution;
+                    e[idx (n)] = static_cast<double> (line[idx (n)].level);
+                }
+                else
+                {
+                    x[idx (n)] = static_cast<double> (v.env[outSlot]) * v.buf[outSlot];
+                    e[idx (n)] = static_cast<double> (v.env[outSlot]);
+                    v.buf[outSlot] = 0.0;
+                    v.env[outSlot] = 0.0f;
+                }
             }
+            if (! bendBus && rs.sample >= rs.routeBusyUntil)
+            {
+                // the common case written out: no write's window open, no bend (renderBusMix's fast path)
+                const auto j = static_cast<std::size_t> (offset + done++);
+                out.b.filterAudio[j] = mem.f[0] * x[0] + mem.f[1] * x[1] + mem.f[2] * x[2];
+                out.b.directAudio[j] = mem.d[0] * x[0] + mem.d[1] * x[1] + mem.d[2] * x[2];
+                out.b.filterEnvelope[j] = mem.f[0] * e[0] + mem.f[1] * e[1] + mem.f[2] * e[2];
+                out.b.directEnvelope[j] = mem.d[0] * e[0] + mem.d[1] * e[1] + mem.d[2] * e[2];
+                out.b.filterVoices[j] = mem.nf;
+                out.b.directVoices[j] = mem.nd;
+                ++rs.sample;
+                rs.inProgress = false;
+            }
+            else
+                renderOutputBuses (out.b, offset + done++, x, e);
         }
-        ++rs.sample;
-        rs.inProgress = false;
-        out[done++] += rs.rounding.next (y);
+        else
+        {
+            double y = 0.0;
+            for (int n = 0; n < 3; ++n)
+            {
+                RenderOsc& v = rs.osc[idx (n)];
+                if (line[idx (n)].constant)
+                    y += line[idx (n)].contribution;
+                else
+                {
+                    y += static_cast<double> (v.env[outSlot]) * v.buf[outSlot];
+                    v.buf[outSlot] = 0.0;
+                    v.env[outSlot] = 0.0f;
+                }
+            }
+            if (rs.sample < rs.routeBusyUntil)
+                renderRouteKeep (outSlot);
+            ++rs.sample;
+            rs.inProgress = false;
+            out.p[offset + done++] += rs.rounding.next (y);
+        }
         cum = end;
     }
     if (cum == 0)
@@ -2237,9 +2355,156 @@ double Chip::renderOutput() noexcept
         v.buf[outSlot] = 0.0;
         v.env[outSlot] = 0.0f;
     }
+    if (rs.sample < rs.routeBusyUntil)
+        renderRouteKeep (outSlot);
     ++rs.sample;
     rs.inProgress = false;
     return y;
+}
+
+// ---- the two buses ("BUSES" at the end of Chip.h) ----
+
+std::uint8_t Chip::renderRouteAtOutput (std::size_t outSlot) noexcept
+{
+    // the sample being completed holds the routing as it is now; the output slot the routing of its own sample
+    std::uint8_t r = rs.route;
+    if (rs.sample < rs.routeBusyUntil)
+    {
+        rs.routeRing[static_cast<std::size_t> (rs.sample % static_cast<std::uint64_t> (kRing))] = rs.route;
+        r = rs.routeRing[outSlot];
+    }
+    return r;
+}
+
+void Chip::renderRouteKeep (std::size_t outSlot) noexcept
+{
+    // the single sum's output: the route ring and the band-limited memberships are kept as the buses would keep them
+    (void) renderRouteAtOutput (outSlot);
+    if (rs.sample < rs.routeBusyUntil)
+        for (auto& o : rs.osc)
+        {
+            o.devF[outSlot] = 0.0;
+            o.devD[outSlot] = 0.0;
+        }
+}
+
+
+void Chip::renderBusMix (const std::array<double, 3>& x, const std::array<double, 3>& e, std::uint8_t route, const std::size_t* devSlot, double* v) noexcept
+{
+    const Members& m = kMembers[static_cast<std::size_t> (route & 0x0f)];
+    std::array<double, 3> xv = x;
+    if (renderBend && cfg.model == Model::A)
+        for (std::size_t n = 0; n < 3; ++n)
+            xv[n] = OutputStage::shapeVoice (Model::A, x[n], e[n]);
+    if (devSlot == nullptr)
+    {
+        // no routing write's window open: the memberships are the byte's
+        v[0] = m.f[0] * xv[0] + m.f[1] * xv[1] + m.f[2] * xv[2];
+        v[1] = m.d[0] * xv[0] + m.d[1] * xv[1] + m.d[2] * xv[2];
+        v[2] = m.f[0] * e[0] + m.f[1] * e[1] + m.f[2] * e[2];
+        v[3] = m.d[0] * e[0] + m.d[1] * e[1] + m.d[2] * e[2];
+        v[4] = m.nf;
+        v[5] = m.nd;
+        return;
+    }
+    double fa = 0.0, da = 0.0, fe = 0.0, de = 0.0, fv = 0.0, dv = 0.0;
+    for (std::size_t n = 0; n < 3; ++n)
+    {
+        RenderOsc& o = rs.osc[n];
+        const double mf = m.f[n] + o.devF[*devSlot];
+        const double md = m.d[n] + o.devD[*devSlot];
+        o.devF[*devSlot] = 0.0;
+        o.devD[*devSlot] = 0.0;
+        fa += mf * xv[n];
+        da += md * xv[n];
+        fe += mf * e[n];
+        de += md * e[n];
+        fv += mf;
+        dv += md;
+    }
+    v[0] = fa;
+    v[1] = da;
+    v[2] = fe;
+    v[3] = de;
+    v[4] = fv;
+    v[5] = dv;
+}
+
+void Chip::renderOutputBuses (const BusBlock& b, int i, const std::array<double, 3>& x, const std::array<double, 3>& e) noexcept
+{
+    const auto outSlot = static_cast<std::size_t> ((rs.sample + static_cast<std::uint64_t> (kRing - kLatency - 1)) % static_cast<std::uint64_t> (kRing));
+    const std::uint8_t route = renderRouteAtOutput (outSlot);
+    double v[6] {};
+    renderBusMix (x, e, route, rs.sample < rs.routeBusyUntil ? &outSlot : nullptr, v);
+    const auto j = static_cast<std::size_t> (i);
+    b.filterAudio[j] = v[0];
+    b.directAudio[j] = v[1];
+    b.filterEnvelope[j] = v[2];
+    b.directEnvelope[j] = v[3];
+    b.filterVoices[j] = v[4];
+    b.directVoices[j] = v[5];
+    ++rs.sample;
+    rs.inProgress = false;
+}
+
+void Chip::renderRouteChange() noexcept
+{
+    // A write of 0x17 or 0x18 that changes the routing or oscillator 3's mute: each oscillator moves between the buses at
+    // the write's cycle as a band-limited step (the long kernel) of its membership, on both buses; nothing else changes
+    // (the piece goes on: the oscillators' rendering is the one without the write)
+    if (! rs.active)
+        return;
+    const std::uint8_t now = routeByte();
+    if (now == rs.route)
+        return;
+    if (! rs.inProgress)
+        renderStartSample();
+    if (rs.sample >= rs.routeBusyUntil)
+        rs.routeRing.fill (rs.route); // the samples before this one hold the routing they were completed with
+    // kAnalogWriteLeadCycles before the write's cycle (Chip.h); at most two samples before the sample's end (base <= 2)
+    const double tw = static_cast<double> (cycleCount - rs.start) - kAnalogWriteLeadCycles;
+    const double base = std::fmin (std::fmax ((rs.tEnd - tw) * rs.samplesPerCycle, 0.0), 2.0);
+    for (int n = 0; n < 3; ++n)
+    {
+        auto memberF = [n] (std::uint8_t r) { return ((r >> n) & 1) != 0 ? 1.0 : 0.0; };
+        auto memberD = [n] (std::uint8_t r) { return ((r >> n) & 1) == 0 && ! (n == 2 && (r & 0x08) != 0) ? 1.0 : 0.0; };
+        RenderOsc& o = rs.osc[idx (n)];
+        const double df = memberF (now) - memberF (rs.route), dd = memberD (now) - memberD (rs.route);
+        if (std::abs (df) > 0.0)
+            addStep<Kernel::longKernel> (*ktab, o.devF, rs.sample, base, df, 0.0);
+        if (std::abs (dd) > 0.0)
+            addStep<Kernel::longKernel> (*ktab, o.devD, rs.sample, base, dd, 0.0);
+    }
+    rs.route = now;
+    rs.routeBusyUntil = rs.sample + static_cast<std::uint64_t> (kRing);
+}
+
+Chip::EventTime Chip::renderEventTime() noexcept
+{
+    EventTime t;
+    if (! rs.active)
+        return t; // part of the state render starts on
+    if (! rs.inProgress)
+        renderStartSample();
+    t.sample = rs.sample;
+    // as renderRouteChange places a routing write: kAnalogWriteLeadCycles before the current cycle
+    const double tw = static_cast<double> (cycleCount - rs.start) - kAnalogWriteLeadCycles;
+    t.base = std::fmin (std::fmax ((rs.tEnd - tw) * rs.samplesPerCycle, 0.0), 2.0);
+    t.beforeStart = false;
+    return t;
+}
+
+void Chip::unitStepTaps (double base, std::array<double, render::kKernelTaps>& taps, int& first) const noexcept
+{
+    // addStep into an empty ring at sample kRing (its taps start at slot kRing + 1 - c - z), read back; the tables
+    // cached at prepare (no static guard per write)
+    std::array<double, kRing> ring {};
+    const double b = std::fmin (std::fmax (base, 0.0), 2.0);
+    addStep<Kernel::longKernel> (*ktab, ring, static_cast<std::uint64_t> (kRing), b, 1.0, 0.0);
+    const int c = static_cast<int> (std::ceil (b));
+    first = 1 - c - render::kLongZeroCrossings;
+    for (int j = 0; j < render::kKernelTaps; ++j)
+        taps[static_cast<std::size_t> (j)] = ring[static_cast<std::size_t> ((2 * kRing + first + j) % kRing)];
 }
 
 // ---- a white-box check of the rendered states (tests only, renderCheckStates) ----
@@ -2293,7 +2558,8 @@ void Chip::renderCheckSample() noexcept
 
 // ---- the public entry points ----
 
-int Chip::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noexcept
+template <class Out>
+int Chip::renderUntilImpl (Out& out, int maxSamples, std::uint64_t untilCycle) noexcept
 {
     if (! rs.active)
         renderActivate();
@@ -2304,7 +2570,7 @@ int Chip::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noe
         {
             if (untilCycle <= cycleCount)
                 break;
-            const int batched = renderBatch (out + done, maxSamples - done, untilCycle);
+            const int batched = renderBatch (out, done, maxSamples - done, untilCycle);
             done += batched;
             if (batched > 0)
                 continue;
@@ -2323,13 +2589,61 @@ int Chip::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noe
         }
         if (! finishing)
             break; // stop inside (or at the last cycle of) the sample: it stays in progress, its piece open
-        out[done++] += rs.rounding.next (renderFinishSample()); // RenderTables.h OutputRounding
+        renderFinishSample();
+        if constexpr (std::is_same_v<Out, BusOut>)
+        {
+            const auto outSlot = static_cast<std::size_t> ((rs.sample + static_cast<std::uint64_t> (kRing - kLatency - 1)) % static_cast<std::uint64_t> (kRing));
+            std::array<double, 3> x {}, e {};
+            for (int n = 0; n < 3; ++n)
+            {
+                RenderOsc& v = rs.osc[idx (n)];
+                x[idx (n)] = static_cast<double> (v.env[outSlot]) * v.buf[outSlot];
+                e[idx (n)] = static_cast<double> (v.env[outSlot]);
+                v.buf[outSlot] = 0.0;
+                v.env[outSlot] = 0.0f;
+            }
+            if (rs.sample >= rs.routeBusyUntil && ! (renderBend && cfg.model == Model::A))
+            {
+                // the common case written out (as in renderBatch)
+                const Members& mem = kMembers[static_cast<std::size_t> (rs.route & 0x0f)];
+                const auto j = static_cast<std::size_t> (done++);
+                out.b.filterAudio[j] = mem.f[0] * x[0] + mem.f[1] * x[1] + mem.f[2] * x[2];
+                out.b.directAudio[j] = mem.d[0] * x[0] + mem.d[1] * x[1] + mem.d[2] * x[2];
+                out.b.filterEnvelope[j] = mem.f[0] * e[0] + mem.f[1] * e[1] + mem.f[2] * e[2];
+                out.b.directEnvelope[j] = mem.d[0] * e[0] + mem.d[1] * e[1] + mem.d[2] * e[2];
+                out.b.filterVoices[j] = mem.nf;
+                out.b.directVoices[j] = mem.nd;
+                ++rs.sample;
+                rs.inProgress = false;
+            }
+            else
+                renderOutputBuses (out.b, done++, x, e);
+        }
+        else
+            out.p[done++] += rs.rounding.next (renderOutput()); // RenderTables.h OutputRounding
     }
     return done;
+}
+
+int Chip::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle) noexcept
+{
+    FloatOut o { out };
+    return renderUntilImpl (o, maxSamples, untilCycle);
 }
 
 void Chip::render (float* out, int numInternalSamples) noexcept
 {
     renderUntil (out, numInternalSamples, std::numeric_limits<std::uint64_t>::max());
+}
+
+int Chip::renderBusesUntil (const BusBlock& out, int maxSamples, std::uint64_t untilCycle) noexcept
+{
+    BusOut o { out };
+    return renderUntilImpl (o, maxSamples, untilCycle);
+}
+
+void Chip::renderBuses (const BusBlock& out, int numInternalSamples) noexcept
+{
+    renderBusesUntil (out, numInternalSamples, std::numeric_limits<std::uint64_t>::max());
 }
 } // namespace vs::bside::chip

@@ -5,6 +5,32 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### Tests: the editor feed's seqlock test no longer depends on the scheduler (2026-11-23)
+- "UiFeed: the held-order seqlock never hands out a torn copy" failed once on the Linux ARM64 CI runner: the writer
+  thread never paused, so the reader was refused 5 million times and saw no consistent copy (`consistent > 0`). No
+  torn copy was handed out; the feed's code is unchanged. The writer now waits every 4096 writes until the reader
+  has taken one more consistent copy (with a 10 s deadline that fails the test instead of hanging it).
+
+### B-Side S3b-1: two buses and the whole chain (2026-11-23)
+- The chip renderer delivers its two buses in double precision (`Chip::renderBuses`): the oscillators routed to the
+  filter and the others, with each bus's envelope sum and voice count; oscillator 3 can be muted on the direct path.
+  A routing write moves an oscillator between the buses at its exact cycle, band-limited. The single-sum render is
+  unchanged.
+- `ChipVoice` (new): one chip's whole chain, the buses -> filter -> output stage, in double up to one shaped
+  conversion to float, Per Note or with a shared filter. Volume and mode writes land at their cycle, band-limited
+  (with volume DC on a volume write is the chip's own step, at its full size); the cutoff runs per sample while it
+  moves. Not wired into the plugin yet (S4).
+- The trace gates now run through the real chain; every earlier analog gate still passes, and the triangle of
+  `a_dac_*` is gated (harmonics within 3 dB). Model A's per-voice bend is applied on the buses; its aliasing and the
+  mixer curves' are the next step's (S3b-2).
+- GCC 13 compiles the chip sources and the B-Side tests with warnings as errors (a bounds warning in the renderer).
+- Fix round after the independent review: a shared filter now gives each chip its static output per sample (one
+  chip is exactly Per Note, and the output no longer depends on the owner's block length); routing, mute, volume and
+  mode writes land one cycle earlier, where the reference shows them (within a quarter of a cycle on average); a full
+  write queue keeps the order of the writes; the chain's latency is a run-time value (`latencySamples ()`). The Shared
+  documentation states that Model B equals Per Note for identical voices only (-39 to -32 dB with different notes).
+  New tests pin the volume with volume DC off, the cutoff's per-sample path and the writes' sample, and the static DC.
+
 ### B-Side S3a fix round after the third review (2026-11-23)
 - Model B's band/high second-order term is removed: it matched noise floors but put harmonics on tones that the
   reference does not have, aliased far above the budget and broke the Shared claim. Model B's filter is linear again;

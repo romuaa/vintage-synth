@@ -11,6 +11,7 @@
 #include "common/engine/UiFeed.h"
 
 #include <atomic>
+#include <chrono>
 #include <thread>
 
 using namespace vs;
@@ -55,6 +56,13 @@ TEST_CASE ("UiFeed: the held-order seqlock never hands out a torn copy (writer t
 {
     UiFeed f;
     std::atomic<bool> stop { false };
+    // The reader must see consistent copies WHILE the writer runs, and a writer that never
+    // pauses can starve it for the whole test (seen on a CI runner: 5 million reads, all
+    // refused). So the writer waits, every 4096 writes, until the reader has taken one more
+    // consistent copy: the interleaving no longer depends on the scheduler. A reader that
+    // never succeeds is reported after a deadline instead of hanging the test.
+    std::atomic<long> consistentSeen { 0 };
+    std::atomic<bool> starved { false };
     constexpr std::uint32_t writes = 1000000;
     std::thread writer ([&] {
         UiFeed::Order o {};
@@ -69,6 +77,20 @@ TEST_CASE ("UiFeed: the held-order seqlock never hands out a torn copy (writer t
             }
             o[15] = static_cast<std::uint8_t> (sum & 0xFFu);
             f.writeOrder (0, o);
+            if ((i & 4095u) == 0u && ! starved.load())
+            {
+                const long before = consistentSeen.load();
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (10);
+                while (consistentSeen.load() == before)
+                {
+                    if (std::chrono::steady_clock::now() > deadline)
+                    {
+                        starved = true;
+                        break;
+                    }
+                    std::this_thread::yield();
+                }
+            }
         }
         stop = true;
     });
@@ -94,8 +116,10 @@ TEST_CASE ("UiFeed: the held-order seqlock never hands out a torn copy (writer t
         REQUIRE (sequence);
         REQUIRE (got[15] == static_cast<std::uint8_t> (sum & 0xFFu));
         ++consistent;
+        consistentSeen.store (consistent);
     }
     writer.join();
+    CHECK_FALSE (starved.load());
     UiFeed::Order last {};
     REQUIRE (f.readOrder (0, last));
     CHECK (last[0] == static_cast<std::uint8_t> (writes & 0x7Fu));

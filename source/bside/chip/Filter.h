@@ -112,7 +112,9 @@ public:
     void setVariation (float value) noexcept;
 
     /** One internal sample: the selected outputs' sum for this input. */
-    float process (float in) noexcept
+    float process (float in) noexcept { return static_cast<float> (processDouble (static_cast<double> (in))); }
+    /** The same in double precision, input and output (the chain, ChipVoice: 8.20.1). */
+    double processDouble (double in) noexcept
     {
         // the trapezoidal state-variable filter written as its state-space form (identical arithmetic in exact
         // numbers, a shorter dependency chain per sample): hp = h (x - (k + g) s1 - s2), bp = g hp + s1,
@@ -125,14 +127,19 @@ public:
         s2 = a2x * x + a21 * s1 + a22 * s2;
         s1 = n1;
         settle();
-        return static_cast<float> (out);
+        return out;
     }
 
     /** One internal sample with a cutoff (register value) that may change every sample, without setCutoff's cost:
         the cutoff curve, a rational tan and the mapped parameters interpolated from a table (see "processWithCutoff"
         above), with the damping, output weights and `variation` of the cutoff given (Model A's Q and band-pass gain
         follow its cutoff). The stored cutoff is not changed. */
-    float processWithCutoff (float in, float registerValue) noexcept;
+    float processWithCutoff (float in, float registerValue) noexcept
+    {
+        return static_cast<float> (processWithCutoffDouble (static_cast<double> (in), registerValue));
+    }
+    /** The same in double precision, input and output. */
+    double processWithCutoffDouble (double in, float registerValue) noexcept;
 
     /** tan (x) for 0 <= x <= 1.42 (cutoffs up to 0.45 x the rate), rational ([5/4] Pade form): relative error
         below 1e-8 up to 0.75 (0.24 x the rate) and below 3e-5 up to 1.42. */
@@ -190,9 +197,8 @@ private:
 
     /** A non-finite or absurd input (|x| >= 1e6) is taken as 0 before it reaches the states (off the per-sample
         dependency chain); the states can then never become non-finite. */
-    static double guard (float in) noexcept
+    static double guard (double x) noexcept
     {
-        const double x = static_cast<double> (in);
         return std::abs (x) < 1e6 ? x : 0.0; // NaN fails the comparison too
     }
 

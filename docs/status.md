@@ -8,8 +8,9 @@ first when resuming.
 
 **Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20; shown as the latest release on GitHub since 2026-11-21, owner's word;
 tag `v0.9.0` at commit `116c5f8`: three zips and `SHA256SUMS.txt`). **M8 is done.**
-**Everything below is merged to `main` except B-Side S3a, which is in flight again since
-2026-11-22 (see "B-Side S3a, in flight").** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
+**Everything below is merged to `main` except B-Side S3b, which is in flight (see "B-Side S3a,
+merged, and S3b, in flight"). S3a merged on 2026-11-23 with Model A's dynamics open (owner
+decisions O4 and O5: neither filter form as it is; a form between the two is being studied).** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
 x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the repository became public
 ("First CI runs" below).
 
@@ -40,7 +41,7 @@ decision 2026-11-19: Vintage first). The owner's three answers on resuming are i
 fails, a pull request with Model B and the output stage only, plus listening files; O2: a cheap
 rate correction inside 7 ns or decide at S4; O3: S3b may start stacked on the S3a branch).
 
-**B-Side S3a, in flight (2026-11-22):** `bside/s3a-filter` has `main` merged in (the tests give
+**B-Side S3a, merged, and S3b, in flight (2026-11-23):** `bside/s3a-filter` had `main` merged in (the tests give
 the parked figures).
 - **Diagnostic, done** (`tests/bside/trace/FilterDiagnosticTests.cpp`, hidden: run it with
   `bside_trace "[s3a-diag]"`; it asserts nothing the gates do not and took 249 s under the
@@ -108,6 +109,34 @@ the parked figures).
   distribution checks passed; every pluginval invocation ended normally (no crash to accept
   in this run). Windows x64 and ARM64 were confirmed by the first run on `61983f3`; since
   then only the workflow, one test tag and records changed.
+- **S3b (2026-11-23; owner decision O3).** S3a is merged (pull request 41, on the owner's
+  word, 2026-11-23). Contract 8.19.4, two steps, each its own pull request: S3b-1 on
+  `bside/s3b-chain` (pull request 43, now against `main`), S3b-2 on `bside/s3b-alias`.
+  **S3b-1, built, reviewed independently, fixed; waiting for the owner:** the renderer's two
+  buses in double precision, routing / volume / mode writes at their cycle, `ChipVoice` (the
+  whole chain `Chip` -> `Filter` -> `OutputStage`, Per Note or with a shared filter), the
+  traces S3a had to skip, now through the real chain. The review found real defects (Shared
+  depended on the owner's block length; write timing a cycle late against the reference; a
+  full write queue reordered writes; tests that could not fail); all fixed, the contract
+  amended (8.19.4, "After the independent review"), decisions D1 to D20.
+  **Orchestrator's gate on `379ffa9`:** the full `scripts/preflight.sh` passed (72m01s: docs,
+  scan, mac, validator 47 of 47 for both plugins, linux, both sanitizer runs). `chip_bench`
+  alone, three runs, 96 kHz: `s3aB` 5.5 to 5.9 ns (budget 7), `chainB` 26.9 to 27.4,
+  `chainA` 42.6 to 45.6, `busesB` 19.9 to 20.6, `busesA` 34.0 to 34.2, `moveB` 34.7 to 36.8,
+  `moveA` 65.4 to 66.5.
+  **Not met:** the buses' cost allowance of 1 ns over the single sum holds for `typical` but
+  not for `noise` (+1.2 to +2.5 ns at 192 kHz; one attempt, no gain; D20). Recorded, not
+  widened. **For the owner's S4 budget question:** Model A's whole chain is about 43 ns per
+  internal sample at 96 kHz on the S4 gate's patch (Model B about 27), before S3b-2 adds to
+  it. **Windows and Linux x86_64:** one CI run is dispatched after `main` was merged
+  in; pull request 43 carries its result.
+  **Listening files** (filter sweeps of both models through the chain) are in the developer
+  cache, `s3b1/listen/`.
+  **Next: S3b-2**, the aliasing of the static curves (pre-filter before Model B's mixer
+  curve, Model A's bend folded into the renderer, Model A's output function and mixer at
+  twice the rate). Carried over from the review: folding the bend shares the renderer's rings
+  with the single sum; the pre-filter's delay moves the writes and adds to
+  `ChipVoice::latencySamples ()`; the copies made for the `Old` blend need the filters' state.
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
@@ -213,7 +242,7 @@ the orchestrator dispatches it (see "Decisions").
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
-2. **B-Side:** S3a is in flight (above); then S3b, S4 and B-Side's own release work as listed
+2. **B-Side:** S3a is merged, S3b is in flight (above); then S4 and B-Side's own release work as listed
    in the parked state.
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of

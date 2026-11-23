@@ -3,6 +3,15 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## A concurrency test that needs luck with the scheduler (2026-11-23)
+- **What happened:** the seqlock test of the editor feed ran a writer in a tight loop of a million writes and
+  required that the reader had seen at least one consistent copy meanwhile. On this Mac about 0.3 % of the reads
+  succeed; on a CI runner (Linux ARM64) none did, and the test failed with the code correct.
+- **Rule:** a test of two threads may not assert something that only holds when the scheduler interleaves them
+  kindly. Make the interleaving part of the test (a handshake: one side waits for the other's progress, with a
+  deadline that fails rather than hangs), and keep the property under test (here: never a torn copy) asserted on
+  every read.
+
 ## Known traps, the short list
 
 One line per trap; the dated sections below have the cause and the details. `CLAUDE.md` names
@@ -44,6 +53,26 @@ is a rule, a line here.
   floors alone was right there and 6 to 12 dB wrong on tones.
 - A magnitude-only design fixes a response only up to reflecting its zeros: gate the phase too, or a
   wrong factor (180 degrees off) passes.
+- A write budget measured on a chain with static curves sees the curves' own aliasing: render the held states
+  too and measure what the writes add (the output minus the held states switched by the ideal step).
+- Check a band-limited step's place against the kernel's own step function, not by interpolating where it
+  crosses one half (linear interpolation is up to 0.05 sample off).
+
+## B-Side S3b-1: two buses and the whole chain (2026-11-23)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Every Model A row and the Model B pulse row of the write-budget test failed (-62 to -88 dB) although the writes were band-limited. | The chain's static curves (Model B's mixer, Model A's voice bend and mixer) alias at the internal rate on a steady tone, with no write at all (held states: -61 to -95 dB): S3b-2's work, measured by a gate meant for the writes. | Render the held states alongside and measure what the writes add (the output minus the held states switched by the ideal band-limited step); print the raw and held figures beside it. |
+| A routing write's crossing of one half sat 0.047 samples from the write's place at every rate. | Linear interpolation between the two samples around a band-limited step's middle is not its centre (the step is curved there). | Compare with the kernel's own step function at the write's cycle and require one cycle early or late to be far worse. |
+| The buses cost 2.3 ns per sample more than the single sum on a light patch. | The per-sample membership arithmetic (bits to 0/1 per oscillator) and six separate stores; the single sum's float conversion they save is about 1 ns. | A table of memberships per routing byte and the common case (no write's window open, no bend) written out in the batched loop: about 1 ns over the single sum; the stores alone are about 0.5 ns. |
+| A shell edit of renderer code was refused by the environment-file hook. | The hook matches that suffix anywhere in the command text, here a member access on an envelope ring. | Put such edits in a script file (the scratchpad) and run the script (as the S3a row says for identifiers on the command line). |
+| The Linux step of the preflight failed on a float `!=` in a new test file that macOS accepted. | The g++ 13 check of the sources had been run before that test file existed. | Rerun the GCC check (g++ 13 image) after the last source is added, on every source of the change, not on a list taken earlier. |
+| A Python block replacement that ended at the file's last line dropped the closing namespace. | The replaced text included the closing brace, the new text did not. | After a scripted edit at a file's end, compile the header alone before the full build. |
+| Shared output depended on the owner's block length after a routing write (n = 1 off Per Note by 0.03 / 0.15). | A per-sample quantity (the filter's static output, which follows the voice counts) was handed over once per block. | Anything a stage reads that can change inside a block is handed over per sample; test any owner/voice split with two block lengths and a write inside the block. |
+| Routing, volume and mode writes sat one cycle after the reference while every unit test passed. | The unit tests pinned our own convention (the oscillator writes'); no committed trace has isolated analog-register steps. | Measure each write kind's timing against generated traces (step midpoints, 0.1 cycle resolution) before pinning a convention in a unit test; record the measured offset beside the pin. |
+| A queue overflow applied the newest write at once and the older queued ones after it. | "Bounded" was taken care of, "in order" was not. | An overflow rule must keep order: retire the oldest entry early, never jump the new one ahead. |
+| Four mutations (volume dropped with volume DC off, the per-sample cutoff path never taken, writes one sample late, static DC not refreshed) survived every test. | The tests compared the chain with itself (splits, Per Note against Shared) or with budgets that the mutations still met. | Pin each rule against a reference computation written out in the test with its own numbers (not the code's constants), and run the mutation before claiming the test can fail. |
+| A record said a gate would fail without a feature; it passed without it (1.60 dB against 1.70). | The claim was reasoned, not run; and one of the gates that does pin it is not in the `[analog]` tag. | Switch the feature off and run every reference test (`bside_trace` in full, not one tag) before writing which gates pin it. |
 
 ## B-Side S3a closing step (2026-11-23)
 

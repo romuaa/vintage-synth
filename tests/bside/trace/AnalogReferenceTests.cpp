@@ -70,9 +70,8 @@ TEST_CASE ("analog: the filter modes and their sums within the scripted-trace to
 
 TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace tolerance (a_routing_*)", "[trace][reference][chip][analog]")
 {
-    // The per-voice harness (AnalogChain.h) renders each voice alone (no sync or ring in these traces), so the two
-    // buses are exact: every routing of the three voices and oscillator 3 off, the scripted tolerance over every
-    // frame.
+    // Through the real chain (AnalogChain.h renderChain: ChipVoice, the renderer's two buses), every routing of the
+    // three voices and oscillator 3 off, each routing write at its cycle: the scripted tolerance over every frame.
     // Model B is gated; Model A is reported, NOT inside the tolerance (decisions "B-Side S3a" round 2: its
     // filter's dependence on the level and the routed DC is not modelled; cutoff 300 here).
     for (const char* name : { "a_routing_a", "a_routing_b" })
@@ -81,7 +80,6 @@ TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace toler
         const auto& r = renderedTrace (kDir, traceName);
         if (! r.ok)
             SKIP (r.why);
-        REQUIRE (r.chain.ambiguousSamples == 0);
         const auto res = tr::compareScripted (r.reference, r.ours);
         const bool gate = std::string (name).back() == 'b';
         std::printf ("[analog] %s: outliers %.2f %% (allowed 5), mean %.2f dB (allowed 1), level %.2f dB (allowed 0.5), largest cell %.1f dB%s\n", name,
@@ -89,6 +87,87 @@ TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace toler
         INFO (res.report);
         if (gate)
             CHECK (res.pass);
+        // Model A's evidence (8.19.4: a trace that fails only by the filter's known dynamics, 8.19.3): the frames where
+        // no voice is routed to the filter against those where one is (the routing at every cycle of the frame's
+        // analysis window), each with the scripted tolerance; reported
+        std::vector<bool> direct (static_cast<std::size_t> (r.reference.frames), true);
+        {
+            std::uint8_t routing = 0;
+            std::size_t next = 0;
+            for (int f = 0; f < r.reference.frames; ++f)
+            {
+                const long centre = static_cast<long> (f) * tr::kSpecHop + tr::kSpecHop / 2;
+                const auto from = static_cast<std::uint64_t> (std::max (0L, centre - tr::kFeatureFftSize / 2)) * r.trace.clockHz / 48000u;
+                const auto to = static_cast<std::uint64_t> (centre + tr::kFeatureFftSize / 2) * r.trace.clockHz / 48000u;
+                while (next < r.trace.writes.size() && r.trace.writes[next].cycle < from)
+                {
+                    if (r.trace.writes[next].reg == 0x17)
+                        routing = static_cast<std::uint8_t> (r.trace.writes[next].value & 7);
+                    ++next;
+                }
+                bool none = routing == 0;
+                for (std::size_t k = next; k < r.trace.writes.size() && r.trace.writes[k].cycle <= to; ++k)
+                    if (r.trace.writes[k].reg == 0x17 && (r.trace.writes[k].value & 7) != 0)
+                        none = false;
+                direct[static_cast<std::size_t> (f)] = none;
+            }
+        }
+        std::vector<bool> routed (direct.size());
+        int nDirect = 0;
+        for (std::size_t f = 0; f < direct.size(); ++f)
+        {
+            routed[f] = ! direct[f];
+            nDirect += direct[f] ? 1 : 0;
+        }
+        const auto rd = tr::compareScripted (keepFrames (r.reference, direct), keepFrames (r.ours, direct));
+        const auto rf = tr::compareScripted (keepFrames (r.reference, routed), keepFrames (r.ours, routed));
+        std::printf ("[analog] %s, the %d frames with no voice routed to the filter: outliers %.2f %%, mean %.2f dB, level %.2f dB%s; the %d with one: "
+                     "outliers %.2f %%, mean %.2f dB, level %.2f dB%s\n",
+                     name, nDirect, 100.0 * rd.outlierFraction, rd.meanCellDb, rd.levelDeltaDb, rd.pass ? " (inside)" : " (OUTSIDE)",
+                     r.reference.frames - nDirect, 100.0 * rf.outlierFraction, rf.meanCellDb, rf.levelDeltaDb, rf.pass ? " (inside)" : " (OUTSIDE)");
+    }
+}
+
+TEST_CASE ("analog: the triangle segment of a_dac_* through the chain: harmonics 2..8 within 3 dB (8.19.4)", "[trace][reference][chip][analog]")
+{
+    // a_dac_* s18: a 110 Hz triangle at full level on the direct path (RenderReferenceTests.cpp leaves it out: its
+    // second harmonic, -34 dB on Model A and -40 dB on Model B, comes from after the converters). Through the real
+    // chain (Model B's mixer curve, Model A's voice bend and mixer) its harmonics 2..8 above -60 dB re the fundamental
+    // within the distortion tolerance of 8.9.4 (+-3 dB). The saws s16 and s17 are printed through the chain as well.
+    for (const char* name : { "a_dac_a", "a_dac_b" })
+    {
+        const std::string traceName (name);
+        const auto& r = renderedTrace (kDir, traceName);
+        if (! r.ok)
+            SKIP (r.why);
+        REQUIRE (r.reference.segments.size() >= 20);
+        const double f0s[] { 110.0, 1000.0, 110.0 };
+        for (int k = 0; k < 3; ++k)
+        {
+            const auto& rs = r.reference.segments[static_cast<std::size_t> (16 + k)];
+            const auto& os = r.ours.segments[static_cast<std::size_t> (16 + k)];
+            const double f0 = static_cast<double> (r.trace.clockHz) * std::round (f0s[k] * 16777216.0 / 985248.0) / 16777216.0;
+            double worst = 0.0;
+            std::string line;
+            for (int h = 2; h <= 8; ++h)
+            {
+                const double dr = tr::toneLevelDb (rs, h * f0) - tr::toneLevelDb (rs, f0);
+                const double dm = tr::toneLevelDb (os, h * f0) - tr::toneLevelDb (os, f0);
+                char buf[48];
+                std::snprintf (buf, sizeof buf, " %6.1f/%6.1f", dm, dr);
+                line += buf;
+                if (dr > -60.0)
+                    worst = std::max (worst, std::abs (dr - dm));
+            }
+            const bool triangle = k == 2;
+            std::printf ("[analog] %s %s harmonics 2..8 (ours/reference dB):%s; worst above -60 dB %.2f dB%s\n", name, rs.name.c_str(), line.c_str(), worst,
+                         triangle ? " (allowed 3)" : " (reported)");
+            if (triangle)
+            {
+                INFO (name << " triangle: worst harmonic " << worst << " dB");
+                CHECK (worst <= tr::tolerance::distortionDb);
+            }
+        }
     }
 }
 
@@ -168,7 +247,6 @@ TEST_CASE ("analog: Model A held-tone distortion and two-tone products at held-o
     const auto& d = renderedTrace (kDir, distName);
     if (! d.ok)
         SKIP (d.why);
-    REQUIRE (d.chain.ambiguousSamples == 0);
     const double f1 = 985248.0 * std::round (160.0 * 16777216.0 / 985248.0) / 16777216.0;
     const double f2 = 985248.0 * std::round (211.0 * 16777216.0 / 985248.0) / 16777216.0;
     const std::size_t segs = d.reference.segments.size();
