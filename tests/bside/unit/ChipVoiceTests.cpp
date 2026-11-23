@@ -554,7 +554,7 @@ SharedResult sharedChips (Model m, int n, bool shared)
         }
         std::vector<double> out;
         auto run = [&] (int samples) {
-            std::array<double, ChipVoice::kBlock> so {}, ss {}, y {};
+            std::array<double, ChipVoice::kBlock> so {}, sl {}, ss {}, y {};
             int done = 0;
             while (done < samples)
             {
@@ -573,11 +573,11 @@ SharedResult sharedChips (Model m, int n, bool shared)
                         double in = dc;
                         for (auto& x : v)
                             in += x->filterInputAc (i);
-                        so[static_cast<std::size_t> (i)] = sf.processDouble (in);
+                        so[static_cast<std::size_t> (i)] = sf.processLinearDouble (in, sl[static_cast<std::size_t> (i)]);
                         ss[static_cast<std::size_t> (i)] = sf.staticOutput (dc);
                     }
                     for (auto& x : v)
-                        x->finishShared (so.data(), ss.data(), n, y.data(), want);
+                        x->finishShared (sf, so.data(), sl.data(), ss.data(), n, y.data(), want);
                 }
                 out.insert (out.end(), y.begin(), y.begin() + want);
                 done += want;
@@ -714,7 +714,7 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
         x.write (0x18, 0x1f);
     }
     std::vector<double> out;
-    std::array<double, ChipVoice::kBlock> so {}, ss {}, y {};
+    std::array<double, ChipVoice::kBlock> so {}, sl {}, ss {}, y {};
     std::size_t next = 0;
     int done = 0;
     while (done < s.samples)
@@ -738,11 +738,11 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
                     double in = dc;
                     for (auto& x : v)
                         in += x->filterInputAc (i);
-                    so[static_cast<std::size_t> (i)] = sf.processDouble (in);
+                    so[static_cast<std::size_t> (i)] = sf.processLinearDouble (in, sl[static_cast<std::size_t> (i)]);
                     ss[static_cast<std::size_t> (i)] = sf.staticOutput (dc);
                 }
                 for (auto& x : v)
-                    x->finishShared (so.data(), ss.data(), s.n, y.data(), want);
+                    x->finishShared (sf, so.data(), sl.data(), ss.data(), s.n, y.data(), want);
             }
             out.insert (out.end(), y.begin(), y.begin() + want);
             done += want;
@@ -905,13 +905,17 @@ TEST_CASE ("chain: the static DC follows the voice counts with volume DC off (no
 
 TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCutoff while it stands still; cutoff and resonance writes land at their own sample", "[chain][cutoff]")
 {
-    // A reference computation from the same buses (a twin Chip given the same writes), the same Filter and OutputStage
-    // classes, and the rule of ChipVoice.h "TIMING" written out here with its numbers: a cutoff or resonance write made
-    // while the chip's sample s is in progress applies from ring sample s on (output sample s + latency + 1); a cutoff
-    // change less than 256 samples after the previous one runs Filter::processWithCutoff (the cutoff given every
-    // sample) from that sample until the cutoff has stood still for 256 samples, then setCutoff + process. One isolated
-    // change, a sweep (a change every 32 samples), resonance writes inside the sweep and while still, a last isolated
-    // change. Bit for bit, both models (volume DC on, no 0x18 write: one configuration). Both paths are taken.
+    // A reference computation of the filter from the voice's own filter input at every sample (ChipVoice test aids), the
+    // same Filter class, and the rule of ChipVoice.h "TIMING" written out here with its numbers: a cutoff or resonance
+    // write made while the chip's sample s is in progress applies from the filter's sample for chip sample s on (output
+    // sample s + filterLagSamples ()); a cutoff change less than 256 samples after the previous one runs
+    // Filter::processWithCutoff (the cutoff given every sample) from that sample until the cutoff has stood still for
+    // 256 samples, then setCutoff + process. One isolated change, a sweep (a change every 32 samples), resonance writes
+    // inside the sweep and while still, a last isolated change. Bit for bit, both models (volume DC on, no 0x18 write:
+    // one configuration). Both paths are taken. Changed in S3b-2: the comparison is on the filter's output, not the
+    // chain's (what follows the filter, the anti-alias stages, is pinned by its own tests), and the lag is the filter's
+    // (the renderer's latency + 1, plus Model A's bus pre-filter), no longer latencySamples () + 1, which now also counts
+    // the stages after the filter.
     for (const Model m : { Model::B, Model::A })
     {
         const double rate = 96000.0;
@@ -922,23 +926,17 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
         cfg.variation = 0.5f;
         PerNote p (m, rate, true);
         ChipVoice& v = *p.v;
-        Chip twin;
-        twin.prepare (cfg);
-        auto both = [&] (std::uint8_t reg, std::uint8_t value) {
-            v.write (reg, value);
-            twin.write (reg, value);
-        };
+        auto both = [&] (std::uint8_t reg, std::uint8_t value) { v.write (reg, value); };
         OscInput in;
         in.frequency = 220.0 * 16777216.0 / 985248.0;
         in.control = ctrl::saw | ctrl::gate;
         in.sustainRelease = 0xf0;
         v.setOscillator (0, in);
-        twin.setOscillator (0, in);
         both (0x15, 0);
         both (0x16, 0x40); // cutoff 512
         both (0x17, 0x81); // resonance 8, oscillator 1 to the filter
         both (0x18, 0x1f);
-        const double cps = static_cast<double> (twin.sampleClock().increment()) / 4294967296.0;
+        const double cps = static_cast<double> (v.chip().sampleClock().increment()) / 4294967296.0;
         struct W
         {
             std::uint64_t cycle;
@@ -958,31 +956,35 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
         w.push_back ({ at (9000.0), 0x17, 0x31 });
         w.push_back ({ at (11000.0), 0x16, 0x90 });
         const int total = 14000;
-        // the voice, and the twin's buses
-        std::vector<double> y (static_cast<std::size_t> (total), 0.0);
-        std::vector<double> fa (y.size()), da (y.size()), fe (y.size()), de (y.size()), fv (y.size()), dv (y.size());
-        auto busAt = [&] (int k) { return Chip::BusBlock { fa.data() + k, da.data() + k, fe.data() + k, de.data() + k, fv.data() + k, dv.data() + k }; };
-        int done = 0, doneTwin = 0;
+        // the voice, sample by sample: its filter's input and output at every output sample
+        std::vector<double> y (static_cast<std::size_t> (total), 0.0), fin (y.size(), 0.0), fout (y.size(), 0.0);
+        int done = 0;
+        auto renderTo = [&] (std::uint64_t cycle) {
+            while (done < total)
+            {
+                if (v.renderUntil (y.data() + done, 1, cycle) == 0)
+                    break;
+                fin[static_cast<std::size_t> (done)] = v.lastFilterInput();
+                fout[static_cast<std::size_t> (done)] = v.lastFilterOutput();
+                ++done;
+            }
+        };
         for (auto& x : w)
         {
-            done += v.renderUntil (y.data() + done, total - done, x.cycle);
-            doneTwin += twin.renderBusesUntil (busAt (doneTwin), total - doneTwin, x.cycle);
+            renderTo (x.cycle);
             REQUIRE (v.chip().cycle() == x.cycle);
             x.sample = v.chip().renderSampleIndex();
             both (x.reg, x.value);
         }
-        v.renderUntil (y.data() + done, total - done, ~std::uint64_t { 0 });
-        twin.renderBusesUntil (busAt (doneTwin), total - doneTwin, ~std::uint64_t { 0 });
+        renderTo (~std::uint64_t { 0 });
+        REQUIRE (done == total);
         // the reference computation
         Filter rf;
         rf.prepare (m, rate, 0.5f);
         rf.setCutoff (512.0f);
         rf.setResonance (8);
         rf.setMode (0x1f);
-        OutputStage rs;
-        rs.prepare (m, rate, true);
-        rs.setModeVolume (0x1f);
-        const std::int64_t delay = v.latencySamples() + 1;
+        const std::int64_t delay = v.filterLagSamples();
         std::uint8_t lo = 0, hi = 0x40, resonance = 0x80;
         float cutoff = 512.0f;
         bool changed = false, moving = false;
@@ -1023,28 +1025,26 @@ TEST_CASE ("chain: the cutoff runs per sample while it moves and through setCuto
                 moving = false;
                 rf.setCutoff (cutoff);
             }
-            rs.setVoices (fv[b], dv[b]);
-            const double x = rs.filterInput (fa[b], fe[b]);
-            const double fo = moving ? rf.processWithCutoffDouble (x, cutoff) : rf.processDouble (x);
-            expected[b] = rs.board (rs.mixerOutput (fo, da[b], de[b]), rs.postGain());
+            expected[b] = moving ? rf.processWithCutoffDouble (fin[b], cutoff) : rf.processDouble (fin[b]);
             (moving ? movingSamples : stillSamples) += 1;
         }
         INFO ((m == Model::A ? "Model A" : "Model B") << ": " << movingSamples << " samples per sample (moving), " << stillSamples
-                                                      << " still; largest difference from the reference computation " << maxAbsDiff (y, expected));
+                                                      << " still; largest difference from the reference computation " << maxAbsDiff (fout, expected));
         CHECK (movingSamples > 2000);
         CHECK (stillSamples > 8000);
-        CHECK (sameBits (y, expected));
+        CHECK (sameBits (fout, expected));
     }
 }
 
 TEST_CASE ("chain: a full write queue applies its oldest entry at once, keeping the order and every value", "[chain][queue]")
 {
     // ChipVoice.h "QUEUE": a cutoff write every cycle at 88.2 kHz (about 11 cycles per sample; a write waits about
-    // latency + 1 samples) fills the queue of 32. The rule, written out here: when write k (made while sample s_k is in
-    // progress) finds 32 writes pending, the oldest pending one takes effect at once, i.e. from ring sample
-    // s_k - (latency + 1) on (the next output sample's); every other write from ring sample s_j on. The cutoff in effect
-    // at every output sample is the value of the latest write in effect. Model B; then the same burst with a 0x18 write
-    // at one cycle 40 times: bounded, finite, the blending ends.
+    // the filter's lag, filterLagSamples (), samples) fills the queue of 32. The rule, written out here: when write k
+    // (made while sample s_k is in progress) finds 32 writes pending, the oldest pending one takes effect at once, i.e.
+    // from the filter's sample s_k - lag on (the next output sample's); every other write from the filter's sample s_j
+    // on. The cutoff in effect at every output sample is the value of the latest write in effect. Model B; then the same
+    // burst with a 0x18 write at one cycle 40 times: bounded, finite, the blending ends. (S3b-2: the lag is the filter's,
+    // filterLagSamples (); latencySamples () + 1 was the same number before the anti-alias stages followed the filter.)
     PerNote p (Model::B, 88200.0, true);
     ChipVoice& v = *p.v;
     osc (v, 0, 3000.0, 2048.0f, ctrl::saw | ctrl::gate);
@@ -1052,7 +1052,7 @@ TEST_CASE ("chain: a full write queue applies its oldest entry at once, keeping 
     v.write (0x16, 0x40);
     v.write (0x17, 0x01);
     v.write (0x18, 0x1f);
-    const std::int64_t delay = v.latencySamples() + 1;
+    const std::int64_t delay = v.filterLagSamples();
     struct W
     {
         std::int64_t sample;

@@ -22,6 +22,7 @@ set(BS_JUCEFREE_SOURCES
     ${PROJECT_SOURCE_DIR}/source/bside/chip/CombinedWaveformParams.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/Filter.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/OutputStage.cpp
+    ${PROJECT_SOURCE_DIR}/source/bside/chip/HalfBand.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/chip/ChipVoice.cpp
     ${PROJECT_SOURCE_DIR}/source/bside/engine/ProgramEngine.cpp)
 
@@ -64,6 +65,7 @@ add_executable(bside_unit
     unit/ChipRenderExactTests.cpp
     unit/ChipBusTests.cpp
     unit/ChipVoiceTests.cpp
+    unit/ChipVoiceAliasTests.cpp
     unit/FilterOutputTests.cpp)
 target_link_libraries(bside_unit PRIVATE bs_juce_free Catch2::Catch2WithMain)
 target_compile_definitions(bside_unit PRIVATE BS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")

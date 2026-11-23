@@ -130,6 +130,35 @@ public:
         return out;
     }
 
+    /** The same sample split for a chain that applies Model A's static functions at another rate (ChipVoice, S3b-2):
+        returns the output without them (Model B: the whole output) and sets lowPass to the low-pass value they are
+        functions of; processDouble (x) = processLinearDouble (x, lp) + outputShape (lp), the state advanced alike. */
+    double processLinearDouble (double in, double& lowPass) noexcept
+    {
+        const double x = guard (in);
+        const double out = ox * x + o1 * s1 + o2 * s2;
+        lowPass = lx * x + l1 * s1 + l2 * s2;
+        const double n1 = a1x * x + a11 * s1 + a12 * s2;
+        s2 = a2x * x + a21 * s1 + a22 * s2;
+        s1 = n1;
+        settle();
+        return out;
+    }
+    /** Model A's static functions of the low-pass value (0 on Model B). */
+    double outputShape (double lowPass) const noexcept { return mdl == Model::A ? shape (lowPass) : 0.0; }
+    /** Their coefficients: outputShape (lp) = ((((p5 v + p4) v + p3) v + p2) v + p1) v, v = lp limited to [lpMin, lpMax]
+        (all 0 on Model B). The limits do not depend on the mode or the resonance. */
+    struct Shape
+    {
+        double p1 = 0.0, p2 = 0.0, p3 = 0.0, p4 = 0.0, p5 = 0.0, lpMin = -1.0e9, lpMax = 1.0e9;
+    };
+    Shape outputShapeCoefficients() const noexcept
+    {
+        if (mdl != Model::A)
+            return {};
+        return { p1, p2, p3, p4, p5, lpMin, lpMax };
+    }
+
     /** One internal sample with a cutoff (register value) that may change every sample, without setCutoff's cost:
         the cutoff curve, a rational tan and the mapped parameters interpolated from a table (see "processWithCutoff"
         above), with the damping, output weights and `variation` of the cutoff given (Model A's Q and band-pass gain
@@ -140,6 +169,8 @@ public:
     }
     /** The same in double precision, input and output. */
     double processWithCutoffDouble (double in, float registerValue) noexcept;
+    /** processWithCutoffDouble split as processLinearDouble splits processDouble. */
+    double processWithCutoffLinearDouble (double in, float registerValue, double& lowPass) noexcept;
 
     /** tan (x) for 0 <= x <= 1.42 (cutoffs up to 0.45 x the rate), rational ([5/4] Pade form): relative error
         below 1e-8 up to 0.75 (0.24 x the rate) and below 3e-5 up to 1.42. */

@@ -499,6 +499,13 @@ Filter::Mapped Filter::cutAt (float registerValue) const noexcept
 
 double Filter::processWithCutoffDouble (double in, float registerValue) noexcept
 {
+    double lp = 0.0;
+    const double out = processWithCutoffLinearDouble (in, registerValue, lp);
+    return mdl == Model::A ? out + shape (lp) : out;
+}
+
+double Filter::processWithCutoffLinearDouble (double in, float registerValue, double& lowPass) noexcept
+{
     if (! cutValid)
         buildCutTable(); // after a rate, resonance or mode change: bounded (33 mappings)
     const Mapped c = cutAt (registerValue);
@@ -510,10 +517,8 @@ double Filter::processWithCutoffDouble (double in, float registerValue) noexcept
     s1 = bp + c.g * hp;
     s2 = lp + c.g * bp;
     settle();
-    double out = c.wL * lp + c.wB * bp + c.wH * hp;
-    if (mdl == Model::A)
-        out += shape (lp);
-    return out;
+    lowPass = lp;
+    return c.wL * lp + c.wB * bp + c.wH * hp;
 }
 
 Filter::Linear Filter::linearPart() const noexcept
