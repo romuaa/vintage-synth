@@ -418,10 +418,8 @@ TEST_CASE ("chain: routing, volume and mode writes every tick meet the write bud
         for (const auto& row : rows)
         {
             double worst = -300.0, worstRaw = -300.0, worstBase = -300.0;
-            for (const auto& rc : rateConfigs())
+            for (const RateConfig rc : { RateConfig { 88200.0, 20000.0 }, RateConfig { 96000.0, 20000.0 }, RateConfig { 192000.0, 20000.0 } })
             {
-                if (rc.internalRate != 88200.0 && rc.internalRate != 96000.0 && rc.internalRate != 192000.0)
-                    continue;
                 for (const double hz : { 110.0, 1000.0, 2000.0 })
                 {
                     // the mute row plays a saw on oscillator 3 (routed direct), the others on oscillator 1
