@@ -63,10 +63,25 @@ the parked figures).
   files (reference, fixed form, signal-dependent form; six cases with a README) are in the
   developer cache, `s3a-esc/listen/`. What a further attempt would need: decisions on that
   branch, "B-Side S3a round 3", rows T12 to T18.
-- **Closing step, running** (contract 8.19.3; branch `bside/s3a-close`): the review's fixes
-  for Model B and the output stage (rate correction with matched poles, GCC 13, Shared DC,
-  Model A `processWithCutoff`, tests that can fail, the Model B stop band). Then the
-  orchestrator's full gate, one CI run and the pull request "Model B and the output stage".
+- **Closing step, built and reviewed; fix round running (2026-11-23)** (contract 8.19.3;
+  decisions "B-Side S3a closing step"). On the branch: the rate correction (matched poles and a
+  designed output row: worst 0.19 dB Model B, 0.10 dB Model A against the analog response at
+  every rate, was 3.2 dB; confirmed by the reviewer's own time-domain measurement, 0.18 / 0.10
+  dB), `processWithCutoff` on a table of the mapping (within 0.05 dB), Model A's
+  `processWithCutoff` following the cutoff given, the Shared topology's DC (Model B exact;
+  Model A a documented, pinned difference of up to 2.7 dB at 16 chips), tests that can fail,
+  the test sources building with GCC 13. **Third independent review: mergeable after small
+  fixes**, now in the fix round (branch `bside/s3a-fix`):
+  - the Model B second-order term that the closing step fitted for the stop-band floor is
+    **removed** (it matched noise floors, but put harmonics 6 to 12 dB too high on band-pass
+    and pulse tones, aliased at -36 dB and broke the Shared claim); the floor stays a recorded
+    known deviation (about 6 to 7 dB low on high-pass noise at mid and full level);
+  - the output row keeps the prototype's phase (the first design was minimum-phase: up to
+    180 degrees off on mode sums); a phase gate of 30 degrees is added to the contract;
+  - comments and records corrected, the input guard pinned by a test.
+  Then the orchestrator's full gate, one CI run and the pull request "Model B and the output
+  stage". **Open, outside S3a:** `ChipRender.cpp` fails one GCC 13 warning (`-Warray-bounds`);
+  GCC 11, the compiler of CI and the local gate, accepts it.
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
