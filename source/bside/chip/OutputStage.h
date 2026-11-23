@@ -34,8 +34,10 @@
 // that one chip's static DC in full, plus 1/n of the rest; setFilterStaticDc gets the static output in full. Then
 // (tested, "the Shared topology ..." in FilterOutputTests.cpp):
 // - n = 1 is Per Note exactly;
-// - Model B (linear filter): n chips with identical held routed voices give the output DC of n Per Note chips (a 0 -> 15
-//   volume step with volume DC on: within 0.01 dB for n = 1 .. 16) and their audio (rms within 1 %);
+// - Model B (its filter linear but for the band/high second-order term, Filter.h, which in Shared acts on the summed
+//   band/high signal): n chips with identical held routed voices (a 110 Hz triangle, cutoff 900, all three modes,
+//   full and half envelope) give the output DC of n Per Note chips (a 0 -> 15 volume step with volume DC on: within
+//   0.05 dB for n = 1 .. 16) and their audio (rms within 1 %);
 // - Model A distorts the summed signal (8.5): the envelopes' DC and the audio of all n chips meet its static output
 //   functions together (they saturate), so with identical held routed voices (a 110 Hz triangle, cutoff 900, all three
 //   modes) at full envelope and n = 2 / 4 / 8 / 16 the volume step's DC differs from n Per Note chips' by -0.1 / +0.6 /
