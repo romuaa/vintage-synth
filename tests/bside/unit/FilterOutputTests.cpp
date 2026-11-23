@@ -370,13 +370,16 @@ bool sameBits (double a, double b)
 TEST_CASE ("filter: Model A below code 480 is the S3a form bit for bit, on setCutoff and on processWithCutoff (8.19.3, O9)", "[filter]")
 {
     // Owner decision O9: the cutoff-step fix covers code 480 and up only. Every register value from 0 to 479 in steps of
-    // a quarter, at variation 0, 0.37, 0.5 and 1: the corner of setCutoff (cutoffCurveHz, the stored corner after
+    // a quarter, at variation 0, 0.25, 0.5, 0.75 and 1: the corner of setCutoff (cutoffCurveHz, the stored corner after
     // setCutoff) and the corner processWithCutoff computes on its own path (cornerWithCutoffHz) have exactly the bits of
-    // the S3a law. Any change below 480, in the last bit, on either path, fails.
+    // the S3a law. Any change below 480, in the last bit, on either path, fails. The variations are those whose shift
+    // (variation - 0.5) x 2 x 0.06 is an exact product: elsewhere a compiler may fuse the shift into a multiply-add in
+    // one translation unit and not in another, so this replica would not be an exact oracle (GCC did so at 0.37). The
+    // class itself was compared with the S3a build there too, outside the tests (decisions S1).
     const S3aLowLaw law;
     int bad = 0, n = 0;
     std::string first;
-    for (const float var : { 0.0f, 0.37f, 0.5f, 1.0f })
+    for (const float var : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
     {
         Filter f;
         f.prepare (Model::A, 96000.0, var);
