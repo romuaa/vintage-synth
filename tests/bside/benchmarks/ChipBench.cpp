@@ -22,9 +22,18 @@
 //                      budget of 8.19.1 is s3aB at 96 kHz; Model A has no budget (S4 question) and is broken
 //                      down into filterA, outputA and s3aA
 //   cutB, cutA         s3aB and s3aA with a new cutoff every sample through Filter::processWithCutoff
+// S3b-1 (8.19.4): CHIP_BENCH_BUSES=1 runs every chip case above through Chip::renderBusesUntil (the two buses in
+// double) instead of the single sum (CHIP_BENCH_NOBEND=1 also: without Model A's voice bend). The whole chain (ChipVoice: buses -> Filter -> OutputStage, double output), the S4
+// gate's patch (s4gate) with oscillators 1 and 2 through the filter (low-pass, cutoff 1024, resonance 8, volume 15):
+//   chainB, chainA     a cutoff write every tick (the filter runs process: setCutoff once per write)
+//   moveB, moveA       a cutoff write every 64 samples (moving: Filter::processWithCutoff every sample)
+//   busesB, busesA     the same patch, Chip::renderBusesUntil alone (the buses' share of chainB / chainA)
+// The breakdown per stage: busesX is the renderer with its buses; chainX - busesX the filter, the stage and the voice's
+// per-sample bookkeeping.
 
 #include "../../support/Env.h"
 #include "bside/chip/Chip.h"
+#include "bside/chip/ChipVoice.h"
 #include "bside/chip/Filter.h"
 #include "bside/chip/OutputStage.h"
 
@@ -34,6 +43,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 using namespace vs::bside::chip;
@@ -48,6 +58,20 @@ double chipSeconds()
     const auto s = testenv::get ("CHIP_BENCH_SECONDS");
     const double v = s ? std::atof (s->c_str()) : 0.0;
     return v > 0.0 ? v : 4.0;
+}
+
+/** CHIP_BENCH_NOBEND=1: Model A's voices are not bent on the buses (the buses' own cost, without the bend's). */
+bool noBendWanted()
+{
+    const auto s = testenv::get ("CHIP_BENCH_NOBEND");
+    return s && *s == "1";
+}
+
+/** CHIP_BENCH_BUSES=1: the chip cases render the two buses (S3b-1). */
+bool busesWanted()
+{
+    const auto s = testenv::get ("CHIP_BENCH_BUSES");
+    return s && *s == "1";
 }
 
 void setOsc (Chip& c, int n, double f, float pw, std::uint8_t control)
@@ -73,6 +97,8 @@ double nsPerSample (Model m, double rate, Setup&& setup, Tick&& tick, bool digit
         cfg.internalRate = rate;
         c.prepare (cfg);
         setup (c);
+        if (noBendWanted())
+            c.renderBendVoices (false);
         std::vector<float> out (64, 0.0f);
         const auto samples = static_cast<std::uint64_t> (chipSeconds() * rate);
         std::uint64_t done = 0, ticks = 1;
@@ -91,13 +117,17 @@ double nsPerSample (Model m, double rate, Setup&& setup, Tick&& tick, bool digit
                 c.advanceCycles (cyc);
             ++done;
         }
+        std::vector<double> bus (6 * 64, 0.0);
+        const Chip::BusBlock block { bus.data(), bus.data() + 64, bus.data() + 128, bus.data() + 192, bus.data() + 256, bus.data() + 320 };
+        const bool buses = busesWanted();
         while (done < samples)
         {
-            const int got = c.renderUntil (out.data(), 64, ticks * kTick);
+            const int got = buses ? c.renderBusesUntil (block, 64, ticks * kTick) : c.renderUntil (out.data(), 64, ticks * kTick);
             done += static_cast<std::uint64_t> (got);
             if (c.cycle() == ticks * kTick)
                 tick (c, ticks++);
         }
+        out[0] += static_cast<float> (bus[0]);
         const auto t1 = std::chrono::steady_clock::now();
         best = std::min (best, std::chrono::duration<double, std::nano> (t1 - t0).count() / static_cast<double> (done));
         volatile float sink = out[0];
@@ -156,6 +186,67 @@ double s3aNsPerSample (Model m, double rate, int which)
         sink += acc;
     }
     volatile float keep = sink;
+    (void) keep;
+    return best;
+}
+/** ns per internal sample of the whole chain (ChipVoice, Per Note) on the S4 gate's patch: `which` 0 chain with a
+    cutoff write every tick, 1 a cutoff write every 64 samples (moving), 2 the buses alone. */
+double chainNsPerSample (Model m, double rate, int which)
+{
+    double best = 1e300;
+    double sink = 0.0;
+    for (int run = 0; run < 5; ++run)
+    {
+        auto v = std::make_unique<ChipVoice>();
+        Config cfg;
+        cfg.model = m;
+        cfg.internalRate = rate;
+        v->prepare (cfg);
+        Filter f;
+        f.prepare (m, rate, 0.5f);
+        v->setFilter (&f);
+        auto osc = [&] (int n, double fr, float pw, std::uint8_t control) {
+            OscInput in;
+            in.frequency = fr;
+            in.pulseWidth = pw;
+            in.control = control;
+            in.attackDecay = 0x09;
+            in.sustainRelease = 0xa9;
+            v->setOscillator (n, in);
+        };
+        osc (0, 3740.0, 2048.0f, ctrl::pulse | ctrl::gate);
+        osc (1, 7480.0, 0.0f, ctrl::saw | ctrl::gate);
+        osc (2, 5600.0, 2048.0f, ctrl::triangle | ctrl::saw | ctrl::gate);
+        v->write (0x15, 0);
+        v->write (0x16, 0x80);
+        v->write (0x17, 0x83);
+        v->write (0x18, 0x1f);
+        std::vector<double> out (64, 0.0);
+        const auto samples = static_cast<std::uint64_t> (chipSeconds() * rate);
+        std::uint64_t done = 0, ticks = 1, blocks = 0;
+        const auto t0 = std::chrono::steady_clock::now();
+        while (done < samples)
+        {
+            const std::uint64_t until = ticks * kTick;
+            const int got = which == 2 ? v->renderBusesUntil (64, until) : v->renderUntil (out.data(), 64, until);
+            done += static_cast<std::uint64_t> (got);
+            if (v->chip().cycle() == until)
+            {
+                const auto pw = static_cast<unsigned> (1024 + (ticks * 37) % 2048);
+                v->write (0x02, static_cast<std::uint8_t> (pw & 0xff));
+                v->write (0x03, static_cast<std::uint8_t> (pw >> 8));
+                if (which == 0)
+                    v->write (0x16, static_cast<std::uint8_t> (0x60 + (ticks * 7) % 64));
+                ++ticks;
+            }
+            if (which == 1 && got == 64)
+                v->write (0x16, static_cast<std::uint8_t> (0x60 + (++blocks * 5) % 64));
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+        best = std::min (best, std::chrono::duration<double, std::nano> (t1 - t0).count() / static_cast<double> (done));
+        sink += out[0];
+    }
+    volatile double keep = sink;
     (void) keep;
     return best;
 }
@@ -349,6 +440,27 @@ int main (int argc, char** argv)
         {
             for (int i = 0; i < 3; ++i)
                 r[i] = s3aNsPerSample (c.model, rates[i], c.which);
+            std::printf ("%-8s %10.1f %10.1f %10.1f   (%s)\n", c.name, r[0], r[1], r[2], c.what);
+        }
+    // S3b-1: the whole chain on the S4 gate's patch (8.19.4)
+    struct ChainCase
+    {
+        const char* name;
+        Model model;
+        int which;
+        const char* what;
+    };
+    const ChainCase chains[] { { "chainB", Model::B, 0, "chain, S4 gate patch, Model B: buses -> filter -> stage" },
+                               { "chainA", Model::A, 0, "chain, S4 gate patch, Model A: buses -> filter -> stage" },
+                               { "moveB", Model::B, 1, "chainB with a cutoff write every 64 samples (processWithCutoff)" },
+                               { "moveA", Model::A, 1, "chainA with a cutoff write every 64 samples (processWithCutoff)" },
+                               { "busesB", Model::B, 2, "the buses alone, S4 gate patch, Model B" },
+                               { "busesA", Model::A, 2, "the buses alone, S4 gate patch, Model A (voice bend included)" } };
+    for (const auto& c : chains)
+        if (want (c.name))
+        {
+            for (int i = 0; i < 3; ++i)
+                r[i] = chainNsPerSample (c.model, rates[i], c.which);
             std::printf ("%-8s %10.1f %10.1f %10.1f   (%s)\n", c.name, r[0], r[1], r[2], c.what);
         }
     return 0;
