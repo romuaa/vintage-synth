@@ -36,6 +36,21 @@ is a rule, a line here.
   only together with its model test (`HandoverModelTests.cpp`).
 - Hooks block writing the git-ignore file and any command text mentioning it or `.env` (even inside a
   script); use the Edit tool for such text. Never read anything under `build/`.
+- GCC 13's `-Wdangling-reference` fires on `const auto& x = f (temporary)` even when `f` returns into a
+  static map; name the argument first (GCC 11, CI's compiler, does not warn).
+- A test that a write does *not* change something needs a companion check that the write still acts
+  (a mutation removing the volume passed a DC-only test).
+
+## B-Side S3a closing step (2026-11-23)
+
+| Problem | Cause | Fix / rule |
+|---|---|---|
+| Test sources that build with GCC 11 failed with GCC 13 (`-Wdangling-reference`). | GCC 13 flags any reference bound to the result of a call that took a temporary by reference, whatever the function returns. | Bind the argument to a named variable first; check new test sources with g++ 13 (the Ubuntu 24.04 image of `scripts/linux-check.sh` has it). |
+| Magnitude-fitted numerators per filter mode, summed, missed the low + high notch by far. | A notch is a cancellation between modes; per-mode magnitude fits do not keep the phases it needs. | Design the numerator of each mode combination as a whole (or match complex responses); gate every combination. |
+| A least-squares numerator on a fixed frequency grid was exact in some places and 5 dB off in others. | Where the gated band is narrow (low cutoffs at high rates) the grid leaves one or two points and the system degenerates. | Prefer a closed form with nodes placed relative to the corner and the band edge; never solve on a grid without checking its conditioning. |
+| `processWithCutoff` cost 20 ns instead of 10 after a table was added. | The table was invalidated in the shared coefficient update, so every `setCutoff` (one per 64 samples in the bench) rebuilt it. | Invalidate a cache only on what it depends on; benchmark the path with the writes it will see. |
+| A quadratic on the whole filter output fixed the stop-band floor and broke `a_routing_b`. | The term added harmonics to low-pass tones; the reference's term acts on the band/high part only. | Before placing a nonlinearity, run it against traces of the other modes and of tones, not only the data that motivated it. |
+| A volume test with held voices passed while the volume was not applied at all. | It checked only that the DC did not move, and the target volume was 0. | Write a non-zero target and check that the write still acts (the audio scales by the volume) next to what must not change. |
 
 ## B-Side S3a: filter and output stage (2026-11-19)
 

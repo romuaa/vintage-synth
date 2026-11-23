@@ -5,6 +5,21 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S3a closing step (2026-11-23)
+- The filter's response no longer depends on the internal rate: matched poles and a numerator designed per mode
+  combination, at no per-sample cost. Within 0.19 dB (Model B) and 0.10 dB (Model A's linear part) of the analog
+  prototype at every rate of 4.4 (was up to 3.2 dB at 88.2 kHz); tested over every mode sum, resonance and cutoff.
+- `Filter::processWithCutoff` reads the mapping from a small table (within 0.05 dB of `setCutoff`) and now follows
+  Model A's damping, band weights and `variation` at the cutoff given.
+- Shared topology: every chip's stage gets the filter's static DC in full (`OutputStage::sharedFilterShare`): Model B
+  equals n Per Note chips for n = 1 .. 16; Model A's difference (summed distortion) is documented and tested.
+- Model B's band- and high-pass part carries a second-order term (0.10), the reference's stop-band floor at mid and full
+  level (was about 10 dB low; held-out traces now within 0.2 dB).
+- Tests that can fail: the board low-pass corner, the volume with held voices (DC off and on, applied once), every
+  resonance and cutoff law; each shown failing on a mutation. Test sources build with GCC 13.
+- Cost (`chip_bench`, 96 kHz, indicative): `s3aB` 5.9 ns (budget 7), `cutB` 10.4 ns. Open: `ChipRender.cpp` fails GCC
+  13's `-Warray-bounds` (GCC 11 builds it).
+
 ### B-Side S3a round 2 (2026-11-20)
 - Model A's held-tone distortion is per voice: `OutputStage::shapeVoice` bends each voice before its envelope (the
   renderer applies it per voice in S3b); the output stage and the filter's output functions refitted with it. Held tones
