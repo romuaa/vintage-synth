@@ -88,6 +88,13 @@ the parked figures).
   the compiler of CI and the local gate, accepts it. To fix in S3b, which reworks that file.
   **Windows and Linux x86_64:** one CI run dispatched for the branch; its result is recorded in
   the pull request "B-Side S3a: Model B filter and the output stage".
+- **S3b, started (2026-11-23; owner decision O3)** on `bside/s3b-chain`, stacked on
+  `bside/s3a-filter` (pull request 41, waiting for the owner). Contract 8.19.4: **S3b-1**, the
+  renderer's two buses in double precision, routing / volume / mode writes at their cycle, the
+  whole chain (`Chip` -> `Filter` -> `OutputStage`), the traces S3a had to skip; then
+  **S3b-2**, the aliasing of the static curves (pre-filter before Model B's mixer curve, Model
+  A's bend folded into the renderer, Model A's output function and mixer at twice the rate).
+  Nothing of S3b merges before S3a has.
 - **Independent review of round 2, done** (no commits; logs in the developer cache,
   `s3a-review2/`). **Model B and the output stage: mergeable after small fixes.** Open findings,
   to be fixed after the escalated attempt (they touch the same files):
