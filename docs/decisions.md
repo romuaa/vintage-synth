@@ -438,6 +438,16 @@ differ), the late-note timing, the switch fade or real-time safety.
 | 2 | Shared: a note of another velocity that joins or leaves changes the level of the held notes' filtered sound (5.9 dB on Model B, 7.2 dB on Model A for velocity 1 against 0.01 at `vel.volume` 100 %), smoothly over 3 ms. | Accepted as a property of the topology and written into the contract: volume stays per note (8.5), so the filtered sum is heard at the share-weighted mean of the note gains. The alternatives (dividing the share by the note gain, or scaling each note's input to the filter) either overdrive Model A's output stage with mixed velocities or break "one voice in Shared equals Per Note bit for bit". Pinned by a test; for the owner's ear in the S4b audition. (review) |
 | 3 | The steal dip of the fix round's reading 3 was understated: the true bound is t(1 − t)/(n − t) of the stolen chip's weight, 0.26 with 16 carriers and 0.34 with 2; smooth, not a click. | The contract carries the true bound and the steal test asserts it. (review) |
 
+### S4b contract: orchestrator's calls (2026-11-24, all review)
+
+| # | Point | Reading taken (reason) |
+|---|---|---|
+| 1 | A level trim for the level rule | One new per-part parameter `mix.level` (-24 to +6 dB, default 0), appended before B-Side's first release. The chip's volume register cannot trim: 16 steps, and it moves Model A's DC and distortion. A part level is also what a player expects next to pan. (review) |
+| 2 | Size and content of the bank | 16 programs (the contract allowed 10 to 20): Init, three leads, two basses, two table arpeggios, three percussion sounds, two Model A pads, one effect, one Dual layer, one Split. Each row of 8.10's list is covered at least once; drums are one sound per program, because kit mode is S5. (review) |
+| 3 | `kChipGain` | Recalibrated once so that Init measures within 1 dB of Vintage's Init on the same phrase, in place of the onset-peak rule of S4a: two instruments of one maker should sit at the same loudness, and the onset peak said little about how loud a held note is. The owner hears the before and after in the audition. (review) |
+| 4 | Goldens | Six programs through the shared render harness (one lead, one bass, one arpeggio, one percussion sound, one Model A pad, the Dual layer), regenerated once after the audition if sounds change. (review) |
+| 5 | Windows CI time | S4b's default tests may add at most 20 s locally, and the step reports where the Windows test time goes, because S4a's Windows x64 job was cancelled at its 60-minute limit. A workflow change, if needed, is its own pull request. (review) |
+
 ## B-Side S3a round 2: the review's findings (2026-11-20, all review)
 
 What round 2 changed, what it measured and what stays open. Fitting traces (never committed, under the developer cache):
