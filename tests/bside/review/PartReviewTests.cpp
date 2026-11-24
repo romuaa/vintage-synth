@@ -122,7 +122,7 @@ TEST_CASE ("Review: irregular host blocks (1 .. 512, events anywhere) give the s
     std::vector<int> irregular;
     for (int k = 0; k < 400; ++k)
         irregular.push_back (1 + static_cast<int> (rng() % 512));
-    for (const int assign : { 0, 2 }) // Poly, Unison (4)
+    for (const int assign : { 0, 1, 2 }) // Poly, Unison (4 voices), Solo
         for (const int model : { 1, 0 })
             for (const bool shared : { false, true })
             {
@@ -558,6 +558,21 @@ TEST_CASE ("Review: latency equal for both parts and models; the chain lengths f
                      b.part->getChainLatency (chip::Model::B));
         CHECK (a.part->getLatencySamples() == b.part->getLatencySamples());
         CHECK (b.part->getMaxChainLatency() < 64);
+    }
+}
+
+TEST_CASE ("Review: host rates below 32 kHz (4x): the chain fits the 64-sample pad ring, both models give the same edge delay", "[review][latency]")
+{
+    for (const double rate : { 22050.0, 16000.0, 11025.0, 8000.0 })
+    {
+        Rig b ({ rate, 4 }, bs::PartParams {});
+        std::printf ("latency %6.0f Hz x4: reported %d, exact %.3f, chain A %d, chain B %d (internal samples)\n", rate, b.part->getLatencySamples(),
+                     b.part->getExactLatency(), b.part->getChainLatency (chip::Model::A), b.part->getChainLatency (chip::Model::B));
+        // the pad delays the shorter chain by the difference, in a ring of 64: the difference must fit (Part::prepare's
+        // jassert asks for the longest chain itself to fit, which fails below 22.05 kHz: a debug-build assertion only)
+        const int padDelay = b.part->getMaxChainLatency() - std::min (b.part->getChainLatency (chip::Model::A), b.part->getChainLatency (chip::Model::B));
+        INFO (rate << " Hz: longest chain " << b.part->getMaxChainLatency() << ", pad delay " << padDelay << " internal samples, pad ring 64");
+        CHECK (padDelay < 64);
     }
 }
 
