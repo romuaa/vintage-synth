@@ -367,6 +367,34 @@ Readings taken while writing contract 8.21. None changes a parameter ID or the s
 | 8 | **A voice leaves and enters the sum silently:** after the idle condition of 8.5 a voice renders on until its output has stayed below -120 dB re full scale for one control interval (at most 500 ms, then the 3 ms fade); a voice that starts from idle starts with its filters settled on the chip's static level. | Idle voices must cost nothing (8.5), but the filter and the board filters ring after the envelopes reach 0, and with Volume DC on a chain started from nothing would step by the whole voice DC. |
 | 9 | **Model routing:** the part is built by the stronger model, not by the one the S4 row of 8.10 names. | It is real-time code around the chip chain with a cost gate that has 0.3 % of room (this repository's `orchestrate` skill routes such work there). Tests, benchmarks and patches stay with the cheaper model. |
 
+### S4a: the implementer's readings (2026-11-24, all review)
+
+Taken while building the part against 8.21.1, where the contract was silent or its wording
+could not be met as written. Not yet checked by the independent review.
+
+| # | Point | Reading taken (reason) |
+|---|---|---|
+| 1 | Latency | The reported latency includes the delay of the board low-pass (about 10 µs, measured at prepare). Without it an edge arrives 1.39 host samples late at 192 kHz without oversampling, outside the contract's own 1-sample test; every stage that adds delay belongs in the latency. (review) |
+| 2 | Tempo | Read from the play head in `applyInstrumentParams` (playing, with a tempo and a position), otherwise `arp.tempo`; a held block keeps the previous tempo. No new shell hook. (review) |
+| 3 | Structural switch | Voices that sounded become idle, so held keys stay silent. A note played during the fade starts after it in the new configuration; a release in the meantime is delayed by the fade length. `chip.clock` is global and switches both parts. (review) |
+| 4 | Unison | A voice starting from idle gets every oscillator's accumulator set to frac(k²/2n) of a cycle right after tick 0; no random base (determinism). A busy voice that retriggers keeps its phases. (review) |
+| 5 | Smoothing | Over 5 ms at the control points: oscillator fine and pulse width, cutoff, key follow, variation, the three macros, velocity to volume and to cutoff, vibrato rate, wheel depth, unison detune, bend and wheel. Not smoothed: `porta.time`, `tick.free_hz`. The note gain is computed at note start. (review) |
+| 6 | Control points | `setHost` / `sync` are skipped when no host input can have moved; `sync` writes only changed values, so the output is the same. (review) |
+| 7 | Retarget | The pitch is synced at the event's cycle, not at the next control point. (review) |
+| 8 | Render spans | Per Note voices render spans of up to 1024 internal samples with the control states precomputed; Shared renders in lockstep segments of up to 64, split at any voice's tick. (review) |
+| 9 | Quiet path | After 0.1 s of exact silence with no voice sounding, the chain after the sum is reset and not run; the decimator's tail is dropped then. (review) |
+| 10 | Idle chip time | Caught up once per render call and before a note starts on the voice. `resume()` (Upper back from Whole) resets Upper's chips to power-on, because how long Upper went unrendered depends on the host's blocks. (review) |
+| 11 | Quiet criterion | Voice × note gain × `kChipGain` below 1e-6 per sample for one control interval, decided at control points. In practice most voices leave by the 500 ms + 3 ms rule, because the board high-pass keeps a 133 ms tail of the envelope's step above -120 dB. (review) |
+| 12 | Idle and looping lanes | Idle uses `anyWaveLaneRunning` as 8.5 words it, so a looping lane keeps a voice until the 30 s rule, although 8.16 says no lane can raise the gate after note-off. (review) |
+| 13 | `kChipGain` = 0.9739 | Calibrated on the note's peak, which is its onset (the envelope's step through the board high-pass); the steady pulse then peaks near -17.9 dBFS. To be weighed in S4b's level rule. (review) |
+| 14 | Settled start | Filters are primed on the static level (envelopes 0, no audio), not on the first sample. Shared: a chip joining a running shared filter is primed on that filter's fixed point for its own DC only. (review) |
+| 15 | Steal | After the fade the chain is suspended (it restarts settled), then the engine's `noteOn(stolen)` runs. (review) |
+| 16 | All Sound Off | Note-off and `enterIdle` (gates cleared, the idle writes), then suspend. (review) |
+| 17 | Tables | A claim not committed by the next read is aborted. If a claim returns nothing while the shell's read succeeded, both parts keep their previous tables but the parameters are applied (the shell cannot fail the block from the hook). (review) |
+| 18 | Shared filter writes | Cutoff, resonance and mode follow the most recently started note through a tap on the sink; a new note also pushes its current registers. Cutoff applies `filterLagSamples` later; mode and resonance at `sharedSwitchSample`. (review) |
+| 19 | CPU benchmark patch | 16 notes D3 to F4 around the pitch `chip_bench` uses; oscillators 1 and 2 through the filter, as in `chip_bench`'s chain case. With A3 to C5 the figures are higher (reported: 5.63 % Model B, 11.27 % Model A). (review) |
+| 20 | Tail | 3 × the nominal release of the enabled oscillators of Lower, plus Upper unless Whole. (review) |
+
 ## B-Side S3a round 2: the review's findings (2026-11-20, all review)
 
 What round 2 changed, what it measured and what stays open. Fitting traces (never committed, under the developer cache):
