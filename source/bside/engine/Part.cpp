@@ -862,18 +862,20 @@ void Part::renderInternal (float* dst, int count) noexcept
 
 void Part::postProcess (float* dst, int len) noexcept
 {
-    // the switch fade, the latency pad, the gain, the one conversion to float (8.20.1)
+    // the latency pad, the switch fade, the gain, the one conversion to float (8.20.1)
     for (int i = 0; i < len; ++i)
     {
-        double s = sum[static_cast<std::size_t> (i)];
+        const double s = sum[static_cast<std::size_t> (i)];
+        pad[static_cast<std::size_t> (padPos)] = s;
+        double delayed = pad[static_cast<std::size_t> ((padPos - padDelay + kPadRing) & (kPadRing - 1))];
+        padPos = (padPos + 1) & (kPadRing - 1);
         if (switchPending)
         {
-            s *= static_cast<double> (switchLeft) / static_cast<double> (fadeSamples);
+            // the switch's fade AFTER the pad (8.21.1 after the review): it reaches the output in full, and what the
+            // pad still holds when the fade ends (the old configuration's last samples) is behind a gain of 0
+            delayed *= static_cast<double> (switchLeft) / static_cast<double> (fadeSamples);
             switchLeft = std::max (0, switchLeft - 1);
         }
-        pad[static_cast<std::size_t> (padPos)] = s;
-        const double delayed = pad[static_cast<std::size_t> ((padPos - padDelay + kPadRing) & (kPadRing - 1))];
-        padPos = (padPos + 1) & (kPadRing - 1);
         dst[i] = rounding.next (delayed * kChipGain);
         silentRun = s < 0.0 || s > 0.0 ? 0 : silentRun + 1;
     }
