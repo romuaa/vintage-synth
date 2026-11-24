@@ -2552,6 +2552,25 @@ rebuilds per resonance write (`ChipVoice.h`, "RESONANCE") and the part's own ove
     idle differs from the same render without the second note's leave by no more after the
     leave than before it (both models, the reviewer's test); the same when a note joins, beyond
     the new note's own sound. One voice in Shared still equals Per Note bit for bit.
+  - **Shared, levels (second review, 2026-11-24).** "Does not step" means no discontinuity. The
+    level may move: each chip's share of the filter's output is heard at that chip's own note
+    gain (8.5: volume stays per note), so the filtered sum is heard at the share-weighted mean
+    of the note gains, and a note of another velocity that joins or leaves moves that level
+    smoothly over the 3 ms fade (measured: a held note at velocity 1 with `vel.volume` at
+    100 % falls by 5.9 dB on Model B and 7.2 dB on Model A when a note at velocity 0.01 joins;
+    nothing at equal velocities). This is a property of the topology, stated in `Part.h` and
+    pinned by a test (the level after the join is the mean gain's within 0.5 dB, and the move
+    has no step). During a steal the filtered sound heard through the other chips dips
+    smoothly by at most t(1 − t)/(n − t) of it (0.26 of the stolen chip's weight with 16
+    carriers, 0.34 with 2); the steal test asserts that bound.
+  - **All Sound Off keeps the part's clock.** A voice stopped by All Sound Off (or by any other
+    path that suspends a chain) is at the part's cycle afterwards, like a voice that went idle:
+    every chip of the part is at the same cycle after every block, in both topologies, whatever
+    happened to it. In Shared a lockstep segment never reads bus samples it did not render:
+    a chip that returns fewer samples than the segment asks for is a defect caught in every
+    build type, not only by a debug assertion. Gate: the second reviewer's three tests
+    (chips at the part's cycle after All Sound Off; a note on a stopped chip does not depend
+    on the host's blocks; the random Shared streams with All Sound Off).
   - **A structural switch ends without a step.** The 3 ms fade reaches the part's output in
     full: nothing after the fade (the latency pad) is cleared while it still holds faded
     samples. Gate: the output divided by a no-switch reference never steps by more than 3/288
