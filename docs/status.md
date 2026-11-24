@@ -4,13 +4,40 @@ Where the project is, what is parked, what comes next, and the history of what w
 The orchestrator keeps this file current; `CLAUDE.md` links here. Read "Where the project is"
 first when resuming.
 
-## Where the project is (2026-11-22) — read this first when resuming
+## Where the project is (2026-11-24) — read this first when resuming
+
+**Resume here (written 2026-11-24, before the owner restarted the machine).**
+- **Nothing is in flight.** No pull request is open, no agent, build or CI run is going, and
+  no worktree exists besides the main checkout. `main` holds B-Side S3a, S3b-1, S3b-2 and
+  the cutoff-jump fix (pull requests 41, 43, 44 and 45).
+- **The next step is S4, and it waits for the owner's word ("start S4").** It opens with the
+  owner's Model A budget question, to be laid out as options before any S4 work is planned:
+  measured at 96 kHz on the owner's machine, per internal sample, Model B's whole chain costs
+  30.6 to 30.9 ns and Model A's 63.4 to 64.2 ns (Model B's filter and output stage 6.3 to
+  6.4 ns against the budget of 7). Then the S4 contract in `docs/architecture.md`
+  (polyphony 8.5, wiring `ChipVoice` into the plugin, reported latency, the decimator with
+  the alias gate after it, factory patches, owner audition).
+- **Owner decisions that bound S4** (`docs/decisions.md`, O1 to O10): Model B is accepted by
+  ear; no further effort goes into Model A's sound (O10); its open points below are known
+  deviations, not work items, unless the owner reopens them.
+- **Open, recorded, not being worked on:** Model A's sweep opens later but faster than the
+  reference and closes the same way; its cutoff steps below code 480; the 16 pinned
+  overdriven Model A alias rows; mode-plus-cutoff write rows at -83 to -86 dB against the
+  reviewers' ideals (unestablished); cutoff-table rebuilds on every resonance write
+  (avoidable cost); thin margins (write gate -90.7 dB against -90; the CI sanitizer job runs
+  close to its 60-minute limit).
+- **Kept on purpose:** remote branches `bside/s3a-modela` (the signal-dependent Model A form,
+  not accepted, exists nowhere else) and `study/crossmod-aliasing`. Developer-only material
+  under `~/Library/Caches/bside-oracle/` (listening files, review harnesses) survives a
+  restart; nothing else from the sessions needs to.
+- **Leftovers the owner may remove:** Docker images `ci-crash:d13`, `ci-crash:u2204` and
+  volume `vs-s3a-close-gcc13` from the agents' work. The images `vs-linux-check:*` belong to
+  the local gate and are rebuilt by it when missing.
 
 **Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20; shown as the latest release on GitHub since 2026-11-21, owner's word;
 tag `v0.9.0` at commit `116c5f8`: three zips and `SHA256SUMS.txt`). **M8 is done.**
-**Everything below is merged to `main` except B-Side S3b, which is in flight (see "B-Side S3a,
-merged, and S3b, in flight"). S3a merged on 2026-11-23 with Model A's dynamics open (owner
-decisions O4 and O5: neither filter form as it is; a form between the two is being studied).** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
+**Everything below is merged to `main`, B-Side S3a and S3b included (2026-11-24). Model A's
+dynamics stay open as a known deviation (owner decisions O4, O5, O7 and O10).** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
 x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the repository became public
 ("First CI runs" below).
 
@@ -200,8 +227,9 @@ the parked figures).
   (O10): Model B is accepted by ear ("practically perfect; some minor audible things, ok");
   Model A opens later but faster than the reference and closes the same way, so the start
   and end of a sweep are cleaner than the reference; no further effort goes into Model A
-  for now beyond finishing what is in flight.** **The cutoff jump at code 512, fixed (scope O9; `bside/modela-cutoff-steps`; full local gate
-  passed on the branch with S3b-2 merged in, `69284ce`):** from code
+  for now beyond finishing what is in flight.** **The cutoff jump at code 512, fixed and merged (scope O9; pull request 45, on the owner's
+  word "merge both when green", 2026-11-24; full local gate on `69284ce`, the branch with
+  S3b-2 merged in; CI run 45282103029 green on `9acd3e3`):** from code
   480 up Model A's cutoff mapping follows the reference (the fall at 511 -> 512 is -15.4 %
   against the reference's -15.0 %; in the owner's one-voice sweep the jump there is -1.44 dB
   in 2 to 5 kHz, was -2.23, reference -1.67; every write at or above 480 within 0.34 dB of
@@ -321,8 +349,9 @@ the orchestrator dispatches it (see "Decisions").
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
-2. **B-Side:** S3a is merged, S3b is in flight (above); then S4 and B-Side's own release work as listed
-   in the parked state.
+2. **B-Side:** S3a and S3b are merged. **Next: S4, on the owner's word, starting with the
+   Model A budget options ("Resume here" at the top).** Then B-Side's own release work as
+   listed in the parked state.
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
 equal width, playing from the computer keyboard, a "Clean" Cross Mod switch, **a go-through of the factory
