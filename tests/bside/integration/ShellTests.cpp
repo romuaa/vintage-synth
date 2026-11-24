@@ -555,6 +555,7 @@ TEST_CASE ("B-Side: processBlock does not allocate (arp, effects, key modes, byp
 TEST_CASE ("B-Side: processBlock does not allocate with chip notes, steals, unison, a table applied while playing and every structural switch", "[bside][shell][realtime][part]")
 {
     Rig rig;
+    rig.proc.getPresets().getGate().setTimeouts (0, 0); // the applies below: no wait for an acknowledgement on this thread
     rig.set ("key.mode", 1.0f); // Dual: both parts
     auto& state = rig.proc.getState();
     const auto table = vs::bside::program::readTable ("bside-table 1\n[restart]\nmode classic\n[wave1]\n    wave pulse+gate +0\nloop:\n    pitch +12\n    pitch +0\n    jump loop\n"
@@ -602,6 +603,7 @@ TEST_CASE ("B-Side: processBlock does not allocate with chip notes, steals, unis
     }
     const int base = counter.count();
     REQUIRE (base > 0);
+    int excluded = 0;
     std::size_t next = 0;
     for (int b = 0; b < 260; ++b)
     {
@@ -613,10 +615,22 @@ TEST_CASE ("B-Side: processBlock does not allocate with chip notes, steals, unis
         if (b == 110)
             rig.proc.tableHandover (0).publish (table.program); // a table applied while playing (inside no hold: the
                                                                  // audio side's claim and commit run in processBlock)
+        // programs and a tone applied while notes sound (8.21.2: the part fades first): the apply itself runs on the message
+        // thread and allocates there, so what it allocates on this thread is not counted
+        if (b == 45 || b == 125 || b == 185 || b == 235)
+        {
+            const int before = counter.count();
+            if (b == 185)
+                REQUIRE (rig.proc.getPresets().applyToneFromSlot (13, 1, 0).isEmpty()); // B6's Upper tone onto Lower
+            else
+                REQUIRE (rig.proc.getPresets().selectProgram (b == 45 ? 12 : (b == 125 ? 14 : 1))); // B5 (Shared, Model A), B7, A2
+            excluded += counter.count() - before;
+        }
         buffer.clear();
         rig.proc.processBlock (buffer, blocks[static_cast<size_t> (b)]);
     }
-    CHECK (counter.count() == base);
+    CHECK (counter.count() - excluded == base);
     CHECK (rig.proc.getLowerPart().switchesDone() >= 5);
+    CHECK (rig.proc.getLowerPart().appliesFaded() >= 3);
 }
 #endif

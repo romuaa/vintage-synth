@@ -285,36 +285,41 @@ Changed by the bank, not by the gain: `ShellTests.cpp`, "B-Side: 64 programs, al
   adds a number of semitones per tick, scaled by `macro.sweep_depth`) if the macro is meant to move it.
 - **B3**'s "a longer open variant on velocity above 100 is not required" is not built.
 
-## An engine behaviour found while drafting
+## Applying a program while notes sound
 
-A change of waveform on held notes steps the output at once (a switch, never smoothed, by the hard rule),
-and a program applied while keys are held releases the voices with the new program's parameters already in
-force, so every program that changes a waveform steps the output of the held voices at the apply. Three keys
-held on a smooth sound (Init with triangles and cutoff 300); the largest sample step in the 4 800 samples
-after the change, against 3 x the step before + 0.002 (Vintage's rule, `PresetManagerTests.cpp`, "Applying a
-program while notes sound releases them without a click"):
+A program applied while keys are held fades the sounding voices of each part whose parameters it changes over
+3 ms and makes them idle **before** the new program's parameters take effect, as a structural switch does
+(`docs/architecture.md` 8.21.2 after the drafting; `Part.h`, "PROGRAM APPLY"). Held keys do not retrigger; a key
+pressed during the fade starts when it ends, with the new program, and keeps its length. The part recognises an
+apply by its committed table: every program, tone and state apply publishes the part's table inside the hold
+that writes its parameters, so a new table generation arriving with changed parameters is an apply; a
+parameter moved by hand or by automation, the pedal, All Notes Off, a key-mode change and a table set by hand
+(which changes no parameter) never fade the part.
+**A waveform parameter changed by hand on a held note is a register write and steps the output at once, as on
+the chip: that is a property of the instrument, not a defect.**
 
-| Change at 0.6 s | Step before | Step after | Rule |
+Measured with three keys held (C3 G3 E4, velocity 100) and the change 0.25 s later; the largest sample step in
+the 9 600 samples before the change and in the 4 800 after it, against Vintage's rule (after at most 3 x before
++ 0.002; `PresetManagerTests.cpp`, "Applying a program while notes sound releases them without a click"):
+
+| Change | Step before | Step after, before the fade was built | Step after, now |
 |---|---|---|---|
-| Cutoff 300 to 1500 | 0.00204 | 0.00209 | holds |
-| Waveform Triangle to Pulse | 0.00204 | 0.01665 | fails (limit 0.00813) |
-| Program A1 applied | 0.00204 | 0.03056 | fails |
-| Programs A2, A4 to B3, B5 to B8 applied | 0.00204 | 0.00906 to 0.0521 | fail (limit 0.00813) |
-| Programs A3 and B4 applied | 0.00204 | within the rule | holds |
+| Cutoff 300 to 1500 by hand (Init, triangles) | 0.00205 | 0.00200 | 0.00200 (holds) |
+| Waveform Triangle to Pulse by hand | 0.00205 | 0.02241 | 0.02241 (steps: the property) |
+| Each of the 16 programs applied over Init in Dual (triangles, cutoff 300, Lower hard left, Upper hard right), per part | 0.00195 to 0.00205 | up to 0.06685; 29 of the 32 parts break the rule | 0.00078 on every part (holds) |
+| Each program applied over the one before it (A1 over B8, ...), per channel | 0.0004 to 0.088 | within the rule | within the rule |
 
-(14 of the 16 programs fail.) The test is `Known defect: a waveform change on held notes steps the output ...`
-in `BankTests.cpp`, hidden (`[.]`, `[known-defect]`); it passes once the engine smooths the change. The bank
-does not work around it. The default level test checks the part of Vintage's rule that holds: the released
-voices decay to silence (peak below 0.001 in the last 100 ms, after the reported tail of the applied program).
+The tests are the `[apply]` cases of `BankTests.cpp`: the step rule for all 16 programs in both directions,
+the waveform property (it steps, no fade, the notes keep sounding), a key pressed during the fade, a tone
+applied to one part (the other part bit-identical whatever the tone), and block lengths 1, 61 and 512.
 
 ## Run time
 
 The default `BSideTests` run took 76 s on this Mac before this step (1:16, `time`, arm64 Release, no other
 build running) and 93 s after (+17 s; the limit is +20 s): the level test 12.3 s, the fifteen program tests
 0.1 to 0.6 s each (about 4 s together), the bank test 0.1 s, the rewritten level test of `PartTests.cpp`
-about 0.1 s. Nothing is hidden behind a tag except the audition render and the known-defect test (about
-1 s). `bside_unit` is unchanged (about 250 s with `--durations yes`; its five slowest cases are 38.5, 28.0,
-22.8, 17.6 and 13.2 s).
+about 0.1 s. Nothing is hidden behind a tag except the audition render. `bside_unit` is unchanged (about 250 s
+with `--durations yes`; its five slowest cases are 38.5, 28.0, 22.8, 17.6 and 13.2 s).
 
 ## Deliberate exclusions
 

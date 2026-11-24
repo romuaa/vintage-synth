@@ -5,6 +5,8 @@
 //                        group's median, the limiter's knee not reached, a state round-trip, a program applied while notes sound
 //   "Bank A2" ... "B8"   one test per program: what its row of the specification says, shown by a measurement (the chip's
 //                        registers read back while it plays, or the audio against the same program without the feature)
+//   "[apply]"            a program applied while notes sound fades the part first (Part.h "PROGRAM APPLY"); a waveform changed
+//                        by hand on a held note steps the output (a property)
 //
 // What these tests do is measure and compare; none of them says how a program sounds. VS_BANK_VERBOSE=1 prints the measured
 // series (they are the figures of docs/bside-factory-sounds.md). The phrases and the measurements are BankSound.h's, shared
@@ -393,8 +395,8 @@ TEST_CASE ("Bank level rule: every program loads, sounds, is finite, keeps its c
 
         checkStateRoundTrip (slot, prog);
 
-        // a program applied while notes sound: the held voices are released and decay to silence (the step the waveform
-        // switch makes is the engine's, not the bank's: the hidden "known-defect" test below)
+        // a program applied while notes sound: the held voices fall silent (the fade before the new program and Vintage's step
+        // rule: the "[apply]" tests below)
         const auto applied = applyWhileSounding (slot);
         INFO ("applied at 0.6 s with the keys down: peak just before " << applied.soundingPeak << ", peak in the last 100 ms " << applied.endPeak);
         REQUIRE (applied.soundingPeak > 0.01);
@@ -1072,38 +1074,281 @@ TEST_CASE ("Bank B8 Bass And Lead: Split at G3, a bass below it from Lower, a le
     }
 }
 
-// ---- a defect of the engine, found while drafting (hidden until it is fixed) ------------------------------------------
+// ---- applying a program while notes sound (8.21.2 after the drafting) ------------------------------------------------
 
-TEST_CASE ("Known defect: a waveform change on held notes steps the output; applying a program while notes sound does the same",
-           "[.][bside][bank][known-defect]")
+namespace
 {
-    // Three held keys on a smooth sound (triangles, cutoff 300). A parameter change that moves no waveform leaves the largest
-    // sample-to-sample step where it was; a change of the waveform (a switch: never smoothed, CLAUDE.md) steps the output at once
-    // on the sounding voices, and a program applied while the keys are down does the same for every program whose waveforms
-    // differ, because the held voices are released with the new parameters already in force (8.21.2: "releases without a click as
-    // far as Vintage's bank test checks it", whose rule is a step after the apply of at most 3 x the step before + 0.002).
-    const auto stepsFor = [&] (const std::function<void (Rig&)>& change) {
-        Rig rig (0, false);
-        rig.set ("lower.osc1.wave", 1.0f);
-        rig.set ("lower.filter.cutoff", 300.0f);
-        const int sw = at (0.6);
-        std::vector<Midi> midi;
-        for (int n : { 48, 55, 64 })
-            midi.push_back (noteOn (at (0.05), n));
-        const auto out = rig.render (at (1.0), midi, kBlock, { { sw, [&] { change (rig); } } });
-        const size_t s0 = static_cast<size_t> (sw);
-        return std::pair<double, double> { maxStep (out.l, s0 - 9600, s0), maxStep (out.l, s0, s0 + 4800) };
-    };
-    const auto cutoffOnly = stepsFor ([] (Rig& r) { r.set ("lower.filter.cutoff", 1500.0f); });
-    const auto waveform = stepsFor ([] (Rig& r) { r.set ("lower.osc1.wave", 3.0f); });
-    INFO ("cutoff change: step before " << cutoffOnly.first << ", after " << cutoffOnly.second);
-    CHECK (cutoffOnly.second < 3.0 * cutoffOnly.first + 0.002); // holds
-    INFO ("waveform change (Triangle to Pulse): step before " << waveform.first << ", after " << waveform.second);
-    CHECK (waveform.second < 3.0 * waveform.first + 0.002);     // fails: 0.0167 against 0.0081
+/** Vintage's rule for an apply over held notes (PresetManagerTests.cpp, "Applying a program while notes sound releases them
+    without a click"): the largest sample step after the apply is at most 3 x the largest step before it + 0.002. */
+bool stepRuleHolds (double before, double after) { return after <= 3.0 * before + 0.002; }
+
+/** When the change comes, and how long the render runs (the windows of stepsOf fit: 0.2 s before, 0.1 s after). */
+constexpr double kChangeAt = 0.3, kRenderEnd = 0.42;
+
+/** Three keys (48 55 64) pressed 0.05 s into the render on `rig` as it is, `change` run at kChangeAt with the keys still down,
+    rendered for kRenderEnd in blocks of `block` (times count from the rig's position: a rig can be used again). */
+Stereo heldKeysThen (Rig& rig, const std::function<void()>& change, int block = kBlock)
+{
+    const auto t0 = static_cast<int> (rig.now);
+    std::vector<Midi> midi;
+    for (int n : { 48, 55, 64 })
+        midi.push_back (noteOn (t0 + at (0.05), n));
+    return rig.render (at (kRenderEnd), midi, block, { { t0 + at (kChangeAt), change } });
+}
+
+/** The smooth sound of Vintage's test on a part (triangles, the low-pass at 300). */
+void smoothSound (Rig& rig, const char* part)
+{
+    rig.set (juce::String (part) + ".osc1.wave", 1.0f);
+    rig.set (juce::String (part) + ".filter.cutoff", 300.0f);
+}
+
+/** Init in Dual with the smooth sound on both parts, Lower panned hard left and Upper hard right: each channel is one part. */
+void smoothDual (Rig& rig)
+{
+    rig.set ("key.mode", 1.0f);
+    smoothSound (rig, "lower");
+    smoothSound (rig, "upper");
+    rig.set ("lower.mix.pan", -1.0f);
+    rig.set ("upper.mix.pan", 1.0f);
+}
+
+struct ApplySteps
+{
+    double before[2] {}, after[2] {}, peakBefore[2] {}, peakAfterFade[2] {};
+    int faded[2] {};
+    int active[2] {};
+};
+
+/** Per channel: the largest step in the 9600 samples before the change and in the 4800 after it (Vintage's windows), the peak
+    before it and the peak from 10 ms after it; per part: the applies faded and the voices still active at the end. */
+ApplySteps stepsOf (Rig& rig, const Stereo& out)
+{
+    const size_t s0 = static_cast<size_t> (at (kChangeAt));
+    ApplySteps r;
+    for (int c = 0; c < 2; ++c)
+    {
+        const auto& x = c == 0 ? out.l : out.r;
+        r.before[c] = maxStep (x, s0 - 9600, s0);
+        r.after[c] = maxStep (x, s0, s0 + 4800);
+        r.peakBefore[c] = peakAbs (x, s0 - 4800, s0);
+        r.peakAfterFade[c] = peakAbs (x, s0 + static_cast<size_t> (at (0.01)), x.size());
+    }
+    r.faded[0] = rig.proc.getLowerPart().appliesFaded();
+    r.faded[1] = rig.proc.getUpperPart().appliesFaded();
+    r.active[0] = rig.proc.getLowerPart().numActiveVoices();
+    r.active[1] = rig.proc.getUpperPart().numActiveVoices();
+    return r;
+}
+} // namespace
+
+TEST_CASE ("Bank: a program applied while notes sound fades them first: Vintage's step rule for all 16 programs over three held keys, from Init (Dual, both parts) and from the previous program",
+           "[bside][bank][apply]")
+{
+    // Two rigs, each used for all 16 (a rig costs more than its render): one goes back to Init in Dual before every apply, the
+    // other plays every program in turn and applies the next one over it (from B8 to A1 first).
+    int failures = 0;
+    Rig fromInit (0, false), chain (kBankSize - 1, false);
     for (int slot = 0; slot < kBankSize; ++slot)
     {
-        const auto r = applyWhileSounding (slot);
-        INFO ("program " << slot << " applied with the keys down: step before " << r.before << ", after " << r.after);
-        CHECK (r.after < 3.0 * r.before + 0.002);
+        INFO (kBank[slot].slot << " " << kBank[slot].name);
+        {
+            // from Init, Dual: Lower on the left channel, Upper on the right; both parts sound and both are applied
+            auto& rig = fromInit;
+            REQUIRE (rig.presets().selectProgram (0));
+            smoothDual (rig);
+            const int fadedBefore[2] { rig.proc.getLowerPart().appliesFaded(), rig.proc.getUpperPart().appliesFaded() };
+            const auto out = heldKeysThen (rig, [&] { REQUIRE (rig.presets().selectProgram (slot)); });
+            auto r = stepsOf (rig, out);
+            r.faded[0] -= fadedBefore[0];
+            r.faded[1] -= fadedBefore[1];
+            for (int part = 0; part < 2; ++part)
+            {
+                const bool holds = stepRuleHolds (r.before[part], r.after[part]);
+                SAY ("apply from Init (Dual), %s %s, part %d: step before %.5f, after %.5f%s\n", kBank[slot].slot, kBank[slot].name, part,
+                     r.before[part], r.after[part], holds ? "" : "  FAILS");
+                INFO ("from Init (Dual), part " << part << ": step before " << r.before[part] << ", after " << r.after[part]);
+                REQUIRE (r.peakBefore[part] > 0.01); // it sounded
+                CHECK (holds);
+                failures += holds ? 0 : 1;
+                CHECK (r.faded[part] == 1);  // the part faded (its parameters changed with the program)
+                CHECK (r.active[part] == 0); // the held keys did not retrigger: nothing sounds after the fade
+                CHECK (r.peakAfterFade[part] < 1.0e-4);
+            }
+        }
+        {
+            // from the previous program as it is (A1 after B8)
+            const int from = (slot + kBankSize - 1) % kBankSize;
+            auto& rig = chain;
+            REQUIRE (rig.presets().currentIndex() == from);
+            const auto out = heldKeysThen (rig, [&] { REQUIRE (rig.presets().selectProgram (slot)); });
+            const auto r = stepsOf (rig, out);
+            for (int c = 0; c < 2; ++c)
+            {
+                const bool holds = stepRuleHolds (r.before[c], r.after[c]);
+                SAY ("apply from %s, %s %s, channel %d: step before %.5f, after %.5f%s\n", kBank[from].slot, kBank[slot].slot, kBank[slot].name, c,
+                     r.before[c], r.after[c], holds ? "" : "  FAILS");
+                INFO ("from " << kBank[from].slot << ", channel " << c << ": step before " << r.before[c] << ", after " << r.after[c]);
+                CHECK (holds);
+                failures += holds ? 0 : 1;
+            }
+        }
+    }
+    SAY ("step rule failures: %d of %d\n", failures, 4 * kBankSize);
+}
+
+TEST_CASE ("Bank: a waveform changed by hand on a held note is a register write and steps the output (a property: no fade)", "[bside][bank][apply]")
+{
+    // docs/bside-factory-sounds.md: as on the chip, a waveform written to a sounding oscillator changes it at once; only a program
+    // apply fades the part. A cutoff change (smoothed) does not step.
+    const auto change = [] (const char* id, float value) {
+        Rig rig (0, false);
+        smoothSound (rig, "lower");
+        const auto out = heldKeysThen (rig, [&] { rig.set (id, value); });
+        return std::make_pair (stepsOf (rig, out), rig.proc.getLowerPart().switchesDone());
+    };
+    const auto [cutoff, cutoffSwitches] = change ("lower.filter.cutoff", 1500.0f);
+    SAY ("cutoff 300 to 1500 by hand: step before %.5f, after %.5f\n", cutoff.before[0], cutoff.after[0]);
+    INFO ("cutoff 300 to 1500: step before " << cutoff.before[0] << ", after " << cutoff.after[0]);
+    CHECK (stepRuleHolds (cutoff.before[0], cutoff.after[0]));
+    CHECK (cutoff.faded[0] == 0);
+    CHECK (cutoffSwitches == 0);
+    const auto [wave, waveSwitches] = change ("lower.osc1.wave", 3.0f);
+    SAY ("waveform Triangle to Pulse by hand: step before %.5f, after %.5f\n", wave.before[0], wave.after[0]);
+    INFO ("waveform Triangle to Pulse: step before " << wave.before[0] << ", after " << wave.after[0]);
+    CHECK_FALSE (stepRuleHolds (wave.before[0], wave.after[0])); // it steps
+    CHECK (wave.faded[0] == 0);                                  // no fade and no switch: the notes keep sounding
+    CHECK (waveSwitches == 0);
+    CHECK (wave.active[0] == 3);
+    CHECK (wave.peakAfterFade[0] > 0.01);
+}
+
+TEST_CASE ("Bank: a note played during an apply's fade starts after it with the new program and keeps its length; held keys do not retrigger",
+           "[bside][bank][apply]")
+{
+    // A4 Glass Ring (Poly, Model B: no structural change from Init) applied over three held keys on Init; a new key (72) pressed 40
+    // host samples later, inside the 3 ms fade, and released 4800 samples after its note-on. The part is read after every sample.
+    Rig rig (0, false);
+    smoothSound (rig, "lower");
+    std::vector<Midi> midi;
+    for (int n : { 48, 55, 64 })
+        midi.push_back (noteOn (at (0.05), n));
+    rig.render (at (0.6), midi);
+    REQUIRE (rig.presets().selectProgram (3));
+    const long long sw = rig.now;
+    const int onAt = 40, length = 4800;
+    const std::vector<Midi> late { noteOn (static_cast<int> (sw) + onAt, 72), noteOff (static_cast<int> (sw) + onAt + length, 72) };
+    long long started = -1, released = -1;
+    int otherVoices = 0, startDelay = -1, control = -1;
+    const auto& lower = rig.proc.getLowerPart();
+    rig.render (onAt + length + 400, late, 1, {}, [&] (int) {
+        for (int i = 0; i < bs::Part::kVoices; ++i)
+        {
+            const auto& v = lower.getVoice (i);
+            if (! v.active)
+                continue;
+            if (v.note != 72)
+            {
+                if (rig.now > sw + at (0.004))
+                    ++otherVoices; // a held key back after the fade
+                continue;
+            }
+            if (started < 0)
+            {
+                started = rig.now - 1; // the sample in which it started
+                startDelay = v.startDelay;
+                control = v.chain.chip().registerValue (4);
+            }
+            if (released < 0 && ! v.held)
+                released = rig.now - 1;
+        }
+    });
+    const int fadeHost = at (bs::Part::kFadeSeconds);
+    INFO ("apply at " << sw << ", note-on at +" << onAt << ", started at +" << (started - sw) << ", released at +" << (released - sw)
+                      << ", start delay " << startDelay << " internal samples");
+    CHECK (lower.appliesFaded() == 1);
+    CHECK (otherVoices == 0);
+    REQUIRE (started >= 0);
+    REQUIRE (released > started);
+    CHECK (started - sw >= fadeHost - 1); // at the fade's end, not before
+    CHECK (started - sw <= fadeHost + 1);
+    CHECK (startDelay > 0);
+    CHECK (std::abs ((released - started) - length) <= 1); // played length = sounded length, to one host sample
+    CHECK (control == 0x15);                                // A4's first row: triangle, ring, gate (the new program)
+}
+
+TEST_CASE ("Bank: a tone applied to one part fades that part only; the other part's output is bit-identical whatever the tone", "[bside][bank][apply]")
+{
+    // Dual, both parts sounding, panned apart. A tone applied to Lower (A4's, then A7's): Upper (the right channel) is the same bit
+    // for bit in both renders and does not fade; Lower fades.
+    const auto withTone = [] (int slot) {
+        Rig rig (0, false);
+        smoothDual (rig);
+        auto out = heldKeysThen (rig, [&] { REQUIRE (rig.presets().applyToneFromSlot (slot, 0, 0).isEmpty()); });
+        const auto r = stepsOf (rig, out);
+        return std::make_pair (std::move (out.r), r);
+    };
+    const auto [rightA, a] = withTone (3);
+    const auto [rightB, b] = withTone (6);
+    CHECK (a.faded[0] == 1);
+    CHECK (b.faded[0] == 1);
+    CHECK (a.faded[1] == 0);
+    CHECK (b.faded[1] == 0);
+    CHECK (stepRuleHolds (a.before[0], a.after[0]));
+    CHECK (stepRuleHolds (b.before[0], b.after[0]));
+    REQUIRE (rightA.size() == rightB.size());
+    CHECK (std::memcmp (rightA.data(), rightB.data(), rightA.size() * sizeof (float)) == 0);
+    CHECK (a.peakBefore[1] > 0.01);
+}
+
+TEST_CASE ("Bank: an apply over held notes does not depend on the host's blocks (1, 61, 512): digital state exact, audio within -120 dB",
+           "[bside][bank][apply]")
+{
+    struct Run
+    {
+        Stereo out;
+        std::vector<std::uint64_t> state;
+    };
+    const auto run = [] (int block) {
+        Rig rig (0, false);
+        smoothDual (rig);
+        const int sw = at (0.12);
+        const std::vector<Midi> midi { noteOn (at (0.01), 48), noteOn (at (0.01), 55), noteOn (at (0.01), 64),
+                                       noteOn (sw + 30, 72), noteOff (sw + 30 + 2000, 72) }; // 72 inside the fade
+        Run r;
+        r.out = rig.render (at (0.2), midi, block, { { sw, [&] { REQUIRE (rig.presets().selectProgram (14)); } } }); // B7: Dual, Upper Model A (a switch too)
+        for (const auto* part : { &rig.proc.getLowerPart(), &rig.proc.getUpperPart() })
+        {
+            r.state.push_back (static_cast<std::uint64_t> (part->getRenderedSamples()));
+            r.state.push_back (static_cast<std::uint64_t> (part->appliesFaded()));
+            r.state.push_back (static_cast<std::uint64_t> (part->switchesDone()));
+            for (int i = 0; i < bs::Part::kVoices; ++i)
+            {
+                const auto& v = part->getVoice (i);
+                r.state.push_back (v.active ? 1u : 0u);
+                r.state.push_back (static_cast<std::uint64_t> (v.note));
+                r.state.push_back (static_cast<std::uint64_t> (v.startDelay));
+                r.state.push_back (v.chain.chip().cycle());
+                for (int reg = 0; reg < 0x19; ++reg)
+                    r.state.push_back (v.chain.chip().registerValue (static_cast<std::uint8_t> (reg)));
+            }
+        }
+        return r;
+    };
+    const auto ref = run (512);
+    constexpr size_t kPartFields = 3 + bs::Part::kVoices * (4 + 0x19);
+    REQUIRE (ref.state.size() == 2 * kPartFields);
+    CHECK (ref.state[1] == 1);               // Lower faded for the apply
+    CHECK (ref.state[kPartFields + 1] == 1); // and Upper
+    for (int block : { 1, 61 })
+    {
+        const auto r = run (block);
+        INFO ("blocks of " << block);
+        CHECK (r.state == ref.state);
+        double worst = 0.0;
+        for (size_t i = 0; i < ref.out.l.size(); ++i)
+            worst = std::max ({ worst, std::abs (static_cast<double> (r.out.l[i]) - ref.out.l[i]), std::abs (static_cast<double> (r.out.r[i]) - ref.out.r[i]) });
+        INFO ("largest difference " << worst);
+        CHECK (worst < 1.0e-6);
     }
 }

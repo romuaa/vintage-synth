@@ -263,6 +263,33 @@ Part::CtlState Part::liveState() const noexcept
 
 void Part::applyBlockParams() noexcept
 {
+    // a program applied while the part sounds (Part.h "PROGRAM APPLY"): a new table generation with parameters that
+    // differ from the ones in force; the fade starts now and the new parameters take effect when it ends (finishSwitch)
+    if (programGen != seenGen)
+    {
+        seenGen = programGen;
+        if (! applyPending && std::memcmp (&applied, &target, sizeof (PartParams)) != 0 && isSounding())
+        {
+            applyPending = true;
+            if (! switchPending)
+                beginSwitch();
+        }
+    }
+    if (applyPending)
+    {
+        // the allocator follows the new program at once (a mode change releases the fading voices): a note played during
+        // the fade is assigned by it and waits for the fade's end
+        allocator.setLegatoGlideOnly (target.portaMode == 1);
+        allocator.setMode (static_cast<vs::AssignMode> (clampIndex (target.assignMode, 0, 2)),
+                           map::kUnisonVoiceCounts[static_cast<std::size_t> (clampIndex (target.unisonVoices, 0, 3))],
+                           [this] (const vs::VoiceAction& a) { execute (a); });
+        return;
+    }
+    takeParams();
+}
+
+void Part::takeParams() noexcept
+{
     if (std::memcmp (&applied, &target, sizeof (PartParams)) != 0)
         hostDirty = true;
     applied = target;
@@ -276,7 +303,10 @@ void Part::applyBlockParams() noexcept
         if (! switchPending && ! (s == current))
         {
             if (isSounding())
+            {
                 beginSwitch();
+                structural = true;
+            }
             else
             {
                 current = wanted;
@@ -291,8 +321,15 @@ void Part::applyBlockParams() noexcept
     allocator.setMode (static_cast<vs::AssignMode> (clampIndex (p.assignMode, 0, 2)),
                        map::kUnisonVoiceCounts[static_cast<std::size_t> (clampIndex (p.unisonVoices, 0, 3))],
                        [this] (const vs::VoiceAction& a) { execute (a); });
+    followParams (false);
+}
 
-    // the continuous parameters' targets (smoothed over 5 ms at the control points)
+void Part::followParams (bool jump) noexcept
+{
+    const PartParams& p = applied;
+
+    // the continuous parameters' targets (smoothed over 5 ms at the control points; at their values at once when `jump`:
+    // the end of a program apply's fade, when nothing sounds)
     const std::array<double, kNumSmoothed - 2> goals {
         static_cast<double> (p.osc1Fine), static_cast<double> (p.osc2Fine), static_cast<double> (p.osc3Fine),
         static_cast<double> (p.osc1Pw), static_cast<double> (p.osc2Pw), static_cast<double> (p.osc3Pw),
@@ -302,11 +339,22 @@ void Part::applyBlockParams() noexcept
         static_cast<double> (p.modWheelVibrato), static_cast<double> (p.unisonDetune)
     };
     for (std::size_t k = 0; k < goals.size(); ++k)
-        sm[k].setGoal (finiteOr (goals[k], 0.0), smoothSteps);
+    {
+        if (jump)
+            sm[k].jump (finiteOr (goals[k], 0.0));
+        else
+            sm[k].setGoal (finiteOr (goals[k], 0.0), smoothSteps);
+    }
 
     // the level: a new target starts a 5 ms ramp from where the gain is now
     const double levelNow = map::levelGain (static_cast<double> (p.mixLevel));
-    if (levelNow < levelGoal || levelNow > levelGoal)
+    if (jump)
+    {
+        levelGain = levelGoal = levelNow;
+        levelLeft = 0;
+        levelStep = 0.0;
+    }
+    else if (levelNow < levelGoal || levelNow > levelGoal)
     {
         levelGoal = levelNow;
         levelLeft = rampSamples;
@@ -333,7 +381,24 @@ void Part::beginSwitch() noexcept
 void Part::finishSwitch() noexcept
 {
     switchPending = false;
+    const bool applyEnds = applyPending;
+    if (applyEnds)
+    {
+        // the program apply's parameters take effect now, after the fade (Part.h "PROGRAM APPLY")
+        applyPending = false;
+        hostDirty = true;
+        applied = target;
+        wanted = structureOf (applied, clockTarget);
+    }
+    if (structural || ! (wanted == current))
+        ++switches;
+    structural = false;
     current = wanted;
+    if (applyEnds)
+    {
+        followParams (true); // before configureVoices: the voices take the new variation and tick period
+        ++applies;
+    }
     // the voices that sounded become idle; a note that waits starts in the new configuration (late)
     std::array<bool, kVoices> waiting {};
     std::array<vs::VoiceAction, kVoices> actions {};
@@ -347,7 +412,6 @@ void Part::finishSwitch() noexcept
         released[static_cast<std::size_t> (i)] = v.pendingRelease;
     }
     configureVoices();
-    ++switches;
     for (int i = 0; i < kVoices; ++i)
         if (! waiting[static_cast<std::size_t> (i)] && allocator.isVoiceBusy (i))
             allocator.voiceIdle (i); // held keys do not retrigger
@@ -409,6 +473,8 @@ void Part::reset() noexcept
     bendValue = wheelValue = 0.0f;
     vibratoPhase = 0.0;
     switchPending = false;
+    structural = applyPending = false;
+    seenGen = programGen;
     switchLeft = 0;
     period = tickPeriod();
     configureVoices();
@@ -453,6 +519,8 @@ void Part::resume() noexcept
     sm[sWheel].jump (static_cast<double> (wheelValue));
     vibratoPhase = 0.0;
     switchPending = false;
+    structural = applyPending = false;
+    seenGen = programGen;
     switchLeft = 0;
     period = tickPeriod();
     configureVoices();

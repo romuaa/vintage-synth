@@ -37,6 +37,18 @@
 // released as much later as it started (its length is kept; the same after a steal's fade); the fade is applied after
 // the latency pad, so it reaches the output in full.
 //
+// PROGRAM APPLY (8.21.2 after the drafting, review): a program applied while the part sounds fades the sounding voices
+// over the same 3 ms and makes them idle, as a structural switch does, BEFORE the new program's parameters take effect.
+// The signal is the processor's: a new table generation committed (ProgramHandover: every program, tone and state
+// apply publishes the part's table inside the hold that writes its parameters, and the block that reads the new
+// parameters commits it) together with parameters that differ from the ones in force. A parameter changed by hand or by
+// automation, the pedal, All Notes Off or a key-mode change commit no table, and a table set by hand (setTable) changes
+// no parameter, so none of them fades the part; a waveform changed by hand on a held note is a register write and steps
+// the output, as on the chip (docs/bside-factory-sounds.md). During the fade the voices render with the old parameters
+// (their tables are their own copies from note-on); the allocator follows the new program at once, so a note played
+// during the fade is assigned by it and starts when the fade ends (the switch's rule for late notes), with the new
+// parameters already at their values (nothing sounds then, so they jump instead of gliding over 5 ms).
+//
 // SHARED (8.5, 8.19.4, 8.21.1): the part runs one Filter for its chips, fed per bus sample with the sum of their
 // filterInputAc and the most recent note's staticFilterBusDc, and hands each chip its share (ChipVoice::finishShared).
 // Cutoff, resonance and mode come from the most recently started note's writes: a cutoff from filterLagSamples ()
@@ -144,6 +156,14 @@ public:
     /** The part's committed table (8.14); a note copies it at its start. nullptr: no table. Must stay valid until
         the next call (the hand-over keeps the committed buffer until the next commit). */
     void setProgram (const vs::bside::program::Program* p) noexcept { program = p; }
+    /** The same, from the processor: `generation` is the hand-over's count of the committed table (ProgramHandover::
+        inUseGeneration). A new generation committed with changed parameters while the part sounds is a program applied
+        over sounding notes (PROGRAM APPLY above): the part fades first and takes the new values when the fade ends. */
+    void setProgram (const vs::bside::program::Program* p, std::uint32_t generation) noexcept
+    {
+        program = p;
+        programGen = generation;
+    }
 
     // ---- shell::PartEngine ----
     void render (float* out, int numSamples, std::span<const vs::NoteEvent> events) noexcept;
@@ -174,6 +194,10 @@ public:
     const vs::bside::chip::Filter& getSharedFilter() const noexcept { return sharedFilter; }
     /** Structural switches completed since prepare. */
     int switchesDone() const noexcept { return switches; }
+    /** Program applies over sounding notes whose fade has ended since prepare (PROGRAM APPLY). */
+    int appliesFaded() const noexcept { return applies; }
+    /** True while a program apply's fade runs: the part still renders with the parameters from before the apply. */
+    bool isApplyFading() const noexcept { return applyPending; }
     /** Test aid: a pitch offset in semitones (double) added to every note's host pitch, so a test can place a note at an
         exact frequency (the alias gate's rational frequencies); 0 in the plugin. */
     void setTestDetune (double semitones) noexcept { testDetune = std::isfinite (semitones) ? semitones : 0.0; }
@@ -227,6 +251,8 @@ private:
     // ---- block and structure ----
     Structure structureOf (const PartParams& p, int clock) const noexcept;
     void applyBlockParams() noexcept;
+    void takeParams() noexcept;                // the block's parameters into force (applied = target)
+    void followParams (bool jump) noexcept;    // the continuous targets, glide and tick period from `applied`
     void configureVoices() noexcept; // every voice into `current` (reset, idle); off the per-sample path
     void beginSwitch() noexcept;
     void finishSwitch() noexcept;
@@ -314,8 +340,12 @@ private:
     const vs::bside::program::Program* program = nullptr;
     Structure current {}, wanted {};
     bool switchPending = false;
+    bool structural = false;      // the running fade was begun by a structural switch
+    bool applyPending = false;    // the running fade is (also) a program apply's: `applied` stays the old program's
+    std::uint32_t programGen = 0, seenGen = 0; // the committed table's generation, given and last seen
     int switchLeft = 0;
     int switches = 0;
+    int applies = 0;
     std::array<Smooth, kNumSmoothed> sm {};
     float bendValue = 0.0f, wheelValue = 0.0f;
     // mix.level: a linear gain on the part's sum, a 5 ms ramp per sample (rampSamples) from the value in force when a block

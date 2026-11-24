@@ -92,7 +92,12 @@ void BSideProcessor::applyInstrumentParams (const BSideParams& p) noexcept
         pt.setParams (i == 0 ? p.lowerParams : p.upperParams);
         pt.setChipClock (p.chipClockIndex);
         pt.setTempo (tickTempo);
-        pt.setProgram (tables != nullptr ? &tables->handover (i).inUse() : nullptr);
+        // with the committed table's generation: a new one with changed parameters is a program applied (Part.h "PROGRAM
+        // APPLY"); every apply publishes the part's table inside the hold that writes its parameters
+        if (tables != nullptr)
+            pt.setProgram (&tables->handover (i).inUse(), tables->handover (i).inUseGeneration());
+        else
+            pt.setProgram (nullptr);
     }
 }
 
@@ -116,7 +121,10 @@ void BSideProcessor::prepareParts (double hostRate, int maxBlock, int osFactor, 
         pt.setParams (pp);
         pt.setChipClock (bp.chipClockIndex);
         pt.setTempo (tickTempo);
-        pt.setProgram (tables != nullptr ? &tables->handover (i).inUse() : nullptr);
+        if (tables != nullptr)
+            pt.setProgram (&tables->handover (i).inUse(), tables->handover (i).inUseGeneration());
+        else
+            pt.setProgram (nullptr);
         pt.prepare (hostRate, maxBlock, osFactor, pp, bp.chipClockIndex);
     }
 }
