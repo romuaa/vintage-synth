@@ -1466,6 +1466,21 @@ void Part::controlPoint() noexcept
 void Part::afterSegment (int len) noexcept
 {
     tapPartSample = partSample;
+
+    // delayed releases of late notes, first: the segment's samples count for the notes that sounded in it, not for a
+    // note that starts below (its countdown is its whole length)
+    for (auto& v : *voices)
+        if (v.releaseCountdown > 0)
+        {
+            v.releaseCountdown -= len;
+            if (v.releaseCountdown <= 0)
+            {
+                v.releaseCountdown = -1;
+                if (v.active && ! v.pending)
+                    noteOffVoice (v);
+            }
+        }
+
     if (switchPending && switchLeft <= 0)
         finishSwitch();
 
@@ -1493,19 +1508,6 @@ void Part::afterSegment (int len) noexcept
     for (int k = 0; k < numLeft; ++k)
         allocator.voiceIdle (leftVoices[static_cast<std::size_t> (k)]);
     numLeft = 0;
-
-    // delayed releases of late notes
-    for (auto& v : *voices)
-        if (v.releaseCountdown > 0)
-        {
-            v.releaseCountdown -= len;
-            if (v.releaseCountdown <= 0)
-            {
-                v.releaseCountdown = -1;
-                if (v.active && ! v.pending)
-                    noteOffVoice (v);
-            }
-        }
 }
 
 // ---- Shared ----------------------------------------------------------------------------------------------------

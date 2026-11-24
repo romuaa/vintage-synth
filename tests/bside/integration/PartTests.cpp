@@ -1408,11 +1408,14 @@ TEST_CASE ("Part: a note that starts late after a steal's fade keeps its length,
 {
     // Poly at 96 kHz x1 (one host sample is one internal sample; the fade is 288): 16 held notes, the 17th steals a
     // voice: the old note fades for 3 ms, then the new one starts. Its release comes as much later as it started (8.21.1
-    // after the review), whether the key went up during the fade or after it.
+    // after the review), whether the key went up during the fade or after it. Per Note and Shared (the two topologies
+    // end a fade and count a delayed release in different places).
+    for (const int topology : { 0, 1 })
     for (const int length : { 0, 1, 20, 287, 288, 400, 2000 })
     {
         bs::PartParams p;
         p.osc1Release = 9;
+        p.filterTopology = topology;
         Rig rig ({ 96000.0, 1 }, p, 1);
         std::vector<vs::NoteEvent> chord;
         for (int k = 0; k < 16; ++k)
@@ -1438,7 +1441,7 @@ TEST_CASE ("Part: a note that starts late after a steal's fade keeps its length,
             if (started >= 0 && released < 0 && ! v.held)
                 released = i;
         }
-        INFO ("played " << length << " samples: started at +" << started << ", released at +" << released);
+        INFO ((topology == 0 ? "Per Note" : "Shared") << ", played " << length << " samples: started at +" << started << ", released at +" << released);
         REQUIRE (started >= 0);
         REQUIRE (released >= 0);
         CHECK (started == 287); // the steal's fade: the 288th sample after the note-on is the new note's first
@@ -1449,18 +1452,21 @@ TEST_CASE ("Part: a note that starts late after a steal's fade keeps its length,
 
 TEST_CASE ("Part: a note played inside a switch's fade and released after its start keeps its length", "[bside][part][switch]")
 {
-    // the reviewer's test releases the note while it still waits; here the key goes up after the note has started, so
-    // the release is delayed by the start's own delay (288 - into), not by a whole fade
+    // the reviewer's test releases the note while it still waits (Per Note); here the key also goes up after the note
+    // has started, so the release is delayed by the start's own delay (288 - into), not by a whole fade; Per Note and
+    // Shared
+    for (const int topology : { 0, 1 })
+    for (const int length : { 1000, 30 })
     for (const int into : { 0, 100, 250, 287 })
     {
         bs::PartParams p;
         p.osc1Release = 9;
+        p.filterTopology = topology;
         Rig rig ({ 96000.0, 1 }, p, 1);
         rig.run (2000, { on (0, 45) }, 1);
         p.chipModel = 0;
         rig.set (p);
         rig.run (into, {}, 1);
-        const int length = 1000;
         int started = -1, released = -1, voice = -1;
         for (int i = 0; i < 3000; ++i)
         {
@@ -1481,12 +1487,55 @@ TEST_CASE ("Part: a note played inside a switch's fade and released after its st
             if (started >= 0 && released < 0 && ! v.held)
                 released = i;
         }
-        INFO ("note-on " << into << " samples into the fade: started at +" << started << ", released at +" << released);
+        INFO ((topology == 0 ? "Per Note" : "Shared") << ", note-on " << into << " samples into the fade, played " << length << ": started at +" << started
+                                                      << ", released at +" << released);
         REQUIRE (started >= 0);
         REQUIRE (released >= 0);
         CHECK (started == 288 - into - 1);
         CHECK (std::abs ((released - started) - length) <= 1);
     }
+}
+
+TEST_CASE ("Part: a late note's release falls on the same sample whatever the host's block length (Per Note and Shared)", "[bside][part][switch][blocks]")
+{
+    // A note played and released inside a switch's fade, and one played inside it and released after its start: its
+    // release is counted in internal samples from its start, so the audio and the chips' state are the same for host
+    // blocks of 1, 61 and 512 samples (8.4.2: no decision depends on the host's block length). In Shared the segment
+    // that ends the fade is as long as the block allows: counting it against a note that only starts at its end made
+    // the release come up to 64 samples early, depending on the blocks.
+    for (const int topology : { 0, 1 })
+        for (const int length : { 30, 700 })
+        {
+            std::vector<float> y[3];
+            std::vector<chip::DigitalState> states[3];
+            int which = 0;
+            for (const int block : { 1, 61, 512 })
+            {
+                bs::PartParams p;
+                p.osc1Release = 2;
+                p.filterTopology = topology;
+                Rig rig ({ 48000.0, 2 }, p, 512);
+                y[which] = rig.run (2000, { on (0, 45) }, block);
+                p.chipModel = 0;
+                rig.set (p);
+                const auto tail = rig.run (6000, { on (37, 69), off (37 + length, 69) }, block);
+                y[which].insert (y[which].end(), tail.begin(), tail.end());
+                for (int v = 0; v < bs::Part::kVoices; ++v)
+                    states[which].push_back (rig.part->getVoice (v).chain.chip().state());
+                ++which;
+            }
+            REQUIRE (peakOf (y[0], 2200) > 0.01); // the late note sounds
+            for (const int other : { 1, 2 })
+            {
+                double worst = 0.0;
+                for (std::size_t i = 0; i < y[0].size(); ++i)
+                    worst = std::max (worst, std::abs (static_cast<double> (y[other][i]) - static_cast<double> (y[0][i])));
+                INFO ((topology == 0 ? "Per Note" : "Shared") << ", played " << length << " host samples, blocks of " << (other == 1 ? 61 : 512)
+                                                              << " against 1: largest difference " << worst);
+                CHECK (worst <= 1.0e-6);
+                CHECK (states[other] == states[0]);
+            }
+        }
 }
 
 TEST_CASE ("Part: a delay does not outlive its note: a late start, then a legato return in Solo, and the release is on time", "[bside][part][switch]")
