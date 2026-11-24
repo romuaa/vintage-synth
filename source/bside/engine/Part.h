@@ -33,8 +33,9 @@
 // STRUCTURAL SWITCHES (8.21.1, review): chip.model, filter.topology, chip.clock, chip.resolution, chip.volume_dc. A
 // change fades the part's sounding voices over 3 ms; when the fade ends every voice is reset into the new
 // configuration (ChipVoice prototypes and filters built in prepare: no design work on the audio thread) and is idle;
-// held keys do not retrigger (the allocator gets voiceIdle). A note started during the fade starts after it, its
-// release as late.
+// held keys do not retrigger (the allocator gets voiceIdle). A note started during the fade starts after it and is
+// released as much later as it started (its length is kept; the same after a steal's fade); the fade is applied after
+// the latency pad, so it reaches the output in full.
 //
 // SHARED (8.5, 8.19.4, 8.21.1): the part runs one Filter for its chips, fed per bus sample with the sum of their
 // filterInputAc and the most recent note's staticFilterBusDc, and hands each chip its share (ChipVoice::finishShared).
@@ -212,6 +213,9 @@ private:
     CtlState liveState() const noexcept;
     void startNote (NoteVoice& v, int index, const vs::VoiceAction& a, bool stolen, const CtlState& c) noexcept;
     void startNote (NoteVoice& v, int index, const vs::VoiceAction& a, bool stolen) noexcept { startNote (v, index, a, stolen, liveState()); }
+    /** A note that waited (a steal's fade, a structural switch) starts at part sample `at`: it remembers how late, and a
+        release that came while it waited is scheduled as long after the start as it came after the note-on. */
+    void startWaiting (NoteVoice& v, int index, bool stolen, const CtlState& c, std::int64_t at) noexcept;
     void noteOffVoice (NoteVoice& v) noexcept;
     void killVoice (NoteVoice& v) noexcept;
     void leaveSum (NoteVoice& v) noexcept;

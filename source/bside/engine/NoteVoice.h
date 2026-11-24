@@ -143,7 +143,12 @@ struct NoteVoice
     // ---- a note waiting for a steal fade or a structural switch ----
     bool pending = false;
     vs::VoiceAction pendingAction {};
-    int releaseCountdown = -1; // internal samples until a delayed release (a late-started note keeps its length)
-    bool late = false;         // started late (after a steal fade or a switch)
+    // A note whose start is delayed (by a steal's fade or a structural switch's) is released as much later as it started
+    // (8.21.1 after the review): its length is kept to the sample, wherever in the fade its note-on fell.
+    std::int64_t pendingAt = 0;       // the part sample of the waiting note's note-on
+    std::int64_t pendingRelease = -1; // released while it waited: how long after its note-on (internal samples); -1: not
+    int startDelay = 0;               // how late the sounding note started (0: on time)
+    bool late = false;                // the sounding note started late and has not been released (never outlives the note)
+    int releaseCountdown = -1;        // internal samples until the sounding note's delayed release (-1: none)
 };
 } // namespace bs

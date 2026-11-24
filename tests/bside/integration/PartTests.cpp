@@ -1065,6 +1065,76 @@ TEST_CASE ("Part: a note played during a switch's fade starts after it, in the n
     CHECK (rig.part->numActiveVoices() == 0);
 }
 
+TEST_CASE ("Part: a note that starts late after a steal's fade keeps its length, released while it waits or after its start", "[bside][part][switch]")
+{
+    // Poly at 96 kHz x1 (one host sample is one internal sample; the fade is 288): 16 held notes, the 17th steals a
+    // voice: the old note fades for 3 ms, then the new one starts. Its release comes as much later as it started (8.21.1
+    // after the review), whether the key went up during the fade or after it.
+    for (const int length : { 0, 1, 20, 287, 288, 400, 2000 })
+    {
+        bs::PartParams p;
+        p.osc1Release = 9;
+        Rig rig ({ 96000.0, 1 }, p, 1);
+        std::vector<vs::NoteEvent> chord;
+        for (int k = 0; k < 16; ++k)
+            chord.push_back (on (k, 40 + k));
+        rig.run (2000, chord, 1);
+        REQUIRE (rig.part->numActiveVoices() == 16);
+        int started = -1, released = -1, voice = -1;
+        for (int i = 0; i < 3000; ++i)
+        {
+            std::vector<vs::NoteEvent> ev;
+            if (i == 0)
+                ev.push_back (on (0, 90));
+            if (i == length)
+                ev.push_back (off (0, 90));
+            rig.run (1, ev, 1);
+            for (int k = 0; k < bs::Part::kVoices && voice < 0; ++k)
+                if (rig.part->getVoice (k).pending && rig.part->getVoice (k).pendingAction.note == 90)
+                    voice = k;
+            REQUIRE (voice >= 0); // a steal: the note waits for the fade
+            const auto& v = rig.part->getVoice (voice);
+            if (started < 0 && ! v.pending && v.note == 90)
+                started = i;
+            if (started >= 0 && released < 0 && ! v.held)
+                released = i;
+        }
+        INFO ("played " << length << " samples: started at +" << started << ", released at +" << released);
+        REQUIRE (started >= 0);
+        REQUIRE (released >= 0);
+        CHECK (started == 287); // the steal's fade: the 288th sample after the note-on is the new note's first
+        CHECK (std::abs ((released - started) - length) <= 1);
+        CHECK_FALSE (rig.part->getVoice (voice).late);
+    }
+}
+
+TEST_CASE ("Part: a delay does not outlive its note: a late start, then a legato return in Solo, and the release is on time", "[bside][part][switch]")
+{
+    // Solo: a key held, a structural switch, and a second key played 100 samples into its fade: that note starts 188
+    // samples late. Its key goes up while the first is still down (a legato return to the first key, no release); the
+    // first key's release then comes at its event, not 188 samples later (8.21.1 after the review).
+    bs::PartParams p;
+    p.assignMode = 2;
+    p.osc1Release = 9;
+    Rig rig ({ 96000.0, 1 }, p, 1);
+    rig.run (2000, { on (0, 48) }, 1);
+    p.chipModel = 0;
+    rig.set (p);
+    rig.run (100, {}, 1);
+    rig.run (1000, { on (0, 60) }, 1);
+    const auto& v = rig.part->getVoice (0);
+    REQUIRE (v.active);
+    REQUIRE (v.note == 60);
+    CHECK (v.late);
+    CHECK (v.startDelay == 188);
+    rig.run (1000, { off (0, 60) }, 1); // key 48 is still down: a legato return
+    REQUIRE (v.note == 48);
+    REQUIRE (v.held);
+    CHECK_FALSE (v.late); // the late note is over
+    rig.run (1, { off (0, 48) }, 1);
+    CHECK_FALSE (v.held); // released at its event
+}
+
 // ---- random event streams (8.21.1, behaviour gate 4) ---------------------------------------------------------------
 
 namespace

@@ -204,7 +204,9 @@ void Part::configureVoices() noexcept
         v.fadeLeft = 0;
         v.fadeKind = NoteVoice::Fade::none;
         v.pending = false;
+        v.pendingRelease = -1;
         v.releaseCountdown = -1;
+        v.startDelay = 0;
         v.late = false;
     }
     refClock.prepare (clockHz, internalRate);
@@ -323,32 +325,51 @@ void Part::finishSwitch() noexcept
     // the voices that sounded become idle; a note that waits starts in the new configuration (late)
     std::array<bool, kVoices> waiting {};
     std::array<vs::VoiceAction, kVoices> actions {};
-    std::array<int, kVoices> countdown {};
+    std::array<std::int64_t, kVoices> since {}, released {};
     for (int i = 0; i < kVoices; ++i)
     {
         auto& v = (*voices)[static_cast<std::size_t> (i)];
         waiting[static_cast<std::size_t> (i)] = v.pending;
         actions[static_cast<std::size_t> (i)] = v.pendingAction;
-        countdown[static_cast<std::size_t> (i)] = v.releaseCountdown;
+        since[static_cast<std::size_t> (i)] = v.pendingAt;
+        released[static_cast<std::size_t> (i)] = v.pendingRelease;
     }
     configureVoices();
     ++switches;
     for (int i = 0; i < kVoices; ++i)
         if (! waiting[static_cast<std::size_t> (i)] && allocator.isVoiceBusy (i))
             allocator.voiceIdle (i); // held keys do not retrigger
+    const CtlState now = liveState();
     for (int i = 0; i < kVoices; ++i)
         if (waiting[static_cast<std::size_t> (i)])
         {
             auto& v = (*voices)[static_cast<std::size_t> (i)];
-            startNote (v, i, actions[static_cast<std::size_t> (i)], false);
-            v.late = true;
-            v.releaseCountdown = countdown[static_cast<std::size_t> (i)];
-            if (v.releaseCountdown == 0)
-            {
-                v.releaseCountdown = -1; // released while it waited, at the very end: released at once
-                noteOffVoice (v);
-            }
+            v.pendingAction = actions[static_cast<std::size_t> (i)];
+            v.pendingAt = since[static_cast<std::size_t> (i)];
+            v.pendingRelease = released[static_cast<std::size_t> (i)];
+            startWaiting (v, i, false, now, partSample); // the fade ended at this sample
         }
+}
+
+void Part::startWaiting (NoteVoice& v, int index, bool stolen, const CtlState& c, std::int64_t at) noexcept
+{
+    const vs::VoiceAction a = v.pendingAction;
+    const std::int64_t waited = std::clamp<std::int64_t> (at - v.pendingAt, 0, 1 << 30);
+    const std::int64_t released = v.pendingRelease;
+    startNote (v, index, a, stolen, c); // clears the waiting state and the delay of the note before
+    v.startDelay = static_cast<int> (waited);
+    v.late = waited > 0;
+    if (released == 0)
+    {
+        v.late = false; // note-on and note-off in one sample: released at once
+        noteOffVoice (v);
+    }
+    else if (released > 0)
+    {
+        // released while it waited: as long after its start as the release came after its note-on
+        v.late = false;
+        v.releaseCountdown = static_cast<int> (std::min<std::int64_t> (released, 1 << 30));
+    }
 }
 
 // ---- reset, resume, release ------------------------------------------------------------------------------------
@@ -500,10 +521,12 @@ void Part::execute (const vs::VoiceAction& a) noexcept
         case vs::VoiceAction::Type::Start:
         case vs::VoiceAction::Type::Steal:
             v.releaseCountdown = -1; // a new note cancels a delayed release of the old one
+            v.pendingRelease = -1;
             if (switchPending || v.pending)
             {
                 v.pending = true; // starts after the switch or the steal fade
                 v.pendingAction = a;
+                v.pendingAt = partSample;
             }
             else if (a.type == vs::VoiceAction::Type::Steal && v.active)
             {
@@ -512,19 +535,23 @@ void Part::execute (const vs::VoiceAction& a) noexcept
                 v.fadeStep = v.fade / static_cast<double> (fadeSamples);
                 v.pending = true;
                 v.pendingAction = a;
+                v.pendingAt = partSample;
             }
             else
-            {
                 startNote (v, index, a, false);
-                v.late = false;
-            }
             break;
 
         case vs::VoiceAction::Type::Retarget:
             if (v.pending)
-                v.pendingAction.note = a.note;
+            {
+                v.pendingAction.note = a.note; // the waiting note is this one now: its delay counts from here
+                v.pendingAt = partSample;
+            }
             else if (v.active)
             {
+                // the note that started late is over: the one retargeted to came on time, and so does its release
+                v.late = false;
+                v.startDelay = 0;
                 const bool glide = glideFactor > 0.0 && a.glideFrom == vs::VoiceAction::kGlideFromCurrent;
                 v.glide = glide ? static_cast<double> (v.note) + v.glide - static_cast<double> (a.note) : 0.0;
                 v.note = a.note;
@@ -537,10 +564,18 @@ void Part::execute (const vs::VoiceAction& a) noexcept
             break;
 
         case vs::VoiceAction::Type::Release:
-            if (v.pending || v.late)
+            if (v.pending)
             {
+                // released while it waits: remembered as a length, scheduled when the note starts (startWaiting)
+                if (v.pendingRelease < 0)
+                    v.pendingRelease = std::max<std::int64_t> (0, partSample - v.pendingAt);
+            }
+            else if (v.late && v.active)
+            {
+                // a late note is released as much later as it started (not a fixed fade length later)
+                v.late = false;
                 if (v.releaseCountdown < 0)
-                    v.releaseCountdown = fadeSamples; // a late note is released as late as it started
+                    v.releaseCountdown = v.startDelay;
             }
             else if (v.active)
                 noteOffVoice (v);
@@ -613,6 +648,9 @@ void Part::startNote (NoteVoice& v, int index, const vs::VoiceAction& a, bool st
     v.fadeStep = 0.0;
     v.fadeKind = NoteVoice::Fade::none;
     v.pending = false;
+    v.pendingRelease = -1;
+    v.startDelay = 0;
+    v.late = false; // a delay belongs to one note: the callers that start a note late set it after this
     v.active = true;
     v.held = true;
     v.idleSent = false;
@@ -656,7 +694,9 @@ void Part::killVoice (NoteVoice& v) noexcept
     }
     v.active = v.held = v.idleSent = false;
     v.pending = false;
+    v.pendingRelease = -1;
     v.releaseCountdown = -1;
+    v.startDelay = 0;
     v.late = false;
     v.fade = 1.0;
     v.fadeLeft = 0;
@@ -979,11 +1019,7 @@ void Part::renderSpanPerNote (float* dst, int count) noexcept
         if (v.active)
             renderVoiceSpan (v, i, count, nCtl, start);
         else
-        {
             v.skipPending += count;
-            if (v.releaseCountdown > 0) // a note waiting for a switch keeps its release time running
-                v.releaseCountdown = std::max (0, v.releaseCountdown - count);
-        }
     }
     refCycle += refClock.nextSamples (static_cast<std::uint64_t> (count));
 
@@ -1047,14 +1083,10 @@ void Part::renderVoiceSpan (NoteVoice& v, int index, int count, int nCtl, const 
         {
             if (v.fadeKind == NoteVoice::Fade::steal)
             {
-                const vs::VoiceAction a = v.pendingAction;
-                const int countdown = v.releaseCountdown;
                 v.chain.suspend();
                 v.active = false;
                 v.skipPending = 0;
-                startNote (v, index, a, true, now);
-                v.late = true;
-                v.releaseCountdown = countdown;
+                startWaiting (v, index, true, now, partSample + pos);
             }
             else
             {
@@ -1335,14 +1367,10 @@ void Part::afterSegment (int len) noexcept
             continue;
         if (v.fadeKind == NoteVoice::Fade::steal)
         {
-            const vs::VoiceAction a = v.pendingAction;
-            const int countdown = v.releaseCountdown;
             v.chain.suspend(); // the new note starts settled
             v.active = false;
             v.skipPending = 0;
-            startNote (v, i, a, true);
-            v.late = true;
-            v.releaseCountdown = countdown;
+            startWaiting (v, i, true, liveState(), partSample);
         }
         else
         {
