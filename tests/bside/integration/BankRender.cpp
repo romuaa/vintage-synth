@@ -5,7 +5,8 @@
 //   <slot>-<name>.wav       one file per program: the phrase plus up to 4 s of its release
 //   bside_audition.wav      all programs in slot order with 0.4 s of silence between them
 //   bside_index.txt         start time, slot, name and category of every program in the audition file
-//   bside_metrics.tsv       the measurement table (BankSound.h has the definitions)
+//   bside_metrics.tsv       the measurement table (BankSound.h has the definitions; dev_dB is the peak's for percussion, and its
+//                           chord columns are the two-key chord's)
 // The table is also printed to the console whether or not VS_RENDER_DIR is set.
 // With VS_BANK_DIR=<folder of program files named like the factory files> the programs are read from that folder and
 // applied with PresetManager::applyProgram instead of coming from the embedded bank: the developer's loop for measuring a
@@ -75,10 +76,11 @@ TEST_CASE ("Render bside_bank audition and measurements", "[.render]")
     {
         juce::String line;
         Group group;
-        double rms;
+        double rms, peak;
     };
     std::vector<Row> rows;
     std::map<Group, std::vector<double>> byGroup;
+    std::vector<double> sustainedPeaks; // percussion is judged by its peak against their median (BankSound.h, judgedByPeak)
 
     for (int slot = 0; slot < kBankSize; ++slot)
     {
@@ -87,7 +89,7 @@ TEST_CASE ("Render bside_bank audition and measurements", "[.render]")
         INFO (prog.meta.name);
         REQUIRE (info.known);
         const auto perf = phraseFor (prog);
-        const auto chord = fullVelocityChord();
+        const auto chord = headroomChord (info.group); // two keys for percussion (8.21.2 after the drafting)
 
         auto rigP = rigFor (slot, false); // levels with the limiter off: the rule compares programs, not the limiter
         auto& rig = *rigP;
@@ -116,9 +118,11 @@ TEST_CASE ("Render bside_bank audition and measurements", "[.render]")
             line << "\t" << fmt (m.bandDb[b], 1);
         line << "\n";
         (void) level;
-        rows.push_back ({ line, info.group, m.rmsDb });
+        rows.push_back ({ line, info.group, m.rmsDb, m.peakDb });
         if (info.group != Group::Reference)
             byGroup[info.group].push_back (m.rmsDb);
+        if (info.group == Group::Sustained)
+            sustainedPeaks.push_back (m.peakDb);
         CHECK (m.finite);
 
         if (dir != juce::File())
@@ -151,10 +155,16 @@ TEST_CASE ("Render bside_bank audition and measurements", "[.render]")
     std::map<Group, double> median;
     for (const auto& [g, v] : byGroup)
         median[g] = medianOf (v);
+    const double peakTarget = sustainedPeaks.empty() ? 0.0 : medianOf (sustainedPeaks);
     for (const auto& row : rows)
-        table << row.line.replace ("%DEV%", fmt (row.group == Group::Reference ? 0.0 : row.rms - median[row.group]));
+    {
+        const double dev = row.group == Group::Reference ? 0.0 : (judgedByPeak (row.group) ? row.peak - peakTarget : row.rms - median[row.group]);
+        table << row.line.replace ("%DEV%", fmt (dev));
+    }
     for (const auto& [g, med] : median)
-        table << "# median RMS " << groupName (g) << " " << fmt (med, 2) << " dB\n";
+        if (! judgedByPeak (g))
+            table << "# median RMS " << groupName (g) << " " << fmt (med, 2) << " dB\n";
+    table << "# median phrase peak sustained (the percussion target) " << fmt (peakTarget, 2) << " dBFS\n";
 
     if (dir != juce::File())
     {

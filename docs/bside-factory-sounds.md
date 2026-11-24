@@ -39,9 +39,9 @@ table rows); "Listen for" is an instruction to the listener, not a claim. Parame
 | A6 | Blip Bass | Bass | W | Pulse bass, width 512 (12.5 %), no filter (oscillator 1 is not routed through it), Solo. The wave lane plays the first tick one octave up (+12) and then the key's pitch | Play a low key and listen to its first twenty milliseconds |
 | A7 | Major Steps | Arpeggio | W | Chip arpeggio in the wave lane (the shell's arpeggiator is off): one key steps +0 +4 +7 +12 +7 +4 semitones, one pitch per tick, repeating; tick rate Tempo, 12 ticks per beat, multiplier 1; pulse width 25 %. The note-off clears the gate and ends the lane | Hold C4 for four seconds, then change `arp.tempo` and play it again |
 | A8 | Minor Steps | Arpeggio | W | The minor counterpart: +0 +3 +7 +10 +12 +10 +7 +3, tick multiplier 2 (twice the rate of A7), and the pulse lane ping-pongs the width between 640 and 3200 at 128 per tick | Hold C4 for four seconds and compare the pace and the width movement with A7 |
-| B1 | Short Kick | Percussion | W | One noise tick (tick 0, `=C7`) and then a triangle whose pitch falls by table `=64 =55 =48 =43 =40 =38` over six ticks of 9.98 ms (tick multiplier 2); absolute pitches, so every key plays the same drum; decay 8, sustain 0 | Play three different keys and compare the drum |
-| B2 | Dry Snare | Percussion | W | Noise and pulse alternate by table (`noise =D7`, `pulse =G3`, `noise =C7`, `pulse =E3`, then `noise =B6` held, the gate cleared at tick 10), pulse width 1536, tick multiplier 2; absolute pitches | Play three different keys and compare the drum |
-| B3 | Tick Hat | Percussion | W | Noise at `=C7` through the high-pass (cutoff 1500), decay 6, sustain 0: decay only | Play eight hits and follow how long each one rings |
+| B1 | Short Kick | Percussion | W | One noise tick (tick 0, `=C7`) and then a triangle whose pitch falls by table `=64 =55 =48 =43 =40 =38` over six ticks of 9.98 ms (tick multiplier 2); absolute pitches, so every key plays the same drum; decay 8, sustain 0; oscillator 2 doubles oscillator 1 in phase (the level) | Play three different keys and compare the drum |
+| B2 | Dry Snare | Percussion | W | Noise and pulse alternate by table (`noise =D7`, `pulse =G3`, `noise =C7`, `pulse =E3`, then `noise =B6` held, the gate cleared at tick 10), pulse width 1536, tick multiplier 2; absolute pitches; oscillator 2 doubles oscillator 1 in phase (the level) | Play three different keys and compare the drum |
+| B3 | Tick Hat | Percussion | W | Noise at `=C7` through the high-pass (cutoff 1500), decay 6, sustain 0: decay only; oscillator 2 doubles oscillator 1 in phase, also through the high-pass (the level) | Play eight hits and follow how long each one rings |
 | B4 | Slow Saw Pad | Pad | W | Model A, Per Note: three sawtooths detuned by -14, 0 and +14 cents through the low-pass (cutoff 900, resonance 5); attack 9, sustain 12, release 9 | Play a four-note chord and follow how the sound arrives |
 | B5 | Shared Chord Pad | Pad | W | Model A, Shared: a sawtooth and a 35 % pulse (+7 cents) of every note into one low-pass (cutoff 1100, resonance 6); attack 8, sustain 12, release 9 | Play the four-note chord in this program and in B4 and compare how the chord sounds against the single notes |
 | B6 | Band Sweep | Sound FX | W | Noise through the band-pass (resonance 10); the filter lane sets the cutoff to 100 and adds 16 per tick for 120 ticks (to 2020); attack 5, release 11 (2.4 s nominal) | Hold a key for three seconds and then let go, and follow the sweep and the end |
@@ -66,16 +66,21 @@ contract (8.21.2).
 | Arpeggio | Arpeggio | C4 held 4 s: one key plays the chord |
 | Split phrase | Split | ten staccato bass notes C2 to C3 below the split point with C4 E4 G4 held 3 s above |
 
-**Level groups**: *sustained* (Lead, Pad, Sound FX, Dual, Split), *percussive* (Arpeggio, Percussion) and
-*bass* (Bass). Init is the reference and belongs to no group.
+**Level groups** (8.21.2 after the drafting): *sustained* (Lead, Pad, Sound FX, Dual, Split, and the table
+arpeggios A7 and A8: one held voice), *percussive* (Percussion) and *bass* (Bass). Init is the reference and
+belongs to no group.
 
 **Level rule** (enforced over the embedded bank by `BankTests.cpp`, one test case over the 16 programs):
 
 1. Loudness = unweighted RMS of both channels from the first note-on to the last note-off of the standard
-   phrase. Each program is within 2 dB of its group's median.
+   phrase. Each sustained and bass program is within 2 dB of its group's median RMS. **Percussion is judged
+   by its peak:** a drum's phrase peak is within 2 dB of the median phrase peak of the sustained group, so a
+   drum hit sits as loud as a lead note.
 2. An eight-note chord (C3 E3 G3 C4 E4 G4 C5 E5) at velocity 127, held 2 s: neither its RMS (from 0.55 s)
    nor its peak is more than 3 dB above Init's (Init: -19.49 dB RMS, -10.11 dBFS peak, so the limits are
-   -16.49 dB and -7.11 dBFS), and its peak is below 0 dBFS.
+   -16.49 dB and -7.11 dBFS), and its peak is below 0 dBFS. For percussion the check is only "below 0 dBFS
+   with two keys down" (C3 and C4 at velocity 127, held 2 s): eight identical fixed-pitch hits summing in
+   phase is not a playing situation and must not set the level.
 3. The standard phrase peaks below 0 dBFS, and with the limiter **on** at its defaults (ceiling -1 dBFS,
    knee from -4 dBFS) it stays below the knee, so the limiter never shapes a factory sound played normally.
 4. Also tested for every program in the same case: it loads (the selected slot holds the file's program), is
@@ -84,43 +89,62 @@ contract (8.21.2).
    processor reports, saves and restores its state (every parameter and both tables the same, and saving
    again gives the same bytes), and, applied over three held keys, releases them to silence.
 
-Levels are set with `mix.level` only (a smoothed per-part gain, -24 to +6 dB; the chip's volume register
+Levels are trimmed with `mix.level` (a smoothed per-part gain, -24 to +6 dB; the chip's volume register
 cannot trim, 8.21.2). Master volume, the limiter switch and its ceiling are session settings, not part of
-a program. The programs' own sounds were drafted first; `mix.level` was then set per group so that the
-phrase RMS lands on the group's target (sustained -32.0 dB, percussive -45.0 dB, bass -33.5 dB), within the
-limits of rule 2. Two programs are held by those limits: A3 (its chord peak is the highest relative to its
-phrase) and B3 (at the +6 dB end of `mix.level`; its deviation is -0.97 dB).
+a program. The programs' own sounds were drafted first; `mix.level` was then set so that the phrase RMS
+lands on its group's target (sustained -32.0 dB, bass -33.5 dB) and a drum's phrase peak on the sustained
+group's median peak (-20.44 dBFS), within the limits of rule 2. A3 is the program held closest by rule 2 (its
+chord peak is the highest relative to its phrase).
+
+**Raised in their content: B1, B2 and B3.** The drums needed +10.2, +11.2 and +5.7 dB on their drafted
+`mix.level` (-2.3, -3.4 and +6.0), so B1 and B2 would have ended at +7.9 and +7.8 and B3 at +11.7 dB, beyond
+`mix.level`'s +6 dB. Their chip volume is at 15 already, their envelopes start at full level (attack 0) and
+the peak of a decay-only hit does not depend on the sustain, so none of those can raise them. What does:
+**oscillator 2 doubles oscillator 1**: the same parameters (`osc2.*` as `osc1.*`) and a `[wave2]` lane that
+is a copy of `[wave1]` (B2 also `[pulse2]` as `[pulse1]`), so the two oscillators get the same register writes
+on the same cycles and sum in phase (+6.0 dB at the output, measured). The trims are then +1.9, +1.7 and
++5.6 dB. Each drum's test of what its row says was run again and passes unchanged, and now also checks that
+oscillator 2's seven registers and envelope counter equal oscillator 1's at every 1 ms read (`Bank B1`,
+`Bank B2`, `Bank B3`).
 
 ### Measured figures
 
 From `bside_metrics.tsv` of the hidden render (below), macOS arm64, 2026-11-24. `mix.level` is Lower / Upper
-in dB. Phrase RMS and peak with the limiter off; the chord is the eight-note chord of rule 2.
+in dB. Phrase RMS and peak with the limiter off. The chord is the eight-note chord of rule 2, for percussion
+the two-key chord (its RMS from 0.55 s says nothing for a drum, whose hits are over by then). The deviation
+is from the group's median RMS, for percussion from the sustained group's median peak.
 
-| Slot | File | Name | Category | Group | `mix.level` | Phrase RMS dB | Phrase peak dBFS | Dev. from median dB | Chord peak dBFS | Chord RMS dB | Reported tail s | Phrase peak, limiter on |
+| Slot | File | Name | Category | Group | `mix.level` | Phrase RMS dB | Phrase peak dBFS | Deviation dB | Chord peak dBFS | Chord RMS dB | Reported tail s | Phrase peak, limiter on |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | A1 | A1-init | Init | Init | reference | 0 | -23.53 | -16.83 | | -10.11 | -19.49 | 0.61 | -16.83 |
-| A2 | A2-moving-pulse | Moving Pulse | Lead | sustained | -1.5 | -31.97 | -25.71 | +0.05 | -24.67 | -30.49 | 0.50 | -25.71 |
-| A3 | A3-synced-climb | Synced Climb | Lead | sustained | +2.2 | -32.05 | -20.37 | -0.03 | -8.53 | -22.54 | 0.50 | -20.37 |
-| A4 | A4-glass-ring | Glass Ring | Lead | sustained | +4.3 | -31.99 | -20.47 | +0.03 | -11.28 | -22.67 | 0.72 | -20.47 |
-| A5 | A5-closing-door | Closing Door | Bass | bass | -1.2 | -33.52 | -21.53 | -0.01 | -20.81 | -31.32 | 0.34 | -21.53 |
-| A6 | A6-blip-bass | Blip Bass | Bass | bass | +1.6 | -33.51 | -24.02 | +0.01 | -22.85 | -32.77 | 0.22 | -24.02 |
-| A7 | A7-major-steps | Major Steps | Arpeggio | percussive | -14.3 | -45.03 | -38.62 | 0.00 | -23.88 | -34.49 | 0.34 | -38.62 |
-| A8 | A8-minor-steps | Minor Steps | Arpeggio | percussive | -15.2 | -44.99 | -39.89 | +0.04 | -23.18 | -33.22 | 0.34 | -39.89 |
-| B1 | B1-short-kick | Short Kick | Percussion | percussive | -2.3 | -45.03 | -30.59 | +0.01 | -11.87 | -106.97 | 0.61 | -30.59 |
-| B2 | B2-dry-snare | Dry Snare | Percussion | percussive | -3.4 | -45.05 | -31.60 | -0.02 | -12.91 | -89.30 | 0.61 | -31.60 |
-| B3 | B3-tick-hat | Tick Hat | Percussion | percussive | +6.0 | -46.00 | -26.14 | -0.97 | -10.68 | -119.08 | 0.61 | -26.14 |
-| B4 | B4-slow-saw-pad | Slow Saw Pad | Pad | sustained | -6.1 | -32.01 | -18.66 | +0.01 | -13.81 | -29.46 | 2.25 | -18.66 |
-| B5 | B5-shared-chord-pad | Shared Chord Pad | Pad | sustained | -2.4 | -32.04 | -18.60 | -0.02 | -18.18 | -43.37 | 2.25 | -18.60 |
-| B6 | B6-band-sweep | Band Sweep | Sound FX | sustained | +2.7 | -32.02 | -15.87 | -0.01 | -12.26 | -28.60 | 7.20 | -15.87 |
-| B7 | B7-pulse-over-pad | Pulse Over Pad | Dual | sustained | -7.5 / -7.5 | -31.97 | -20.40 | +0.05 | -15.49 | -28.62 | 2.25 | -20.40 |
-| B8 | B8-bass-and-lead | Bass And Lead | Split | sustained | -4.0 / -4.0 | -32.03 | -21.22 | -0.01 | -21.62 | -30.65 | 0.50 | -21.22 |
+| A2 | A2-moving-pulse | Moving Pulse | Lead | sustained | -1.5 | -31.97 | -25.71 | +0.05 (RMS) | -24.67 | -30.49 | 0.50 | -25.71 |
+| A3 | A3-synced-climb | Synced Climb | Lead | sustained | +2.2 | -32.05 | -20.37 | -0.03 (RMS) | -8.53 | -22.54 | 0.50 | -20.37 |
+| A4 | A4-glass-ring | Glass Ring | Lead | sustained | +4.3 | -31.99 | -20.47 | +0.03 (RMS) | -11.28 | -22.67 | 0.72 | -20.47 |
+| A5 | A5-closing-door | Closing Door | Bass | bass | -1.2 | -33.52 | -21.53 | -0.01 (RMS) | -20.81 | -31.32 | 0.34 | -21.53 |
+| A6 | A6-blip-bass | Blip Bass | Bass | bass | +1.6 | -33.51 | -24.02 | +0.01 (RMS) | -22.85 | -32.77 | 0.22 | -24.02 |
+| A7 | A7-major-steps | Major Steps | Arpeggio | sustained | -1.3 | -32.03 | -25.62 | -0.02 (RMS) | -10.88 | -21.49 | 0.34 | -25.62 |
+| A8 | A8-minor-steps | Minor Steps | Arpeggio | sustained | -2.2 | -31.99 | -26.89 | +0.03 (RMS) | -10.18 | -20.22 | 0.34 | -26.89 |
+| B1 | B1-short-kick | Short Kick | Percussion | percussive | +1.9 | -34.94 | -20.45 | -0.02 (peak) | -13.68 (two keys) | -104.41 | 0.61 | -20.45 |
+| B2 | B2-dry-snare | Dry Snare | Percussion | percussive | +1.7 | -34.04 | -20.47 | -0.03 (peak) | -13.79 (two keys) | -89.56 | 0.61 | -20.47 |
+| B3 | B3-tick-hat | Tick Hat | Percussion | percussive | +5.6 | -40.38 | -20.37 | +0.06 (peak) | -17.02 (two keys) | -119.48 | 0.61 | -20.37 |
+| B4 | B4-slow-saw-pad | Slow Saw Pad | Pad | sustained | -6.1 | -32.01 | -18.66 | +0.01 (RMS) | -13.81 | -29.46 | 2.25 | -18.66 |
+| B5 | B5-shared-chord-pad | Shared Chord Pad | Pad | sustained | -2.4 | -32.04 | -18.60 | -0.02 (RMS) | -18.18 | -43.37 | 2.25 | -18.60 |
+| B6 | B6-band-sweep | Band Sweep | Sound FX | sustained | +2.7 | -32.02 | -15.87 | -0.01 (RMS) | -12.26 | -28.60 | 7.20 | -15.87 |
+| B7 | B7-pulse-over-pad | Pulse Over Pad | Dual | sustained | -7.5 / -7.5 | -31.97 | -20.40 | +0.05 (RMS) | -15.49 | -28.62 | 2.25 | -20.40 |
+| B8 | B8-bass-and-lead | Bass And Lead | Split | sustained | -4.0 / -4.0 | -32.03 | -21.22 | -0.01 (RMS) | -21.62 | -30.65 | 0.50 | -21.22 |
 
-Group medians: sustained -32.02 dB, percussive -45.03 dB, bass -33.51 dB. Loudest phrase peak: B6,
--15.87 dBFS (the limiter's knee is at -4 dBFS). Highest chord peak of the designed programs: A3, -8.53 dBFS,
-1.42 dB inside the -7.11 dBFS limit (Init's own is -10.11 dBFS); then B3 (-10.68) and A4 (-11.28). A3's
-chord is the sum of eight sawtooths whose accumulators all start at the same cycle, so their peaks coincide;
-the drums' chords are eight identical absolute-pitch hits for the same reason, which is why the drums
-cannot be trimmed up to the sustained programs' level.
+Targets: sustained median RMS -32.02 dB, bass median RMS -33.51 dB, sustained median phrase peak -20.44 dBFS
+(the percussion target; the mean of A4's -20.47 and B7's -20.40, the 5th and 6th of the ten sustained peaks).
+Loudest phrase peak: B6, -15.87 dBFS (the limiter's knee is at -4 dBFS). Highest eight-note chord peak of the
+designed programs: A3, -8.53 dBFS, 1.42 dB inside the -7.11 dBFS limit (Init's own is -10.11 dBFS); then A8
+(-10.18) and A7 (-10.88). A3's chord is the sum of eight sawtooths whose accumulators all start at the same
+cycle, so their peaks coincide. Before this rule the drums and the arpeggios were trimmed 13 dB below the
+leads by that eight-note chord (eight identical absolute-pitch hits, in phase); with two keys a drum peaks at
+-13.7 dBFS or below.
+
+The percussion rule can fail: B1 with `mix.level` 4 dB higher (+5.9) fails the level test with
+`Short Kick [percussive]: phrase peak -16.4535 dB, target (the sustained group's median peak) -20.4379 dB,
+deviation 3.98439 dB`.
 
 ### Cost of the tests
 
@@ -172,14 +196,17 @@ equal-tempered frequency to within one register step (0.059 Hz). Each line is a 
   1), 3200 at tick 20, 3072 at tick 21.
 - **B1** (keys 36 and 60, 0.3 s). Oscillator 1 control `0x81` (noise, gate) at tick 0, `0x11` after; frequency
   per tick: `2093.0 329.6 196.0 130.8 98.0 82.4 73.4 73.4 ...` Hz (the fall is -1763, -133.6, -65.2, -32.8,
-  -15.6, -9.0 Hz per tick, then none); the same for both keys. Envelope registers `0x08 0x08`.
+  -15.6, -9.0 Hz per tick, then none); the same for both keys. Envelope registers `0x08 0x08`. Oscillator 2's
+  seven registers and envelope counter equal oscillator 1's at every read (the doubling).
 - **B2** (key 48, 0.3 s). Oscillator 1 control per tick: `81 41 81 41 81 81 81 81 81 81 80 80 80 80` (noise,
   pulse, noise, pulse, noise ... then the gate cleared at tick 10); pitches `=D7 =G3 =C7 =E3 =B6`; pulse
-  width 1536.
+  width 1536. Oscillator 2 equals oscillator 1 at every read (the doubling).
 - **B3** (key 48, 0.5 s). Control `0x81`, F at `=C7` (2093.0 Hz), envelope registers `0x06 0x06`, mode High (4),
-  oscillator 1 routed. The envelope counter peaks at 253 at 3 ms, is at or below 128 at 37 ms, at or below 16
-  at 120 ms and 0 at 208 ms (the key goes up at 500 ms); the audio's RMS in the 150 ms before the key goes up
-  is -118.8 dB. 99 % of the energy of the note (0.05 to 0.3 s) is at or above 4 kHz (centroid 13 737 Hz).
+  oscillators 1 and 2 routed, oscillator 2 equal to oscillator 1 at every read (the doubling). The envelope
+  counter peaks at 253 at 3 ms, is at or below 128 at 37 ms, at or below 16 at 120 ms and 0 at 208 ms (the key
+  goes up at 500 ms); the audio's RMS in the 150 ms before the key goes up is -107.2 dB (-118.8 dB before the
+  level was raised by 11.6 dB; the test's bound is -100 dB). 99 % of the energy of the note (0.05 to 0.3 s) is
+  at or above 4 kHz (centroid 13 730 Hz).
 - **B4** (chord, 1.2 s). `chip.model` Model A and `filter.topology` Per Note in the parameters the audio
   thread used; the newest voice's own filter reports Model A. Three oscillators `0x21`; the detune of
   oscillators 1 and 3 against 2: -14.0 and +13.9 cents. Mode Low, resonance 5, all three routed; attack
@@ -214,7 +241,8 @@ VS_RENDER_DIR=<dir> build/<dir>/tests/bside/BSideTests "Render bside_bank*"
 (hidden, `[.render]`) writes one WAV per program (`<slot>-<name>.wav`, the phrase plus up to 4 s of release, 48
 kHz, 24 bit), `bside_audition.wav` (all 16 with 0.4 s of silence between them), `bside_index.txt` (start
 time of each program) and `bside_metrics.tsv` (per program: `mix.level`, peak, RMS and its deviation from
-the group median, spectral centroid, the chord's peak and RMS, the reported tail, the phrase and chord
+the group median, for percussion the peak's from the sustained median peak, spectral centroid, the chord's
+peak and RMS (for percussion the two-key chord's), the reported tail, the phrase and chord
 peaks with the limiter on, and the energy of nine octave bands, dB re the sum, 0 to 125 Hz ... above 16 kHz).
 Nothing is written without `VS_RENDER_DIR`, and never into the repository. With `VS_BANK_DIR=<folder>` the
 render reads program files from that folder (named like the factory files) instead of the embedded bank, so a
@@ -321,6 +349,11 @@ build running) and 93 s after (+17 s; the limit is +20 s): the level test 12.3 s
 about 0.1 s. Nothing is hidden behind a tag except the audition render. `bside_unit` is unchanged (about 250 s
 with `--durations yes`; its five slowest cases are 38.5, 28.0, 22.8, 17.6 and 13.2 s).
 
+After the drafting (the silent apply and the level groups): 92.1 s before and 93.2 s after (`time`; the sum
+of `--durations yes` 91.9 s and 93.2 s). The five `[apply]` cases take 1.2 s together (the step rule for
+all 16 programs in both directions 0.33 s: two processors, each used for all 16); the level test stays at
+about 12 s (the two-key chord of the drums replaces their eight-note chord).
+
 ## Deliberate exclusions
 
 - The shell's arpeggiator and step sequencer are off in every program: A7 and A8 show the chip technique (the
@@ -350,6 +383,7 @@ Computed from the files (each row: programs that use the feature in a part that 
 | Hard restart section | B1 B2 B3 |
 | Tick rate Tempo | A7 A8 |
 | Tick multiplier above 1 | A8 B1 B2 |
+| Two oscillators doubled in phase (the level) | B1 B2 B3 |
 | Velocity to cutoff | A5 B8 |
 | Noise waveform | B1 B2 B3 B6 |
 | High-pass / band-pass / low-pass | B3 / B6 / A2 A3 A5 A7 A8 B4 B5 B7 B8 |

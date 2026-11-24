@@ -19,11 +19,13 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace bsbank;
@@ -114,6 +116,16 @@ std::string joinLines (const std::vector<std::string>& lines)
 double hzOfNote (double note) { return 440.0 * std::exp2 ((note - 69.0) / 12.0); }
 double semitonesBetween (double f, double ref) { return 12.0 * std::log2 (f / ref); }
 double msOfTicks (std::uint32_t period, double ticks) { return 1000.0 * ticks * static_cast<double> (period) / 985248.0; }
+
+/** Oscillator 2 doubles oscillator 1 (the drums, raised in their content to reach their level, 8.21.2 after the drafting): its seven
+    registers and its envelope counter are oscillator 1's, so the two sum in phase. */
+bool doublesOscillator1 (const RegisterSample& s)
+{
+    for (int r = 0; r < 7; ++r)
+        if (osc (s, 1, r) != osc (s, 0, r))
+            return false;
+    return s.env[1] == s.env[0];
+}
 
 /** The table lines of a program's part with every occurrence of `token` removed (the same program without a feature). */
 std::vector<std::string> withoutToken (std::vector<std::string> lines, const std::string& token)
@@ -336,10 +348,13 @@ TEST_CASE ("Bank: 16 programs A1 to B8 in slot order, own names, known categorie
 TEST_CASE ("Bank level rule: every program loads, sounds, is finite, keeps its chord headroom, sits within 2 dB of its group, stays below the limiter's knee, round-trips its state, and releases when applied over held notes",
            "[bside][bank][level]")
 {
+    // 8.21.2 after the drafting: sustained (the arpeggios too) and bass programs by their phrase RMS against their group's median;
+    // percussion by its phrase PEAK against the median phrase peak of the sustained group, and its headroom with two keys down.
     const auto& bank = factoryBank();
     REQUIRE (bank.programs.size() >= static_cast<size_t> (kBankSize));
-    std::vector<double> rms (static_cast<size_t> (kBankSize));
+    std::vector<double> rms (static_cast<size_t> (kBankSize)), peak (static_cast<size_t> (kBankSize));
     std::map<Group, std::vector<double>> byGroup;
+    std::vector<double> sustainedPeaks;
     double initChordRms = 0.0, initChordPeak = 0.0;
     for (int slot = 0; slot < kBankSize; ++slot)
     {
@@ -365,23 +380,26 @@ TEST_CASE ("Bank level rule: every program loads, sounds, is finite, keeps its c
         CHECK (m.peakDb < 0.0);      // below full scale at the default master volume
         CHECK (m.endPeakDb < -80.0); // nothing stuck: silent 0.75 s after the reported tail has passed
         rms[static_cast<size_t> (slot)] = m.rmsDb;
+        peak[static_cast<size_t> (slot)] = m.peakDb;
         if (info.group != Group::Reference)
-            byGroup[info.group].push_back (m.rmsDb);
+            byGroup[info.group].push_back (judgedByPeak (info.group) ? m.peakDb : m.rmsDb);
+        if (info.group == Group::Sustained)
+            sustainedPeaks.push_back (m.peakDb);
 
-        // chord headroom: eight notes at full velocity
+        // chord headroom: eight notes at full velocity; for percussion two keys, below full scale only
         Rig chordRig (slot, false);
-        auto chord = fullVelocityChord();
+        auto chord = headroomChord (info.group);
         const auto chordOut = chordRig.play (chord, 0.0);
         chord.firstOn = at (0.55); // the steady part
         const auto cm = measure (chordOut, chord);
-        INFO ("eight-note chord: RMS " << cm.rmsDb << " dB, peak " << cm.peakDb << " dBFS");
+        INFO ((judgedByPeak (info.group) ? "two keys" : "eight-note chord") << ": RMS " << cm.rmsDb << " dB, peak " << cm.peakDb << " dBFS");
         CHECK (cm.peakDb < 0.0);
         if (slot == 0)
         {
             initChordRms = cm.rmsDb;
             initChordPeak = cm.peakDb;
         }
-        else
+        else if (! judgedByPeak (info.group))
         {
             CHECK (cm.rmsDb <= initChordRms + kChordHeadroomDb);
             CHECK (cm.peakDb <= initChordPeak + kChordHeadroomDb);
@@ -403,15 +421,23 @@ TEST_CASE ("Bank level rule: every program loads, sounds, is finite, keeps its c
         CHECK (applied.endPeak < 1.0e-3);
     }
 
-    std::map<Group, double> median;
+    // the targets: each RMS group's median RMS; for percussion the sustained group's median PEAK
+    std::map<Group, double> target;
     for (const auto& [g, v] : byGroup)
-        median[g] = medianOf (v);
+        target[g] = judgedByPeak (g) ? medianOf (sustainedPeaks) : medianOf (v);
+    REQUIRE (sustainedPeaks.size() >= 3);
     for (int slot = 1; slot < kBankSize; ++slot)
     {
         const auto& prog = bank.programs[static_cast<size_t> (slot)];
         const auto g = categoryInfo (prog.meta.category).group;
-        const double dev = rms[static_cast<size_t> (slot)] - median[g];
-        INFO (prog.meta.name << " [" << groupName (g) << "]: " << rms[static_cast<size_t> (slot)] << " dB, median " << median[g] << " dB, deviation " << dev << " dB");
+        const bool byPeak = judgedByPeak (g);
+        const double value = byPeak ? peak[static_cast<size_t> (slot)] : rms[static_cast<size_t> (slot)];
+        const double dev = value - target[g];
+        SAY ("%s %s [%s]: %s %.2f dB, target %.2f dB, deviation %+.2f dB\n", kBank[slot].slot, kBank[slot].name, groupName (g),
+             byPeak ? "phrase peak" : "phrase RMS", value, target[g], dev);
+        INFO (prog.meta.name << " [" << groupName (g) << "]: " << (byPeak ? "phrase peak " : "phrase RMS ") << value << " dB, target "
+                             << (byPeak ? "(the sustained group's median peak) " : "(the group's median RMS) ") << target[g] << " dB, deviation "
+                             << dev << " dB");
         CHECK (std::abs (dev) <= kGroupToleranceDb);
     }
 }
@@ -781,6 +807,9 @@ TEST_CASE ("Bank B1 Short Kick: a noise tick, then a triangle falling in pitch b
         }
         CHECK (t[0].reg[5] == 0x08); // attack 0, decay 8
         CHECK (t[0].reg[6] == 0x08); // sustain 0, release 8
+        for (const auto& s : p.samples)
+            if (s.voiceFound)
+                CHECK (doublesOscillator1 (s)); // the level: oscillator 2 plays the same drum in phase
         if (key == 36)
             SAY ("B1 oscillator 1 frequency (Hz) per tick (tick = %.2f ms): %s\n", msOfTicks (t[0].tickPeriod, 1.0), hz.c_str());
         CHECK (msOfTicks (t[0].tickPeriod, 1.0) < 10.5); // tick.mult 2
@@ -812,6 +841,9 @@ TEST_CASE ("Bank B2 Dry Snare: noise and pulse alternating by table, then noise 
     CHECK (pulseWidth (t[1], 0) == 1536);
     CHECK (t[0].reg[5] == 0x07); // decay 7
     CHECK (t[0].reg[6] == 0x07); // sustain 0, release 7
+    for (const auto& s : p.samples)
+        if (s.voiceFound)
+            CHECK (doublesOscillator1 (s)); // the level: oscillator 2 plays the same drum in phase
 }
 
 TEST_CASE ("Bank B3 Tick Hat: short noise at a high pitch, decay only, mostly above 4 kHz", "[bside][bank][program]")
@@ -826,6 +858,10 @@ TEST_CASE ("Bank B3 Tick Hat: short noise at a high pitch, decay only, mostly ab
     CHECK (t[0].reg[6] == 0x06); // sustain 0: decay only
     CHECK (filterMode (t[0]) == 4);    // high-pass
     CHECK ((routing (t[0]) & 1) == 1); // oscillator 1 through it
+    CHECK ((routing (t[0]) & 2) == 2); // and oscillator 2, which doubles it (the level)
+    for (const auto& s : p.samples)
+        if (s.voiceFound)
+            CHECK (doublesOscillator1 (s));
     // the envelope: it rises at once, falls through the decay and is at 0 long before the key goes up
     double peakAt = -1.0, below128 = -1.0, below16 = -1.0, zeroAt = -1.0;
     int top = 0;

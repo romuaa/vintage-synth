@@ -9,8 +9,10 @@
   "lower": {
     "osc1.wave": 1,
     "osc1.filter": 0,
+    "osc2.wave": 1,
+    "osc2.filter": 0,
     "tick.mult": 2,
-    "mix.level": -2.3
+    "mix.level": 1.9
   },
   "upper": {},
   "tables": {
@@ -20,6 +22,15 @@
       "mode classic",
       "lead 2",
       "[wave1]",
+      "    adsr 0 8 0 8, wave noise+gate =C7",
+      "    wave tri+gate =64",
+      "    wave tri+gate =55",
+      "    wave tri+gate =48",
+      "    wave tri+gate =43",
+      "    wave tri+gate =40",
+      "    wave tri+gate =38 ticks 255",
+      "    end",
+      "[wave2]",
       "    adsr 0 8 0 8, wave noise+gate =C7",
       "    wave tri+gate =64",
       "    wave tri+gate =55",

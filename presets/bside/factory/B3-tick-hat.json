@@ -8,9 +8,10 @@
   "global": {},
   "lower": {
     "osc1.wave": 4,
+    "osc2.wave": 4,
     "filter.mode": 3,
     "filter.cutoff": 1500,
-    "mix.level": 6.0
+    "mix.level": 5.6
   },
   "upper": {},
   "tables": {
@@ -20,6 +21,9 @@
       "mode classic",
       "lead 2",
       "[wave1]",
+      "    adsr 0 6 0 6, wave noise+gate =C7",
+      "    end",
+      "[wave2]",
       "    adsr 0 6 0 6, wave noise+gate =C7",
       "    end"
     ]

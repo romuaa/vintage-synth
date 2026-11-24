@@ -43,8 +43,13 @@ enum class Phrase
     SplitPhrase // ten staccato bass notes C2 .. C3 below the split point and C4 E4 G4 held 3 s above
 };
 
-/** The loudness groups of the level rule (at most three, plus the Init reference). */
+/** The loudness groups of the level rule (at most three, plus the Init reference; 8.21.2 after the drafting). Sustained and
+    bass programs are judged by their phrase's RMS against their group's median RMS; percussion is judged by its phrase PEAK
+    against the median phrase peak of the sustained group (a drum hit sits as loud as a lead note). */
 enum class Group { Reference, Sustained, Percussive, Bass };
+
+/** Whether a group is judged by its phrase peak (against the sustained group's median peak) rather than its RMS. */
+inline bool judgedByPeak (Group g) { return g == Group::Percussive; }
 
 inline const char* groupName (Group g)
 {
@@ -76,7 +81,7 @@ inline CategoryInfo categoryInfo (const juce::String& c)
     };
     static const Row rows[] {
         { "Init", Phrase::Chord, Group::Reference },          { "Lead", Phrase::Melody, Group::Sustained },
-        { "Bass", Phrase::BassLine, Group::Bass },            { "Arpeggio", Phrase::Arpeggio, Group::Percussive },
+        { "Bass", Phrase::BassLine, Group::Bass },            { "Arpeggio", Phrase::Arpeggio, Group::Sustained }, // one held voice
         { "Percussion", Phrase::Percussion, Group::Percussive }, { "Pad", Phrase::Chord, Group::Sustained },
         { "Sound FX", Phrase::Chord, Group::Sustained },      { "Dual", Phrase::Chord, Group::Sustained },
         { "Split", Phrase::SplitPhrase, Group::Sustained },
@@ -190,6 +195,20 @@ inline Performance fullVelocityChord()
     finish (p);
     return p;
 }
+
+/** The headroom check of percussion (8.21.2 after the drafting): two keys down at full velocity, held 2 s (eight identical
+    fixed-pitch hits summing in phase is not a playing situation). */
+inline Performance twoKeyChord()
+{
+    Performance p;
+    for (int n : { 48, 60 })
+        addNote (p, 0.05, 2.05, n, 127);
+    finish (p);
+    return p;
+}
+
+/** The chord a program's headroom is checked with: two keys for percussion, eight notes for everything else. */
+inline Performance headroomChord (Group g) { return judgedByPeak (g) ? twoKeyChord() : fullVelocityChord(); }
 
 inline double dbOf (double v) { return 20.0 * std::log10 (std::max (v, 1.0e-10)); }
 
