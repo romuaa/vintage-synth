@@ -1,0 +1,63 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Bass And Lead",
+  "category": "Split",
+  "author": "Exitium",
+  "global": {
+    "key.mode": 2,
+    "key.split_point": 55
+  },
+  "lower": {
+    "osc1.wave": 2,
+    "osc1.decay": 7,
+    "osc1.sustain": 10,
+    "osc1.release": 4,
+    "osc2.wave": 3,
+    "osc2.coarse": -12,
+    "osc2.pw": 40,
+    "osc2.decay": 7,
+    "osc2.sustain": 10,
+    "osc2.release": 4,
+    "filter.mode": 1,
+    "filter.cutoff": 1800,
+    "filter.resonance": 9,
+    "vel.cutoff": 0.6,
+    "assign.mode": 2,
+    "mix.level": -4.0
+  },
+  "upper": {
+    "osc1.wave": 3,
+    "osc1.release": 5,
+    "filter.cutoff": 1500,
+    "filter.resonance": 3,
+    "assign.mode": 2,
+    "porta.time": 0.3,
+    "porta.mode": 1,
+    "mix.level": -4.0
+  },
+  "tables": {
+    "lower": [
+      "bside-table 1",
+      "[filter]",
+      "    sweep -75 x20",
+      "    end"
+    ],
+    "upper": [
+      "bside-table 1",
+      "[wave1]",
+      "    wave pulse+gate +0 ticks 15",
+      "vib:",
+      "    pitch +0.2 ticks 2",
+      "    pitch -0.2 ticks 2",
+      "    jump vib",
+      "release:",
+      "    gate off",
+      "    end",
+      "[pulse1]",
+      "    set 768",
+      "    pingpong 768 3328 40"
+    ]
+  }
+}

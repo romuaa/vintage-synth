@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Band Sweep",
+  "category": "Sound FX",
+  "author": "Exitium",
+  "global": {},
+  "lower": {
+    "osc1.wave": 4,
+    "osc1.attack": 5,
+    "osc1.release": 11,
+    "filter.mode": 2,
+    "filter.resonance": 10,
+    "mix.level": 2.7
+  },
+  "upper": {},
+  "tables": {
+    "lower": [
+      "bside-table 1",
+      "[filter]",
+      "    route 1, mode bp, res 10, cutoff 100",
+      "    sweep +16 x120",
+      "    end"
+    ]
+  }
+}

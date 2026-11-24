@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Shared Chord Pad",
+  "category": "Pad",
+  "author": "Exitium",
+  "global": {},
+  "lower": {
+    "chip.model": 0,
+    "osc1.wave": 2,
+    "osc2.wave": 3,
+    "osc2.pw": 35,
+    "osc2.coarse": 0,
+    "osc2.fine": 7,
+    "osc1.attack": 8,
+    "osc1.sustain": 12,
+    "osc1.release": 9,
+    "osc2.attack": 8,
+    "osc2.sustain": 12,
+    "osc2.release": 9,
+    "filter.mode": 1,
+    "filter.cutoff": 1100,
+    "filter.resonance": 6,
+    "filter.topology": 1,
+    "mix.level": -2.4
+  },
+  "upper": {}
+}

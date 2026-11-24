@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Tick Hat",
+  "category": "Percussion",
+  "author": "Exitium",
+  "global": {},
+  "lower": {
+    "osc1.wave": 4,
+    "filter.mode": 3,
+    "filter.cutoff": 1500,
+    "mix.level": 6.0
+  },
+  "upper": {},
+  "tables": {
+    "lower": [
+      "bside-table 1",
+      "[restart]",
+      "mode classic",
+      "lead 2",
+      "[wave1]",
+      "    adsr 0 6 0 6, wave noise+gate =C7",
+      "    end"
+    ]
+  }
+}

@@ -154,12 +154,16 @@ TEST_CASE ("B-Side: the 75 shared parameters come first, in the contract's order
     CHECK (rig.get ("master.limiter.ceiling") == Catch::Approx (-1.0f));
 }
 
-TEST_CASE ("B-Side: 64 programs, all Init, in an 8 x 8 bank with B-Side's own preset identity", "[bside][shell][presets]")
+TEST_CASE ("B-Side: 64 programs (the 16 of the factory bank, then Init), in an 8 x 8 bank with B-Side's own preset identity", "[bside][shell][presets]")
 {
     Rig rig (false);
     CHECK (rig.proc.getNumPrograms() == 64);
     CHECK (rig.proc.getCurrentProgram() == 0);
-    for (int i = 0; i < 64; ++i)
+    // Before S4b (8.21.2) all 64 were Init; the bank's 16 programs A1 to B8 are tested in BankTests.cpp, the rest are still Init.
+    CHECK (rig.proc.getProgramName (0) == "Init");
+    CHECK (rig.proc.getProgramName (1) == "Moving Pulse");
+    CHECK (rig.proc.getProgramName (15) == "Bass And Lead");
+    for (int i = 16; i < 64; ++i)
         REQUIRE (rig.proc.getProgramName (i) == "Init");
 
     auto& presets = rig.proc.getPresets();

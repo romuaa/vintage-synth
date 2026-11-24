@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Pulse Over Pad",
+  "category": "Dual",
+  "author": "Exitium",
+  "global": {
+    "key.mode": 1
+  },
+  "lower": {
+    "osc1.wave": 3,
+    "osc1.release": 5,
+    "filter.cutoff": 1500,
+    "filter.resonance": 3,
+    "mix.pan": -0.6,
+    "mix.level": -7.5
+  },
+  "upper": {
+    "chip.model": 0,
+    "osc1.wave": 2,
+    "osc1.fine": -10,
+    "osc2.wave": 2,
+    "osc2.fine": 10,
+    "osc1.attack": 9,
+    "osc1.sustain": 12,
+    "osc1.release": 9,
+    "osc2.attack": 9,
+    "osc2.sustain": 12,
+    "osc2.release": 9,
+    "filter.mode": 1,
+    "filter.cutoff": 900,
+    "filter.resonance": 4,
+    "mix.pan": 0.6,
+    "mix.level": -7.5
+  },
+  "tables": {
+    "lower": [
+      "bside-table 1",
+      "[wave1]",
+      "    wave pulse+gate +0 ticks 15",
+      "vib:",
+      "    pitch +0.2 ticks 2",
+      "    pitch -0.2 ticks 2",
+      "    jump vib",
+      "release:",
+      "    gate off",
+      "    end",
+      "[pulse1]",
+      "    set 768",
+      "    pingpong 768 3328 40"
+    ]
+  }
+}

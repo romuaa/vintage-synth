@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Closing Door",
+  "category": "Bass",
+  "author": "Exitium",
+  "global": {},
+  "lower": {
+    "osc1.wave": 2,
+    "osc1.decay": 7,
+    "osc1.sustain": 10,
+    "osc1.release": 4,
+    "osc2.wave": 3,
+    "osc2.coarse": -12,
+    "osc2.pw": 40,
+    "osc2.decay": 7,
+    "osc2.sustain": 10,
+    "osc2.release": 4,
+    "filter.mode": 1,
+    "filter.cutoff": 1800,
+    "filter.resonance": 9,
+    "vel.cutoff": 0.6,
+    "assign.mode": 2,
+    "mix.level": -1.2
+  },
+  "upper": {},
+  "tables": {
+    "lower": [
+      "bside-table 1",
+      "[filter]",
+      "    sweep -75 x20",
+      "    end"
+    ]
+  }
+}

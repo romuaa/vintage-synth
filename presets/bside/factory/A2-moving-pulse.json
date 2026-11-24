@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Moving Pulse",
+  "category": "Lead",
+  "author": "Exitium",
+  "global": {},
+  "lower": {
+    "osc1.wave": 3,
+    "osc1.release": 5,
+    "filter.cutoff": 1500,
+    "filter.resonance": 3,
+    "assign.mode": 2,
+    "porta.time": 0.3,
+    "porta.mode": 1,
+    "mix.level": -1.5
+  },
+  "upper": {},
+  "tables": {
+    "lower": [
+      "bside-table 1",
+      "[wave1]",
+      "    wave pulse+gate +0 ticks 15",
+      "vib:",
+      "    pitch +0.2 ticks 2",
+      "    pitch -0.2 ticks 2",
+      "    jump vib",
+      "release:",
+      "    gate off",
+      "    end",
+      "[pulse1]",
+      "    set 768",
+      "    pingpong 768 3328 40"
+    ]
+  }
+}
