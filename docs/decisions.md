@@ -410,6 +410,22 @@ independent review".
 | 5 | Implementer's readings 1 (latency includes the board filters' delay), 2 (tempo only while the host plays and gives a position) and 3 (`chip.clock` switches both parts) differ from the contract's wording. | Accepted and written into the contract: each is the stricter or the only workable reading. (review) |
 | 6 | CPU: Model B misses its gates at the orchestrator's bench (16 voices 5.15 to 5.22 % against 5 %, Dual 10.34 to 10.51 % against 10 %); Model A sits on its gates; the chain measures about 1 ns slower than on `main`. | The gates stand. The author's two cost rounds missed, so the fixes and one more cost round go to a stronger model, as the escalation rule says. If that misses too, the choice goes to the owner. (review) |
 
+### S4a: readings of the fix round (2026-11-24, all review)
+
+Taken while fixing the review's findings and in the cost round. A second independent review of
+this round is not yet in.
+
+| # | Point | Reading taken (reason) |
+|---|---|---|
+| 1 | Shared shares | Each chip has a share that ramps over the 3 ms fade; its weight is share / sum of shares, so the weights always add up to 1. A note joins at share 0 when another chip already carries the output, and at 1 when none does (so one voice is still Per Note bit for bit). The chip chain takes the weight per bus sample (`finishSharedWeighted`); the counted share computes what it did. (review) |
+| 2 | Shared, idle | An idle chip hands its share on only while another chip can take it; otherwise it keeps it and is judged on its whole output. The quiet criterion is the chip's actual output at weight 0, not a separate own-contribution signal: the board high-pass still holds the memory of the share (133 ms), so most voices still leave by the 500 ms + 3 ms rule, as in Per Note. This is short of the contract's wording ("stops costing CPU within the same times" holds; "judged on its own contribution" only in effect). (review) |
+| 3 | Shared, steal | The stage weights stay at a sum of 1 through a steal, which conserves DC; the audible sum dips by at most a quarter of the stolen chip's share at mid-fade (measured with 16 voices: 0.0185 of the chord, against 0.0625 lost before). Scaling the other chips up instead produced a DC step on Model A, because a chip's board high-pass has already removed the DC of its share. (review) |
+| 4 | Shared, fading chip | A fading chip's input to the shared filter fades with its output when others carry the output. (review) |
+| 5 | Late notes | A Retarget of a waiting note restarts its delay count; a Retarget of a sounding late note ends its delay. A note-on and note-off in the same sample while waiting is released at once at its start. Mono modes never emit a steal, so "a steal in Solo" does not exist; the real case (a late start after a switch in Solo, then a legato return) is fixed and tested. (review) |
+| 6 | Pad ring | 128 samples: twice the largest possible difference between the two chains (63). (review) |
+| 7 | Cost round | One change: Per Note, the chain runs a block of bus samples in one loop when nothing can happen inside it (no write in flight or due, cutoff standing still, not the first samples after a reset or suspend), otherwise per sample as before; the same bits, shown by a direct comparison test and by every chip test passing unchanged. Shared and the float variant stay per sample. The suspected slowdown of the chain against `main` was not reproduced (measurement noise). The part's own overhead (about 0.15 % of a core) was left alone. (review) |
+| 8 | Steal thump (open, for the owner's ear) | A stolen voice restarts with its envelopes at the chip's power-on value, as 8.6.4 asks under Clean and Precondition: with 16 held notes a steal differs from the no-steal render by about 0.16 within 10 ms. Not changed in S4a; to be judged in the S4b audition. (review) |
+
 ## B-Side S3a round 2: the review's findings (2026-11-20, all review)
 
 What round 2 changed, what it measured and what stays open. Fitting traces (never committed, under the developer cache):
