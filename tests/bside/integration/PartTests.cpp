@@ -7,9 +7,12 @@
 
 #include "PartTestSupport.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <random>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace bs_part_test;
@@ -65,7 +68,8 @@ double measuredDelay (HostConfig h, int model, bool shared, int n)
     Rig rig (h, p, 512);
     rig.part->setProgram (&prog);
     const int note = 36;
-    const auto y = rig.run (n + static_cast<int> (0.03 * h.rate), { on (n, note) });
+    // long enough for the edge, the latency and the window edgeAt reads behind it (the latency is 134 host samples at 8 kHz x1)
+    const auto y = rig.run (n + static_cast<int> (0.03 * h.rate) + rig.part->getLatencySamples() + 80, { on (n, note) });
     // the accumulator starts at 0 at the note-on cycle; the pulse rises when bits 23..12 reach 2048: after 2^23 / F cycles
     const double f = 440.0 * std::exp2 ((note - 69) / 12.0) * 16777216.0 / 985248.0;
     const double edgeCycles = 8388608.0 / f;
@@ -616,6 +620,41 @@ TEST_CASE ("Part mapping: chip.model, chip.resolution, chip.volume_dc and chip.c
     }
 }
 
+TEST_CASE ("Part mapping: restart.policy changes the output: Clean, Precondition and Authentic differ on a retrigger", "[bside][part][mapping]")
+{
+    // 8.6.4 / 8.16: a note retriggered on its voice while the release still sounds (release 15: the envelope's rate
+    // counter runs a long period). Authentic applies no part of the restart section, so the oscillator's phase runs on;
+    // Clean and Precondition restart it (mode phase). Clean also clears the envelope's rate counter directly, so its
+    // attack never waits; Precondition's can wait for the counter to wrap (the envelope delay of the chip).
+    const auto prog = compile ("bside-table 1\n[restart]\nmode phase\n");
+    std::vector<float> y[3];
+    for (const int policy : { 0, 1, 2 })
+    {
+        bs::PartParams p;
+        p.restartPolicy = policy;
+        p.osc1Wave = 2;
+        p.osc1Filter = 0;
+        p.osc1Release = 15;
+        Rig rig ({ 48000.0, 2 }, p);
+        rig.part->setProgram (&prog);
+        rig.run (3000, { on (0, 57), off (2000, 57) });
+        y[policy] = rig.run (4800, { on (0, 57) }); // the retrigger, on the same voice
+        REQUIRE (rig.part->numActiveVoices() == 1);
+        REQUIRE (peakOf (y[policy]) > 0.01);
+    }
+    const char* names[3] { "Clean", "Precondition", "Authentic" };
+    for (const auto& pair : { std::pair<int, int> { 0, 1 }, std::pair<int, int> { 0, 2 }, std::pair<int, int> { 1, 2 } })
+    {
+        double diff = 0.0;
+        for (std::size_t i = 0; i < y[0].size(); ++i)
+            diff = std::max (diff, std::abs (static_cast<double> (y[pair.first][i]) - static_cast<double> (y[pair.second][i])));
+        const double peak = std::max (peakOf (y[pair.first]), peakOf (y[pair.second]));
+        std::printf ("[restart] %s against %s after a retrigger: largest difference %.4f (peak %.4f)\n", names[pair.first], names[pair.second], diff, peak);
+        INFO (names[pair.first] << " against " << names[pair.second] << ": largest difference " << diff << ", peak " << peak);
+        CHECK (diff > 0.05 * peak);
+    }
+}
+
 // ---- idle (8.5, 8.21.1) -----------------------------------------------------------------------------------------
 
 TEST_CASE ("Part idle: after its note-off a voice gets enterIdle, falls silent, leaves the sum and is idle for the allocator; idle voices are not rendered", "[bside][part][idle]")
@@ -968,6 +1007,244 @@ TEST_CASE ("Part Shared: several voices share one filter (their output differs f
     }
 }
 
+namespace
+{
+/** The largest second difference of y over host samples [from, to): what a click adds to a smooth signal. */
+double roughness (const std::vector<float>& y, int from, int to)
+{
+    double w = 0.0;
+    for (int i = std::max (2, from); i < std::min (to, static_cast<int> (y.size())); ++i)
+        w = std::max (w, std::abs (static_cast<double> (y[static_cast<std::size_t> (i)]) - 2.0 * static_cast<double> (y[static_cast<std::size_t> (i - 1)])
+                                   + static_cast<double> (y[static_cast<std::size_t> (i - 2)])));
+    return w;
+}
+
+/** Shared, triangles through the low-pass (a smooth signal: a click stands out in its second difference). */
+bs::PartParams smoothShared (int model, int topology = 1)
+{
+    bs::PartParams p;
+    p.chipModel = model;
+    p.filterTopology = topology;
+    p.osc1Wave = 1; // triangle
+    p.osc1Filter = 1;
+    p.filterCutoff = 500.0f;
+    p.osc1Release = 0;
+    return p;
+}
+} // namespace
+
+TEST_CASE ("Part Shared: releases and leaves in any order: the notes that go on sounding are not disturbed, every voice leaves", "[bside][part][shared]")
+{
+    // Three held notes, released in every order 700 ms apart (so that the others still sound when one leaves). Each released chip goes idle, hands its share of the
+    // shared filter's output on and leaves the sum (within 505 ms of going idle, as Per Note); the chips that stay take
+    // its share over the 3 ms fade (8.21.1 after the review). Around every leave the output is as smooth as the held
+    // chord was: with a share that steps, or a chip that takes its share out with it, the second difference there is
+    // 10 to 100 times the chord's own.
+    const int notes[3] { 48, 55, 64 };
+    for (const int model : { 1, 0 })
+        for (const auto& order : { std::array<int, 3> { 0, 1, 2 }, std::array<int, 3> { 2, 1, 0 }, std::array<int, 3> { 1, 2, 0 },
+                                   std::array<int, 3> { 0, 2, 1 }, std::array<int, 3> { 1, 0, 2 }, std::array<int, 3> { 2, 0, 1 } })
+        {
+            Rig rig ({ 48000.0, 2 }, smoothShared (model), 48);
+            std::vector<vs::NoteEvent> ev { on (0, notes[0]), on (480, notes[1]), on (960, notes[2]) };
+            for (int k = 0; k < 3; ++k)
+                ev.push_back (off (24000 + 33600 * k, notes[order[static_cast<std::size_t> (k)]]));
+            std::vector<float> y;
+            std::vector<int> leaves; // host samples at which a voice left the sum
+            std::size_t next = 0;
+            int active = 0;
+            bool finite = true;
+            for (int b = 0; b < 3200; ++b)
+            {
+                std::vector<vs::NoteEvent> chunk;
+                while (next < ev.size() && ev[next].offset < (b + 1) * 48)
+                {
+                    auto e = ev[next++];
+                    e.offset -= b * 48;
+                    chunk.push_back (e);
+                }
+                const auto part = rig.run (48, chunk, 48);
+                for (const float v : part)
+                    finite = finite && std::isfinite (v);
+                y.insert (y.end(), part.begin(), part.end());
+                const int now = rig.part->numActiveVoices();
+                for (int k = now; k < active; ++k)
+                    leaves.push_back ((b + 1) * 48);
+                active = now;
+            }
+            INFO ("model " << (model == 0 ? "A" : "B") << ", release order " << order[0] << order[1] << order[2]);
+            REQUIRE (finite);
+            REQUIRE (leaves.size() == 3);
+            CHECK (rig.part->numActiveVoices() == 0);
+            CHECK_FALSE (rig.part->isSounding());
+            const double chord = roughness (y, 12000, 24000); // the three notes held
+            REQUIRE (chord > 0.0);
+            REQUIRE (peakOf (y, 12000, 24000) > 0.02);
+            for (std::size_t k = 0; k < leaves.size(); ++k)
+            {
+                // the release itself (release 0: a 6 ms ramp of the note's own level) is the note's own sound; a leave
+                // comes about 500 ms later, when only the other notes sound
+                const int at = leaves[k];
+                const int released = 24000 + 33600 * static_cast<int> (k);
+                CHECK (at - released <= static_cast<int> (0.57 * 48000.0)); // idle within 60 ms, gone within 505 ms more
+                const double r = roughness (y, at - 480, at + 480);
+                std::printf ("[shared leave] model %s order %d%d%d: leave %zu at %.3f s, roughness %.3g (held chord %.3g, ratio %.2f)\n", model == 0 ? "A" : "B",
+                             order[0], order[1], order[2], k, at / 48000.0, r, chord, r / chord);
+                INFO ("leave " << k << " at host sample " << at << ": second difference " << r << ", the held chord's " << chord);
+                CHECK (r <= 1.5 * chord);
+            }
+            CHECK (peakOf (rig.run (4800)) <= 0.0);
+        }
+}
+
+TEST_CASE ("Part Shared: a note that joins the sum does not disturb a held note beyond its own sound", "[bside][part][shared]")
+{
+    // Note A held through the shared filter; note B joins with a table that never opens its gate, so B has no sound of
+    // its own: all it does is take its share of the filter's output. Against the same render without B, the difference
+    // while B's share comes up (the 3 ms fade) is no larger than afterwards, when the two chips share the output half
+    // and half (what remains then is the two stages' curves seeing half the signal each: the topology's own, 8.5). A
+    // share that jumped, or weights that did not add up to 1, would show a larger difference in the join's window.
+    const auto silent = compile ("bside-table 1\n[wave1]\n    wave saw +0\n    end\n");
+    for (const int model : { 1, 0 })
+    {
+        std::vector<float> y[2];
+        const int join = 24000, total = 36000;
+        for (const int withB : { 0, 1 })
+        {
+            auto p = smoothShared (model);
+            p.filterResonance = 6;
+            Rig rig ({ 48000.0, 2 }, p, 48);
+            y[withB] = rig.run (join, { on (0, 48) }, 48);
+            rig.part->setProgram (&silent);
+            const auto tail = rig.run (total - join, withB != 0 ? std::vector<vs::NoteEvent> { on (0, 60) } : std::vector<vs::NoteEvent> {}, 48);
+            y[withB].insert (y[withB].end(), tail.begin(), tail.end());
+            CHECK (rig.part->numActiveVoices() == 1 + withB);
+            if (withB != 0)
+                CHECK (rig.part->getVoice (1).chain.chip().envelope (0) == 0); // B is silent by itself
+        }
+        auto diff = [&] (int from, int to) {
+            double w = 0.0;
+            for (int i = from; i < to; ++i)
+                w = std::max (w, std::abs (static_cast<double> (y[1][static_cast<std::size_t> (i)]) - static_cast<double> (y[0][static_cast<std::size_t> (i)])));
+            return w;
+        };
+        const int fade = 144 + 30;                             // 3 ms and the part's latency, in host samples
+        const double during = diff (join, join + fade);        // B's share comes up
+        const double after = diff (join + fade, join + 2400);  // the shares at one half each
+        const double before = diff (0, join);
+        std::printf ("[shared join] model %s: largest |with B - without B| before %.3g, during the join %.3g, after it %.3g (held note's peak %.3g)\n",
+                     model == 0 ? "A" : "B", before, during, after, peakOf (y[0], 12000, 24000));
+        INFO ("model " << (model == 0 ? "A" : "B") << ": during the join " << during << ", after it " << after << ", the held note's peak " << peakOf (y[0]));
+        CHECK (before <= 0.0);
+        CHECK (after > 0.0); // B is in the sum: the output is shared
+        CHECK (during <= after);
+        // and the join is smooth: no more roughness than the held note's own
+        CHECK (roughness (y[1], join - 48, join + 480) <= 1.5 * roughness (y[0], join - 48, join + 480));
+    }
+}
+
+TEST_CASE ("Part Shared: a stolen voice's share of the filter's output goes to the others while it fades", "[bside][part][shared]")
+{
+    // 16 held notes through the shared filter; the first has no sound of its own (its table never opens the gate), the
+    // other 15 play. A 17th note steals the first voice: its output fades for 3 ms, and with it what it carries of the
+    // filter's output, a sixteenth of the chord. It hands that share on to the other chips over the same 3 ms (8.21.1
+    // after the review), so the chord dips by at most a quarter of a sixteenth, at mid-fade, and is whole again when the
+    // fade ends; without the hand-over it has lost the whole sixteenth by then. Measured as the difference from the
+    // render without the steal, relative to that render, wherever it is not near a zero crossing. (What follows the
+    // fade is the new note's own start.) Model B: its stages are close to linear, so the ratio is the lost share.
+    const auto silent = compile ("bside-table 1\n[wave1]\n    wave saw +0\n    end\n");
+    std::vector<float> y[2];
+    const int steal = 24000, fade = 144, latency = 22; // host samples
+    for (const int withSteal : { 0, 1 })
+    {
+        auto p = smoothShared (1);
+        p.filterCutoff = 400.0f;
+        Rig rig ({ 48000.0, 2 }, p, 48);
+        REQUIRE (rig.part->getLatencySamples() == latency);
+        rig.part->setProgram (&silent);
+        y[withSteal] = rig.run (48, { on (0, 30) }, 48);
+        rig.part->setProgram (nullptr);
+        std::vector<vs::NoteEvent> chord;
+        for (int k = 1; k < 16; ++k)
+            chord.push_back (on (48 * k, 36 + 2 * k));
+        const auto held = rig.run (steal - 48, chord, 48);
+        y[withSteal].insert (y[withSteal].end(), held.begin(), held.end());
+        REQUIRE (rig.part->numActiveVoices() == 16);
+        REQUIRE (rig.part->getVoice (0).chain.chip().envelope (0) == 0);
+        const auto tail = rig.run (480, withSteal != 0 ? std::vector<vs::NoteEvent> { on (0, 90) } : std::vector<vs::NoteEvent> {}, 48);
+        y[withSteal].insert (y[withSteal].end(), tail.begin(), tail.end());
+        if (withSteal != 0)
+            CHECK (rig.part->getVoice (0).note == 90); // the first voice was stolen
+    }
+    const double chordPeak = peakOf (y[0], 12000, steal);
+    REQUIRE (chordPeak > 0.02);
+    double worst = 0.0, atEnd = 0.0;
+    int measured = 0, measuredAtEnd = 0;
+    for (int i = steal + latency; i < steal + latency + fade - 4; ++i)
+    {
+        const double ref = static_cast<double> (y[0][static_cast<std::size_t> (i)]);
+        if (std::abs (ref) < 0.2 * chordPeak)
+            continue;
+        const double lost = std::abs ((static_cast<double> (y[1][static_cast<std::size_t> (i)]) - ref) / ref);
+        worst = std::max (worst, lost);
+        ++measured;
+        if (i >= steal + latency + fade - 30)
+        {
+            atEnd = std::max (atEnd, lost);
+            ++measuredAtEnd;
+        }
+    }
+    std::printf ("[shared steal] the chord during a steal's fade: at most %.4f of it missing (a sixteenth is %.4f), %.4f in the fade's last 26 samples\n",
+                 worst, 1.0 / 16.0, atEnd);
+    INFO ("at most " << worst << " of the chord missing during the fade, " << atEnd << " at its end; a sixteenth is " << 1.0 / 16.0);
+    CHECK (measured > 60);
+    CHECK (measuredAtEnd > 5);
+    CHECK (worst <= 0.4 / 16.0); // a quarter of a sixteenth at mid-fade, and the stages' own difference
+    CHECK (atEnd <= 0.15 / 16.0); // whole again at the end (without the hand-over: the whole sixteenth is gone there)
+}
+
+TEST_CASE ("Part Shared: an idle voice is judged on its own contribution: it leaves as Per Note while another note sounds", "[bside][part][shared]")
+{
+    // Note B's table gives it an envelope that falls to 0 at once (decay 0, sustain 0): held for 2.5 s it is silent and
+    // its board filters have settled, so when its key goes up its own output is quiet. Per Note it leaves within a few
+    // control intervals of going idle. In Shared its output also carries its share of the filter's output, that is the
+    // held note A; judged on that it would never be quiet and stay for the whole 500 ms (and cost a voice). It hands its
+    // share on over the 3 ms fade and leaves on its own contribution (8.21.1 after the review).
+    const auto pluck = compile ("bside-table 1\n[wave1]\n    adsr 0 0 0 0, wave saw+gate +0\n    end\n");
+    int leftAfter[2] { -1, -1 };
+    for (const int topology : { 0, 1 })
+    {
+        auto p = smoothShared (1, topology);
+        p.filterMode = 2;  // band-pass: the filter's output carries no DC of the held note's envelope
+        p.osc1Decay = 0;
+        p.osc1Sustain = 3; // a low level: what the stage's curve rectifies of it is far below the quiet level
+        Rig rig ({ 48000.0, 2 }, p, 48);
+        rig.run (4800, { on (0, 48) }, 48);
+        rig.part->setProgram (&pluck);
+        rig.run (120000, { on (0, 60) }, 48);
+        REQUIRE (rig.part->numActiveVoices() == 2);
+        REQUIRE (rig.part->getVoice (1).chain.chip().envelope (0) == 0);
+        rig.run (0, { off (0, 60) });
+        int idleAt = -1;
+        for (int ms = 0; ms < 700 && leftAfter[topology] < 0; ++ms)
+        {
+            rig.run (48, {}, 48);
+            if (idleAt < 0 && rig.part->getVoice (1).idleSent)
+                idleAt = ms;
+            if (rig.part->numActiveVoices() == 1)
+                leftAfter[topology] = ms - idleAt;
+        }
+        INFO ((topology == 0 ? "Per Note" : "Shared") << ": idle " << idleAt << " ms after the note-off, left " << leftAfter[topology] << " ms after that");
+        REQUIRE (idleAt >= 0);
+        REQUIRE (leftAfter[topology] >= 0);
+        CHECK (rig.part->getVoice (0).active); // the held note sounds on
+        CHECK (peakOf (rig.run (4800, {}, 48)) > 1.0e-4);
+    }
+    std::printf ("[shared idle] a silent idle voice leaves %d ms after going idle Per Note, %d ms in Shared\n", leftAfter[0], leftAfter[1]);
+    CHECK (leftAfter[0] <= 10);
+    CHECK (leftAfter[1] <= leftAfter[0] + 5); // the 3 ms hand-over of its share, then quiet for a control interval
+}
+
 TEST_CASE ("Part Shared: the filter takes the most recent note's cutoff even when its engine writes nothing new", "[bside][part][shared]")
 {
     // Key follow gives notes 48 and 72 their own cutoffs. Every voice plays once (All Sound Off makes each idle at
@@ -1042,6 +1319,68 @@ TEST_CASE ("Part: a structural switch fades the sounding voices over 3 ms, reset
             CHECK (cfg.authentic);
         if (std::string (s.what) == "chip.volume_dc")
             CHECK (cfg.volumeDc);
+
+        // No click, measured (8.21.1 after the review): the output divided by a no-switch reference is the fade's gain;
+        // it never steps by more than 3/288 of the signal at the fade's end. At 96 kHz x1 (no decimator behind the part:
+        // one host sample is one internal sample, the fade is 288 samples), from either model, a held direct sawtooth.
+        // (A step between neighbouring samples no larger than the note's own, as above, cannot see a step of 4 %.)
+        for (const int model : { 1, 0 })
+        {
+            auto render = [&] (bool withSwitch) {
+                bs::PartParams q;
+                q.chipModel = model;
+                q.osc1Wave = 2;
+                q.osc1Filter = 0;
+                int c = 0;
+                Rig r ({ 96000.0, 1 }, q, 64);
+                auto y = r.run (9600, { on (0, 45) }, 64);
+                if (withSwitch)
+                {
+                    bs::PartParams to;
+                    int toClock = 0;
+                    s.apply (to, toClock); // which member the switch moves (from the defaults)
+                    if (std::string (s.what) == "chip.model")
+                        q.chipModel = 1 - model;
+                    q.filterTopology = to.filterTopology;
+                    q.chipResolution = to.chipResolution;
+                    q.chipVolumeDc = to.chipVolumeDc;
+                    c = toClock;
+                    r.set (q);
+                    r.part->setChipClock (c);
+                }
+                const auto tail = r.run (960, {}, 64);
+                y.insert (y.end(), tail.begin(), tail.end());
+                if (withSwitch)
+                    CHECK (r.part->switchesDone() == 1);
+                return y;
+            };
+            const auto y = render (true), ref = render (false);
+            const int at = 9600;
+            double worst = 0.0, lastGain = 1.0;
+            int measured = 0, worstAt = 0;
+            for (int i = at + 200; i < at + 400; ++i)
+            {
+                const auto k = static_cast<std::size_t> (i);
+                if (std::abs (ref[k]) < 0.02f || std::abs (ref[k - 1]) < 0.02f)
+                    continue;
+                const double g = static_cast<double> (y[k]) / static_cast<double> (ref[k]);
+                const double gBefore = static_cast<double> (y[k - 1]) / static_cast<double> (ref[k - 1]);
+                if (std::abs (g - gBefore) > worst)
+                {
+                    worst = std::abs (g - gBefore);
+                    worstAt = i - at;
+                }
+                if (i < at + 288)
+                    lastGain = g;
+                ++measured;
+            }
+            INFO ("from Model " << (model == 0 ? "A" : "B") << ": the fade's gain steps by at most " << worst * 288.0 << " / 288 (at +" << worstAt
+                                << "), its last value " << lastGain * 288.0 << " / 288, over " << measured << " samples");
+            CHECK (measured > 100);
+            CHECK (worst <= 3.0 / 288.0);
+            CHECK (lastGain <= 3.0 / 288.0); // the fade reaches the output in full
+            CHECK (peakOf (y, static_cast<std::size_t> (at + 288 + 1)) <= 1.0e-9); // then silence (the shaped rounding's last errors)
+        }
     }
 }
 

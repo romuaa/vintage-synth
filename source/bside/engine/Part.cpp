@@ -208,6 +208,9 @@ void Part::configureVoices() noexcept
         v.releaseCountdown = -1;
         v.startDelay = 0;
         v.late = false;
+        v.share = 1.0;
+        v.shareUp = true;
+        v.startedAt = 0;
     }
     refClock.prepare (clockHz, internalRate);
     refCycle = 0;
@@ -530,6 +533,8 @@ void Part::execute (const vs::VoiceAction& a) noexcept
             }
             else if (a.type == vs::VoiceAction::Type::Steal && v.active)
             {
+                if (current.shared && carriedByOthers (v))
+                    v.shareUp = false; // Shared: its share goes to the others as it fades (its new note joins from 0)
                 v.fadeKind = NoteVoice::Fade::steal;
                 v.fadeLeft = fadeSamples;
                 v.fadeStep = v.fade / static_cast<double> (fadeSamples);
@@ -659,7 +664,23 @@ void Part::startNote (NoteVoice& v, int index, const vs::VoiceAction& a, bool st
     if (current.model == 0)
         v.filter.setVariation (map::percentToFraction (static_cast<float> (c.v[sVariation])));
     if (current.shared)
+    {
+        // its share of the shared filter's output (Part.h "SHARES"): from 0 when other chips carry it already (it joins
+        // over the 3 ms fade), in full when none does; every idle chip hands its share on to it
+        bool carried = false;
+        for (auto& u : *voices)
+            if (&u != &v && u.active)
+            {
+                carried = carried || (u.share > 0.0 && u.startedAt < partSample);
+                if (u.idleSent)
+                    u.shareUp = false;
+            }
+        if (fromIdle || stolen)
+            v.share = carried ? 0.0 : 1.0;
+        v.shareUp = true;
+        v.startedAt = partSample;
         setMostRecent (index);
+    }
 
     const program::Program& table = program != nullptr ? *program : emptyTable();
     v.restart = table.restart;
@@ -1150,9 +1171,13 @@ void Part::renderShared (int len) noexcept
         sharedChanged = sharedMoving = false;
         return;
     }
+    std::array<bool, kVoices> shedding {}; // chips that still hand a share on in this segment
     for (int a = 0; a < nAct; ++a)
-        std::fill (voiceOut[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])].begin(),
-                   voiceOut[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])].begin() + len, 0.0);
+    {
+        const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
+        std::fill (voiceOut[vi].begin(), voiceOut[vi].begin() + len, 0.0);
+        shedding[vi] = ! (*voices)[vi].shareUp && (*voices)[vi].share > 0.0;
+    }
 
     int pos = 0;
     while (pos < len)
@@ -1206,6 +1231,8 @@ void Part::renderShared (int len) noexcept
                 v.chain.settleShared (linS, lpS);
             }
         }
+        // the chips' shares of the filter's output over these samples, and a fading chip's input factor
+        const bool inputFades = sharedWeights (act, nAct, pos, m);
         for (int i = 0; i < m; ++i)
         {
             const std::int64_t p = partSample + pos + i;
@@ -1222,8 +1249,15 @@ void Part::renderShared (int len) noexcept
             }
             const double dc = dcChain.staticFilterBusDc (i);
             double in = dc;
-            for (int a = 0; a < nAct; ++a)
-                in += (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])].chain.filterInputAc (i);
+            if (! inputFades)
+                for (int a = 0; a < nAct; ++a)
+                    in += (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])].chain.filterInputAc (i);
+            else
+                for (int a = 0; a < nAct; ++a)
+                {
+                    const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
+                    in += shareIn[vi][static_cast<std::size_t> (i)] * (*voices)[vi].chain.filterInputAc (i);
+                }
             if (sharedSettle)
             {
                 sharedFilter.primeSteady (dc); // the static level: the voices' DC, no audio, envelopes 0
@@ -1238,8 +1272,8 @@ void Part::renderShared (int len) noexcept
         for (int a = 0; a < nAct; ++a)
         {
             const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
-            (*voices)[vi].chain.finishShared (shShape.data(), shLinear.data(), shLowPass.data(), shStatic.data(), nAct,
-                                              voiceOut[vi].data() + pos, m);
+            (*voices)[vi].chain.finishSharedWeighted (shShape.data(), shLinear.data(), shLowPass.data(), shStatic.data(), shareW[vi].data(),
+                                                      voiceOut[vi].data() + pos, m);
         }
         pos += m;
     }
@@ -1247,7 +1281,76 @@ void Part::renderShared (int len) noexcept
     {
         const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
         mixVoice ((*voices)[vi], voiceOut[vi].data(), sum.data(), len);
+        // the quiet criterion is judged on the chip's own contribution (8.21.1 after the review): not while it still
+        // carried a share that it is handing on
+        if (shedding[vi])
+            (*voices)[vi].quiet = 0;
     }
+}
+
+bool Part::carriedByOthers (const NoteVoice& v) const noexcept
+{
+    for (const auto& u : *voices)
+        if (&u != &v && u.active && u.shareUp && u.fadeLeft == 0)
+            return true;
+    return false;
+}
+
+bool Part::sharedWeights (const std::array<int, kVoices>& act, int nAct, int pos, int m) noexcept
+{
+    const double step = 1.0 / static_cast<double> (fadeSamples);
+    bool moving = false;
+    double total = 0.0;
+    for (int a = 0; a < nAct; ++a)
+    {
+        const auto& v = (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])];
+        moving = moving || (v.shareUp ? v.share < 1.0 : (v.share > 0.0 || v.fadeLeft > 0));
+        total += v.share;
+    }
+    if (! moving)
+    {
+        // nothing moves: each chip's share of the sum (one chip, or equal chips: 1 / n; an idle chip that handed on: 0)
+        for (int a = 0; a < nAct; ++a)
+        {
+            const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
+            const double w = total > 0.0 ? (*voices)[vi].share / total : 0.0;
+            std::fill (shareW[vi].begin(), shareW[vi].begin() + m, w);
+        }
+        return false;
+    }
+    bool inputFades = false;
+    std::array<double, kVoices> share {};
+    for (int i = 0; i < m; ++i)
+    {
+        // sample i: every share i steps on its way to its target; the weights are the shares over their sum
+        double all = 0.0;
+        for (int a = 0; a < nAct; ++a)
+        {
+            const auto& v = (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])];
+            const double moved = static_cast<double> (i) * step;
+            const double s = v.shareUp ? std::min (1.0, v.share + moved) : std::max (0.0, v.share - moved);
+            share[static_cast<std::size_t> (a)] = s;
+            all += s;
+        }
+        for (int a = 0; a < nAct; ++a)
+        {
+            const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
+            const auto& v = (*voices)[vi];
+            shareW[vi][static_cast<std::size_t> (i)] = all > 0.0 ? share[static_cast<std::size_t> (a)] / all : 0.0;
+            // a chip that fades out while others carry the filter's output: its input to the filter fades with it (the
+            // output gain mixVoice applies at this sample)
+            const bool fading = v.fadeLeft > 0 && ! v.shareUp;
+            shareIn[vi][static_cast<std::size_t> (i)] = fading ? std::max (0.0, v.fade - static_cast<double> (pos + i) * v.fadeStep) : 1.0;
+            inputFades = inputFades || fading;
+        }
+    }
+    for (int a = 0; a < nAct; ++a)
+    {
+        auto& v = (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])];
+        const double moved = static_cast<double> (m) * step;
+        v.share = v.shareUp ? std::min (1.0, v.share + moved) : std::max (0.0, v.share - moved);
+    }
+    return inputFades;
 }
 
 Part::CtlState Part::partControl() noexcept
@@ -1317,6 +1420,13 @@ bool Part::voiceControl (NoteVoice& v, const CtlState& c) noexcept
             v.idleSent = true;
             v.sinceIdle = 0;
             v.quiet = 0;
+            if (current.shared)
+            {
+                // Shared: it hands its share of the filter's output on to the chips that carry it (Part.h "SHARES"),
+                // so that its own contribution is what the quiet criterion below sees
+                if (carriedByOthers (v))
+                    v.shareUp = false;
+            }
         }
         return false;
     }
@@ -1330,6 +1440,8 @@ bool Part::voiceControl (NoteVoice& v, const CtlState& c) noexcept
     const auto leaveAfter = static_cast<std::int64_t> (std::llround (kLeaveSeconds * internalRate));
     if (v.sinceIdle >= leaveAfter)
     {
+        if (current.shared && carriedByOthers (v))
+            v.shareUp = false; // Shared: what it still carries of the filter's output goes to the others as it fades
         v.fadeKind = NoteVoice::Fade::leave;
         v.fadeLeft = fadeSamples;
         v.fadeStep = v.fade / static_cast<double> (fadeSamples);

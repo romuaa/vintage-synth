@@ -140,6 +140,11 @@ struct NoteVoice
     int fadeLeft = 0;
     Fade fadeKind = Fade::none;
 
+    // ---- Shared: this chip's membership of the shared filter's output (Part.h "SHARED") ----
+    double share = 1.0;         // 0 .. 1; moves to its target over the 3 ms fade (the weights are share / the sum of shares)
+    bool shareUp = true;        // the target: 1 (a member) or 0 (an idle chip that has handed its share on)
+    std::int64_t startedAt = 0; // the part sample its note started at
+
     // ---- a note waiting for a steal fade or a structural switch ----
     bool pending = false;
     vs::VoiceAction pendingAction {};
