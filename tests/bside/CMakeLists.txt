@@ -169,6 +169,7 @@ if(VS_BUILD_BSIDE)
         integration/StateDumpTests.cpp
         integration/TablePresetTests.cpp
         integration/ParamTests.cpp
+        integration/BankRender.cpp
         review/PartReviewTests.cpp
         review/PartReview2Tests.cpp)
     target_link_libraries(BSideTests PRIVATE
