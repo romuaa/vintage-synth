@@ -1333,7 +1333,12 @@ TEST_CASE ("Part: a structural switch fades the sounding voices over 3 ms, reset
                 q.osc1Filter = 0;
                 int c = 0;
                 Rig r ({ 96000.0, 1 }, q, 64);
-                auto y = r.run (9600, { on (0, 45) }, 64);
+                // (one vector filled sample by sample: GCC 11 reports a stringop-overflow, wrongly, for a range insert
+                // into a vector that was just returned, inlined here)
+                std::vector<float> y;
+                y.reserve (9600 + 960);
+                for (const float v : r.run (9600, { on (0, 45) }, 64))
+                    y.push_back (v);
                 if (withSwitch)
                 {
                     bs::PartParams to;
@@ -1348,8 +1353,8 @@ TEST_CASE ("Part: a structural switch fades the sounding voices over 3 ms, reset
                     r.set (q);
                     r.part->setChipClock (c);
                 }
-                const auto tail = r.run (960, {}, 64);
-                y.insert (y.end(), tail.begin(), tail.end());
+                for (const float v : r.run (960, {}, 64))
+                    y.push_back (v);
                 if (withSwitch)
                     CHECK (r.part->switchesDone() == 1);
                 return y;
