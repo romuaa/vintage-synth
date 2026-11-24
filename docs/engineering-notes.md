@@ -3,6 +3,41 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S4a: the part around the chip (2026-11-24)
+
+- **An author's "all gates pass" missed five audible or timing defects.** Each was found by a
+  reviewer's own test written from the contract: compare against a reference render (the same
+  input without the event) instead of against the signal's own steps, and measure lengths and
+  cycles instead of asserting "some difference". Rule: a click test divides by a reference.
+- **A write to a rendering chip at a sample boundary starts the next sample.** Writing and then
+  suspending left the chip one internal sample ahead of its part. Rule: suspend first, then
+  write; and test that every chip of a part is at the part's cycle after every block.
+- **A debug assertion is not a guard.** `jassert (got == m)` was compiled out, and a Shared
+  segment read stale buses. Rule: make the loop render exactly what it reads, in every build.
+- **Shared filter shares and the board high-pass.** A chip's board high-pass has already
+  removed the DC of its share, so scaling other chips up while one fades injects a DC step.
+  Keep the stage weights at a sum of 1 and ramp them.
+- **A count-down that starts at the end of a lockstep segment** must not be charged that
+  segment's length; test late-note timing at several host block lengths in both topologies
+  (blocks of 1 hide it).
+- **Priming a filter on the first sample's value** bakes the waveform's instantaneous level in
+  as DC. Prime on the static level (envelopes 0).
+- **A part's "peak" is the envelope's onset step** through the board high-pass, not the steady
+  waveform. A level rule must say which one it means.
+- **A latency figure from the configured delays misses a filter's phase delay** (the board
+  low-pass, about 10 us): measure an edge.
+- **An exact alias measurement at host rate x p/q needs p >= 2;** with p = 1 everything that
+  folds lands on harmonics and the measurement sees nothing.
+- **Forced inlining of a shared header function** sped up one caller and slowed another by
+  0.3 ns. Give the hot path its own forced-inline form and let the plain form call it.
+- **GCC 11 reports a false `stringop-overflow`** on `vector.insert (end, ...)` into a
+  just-returned vector inside an inlined lambda. Fill the vector another way.
+- **A suspected 1 ns slowdown of the chain against `main` was measurement noise** (browser and
+  window server active). Alternate the two builds in one session before believing a difference
+  of a few percent.
+- **Agent worktrees with symlinked submodules:** `git status` and `git rm` refuse to run;
+  swap the symlinks for empty directories around the git call.
+
 ## A concurrency test that needs luck with the scheduler (2026-11-23)
 - **What happened:** the seqlock test of the editor feed ran a writer in a tight loop of a million writes and
   required that the reader had seen at least one consistent copy meanwhile. On this Mac about 0.3 % of the reads
