@@ -304,6 +304,15 @@ void Part::applyBlockParams() noexcept
     for (std::size_t k = 0; k < goals.size(); ++k)
         sm[k].setGoal (finiteOr (goals[k], 0.0), smoothSteps);
 
+    // the level: a new target starts a 5 ms ramp from where the gain is now
+    const double levelNow = map::levelGain (static_cast<double> (p.mixLevel));
+    if (levelNow < levelGoal || levelNow > levelGoal)
+    {
+        levelGoal = levelNow;
+        levelLeft = rampSamples;
+        levelStep = (levelGoal - levelGain) / static_cast<double> (rampSamples);
+    }
+
     // glide: Vintage's time mapping (99 % of the interval in 5 s x v^2), per control interval
     const double portaSec = static_cast<double> (vs::map::portaTimeSec (std::clamp (p.portaTime, 0.0f, 1.0f)));
     const double ctlRate = internalRate / static_cast<double> (controlInterval);
@@ -394,6 +403,9 @@ void Part::reset() noexcept
     };
     for (std::size_t k = 0; k < now.size(); ++k)
         sm[k].jump (finiteOr (now[k], 0.0));
+    levelGain = levelGoal = map::levelGain (static_cast<double> (target.mixLevel));
+    levelLeft = 0;
+    levelStep = 0.0;
     bendValue = wheelValue = 0.0f;
     vibratoPhase = 0.0;
     switchPending = false;
@@ -434,6 +446,9 @@ void Part::resume() noexcept
     };
     for (std::size_t k = 0; k < now.size(); ++k)
         sm[k].jump (finiteOr (now[k], 0.0));
+    levelGain = levelGoal = map::levelGain (static_cast<double> (target.mixLevel));
+    levelLeft = 0;
+    levelStep = 0.0;
     sm[sBend].jump (static_cast<double> (bendValue));
     sm[sWheel].jump (static_cast<double> (wheelValue));
     vibratoPhase = 0.0;
@@ -822,6 +837,8 @@ void Part::render (float* out, int numSamples, std::span<const vs::NoteEvent> ev
             rounding = chip::render::OutputRounding {};
             quietChain = true;
         }
+        levelGain = levelGoal; // silent: an unfinished ramp is finished
+        levelLeft = 0;
         int at0 = 0;
         for (const auto& e : events)
         {
@@ -941,6 +958,12 @@ void Part::postProcess (float* dst, int len) noexcept
             delayed *= static_cast<double> (switchLeft) / static_cast<double> (fadeSamples);
             switchLeft = std::max (0, switchLeft - 1);
         }
+        // the level (mix.level): on the delayed sum, before the one gain and conversion; the quiet count above stays on the
+        // sum itself, so the level never changes when a part is quiet
+        const double level = levelGain;
+        if (levelLeft > 0)
+            levelGain = --levelLeft == 0 ? levelGoal : levelGain + levelStep;
+        delayed *= level;
         dst[i] = rounding.next (delayed * kChipGain);
         silentRun = s < 0.0 || s > 0.0 ? 0 : silentRun + 1;
     }

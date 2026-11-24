@@ -1,4 +1,4 @@
-// B-Side's per-part host parameters (docs/architecture.md 8.7): the 202 IDs in the contract's order, every
+// B-Side's per-part host parameters (docs/architecture.md 8.7): the 204 IDs in the contract's order, every
 // range, default and label, the display text, the text -> value round trip, state and preset round trips,
 // sessions and files that predate the parameters, lower/upper symmetry and the binding.
 //
@@ -59,7 +59,7 @@ void addOsc (std::vector<Expected>& t, int n)
     t.push_back ({ keep (p + "filter"), keep (q + "Filter"), Kind::Choice, 0, 1, 1, kOffOn });
 }
 
-/** The 63 per-part parameters of 8.7, in order. */
+/** The 64 per-part parameters of 8.7 and 8.21.2, in order. */
 const std::vector<Expected>& contract()
 {
     static const std::vector<Expected> table = [] {
@@ -98,6 +98,7 @@ const std::vector<Expected>& contract()
         t.push_back ({ "bend.range", "Bend Range", Kind::Choice, 0, 12, 2,
                        { "0 st", "1 st", "2 st", "3 st", "4 st", "5 st", "6 st", "7 st", "8 st", "9 st", "10 st", "11 st", "12 st" } });
         t.push_back ({ "mix.pan", "Pan", Kind::Float, -1, 1, 0, {} });
+        t.push_back ({ "mix.level", "Level", Kind::Float, -24, 6, 0, {} });
         return t;
     }();
     return table;
@@ -195,17 +196,17 @@ bool isNewParameterId (const juce::String& id)
 }
 } // namespace
 
-TEST_CASE ("B-Side params: 202 parameters, the 127 new IDs in the contract's order after the first 75", "[bside][params]")
+TEST_CASE ("B-Side params: 204 parameters, the 129 new IDs in the contract's order after the first 75", "[bside][params]")
 {
     Rig rig;
     const auto all = rig.ids();
-    REQUIRE (all.size() == 202);
-    REQUIRE (bs::kParameterCount == 202);
-    REQUIRE (static_cast<int> (contract().size()) == 63);
-    REQUIRE (bs::kPartParamCount == 63);
+    REQUIRE (all.size() == 204);
+    REQUIRE (bs::kParameterCount == 204);
+    REQUIRE (static_cast<int> (contract().size()) == 64);
+    REQUIRE (bs::kPartParamCount == 64);
 
     const auto expected = expectedPartIds();
-    REQUIRE (expected.size() == 127);
+    REQUIRE (expected.size() == 129);
     for (size_t i = 0; i < expected.size(); ++i)
     {
         INFO ("index " << 75 + i);
@@ -213,12 +214,14 @@ TEST_CASE ("B-Side params: 202 parameters, the 127 new IDs in the contract's ord
     }
     CHECK (all[75] == "lower.osc1.wave");
     CHECK (all[75 + 62] == "lower.mix.pan");
-    CHECK (all[75 + 63] == "upper.osc1.wave");
-    CHECK (all[75 + 125] == "upper.mix.pan");
-    CHECK (all[201] == "chip.clock");
+    CHECK (all[75 + 63] == "lower.mix.level");
+    CHECK (all[75 + 64] == "upper.osc1.wave");
+    CHECK (all[75 + 126] == "upper.mix.pan");
+    CHECK (all[75 + 64 + 63] == "upper.mix.level");
+    CHECK (all[203] == "chip.clock");
     CHECK (bs::kLowerFirstIndex == 75);
-    CHECK (bs::kUpperFirstIndex == 138);
-    CHECK (bs::kChipClockIndex == 201);
+    CHECK (bs::kUpperFirstIndex == 139);
+    CHECK (bs::kChipClockIndex == 203);
 
     auto unique = all;
     std::sort (unique.begin(), unique.end());
@@ -563,7 +566,7 @@ TEST_CASE ("B-Side params: a session without the new parameters loads them at th
         {
             const auto id = juce::String (prefix) + e.suffix;
             INFO (id);
-            CHECK (b.get (id) == Catch::Approx (e.def));
+            CHECK (b.get (id) == Catch::Approx (e.def).margin (1.0e-4));
         }
     CHECK (b.get ("chip.clock") == Catch::Approx (0.0f));
 }
@@ -598,7 +601,7 @@ TEST_CASE ("B-Side params: a program file without the new parameters loads at de
     REQUIRE (pm.loadProgramFile (old).isEmpty());
     for (const char* prefix : { "lower.", "upper." })
         for (const auto& e : contract())
-            CHECK (rig.get (juce::String (prefix) + e.suffix) == Catch::Approx (e.def));
+            CHECK (rig.get (juce::String (prefix) + e.suffix) == Catch::Approx (e.def).margin (1.0e-4));
     CHECK (rig.get ("chip.clock") == Catch::Approx (0.0f));
     CHECK (rig.get ("fx.reverb.level") == Catch::Approx (0.25f));
 
@@ -683,7 +686,7 @@ TEST_CASE ("B-Side params: the binding reads the host values, sanitised", "[bsid
     CHECK (lo.osc2Attack == 0);
 }
 
-TEST_CASE ("B-Side params: typed non-finite or huge text gives a finite value inside the range, for all 127", "[bside][params][display]")
+TEST_CASE ("B-Side params: typed non-finite or huge text gives a finite value inside the range, for all 129", "[bside][params][display]")
 {
     Rig rig;
     std::vector<juce::String> ids;
@@ -691,7 +694,7 @@ TEST_CASE ("B-Side params: typed non-finite or huge text gives a finite value in
         for (const auto& e : contract())
             ids.push_back (juce::String (prefix) + e.suffix);
     ids.push_back ("chip.clock");
-    REQUIRE (ids.size() == 127);
+    REQUIRE (ids.size() == 129);
     for (const auto& id : ids)
         for (const char* text : { "nan", "NaN", "-nan", "inf", "-inf", "Infinity", "1e999", "-1e999", "1e39 ms", "9999999999999999999999" })
         {
@@ -904,8 +907,8 @@ TEST_CASE ("B-Side params: every member of a default PartParams is the contract'
         const auto* e = contractEntry (id);                   \
         REQUIRE (e != nullptr);                               \
         CHECK (defaults.member == Catch::Approx (e->def));    \
-        CHECK (lo.member == Catch::Approx (defaults.member)); \
-        CHECK (up.member == Catch::Approx (defaults.member)); \
+        CHECK (lo.member == Catch::Approx (defaults.member).margin (1.0e-4)); \
+        CHECK (up.member == Catch::Approx (defaults.member).margin (1.0e-4)); \
         ++members;                                            \
     }
 #define BS_T_INT(member, id, name, mn, mx, dflt, kind)         \
@@ -923,5 +926,135 @@ TEST_CASE ("B-Side params: every member of a default PartParams is the contract'
 #undef BS_T_FLOAT
 #undef BS_T_INT
 #undef BS_T_CHOICE
-    CHECK (members == 63);
+    CHECK (members == 64);
+}
+
+// ---- mix.level (docs/architecture.md 8.21.2, "One new parameter, first and alone") --------------------------------
+
+TEST_CASE ("B-Side params: mix.level exists for both parts (-24 ... +6 dB, default 0 dB, \"Level\") and is the only addition to the ID list", "[bside][params][level]")
+{
+    Rig rig;
+    for (const char* prefix : { "lower.", "upper." })
+    {
+        const juce::String id = juce::String (prefix) + "mix.level";
+        INFO (id);
+        auto* p = dynamic_cast<juce::AudioParameterFloat*> (rig.param (id));
+        REQUIRE (p != nullptr);
+        CHECK (p->getName (100) == (juce::String (prefix) == "lower." ? "Lower Level" : "Upper Level"));
+        CHECK (p->getNormalisableRange().start == Catch::Approx (-24.0f));
+        CHECK (p->getNormalisableRange().end == Catch::Approx (6.0f));
+        CHECK (p->get() == Catch::Approx (0.0f));
+        CHECK (static_cast<juce::RangedAudioParameter*> (p)->getDefaultValue() == Catch::Approx (p->convertTo0to1 (0.0f)));
+        CHECK (rig.text (id, 0.0f) == "0.0 dB");
+        CHECK (rig.text (id, -6.0f) == "-6.0 dB");
+        CHECK (rig.text (id, 6.0f) == "+6.0 dB");
+        CHECK (rig.fromText (id, "-12 dB") == Catch::Approx (-12.0f));
+        CHECK (rig.fromText (id, "99") == Catch::Approx (6.0f));
+        CHECK (rig.fromText (id, "-99") == Catch::Approx (-24.0f));
+    }
+
+    // The dump of all IDs: the previous list (75 shared, each part's 63 parameters of the contract up to mix.pan,
+    // chip.clock) plus exactly the two appended IDs, each at the end of its part's block.
+    const auto all = rig.ids();
+    REQUIRE (all.size() == 204);
+    std::vector<juce::String> previous;
+    for (size_t i = 0; i < 75; ++i)
+        previous.push_back (all[i]);
+    for (const char* prefix : { "lower.", "upper." })
+        for (size_t k = 0; k + 1 < contract().size(); ++k)
+            previous.push_back (juce::String (prefix) + contract()[k].suffix);
+    previous.push_back ("chip.clock");
+    REQUIRE (previous.size() == 202);
+    CHECK (previous[75 + 62] == "lower.mix.pan");
+    CHECK (previous[75 + 62 + 63] == "upper.mix.pan");
+
+    auto withoutNew = all;
+    withoutNew.erase (std::remove_if (withoutNew.begin(), withoutNew.end(), [] (const juce::String& id) { return id.endsWith ("mix.level"); }),
+                      withoutNew.end());
+    CHECK (withoutNew == previous);
+    CHECK (std::count_if (all.begin(), all.end(), [] (const juce::String& id) { return id.endsWith ("mix.level"); }) == 2);
+    CHECK (all[75 + 63] == "lower.mix.level");
+    CHECK (all[75 + 64 + 63] == "upper.mix.level");
+}
+
+TEST_CASE ("B-Side params: a state and a program file saved before mix.level load with 0 dB and otherwise identical values", "[bside][params][level][presets]")
+{
+    // The old form is a saved state / program file with the two IDs removed (no earlier fixtures are committed).
+    Rig a;
+    for (const char* prefix : { "lower.", "upper." })
+        for (const auto& e : contract())
+            a.set (juce::String (prefix) + e.suffix, otherValue (e));
+    a.set ("chip.clock", 1.0f);
+    a.set ("fx.reverb.level", 0.4f);
+    REQUIRE (a.get ("lower.mix.level") != Catch::Approx (0.0f));
+    REQUIRE (a.get ("upper.mix.level") != Catch::Approx (0.0f));
+    const auto isLevel = [] (const juce::String& id) { return id.endsWith ("mix.level"); };
+
+    // state
+    {
+        const auto block = a.state();
+        auto xml = juce::AudioProcessor::getXmlFromBinary (block.getData(), static_cast<int> (block.getSize()));
+        REQUIRE (xml != nullptr);
+        removeParamElements (*xml, isLevel);
+        bool found = false;
+        removeParamElements (*xml, [&] (const juce::String& id) { found = found || isLevel (id); return false; });
+        REQUIRE_FALSE (found);
+
+        Rig b;
+        b.set ("lower.mix.level", -9.0f);
+        b.set ("upper.mix.level", 3.0f);
+        b.restore (*xml);
+        CHECK (b.get ("lower.mix.level") == Catch::Approx (0.0f).margin (1.0e-4));
+        CHECK (b.get ("upper.mix.level") == Catch::Approx (0.0f).margin (1.0e-4));
+        for (const auto& id : a.ids())
+            if (! isLevel (id))
+            {
+                INFO (id);
+                CHECK (b.get (id) == Catch::Approx (a.get (id)).margin (1.0e-4));
+            }
+    }
+
+    // program file
+    {
+        auto& pm = a.proc.getPresets();
+        const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bs_level_test_" + juce::Uuid().toString());
+        REQUIRE (dir.createDirectory());
+        pm.setLocations ({ dir });
+        const auto saved = dir.getChildFile ("new.bsprog");
+        REQUIRE (pm.saveProgramFile (saved).isEmpty());
+        juce::StringArray lines;
+        saved.readLines (lines);
+        juce::StringArray kept;
+        int removed = 0;
+        for (const auto& l : lines)
+            if (l.contains ("\"mix.level\""))
+            {
+                ++removed;
+                if (! l.trimEnd().endsWithChar (',') && kept.size() > 0) // the last entry of its object: the one before ends it
+                    kept.set (kept.size() - 1, kept[kept.size() - 1].trimEnd().trimCharactersAtEnd (","));
+            }
+            else
+                kept.add (l);
+        REQUIRE (removed == 2);
+        const auto old = dir.getChildFile ("old.bsprog");
+        REQUIRE (old.replaceWithText (kept.joinIntoString ("\n")));
+
+        Rig b;
+        auto& pb = b.proc.getPresets();
+        pb.setLocations ({ dir });
+        b.set ("lower.mix.level", -9.0f);
+        b.set ("upper.mix.level", 3.0f);
+        const auto err = pb.loadProgramFile (old);
+        INFO (err);
+        REQUIRE (err.isEmpty());
+        CHECK (b.get ("lower.mix.level") == Catch::Approx (0.0f).margin (1.0e-4));
+        CHECK (b.get ("upper.mix.level") == Catch::Approx (0.0f).margin (1.0e-4));
+        for (const auto& id : a.ids())
+            if (! isLevel (id) && ! id.startsWith ("master."))
+            {
+                INFO (id);
+                CHECK (b.get (id) == Catch::Approx (a.get (id)).margin (1.0e-4));
+            }
+        dir.deleteRecursively();
+    }
 }

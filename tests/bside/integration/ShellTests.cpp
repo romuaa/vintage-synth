@@ -125,8 +125,8 @@ TEST_CASE ("B-Side: the 75 shared parameters come first, in the contract's order
 {
     Rig rig (false);
     const auto& params = rig.proc.getParameters();
-    REQUIRE (params.size() == bs::kParameterCount); // 75 shared + 2 x 63 per part + chip.clock (8.7; ParamTests.cpp)
-    REQUIRE (bs::kParameterCount == 202);
+    REQUIRE (params.size() == bs::kParameterCount); // 75 shared + 2 x 64 per part + chip.clock (8.7, 8.21.2; ParamTests.cpp)
+    REQUIRE (bs::kParameterCount == 204);
     REQUIRE (bs::kShellParameterCount == 75);
 
     juce::StringArray ids;
@@ -172,7 +172,7 @@ TEST_CASE ("B-Side: 64 programs, all Init, in an 8 x 8 bank with B-Side's own pr
     CHECK (schema.instrument().toneExtension == ".bstone");
     CHECK (schema.instrument().bankExtension == ".bsbank");
     CHECK (presets.positionName (63) == "H8");
-    CHECK (schema.numParams() == 202);
+    CHECK (schema.numParams() == 204);
     // Master volume and the limiter are session settings: not part of a program.
     CHECK (schema.isExcluded (schema.indexOf ("master.volume")));
     CHECK (schema.isExcluded (schema.indexOf ("master.limiter")));
@@ -581,11 +581,13 @@ TEST_CASE ("B-Side: processBlock does not allocate with chip notes, steals, unis
         float value;
     };
     const std::vector<Change> changes {
-        { 20, "lower.assign.mode", 1.0f },    { 40, "lower.assign.unison_voices", 3.0f }, { 60, "lower.chip.model", 0.0f },
-        { 80, "lower.filter.topology", 1.0f }, { 100, "chip.clock", 1.0f },              { 120, "lower.chip.resolution", 1.0f },
-        { 140, "lower.chip.volume_dc", 1.0f },  { 150, "upper.chip.model", 0.0f },        { 160, "lower.assign.mode", 2.0f },
-        { 170, "lower.porta.time", 0.5f },      { 180, "lower.chip.variation", 90.0f },   { 190, "lower.filter.topology", 0.0f },
-        { 200, "lower.tick.rate", 2.0f },       { 210, "lower.assign.mode", 0.0f },
+        { 20, "lower.assign.mode", 1.0f },    { 30, "lower.mix.level", -18.0f },          { 40, "lower.assign.unison_voices", 3.0f },
+        { 60, "lower.chip.model", 0.0f },     { 70, "upper.mix.level", 6.0f },            { 71, "upper.mix.level", -24.0f }, // a ramp cut by the next
+        { 80, "lower.filter.topology", 1.0f }, { 100, "chip.clock", 1.0f },               { 120, "lower.chip.resolution", 1.0f },
+        { 130, "lower.mix.level", 0.0f },     { 140, "lower.chip.volume_dc", 1.0f },      { 150, "upper.chip.model", 0.0f },
+        { 160, "lower.assign.mode", 2.0f },   { 170, "lower.porta.time", 0.5f },          { 180, "lower.chip.variation", 90.0f },
+        { 190, "lower.filter.topology", 0.0f }, { 200, "lower.tick.rate", 2.0f },         { 210, "lower.assign.mode", 0.0f },
+        { 220, "lower.mix.level", -6.0f },    { 240, "upper.mix.level", 0.0f },
     };
     // the counter must see an allocation on this thread
     vs::seq::test::AllocationCounter counter;

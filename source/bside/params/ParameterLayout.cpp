@@ -85,6 +85,7 @@ juce::String floatText (Disp d, float v)
         case Disp::Unit:          return vs::toText (vs::Display::Percent, v);
         case Disp::Porta:         return vs::toText (vs::Display::PortaTime, v);
         case Disp::Pan:           return vs::toText (vs::Display::Pan, v);
+        case Disp::Db:            return signedText (v, 1, " dB");
     }
     return {};
 }
@@ -105,7 +106,8 @@ float floatFromText (Disp d, const juce::String& t, float def)
         case Disp::PercentSigned:
         case Disp::Register:
         case Disp::Hz:
-        case Disp::TickHz:        return number ? static_cast<float> (*number) : def;
+        case Disp::TickHz:
+        case Disp::Db:            return number ? static_cast<float> (*number) : def;
         case Disp::WheelCents:    return number ? map::wheelVibratoFromCents (static_cast<float> (*number)) : def;
         case Disp::UnisonCents:   return number ? map::unisonDetuneFromCents (static_cast<float> (*number)) : def;
         case Disp::Unit:          return number ? vs::fromText (vs::Display::Percent, t) : def;

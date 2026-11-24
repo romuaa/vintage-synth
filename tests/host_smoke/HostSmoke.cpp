@@ -59,10 +59,10 @@ struct Profile
     float notePeakMin, notePeakMax;
 };
 
-// 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3 + 2 = 172 (docs/architecture.md 6c.2); B-Side: 75 shared + 2 * 63 per part + chip.clock = 202 (8.3, 8.7).
+// 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3 + 2 = 172 (docs/architecture.md 6c.2); B-Side: 75 shared + 2 * 64 per part + chip.clock = 204 (8.3, 8.7).
 constexpr Profile kVintage { "Exitium Vintage Synth", 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3 + 2, 64, "Init", "Copper Fanfare", "Chorus Garden",
                              "Low Sun Horns", "Lower VCF Cutoff", { -1, -1, -1 }, -1.0f, -1.0f };
-constexpr Profile kBSide { "Exitium B-Side", 202, 64, "Init", "Init", "Init", "Init", nullptr, { 31, 22, 41 }, 0.045f, 0.072f };
+constexpr Profile kBSide { "Exitium B-Side", 204, 64, "Init", "Init", "Init", "Init", nullptr, { 31, 22, 41 }, 0.045f, 0.072f };
 
 RenderStats render (juce::AudioPluginInstance& p, int numSamples, int blockSize, juce::MidiBuffer firstBlockMidi)
 {

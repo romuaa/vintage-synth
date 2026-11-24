@@ -315,6 +315,10 @@ private:
     int switches = 0;
     std::array<Smooth, kNumSmoothed> sm {};
     float bendValue = 0.0f, wheelValue = 0.0f;
+    // mix.level: a linear gain on the part's sum, a 5 ms ramp per sample (rampSamples) from the value in force when a block
+    // latches a new target; exactly 1.0 at 0 dB (the product with 1.0 changes no bit)
+    double levelGain = 1.0, levelGoal = 1.0, levelStep = 0.0;
+    int levelLeft = 0;
     double vibratoPhase = 0.0;    // cycles, 0 .. 1
     double glideFactor = 0.0;     // per control interval (0: no glide)
     double testDetune = 0.0;      // setTestDetune

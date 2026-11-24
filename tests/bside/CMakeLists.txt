@@ -165,6 +165,7 @@ if(VS_BUILD_BSIDE)
         integration/ShellTests.cpp
         integration/PartTests.cpp
         integration/PartAliasTests.cpp
+        integration/PartLevelTests.cpp
         integration/StateDumpTests.cpp
         integration/TablePresetTests.cpp
         integration/ParamTests.cpp
