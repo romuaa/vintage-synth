@@ -592,7 +592,7 @@ void ChipVoice::prepareBlock (int n) noexcept
 }
 
 double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass,
-                               const double* sharedStaticOut, int chips) noexcept
+                               const double* sharedStaticOut, int chips, const double* sharedWeight) noexcept
 {
     const auto j = static_cast<std::size_t> (i);
     const bool modelA = cfg.model == Model::A;
@@ -658,19 +658,38 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
             old[static_cast<std::size_t> (k)].stage.setFilterStaticDc (so);
         lin = sharedLinear[j];
         lp = sharedLowPass != nullptr ? sharedLowPass[j] : 0.0;
-        if (settle)
+        if (sharedWeight != nullptr)
         {
-            // after suspend: the owner's filter on this chip's static level (settleShared)
-            settleLin = chips > 1 ? (sharedSettleLin - so) / static_cast<double> (chips) + so : sharedSettleLin;
-            settleLp = sharedSettleLp;
+            // this chip's share as a weight (finishSharedWeighted): the static output in full, w of the rest; a weight
+            // of 1 is the filter's output itself (no arithmetic on it: bit for bit Per Note)
+            const double w = sharedWeight[j];
+            if (settle)
+            {
+                settleLin = w < 1.0 ? (sharedSettleLin - so) * w + so : sharedSettleLin;
+                settleLp = sharedSettleLp;
+            }
+            if (w < 1.0)
+            {
+                lin = (lin - so) * w + so;
+                pScale = w;
+            }
         }
-        if (chips > 1)
+        else
         {
-            // this chip's share (OutputStage "SHARED"): the static output in full, 1/n of the rest (the output function's
-            // part through pScale)
-            const double n = static_cast<double> (chips);
-            lin = (lin - so) / n + so;
-            pScale = 1.0 / n;
+            if (settle)
+            {
+                // after suspend: the owner's filter on this chip's static level (settleShared)
+                settleLin = chips > 1 ? (sharedSettleLin - so) / static_cast<double> (chips) + so : sharedSettleLin;
+                settleLp = sharedSettleLp;
+            }
+            if (chips > 1)
+            {
+                // this chip's share (OutputStage "SHARED"): the static output in full, 1/n of the rest (the output
+                // function's part through pScale)
+                const double n = static_cast<double> (chips);
+                lin = (lin - so) / n + so;
+                pScale = 1.0 / n;
+            }
         }
         for (int k = 0; k < nConfigs; ++k)
             linOld[static_cast<std::size_t> (k)] = lin;
@@ -798,7 +817,7 @@ int ChipVoice::renderUntil (double* out, int maxSamples, std::uint64_t untilCycl
         const int n = c.renderBusesUntil (block(), want, untilCycle);
         prepareBlock (n);
         for (int i = 0; i < n; ++i)
-            out[done + i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1);
+            out[done + i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1, nullptr);
         done += n;
         if (n < want)
             break;
@@ -823,7 +842,7 @@ int ChipVoice::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle
         const int n = c.renderBusesUntil (block(), want, untilCycle);
         prepareBlock (n);
         for (int i = 0; i < n; ++i)
-            out[done + i] += rounding.next (chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1));
+            out[done + i] += rounding.next (chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1, nullptr));
         done += n;
         if (n < want)
             break;
@@ -867,7 +886,14 @@ void ChipVoice::finishShared (const Filter::Shape* sharedShape, const double* sh
                               int chips, double* out, int n) noexcept
 {
     for (int i = 0; i < n && i < kBlock; ++i)
-        out[i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, true, sharedShape, sharedLinear, sharedLowPass, filterStaticOut, chips);
+        out[i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, true, sharedShape, sharedLinear, sharedLowPass, filterStaticOut, chips, nullptr);
+}
+
+void ChipVoice::finishSharedWeighted (const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass,
+                                      const double* filterStaticOut, const double* weight, double* out, int n) noexcept
+{
+    for (int i = 0; i < n && i < kBlock; ++i)
+        out[i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, true, sharedShape, sharedLinear, sharedLowPass, filterStaticOut, 1, weight);
 }
 
 void ChipVoice::processBuses (const Chip::BusBlock& in, int n, double* out) noexcept
@@ -891,7 +917,7 @@ void ChipVoice::processBuses (const Chip::BusBlock& in, int n, double* out) noex
         }
         prepareBlock (k);
         for (int i = 0; i < k; ++i)
-            out[done + i] += chainSample (i, static_cast<std::int64_t> (injected++) - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1);
+            out[done + i] += chainSample (i, static_cast<std::int64_t> (injected++) - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1, nullptr);
         done += k;
     }
 }

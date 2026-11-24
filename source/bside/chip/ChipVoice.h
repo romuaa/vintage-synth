@@ -31,7 +31,8 @@
 // (renderBusesUntil), the owner sums filterInputAc over the chips plus one chip's staticFilterBusDc into the shared
 // filter, PER BUS SAMPLE, and hands each voice the filter's output and, per sample too, the filter's static output
 // for that one chip's static DC (finishShared); each voice takes its share (OutputStage::sharedShare: the static
-// output in full, 1/n of the rest) and subtracts the static output with volume DC off, both per sample, so Shared
+// output in full, 1/n of the rest; or a weight per sample in place of 1/n, finishSharedWeighted: an owner that moves
+// the shares when a chip joins or leaves) and subtracts the static output with volume DC off, both per sample, so Shared
 // output does not depend on the owner's block length, also across routing and mute writes. The owner sets the shared
 // filter's cutoff, resonance and mode itself (the most recent note's), and applies each such write to the shared filter
 // at a bus sample (bus sample i of a renderBusesUntil call started at renderSampleIndex () r is bus sample r + i):
@@ -256,6 +257,15 @@ public:
         chips, the number of chips feeding it; out, to which the output is ADDED; n. */
     void finishShared (const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass, const double* filterStaticOut,
                        int chips, double* out, int n) noexcept;
+    /** finishShared with this chip's share of the shared filter's output given per bus sample as a WEIGHT (0 .. 1; the
+        owner keeps the weights of the chips it runs summing to 1) instead of the whole count `chips` (weight 1 / chips):
+        the static output in full, `weight` times the rest (and of the output function's part). So an owner can move the
+        shares smoothly when a chip joins or leaves the sum (docs/architecture.md 8.21.1 after the review). A weight of 1
+        (or more) is the filter's output itself, bit for bit Per Note and finishShared (..., 1, ...); a weight of 0 is the
+        chip's own output only (its direct bus and the static level): nothing of the shared filter's signal. Everything
+        else as finishShared. */
+    void finishSharedWeighted (const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass,
+                               const double* filterStaticOut, const double* weight, double* out, int n) noexcept;
 
     /** Test aid: the chain run on the given buses instead of the chip's (Per Note; the chip is not rendered, no write may
         be pending; the sample index counts on from the last such call): ADDS n output samples to out. */
@@ -331,9 +341,10 @@ private:
     /** Model A: the bus pre-filters over bus samples 0 .. n of the block, and the voice counts at the filter's time. */
     void prepareBlock (int n) noexcept;
     /** One output sample from bus sample i at ring sample q (Per Note when `shared` is false; Shared: the shared filter's
-        output function, linear output, low-pass value and static output at that sample, and the number of chips). */
+        output function, linear output, low-pass value and static output at that sample, and the number of chips or, when
+        sharedWeight is not null, this chip's weight per sample). */
     double chainSample (int i, std::int64_t q, bool shared, const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass,
-                        const double* sharedStaticOut, int chips) noexcept;
+                        const double* sharedStaticOut, int chips, const double* sharedWeight) noexcept;
     double runFilter (Filter& f, double in, double& lowPass) const noexcept;
     static double weightAt (std::int64_t q, std::uint64_t sample, int first, const std::array<double, render::kKernelTaps>& taps) noexcept;
     Chip::BusBlock block() noexcept;
