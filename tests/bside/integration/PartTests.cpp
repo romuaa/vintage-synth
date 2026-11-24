@@ -1108,6 +1108,48 @@ TEST_CASE ("Part: a note that starts late after a steal's fade keeps its length,
     }
 }
 
+TEST_CASE ("Part: a note played inside a switch's fade and released after its start keeps its length", "[bside][part][switch]")
+{
+    // the reviewer's test releases the note while it still waits; here the key goes up after the note has started, so
+    // the release is delayed by the start's own delay (288 - into), not by a whole fade
+    for (const int into : { 0, 100, 250, 287 })
+    {
+        bs::PartParams p;
+        p.osc1Release = 9;
+        Rig rig ({ 96000.0, 1 }, p, 1);
+        rig.run (2000, { on (0, 45) }, 1);
+        p.chipModel = 0;
+        rig.set (p);
+        rig.run (into, {}, 1);
+        const int length = 1000;
+        int started = -1, released = -1, voice = -1;
+        for (int i = 0; i < 3000; ++i)
+        {
+            std::vector<vs::NoteEvent> ev;
+            if (i == 0)
+                ev.push_back (on (0, 69));
+            if (i == length)
+                ev.push_back (off (0, 69));
+            rig.run (1, ev, 1);
+            for (int k = 0; k < bs::Part::kVoices && voice < 0; ++k)
+                if ((rig.part->getVoice (k).pending && rig.part->getVoice (k).pendingAction.note == 69)
+                    || (rig.part->getVoice (k).active && rig.part->getVoice (k).note == 69))
+                    voice = k;
+            REQUIRE (voice >= 0);
+            const auto& v = rig.part->getVoice (voice);
+            if (started < 0 && v.active && v.note == 69)
+                started = i;
+            if (started >= 0 && released < 0 && ! v.held)
+                released = i;
+        }
+        INFO ("note-on " << into << " samples into the fade: started at +" << started << ", released at +" << released);
+        REQUIRE (started >= 0);
+        REQUIRE (released >= 0);
+        CHECK (started == 288 - into - 1);
+        CHECK (std::abs ((released - started) - length) <= 1);
+    }
+}
+
 TEST_CASE ("Part: a delay does not outlive its note: a late start, then a legato return in Solo, and the release is on time", "[bside][part][switch]")
 {
     // Solo: a key held, a structural switch, and a second key played 100 samples into its fade: that note starts 188
