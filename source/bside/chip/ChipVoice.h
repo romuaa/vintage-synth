@@ -287,6 +287,11 @@ public:
         Note). */
     double lastFilterInput() const noexcept { return lastFilterIn; }
     double lastFilterOutput() const noexcept { return lastFilterOut; }
+    /** Test aid: off runs every sample through the per-sample path (chainSample), on (the default) lets renderUntil take
+        whole blocks in one loop where nothing can happen inside them (fastBlock: the same bits); and how many samples
+        took the block path since prepare. */
+    void blockPathEnabled (bool on) noexcept { blockPath = on; }
+    std::uint64_t blockPathSamples() const noexcept { return blockSamples; }
     /** Test aid: how many writes found their queue full (QUEUE above) since prepare or reset. */
     std::uint64_t queueOverflows() const noexcept { return overflows; }
 
@@ -345,6 +350,19 @@ private:
         sharedWeight is not null, this chip's weight per sample). */
     double chainSample (int i, std::int64_t q, bool shared, const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass,
                         const double* sharedStaticOut, int chips, const double* sharedWeight) noexcept;
+    /** COST (docs/architecture.md 8.21.1, the cost round after the review). Per Note, the n bus samples of the block in
+        one loop when nothing can happen inside it: no write in flight or due before the block ends (no configuration
+        being blended, no parameter or dynamics change waiting, the cutoff standing still), the voice counts and Model A's
+        pre-filtered voice DC as at the last sample, not the first samples after reset or suspend, and the delayed
+        post-curve coefficients all equal to the current ones (ringsUniform). It then runs exactly the arithmetic
+        chainSample runs for such a sample, operation for operation, without its per-sample decisions: the output is the
+        same bits (tested: every chain test runs through both, and "the block path and the per-sample path" compares
+        them directly). Returns false, having done nothing, when the block needs chainSample. Adds to out[0 .. n). */
+    bool fastBlock (int n, std::int64_t q0, double* out) noexcept;
+    /** Whether the post-curve coefficients still delayed in the rings (the last postDelay entries; Model A: its output
+        function's too) all equal the current ones, so that a sample reads the same values whether or not the rings are
+        written: remembered (ringsClean) until chainSample writes a ring again. */
+    bool ringsUniform (const std::array<double, 3>& postNow, const std::array<double, 5>& shapeNow) noexcept;
     double runFilter (Filter& f, double in, double& lowPass) const noexcept;
     static double weightAt (std::int64_t q, std::uint64_t sample, int first, const std::array<double, render::kKernelTaps>& taps) noexcept;
     Chip::BusBlock block() noexcept;
@@ -374,6 +392,9 @@ private:
     std::array<std::array<double, 2>, kDelayRing> countRing {};  // Model A: the voice counts per ring sample
     std::array<std::array<double, 5>, kDelayRing> shapeRing {};  // Model A: the blended output-function coefficients
     int postPos = 0, countPos = 0;
+    bool ringsClean = false; // fastBlock: the rings are known to hold the current coefficients throughout
+    bool blockPath = true;   // blockPathEnabled
+    std::uint64_t blockSamples = 0;
     double lpMin = -1.0e9, lpMax = 1.0e9;  // Model A's output function's limits (constant)
     double lastFilterIn = 0.0, lastFilterOut = 0.0;
     std::uint64_t injected = 0;            // processBuses' sample index

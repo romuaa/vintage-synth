@@ -159,7 +159,9 @@ public:
         functions of (0 on Model B); processDouble (x) = processLinearDouble (x, lp) + outputShape (lp), the state advanced alike.
         The trapezoidal state-variable filter written as its state-space form (identical arithmetic in exact numbers, a
         shorter dependency chain per sample): every output a linear form in x, s1, s2. */
-    double processLinearDouble (double in, double& lowPass) noexcept
+    double processLinearDouble (double in, double& lowPass) noexcept { return processLinearDoubleInline (in, lowPass); }
+    /** processLinearDouble, inlined into its caller whatever its size (ChipVoice's block path; ChipTypes.h). */
+    BS_CHIP_INLINE double processLinearDoubleInline (double in, double& lowPass) noexcept
     {
         const double x = guard (in);
         const double out = ox * x + o1 * s1 + o2 * s2;

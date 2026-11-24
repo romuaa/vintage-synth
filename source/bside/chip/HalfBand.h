@@ -39,6 +39,8 @@
 // its whole window holds it (and skips its taps: the per-sample form is the plain one), HalfBandUp and HalfBandDown take
 // each pair as its difference from the centre sample, (x[c - k] + x[c + k]) - 2 x[c], weighted and added to x[c].
 
+#include "bside/chip/ChipTypes.h"
+
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -77,7 +79,9 @@ public:
     void reset() noexcept;
     /** Fills the history with x (the filter then outputs x as if x had always been its input). */
     void prime (double x) noexcept;
-    double process (double x) noexcept
+    double process (double x) noexcept { return processInline (x); }
+    /** process, inlined into its caller whatever its size (ChipVoice's block path; ChipTypes.h). */
+    BS_CHIP_INLINE double processInline (double x) noexcept
     {
         pos = (pos + 1) & (kRing - 1);
         buf[static_cast<std::size_t> (pos)] = x;
@@ -126,7 +130,8 @@ public:
     void prepare (const HalfBandDesign& d) noexcept; // d at the doubled rate
     void reset() noexcept;
     void prime (double x) noexcept;
-    void process (double x, double& first, double& second) noexcept
+    void process (double x, double& first, double& second) noexcept { processInline (x, first, second); }
+    BS_CHIP_INLINE void processInline (double x, double& first, double& second) noexcept
     {
         pos = (pos + 1) & (kRing - 1);
         buf[static_cast<std::size_t> (pos)] = x;
@@ -165,7 +170,8 @@ public:
     void prepare (const HalfBandDesign& d) noexcept; // d at the doubled rate
     void reset() noexcept;
     void prime (double x) noexcept;
-    double process (double first, double second) noexcept
+    double process (double first, double second) noexcept { return processInline (first, second); }
+    BS_CHIP_INLINE double processInline (double first, double second) noexcept
     {
         // out = 1/2 second[m - P] + sum_j h_j (first[m - P + 1 + j] + first[m - P - j]); second[m] joins after (it is
         // the centre of a later output)

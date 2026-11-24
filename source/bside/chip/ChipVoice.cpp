@@ -35,6 +35,7 @@ ChipVoice::ChipVoice() noexcept
 void ChipVoice::prepare (const Config& config) noexcept
 {
     cfg = config;
+    blockSamples = 0;
     c.prepare (cfg);
     c.renderBendVoices (true); // Model A's voice bend in the renderer ("ALIAS"; no effect on Model B)
     st = OutputStage {};
@@ -119,6 +120,7 @@ void ChipVoice::reset() noexcept
     countRing = {};
     shapeRing = {};
     postPos = countPos = 0;
+    ringsClean = false;
     lastFilterIn = lastFilterOut = 0.0;
     injected = 0;
     st.setModeVolume (0);
@@ -172,6 +174,7 @@ void ChipVoice::suspend() noexcept
     countRing = {};
     shapeRing = {};
     postPos = countPos = 0;
+    ringsClean = false;
     lastFilterIn = lastFilterOut = 0.0;
     refreshStaticDc();
 }
@@ -769,6 +772,7 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
     }
     postPos = (postPos + 1) & (kDelayRing - 1);
     postRing[static_cast<std::size_t> (postPos)] = { pa, pb, pp };
+    ringsClean = false; // fastBlock looks at the rings again before it relies on them
     const auto& post = postRing[static_cast<std::size_t> ((postPos + kDelayRing - postDelay) & (kDelayRing - 1))];
     double m = 0.0;
     if (! modelA)
@@ -816,13 +820,139 @@ int ChipVoice::renderUntil (double* out, int maxSamples, std::uint64_t untilCycl
         blockStart = c.renderSampleIndex();
         const int n = c.renderBusesUntil (block(), want, untilCycle);
         prepareBlock (n);
-        for (int i = 0; i < n; ++i)
-            out[done + i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1, nullptr);
+        const std::int64_t q0 = static_cast<std::int64_t> (blockStart) - kRingLag;
+        if (! fastBlock (n, q0, out + done))
+            for (int i = 0; i < n; ++i)
+                out[done + i] += chainSample (i, q0 + i, false, nullptr, nullptr, nullptr, nullptr, 1, nullptr);
         done += n;
         if (n < want)
             break;
     }
     return done;
+}
+
+bool ChipVoice::ringsUniform (const std::array<double, 3>& postNow, const std::array<double, 5>& shapeNow) noexcept
+{
+    if (ringsClean)
+    {
+        // nothing has written the rings since they were found uniform: only the current values can have moved (a write
+        // applied outside a sample, the owner's setVariation on the lent filter)
+        const auto& last = postRing[static_cast<std::size_t> (postPos)];
+        bool same = sameBits (last[0], postNow[0]) && sameBits (last[1], postNow[1]) && sameBits (last[2], postNow[2]);
+        if (same && cfg.model == Model::A)
+        {
+            const auto& sh = shapeRing[static_cast<std::size_t> (postPos)];
+            for (std::size_t k = 0; k < 5; ++k)
+                same = same && sameBits (sh[k], shapeNow[k]);
+        }
+        return same;
+    }
+    // every entry a sample of this block can read: the newest postDelay (the output function's: shapeDelay + 1)
+    for (int d = 0; d <= postDelay; ++d)
+    {
+        const auto& e = postRing[static_cast<std::size_t> ((postPos + kDelayRing - d) & (kDelayRing - 1))];
+        if (! (sameBits (e[0], postNow[0]) && sameBits (e[1], postNow[1]) && sameBits (e[2], postNow[2])))
+            return false;
+    }
+    if (cfg.model == Model::A)
+        for (int d = 0; d <= shapeDelay + 1; ++d)
+        {
+            const auto& e = shapeRing[static_cast<std::size_t> ((postPos + kDelayRing - d) & (kDelayRing - 1))];
+            for (std::size_t k = 0; k < 5; ++k)
+                if (! sameBits (e[k], shapeNow[k]))
+                    return false;
+        }
+    // the whole of both rings now counts as holding these values: entries older than a sample can read are never read
+    // before they are written again, and fastBlock leaves the rings alone
+    ringsClean = true;
+    return true;
+}
+
+bool ChipVoice::fastBlock (int n, std::int64_t q0, double* out) noexcept
+{
+    if (n <= 0)
+        return true;
+    if (! blockPath || settle || freshPost || nConfigs != 0 || outDiffers || dynCount != 0 || moving || filter == nullptr)
+        return false;
+    // nothing becomes due before the block's last sample (advanceTo's conditions at the filter's signal time)
+    const std::int64_t tLast = q0 + n - 1 - preDelay;
+    if (paramCount > 0 && static_cast<std::int64_t> (params[static_cast<std::size_t> (paramHead)].sample) <= tLast)
+        return false;
+    if (configCount > 0)
+    {
+        const Pending& p = configs[static_cast<std::size_t> (configHead)];
+        if (static_cast<std::int64_t> (p.sample) + p.first <= tLast)
+            return false;
+    }
+    // the voice counts as the stage has them (a routing or mute write moves them: setVoices), Model A's pre-filtered
+    // voice DC as the stage's static DC was taken for
+    const bool modelA = cfg.model == Model::A;
+    bool steady = true;
+    for (int i = 0; i < n; ++i)
+    {
+        const auto j = static_cast<std::size_t> (i);
+        steady = steady && sameBits (cF[j], lastFv) && sameBits (cD[j], lastDv);
+    }
+    if (modelA)
+        for (int i = 0; i < n; ++i)
+            steady = steady && sameBits (pDc[static_cast<std::size_t> (i)], preDcNow);
+    if (! steady)
+        return false;
+
+    Filter& f = *filter;
+    const double g = st.gainFactor();
+    const double pa = st.postScale(), pb = st.postOffset(), pp = st.postGain();
+    std::array<double, 5> shape {};
+    if (modelA)
+    {
+        // chainSample: shape[m] = g * pScale * p[m] with pScale = 1 (Per Note)
+        const auto p = shapeOf (f.outputShapeCoefficients());
+        for (std::size_t m = 0; m < 5; ++m)
+            shape[m] = g * p[m];
+    }
+    if (! ringsUniform ({ pa, pb, pp }, shape))
+        return false;
+
+    double in = 0.0, lin = 0.0, lp = 0.0;
+    if (! modelA)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const auto j = static_cast<std::size_t> (i);
+            in = st.filterInput (fa[j], fe[j]);
+            lin = f.processLinearDoubleInline (in, lp);
+            const double di = st.directSumWith (da[j], de[j], dv[j]);
+            const double x = g * (lin + di);
+            const double m = st.mixerCurveInline (mixFir.processInline (x));
+            const double mix = pa * m + pb;
+            out[i] += board ? st.boardInline (mix, pp) : mix * pp;
+        }
+    }
+    else
+    {
+        // the delayed coefficients all equal `shape`, so the interpolated sample's mean of two of them is `shape` too
+        // (0.5 * (s + s) = s exactly)
+        for (int i = 0; i < n; ++i)
+        {
+            const auto j = static_cast<std::size_t> (i);
+            in = pAc[j] + pDc[j];
+            lin = f.processLinearDoubleInline (in, lp);
+            const double di = pDi[j];
+            const double x = g * (lin + di);
+            double l0 = 0.0, l1 = 0.0, p0 = 0.0, p1 = 0.0;
+            upLin.processInline (x, l0, l1);
+            upLow.processInline (lp, p0, p1);
+            const double m0 = st.mixerCurveInline (l0 + shapeWith (shape, p0, lpMin, lpMax));
+            const double m1 = st.mixerCurveInline (l1 + shapeWith (shape, p1, lpMin, lpMax));
+            const double m = down.processInline (m0, m1);
+            const double mix = pa * m + pb;
+            out[i] += board ? st.boardInline (mix, pp) : mix * pp;
+        }
+    }
+    lastFilterIn = in;
+    lastFilterOut = lin + f.outputShape (lp);
+    blockSamples += static_cast<std::uint64_t> (n);
+    return true;
 }
 
 void ChipVoice::render (double* out, int numInternalSamples) noexcept

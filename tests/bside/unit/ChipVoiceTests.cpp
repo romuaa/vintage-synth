@@ -1968,6 +1968,11 @@ struct PartSetup
     // sample i (null: finishShared with the count n)
     double (*weight) (int chip, int chips, int sample) = nullptr;
     bool othersSilent = false; // chips 1 .. n - 1 keep their gates closed (no sound of their own)
+    // the cost round's block path (ChipVoice::fastBlock): off runs every sample through the per-sample path; the number
+    // of samples that took the block path, summed over the chips, is written to blockSamples when it is not null
+    double rate = 96000.0;
+    bool blockPath = true;
+    std::uint64_t* blockSamples = nullptr;
 };
 
 /** n chips at 96 kHz, each on its own notes (chip k: oscillator 1 a saw, triangle or pulse a fifth-spaced step above
@@ -1977,7 +1982,7 @@ struct PartSetup
     handed over per sample), rendered in owner blocks of blockLen samples; the summed output. */
 std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
 {
-    const double rate = 96000.0;
+    const double rate = s.rate;
     std::vector<std::unique_ptr<ChipVoice>> v;
     std::vector<std::unique_ptr<Filter>> f;
     for (int k = 0; k < s.n; ++k)
@@ -1988,6 +1993,7 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
         cfg.volumeDc = s.vdc;
         v.push_back (std::make_unique<ChipVoice>());
         v.back()->prepare (cfg);
+        v.back()->blockPathEnabled (s.blockPath);
         if (! shared || k == 0)
         {
             f.push_back (std::make_unique<Filter>());
@@ -2070,6 +2076,12 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
             ++next;
         }
     }
+    if (s.blockSamples != nullptr)
+    {
+        *s.blockSamples = 0;
+        for (auto& x : v)
+            *s.blockSamples += x->blockPathSamples();
+    }
     return out;
 }
 
@@ -2120,6 +2132,52 @@ TEST_CASE ("chain: Shared is exact per sample (one chip is Per Note bit for bit;
                 CHECK (sameBits (a, b));
             }
         }
+}
+
+TEST_CASE ("chain: the block path and the per-sample path give the same bits (writes of every kind, any call length, three rates)", "[chain][cost]")
+{
+    // The cost round (docs/architecture.md 8.21.1 after the review): Per Note, renderUntil takes a block of samples in
+    // one loop when nothing can happen inside it (ChipVoice::fastBlock) and falls back to the per-sample path around
+    // every write. Both must be the same arithmetic: with the block path off (every sample through chainSample) the
+    // output is the same bits, across routing, mute, volume, mode, resonance and cutoff writes (a single cutoff write,
+    // and bursts close enough to make the cutoff move), for calls of 64, 17 and 1 samples, at 48, 96 and 192 kHz, with
+    // volume DC on and off, one chip and three. And the block path is really taken: for most samples of these renders.
+    std::vector<PartWrite> writes { { 3000, 0x17, 0x41 }, { 5017, 0x18, 0x9f }, { 7033, 0x17, 0x45 }, { 9001, 0x18, 0x1f },
+                                    { 11000, 0x18, 0x19 }, { 13000, 0x17, 0x43 }, { 14000, 0x16, 0x50 }, { 14500, 0x17, 0xa3 },
+                                    { 15001, 0x18, 0x2f }, { 15003, 0x17, 0x33 }, { 15010, 0x16, 0x71 }, { 15020, 0x15, 0x05 } };
+    for (int k = 0; k < 12; ++k) // a moving cutoff: writes 40 samples apart, then it stands still again
+        writes.push_back ({ 17000 + 40 * k, 0x16, static_cast<std::uint8_t> (0x40 + 3 * k) });
+    writes.push_back ({ 19000, 0x18, 0x1f });
+    for (const double rate : { 48000.0, 96000.0, 192000.0 })
+        for (const Model m : { Model::B, Model::A })
+            for (const bool vdc : { false, true })
+                for (const int n : { 1, 3 })
+                {
+                    PartSetup s;
+                    s.rate = rate;
+                    s.m = m;
+                    s.vdc = vdc;
+                    s.n = n;
+                    s.writes = writes;
+                    s.samples = 22000;
+                    PartSetup perSample = s;
+                    perSample.blockPath = false;
+                    std::uint64_t none = 1;
+                    perSample.blockSamples = &none;
+                    const auto ref = renderPart (perSample, false, 64);
+                    INFO ((m == Model::A ? "Model A" : "Model B") << ", " << rate << " Hz, volume DC " << (vdc ? "on" : "off") << ", " << n << " chips");
+                    CHECK (none == 0);
+                    for (const int block : { 64, 17, 1 })
+                    {
+                        std::uint64_t taken = 0;
+                        s.blockSamples = &taken;
+                        const auto y = renderPart (s, false, block);
+                        INFO ("calls of " << block << " samples: " << taken << " of " << static_cast<std::uint64_t> (n) * 22000u << " samples took the block path; largest difference "
+                                          << maxAbsDiff (y, ref));
+                        CHECK (sameBits (y, ref));
+                        CHECK (taken > static_cast<std::uint64_t> (n) * 22000u * 6u / 10u);
+                    }
+                }
 }
 
 TEST_CASE ("chain: Shared by weight (finishSharedWeighted): weight 1 is Per Note bit for bit, 1 / n is finishShared, 0 is the chip's own output", "[chain][shared]")

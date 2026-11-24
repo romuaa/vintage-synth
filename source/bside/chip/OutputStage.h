@@ -184,6 +184,18 @@ public:
     }
     /** The static curve N (limited) of the mixer, on gain x sum. */
     double mixerCurve (double x) const noexcept { return curve (x); }
+    /** mixerCurve and board, inlined into their caller whatever their size (ChipVoice's block path; ChipTypes.h). */
+    BS_CHIP_INLINE double mixerCurveInline (double x) const noexcept { return curveInline (x); }
+    BS_CHIP_INLINE double boardInline (double mix, double post) noexcept
+    {
+        const double in = std::abs (mix) < 1e9 ? mix : 0.0; // a NaN or absurd input does not enter the filters
+        hpY = flush (hpA * hpY + hpA * (in - hpX));
+        hpX = in;
+        const double lpIn0 = post * hpY;
+        const double y = lpG * lpIn0 + lpKeep * lpS;
+        lpS = flush (lpIn * lpIn0 + lpNext * lpS);
+        return y;
+    }
     /** Where N leaves its polynomial (Model A: the joins of its smooth continuation; Model B: its limits): {lower, upper}. */
     std::array<double, 2> mixerLimits() const noexcept { return { curveMin, curveMax }; }
     /** Test aid: N's polynomial coefficients {n2, n3, n4, n5} (N = x + n2 x^2 + ... + n5 x^5 between the limits). */
@@ -194,16 +206,7 @@ public:
     double postOffset() const noexcept { return volumeDcOn ? offset : -curveDc; }
     /** The board filters over a mixer value (mixerOutput) and a post gain (postGain): one internal sample of the output
         in the reference's units. A chain blending configurations across a write passes their blends. */
-    double board (double mix, double post) noexcept
-    {
-        const double in = std::abs (mix) < 1e9 ? mix : 0.0; // a NaN or absurd input does not enter the filters
-        hpY = flush (hpA * hpY + hpA * (in - hpX));
-        hpX = in;
-        const double lpIn0 = post * hpY;
-        const double y = lpG * lpIn0 + lpKeep * lpS;
-        lpS = flush (lpIn * lpIn0 + lpNext * lpS);
-        return y;
-    }
+    double board (double mix, double post) noexcept { return boardInline (mix, post); }
 
     Model model() const noexcept { return mdl; }
     double gainFactor() const noexcept { return gain; }
@@ -217,7 +220,8 @@ public:
 private:
     /** A filter state: 0 below 1e-15 (no subnormal numbers). */
     static double flush (double v) noexcept { return std::abs (v) < 1e-15 ? 0.0 : v; }
-    double curve (double x) const noexcept
+    double curve (double x) const noexcept { return curveInline (x); }
+    BS_CHIP_INLINE double curveInline (double x) const noexcept
     {
         if (! quintic)
         {
