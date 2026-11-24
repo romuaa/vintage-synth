@@ -395,6 +395,21 @@ could not be met as written. Not yet checked by the independent review.
 | 19 | CPU benchmark patch | 16 notes D3 to F4 around the pitch `chip_bench` uses; oscillators 1 and 2 through the filter, as in `chip_bench`'s chain case. With A3 to C5 the figures are higher (reported: 5.63 % Model B, 11.27 % Model A). (review) |
 | 20 | Tail | 3 × the nominal release of the enabled oscillators of Lower, plus Upper unless Whole. (review) |
 
+### S4a: after the independent review (2026-11-24, all review)
+
+The reviewer's own tests (`tests/bside/review/PartReviewTests.cpp`) found three defects the
+author's tests could not see; the orchestrator's calls on them are in 8.21.1, "After the
+independent review".
+
+| # | Finding | Call (reason) |
+|---|---|---|
+| 1 | Shared: an idle voice carries 1/n of the other notes' filtered sound, never gets quiet, leaves by the 500 ms limit and takes that share with it (a burst of -18 dB on Model B and -12 dB on Model A re the held note). | The quiet criterion is judged on the voice's own contribution, and the shares move to their new values over the 3 ms fade when a chip joins or leaves (weights sum to 1). Row 8 of the contract's readings ("leaves and enters the sum silently") is the owner's confirmed wish; this is what it takes in Shared. (review) |
+| 2 | A structural switch on Model B ends its fade with a step of about 4 % of the signal, because the latency pad is cleared while it still holds faded samples. | The fade must reach the output in full; gate: no step above 3/288 of the signal at the fade's end. (review) |
+| 3 | A note played and released inside a switch's fade sounds up to 3 ms too long; a delay flag can outlive its note in Solo. | A delayed note is released as much later as it started. (review) |
+| 4 | The pad's assertion fails at host rates of 16 kHz and below, and the ring has no margin at 8 and 11.025 kHz. | The ring covers every rate from 8 kHz up with margin; tested at 8, 11.025 and 16 kHz. (review) |
+| 5 | Implementer's readings 1 (latency includes the board filters' delay), 2 (tempo only while the host plays and gives a position) and 3 (`chip.clock` switches both parts) differ from the contract's wording. | Accepted and written into the contract: each is the stricter or the only workable reading. (review) |
+| 6 | CPU: Model B misses its gates at the orchestrator's bench (16 voices 5.15 to 5.22 % against 5 %, Dual 10.34 to 10.51 % against 10 %); Model A sits on its gates; the chain measures about 1 ns slower than on `main`. | The gates stand. The author's two cost rounds missed, so the fixes and one more cost round go to a stronger model, as the escalation rule says. If that misses too, the choice goes to the owner. (review) |
+
 ## B-Side S3a round 2: the review's findings (2026-11-20, all review)
 
 What round 2 changed, what it measured and what stays open. Fitting traces (never committed, under the developer cache):
