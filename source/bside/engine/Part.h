@@ -127,6 +127,9 @@ public:
     int getControlInterval() const noexcept { return controlInterval; }
     int getChainLatency (vs::bside::chip::Model m) const noexcept { return chainLatency[m == vs::bside::chip::Model::A ? 0 : 1]; }
     int getMaxChainLatency() const noexcept { return maxChainLatency; }
+    /** The latency pad: how many internal samples it delays the current model's chain by, and what its ring holds. */
+    int getPadDelay() const noexcept { return padDelay; }
+    static constexpr int padCapacity() noexcept { return kPadRing; }
     std::int64_t getRenderedSamples() const noexcept { return partSample; }
     int numActiveVoices() const noexcept;
     const NoteVoice& getVoice (int i) const noexcept { return (*voices)[static_cast<std::size_t> (i)]; }
@@ -296,7 +299,11 @@ private:
     std::array<CtlState, kMaxControls> ctlStates {};
     std::array<int, kVoices> leftAt {};
     std::array<std::array<double, kSegment>, kVoices> voiceOut {}; // Shared: each voice's output of a segment
-    static constexpr int kPadRing = 64;
+    // the pad delays the shorter chain by the DIFFERENCE of the two chains (never by a chain's whole length): at most
+    // 2 x HalfBandDesign::kMaxPairs - 1 = 63 internal samples (Model A's 2x part, reached at host rates of 8 and
+    // 11.025 kHz); the ring holds twice that, at every host rate the shell accepts (8.21.1 after the review)
+    static constexpr int kPadRing = 128;
+    static_assert (kPadRing >= 4 * vs::bside::chip::HalfBandDesign::kMaxPairs && (kPadRing & (kPadRing - 1)) == 0);
     std::array<double, kPadRing> pad {};
     int padPos = 0, padDelay = 0;
     vs::bside::chip::render::OutputRounding rounding {};

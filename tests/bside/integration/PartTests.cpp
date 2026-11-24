@@ -107,8 +107,9 @@ TEST_CASE ("Part: one latency for both models, fixed at prepare; a note's first 
 
         for (const int n : { 100, 333 })
         {
-            double byModel[2] {};
             for (const bool shared : { false, true })
+            {
+                double byModel[2] {};
                 for (const int model : { 0, 1 })
                 {
                     const double d = measuredDelay (h, model, shared, n);
@@ -118,10 +119,43 @@ TEST_CASE ("Part: one latency for both models, fixed at prepare; a note's first 
                     CHECK (std::abs (d - b.part->getLatencySamples()) <= 1.0);
                     byModel[model] = d;
                 }
-            // checked for the last topology of the loop (Shared); Per Note is the same chain for a direct oscillator
-            CHECK (std::abs (byModel[0] - byModel[1]) <= 0.5);
+                // the two models within half a host sample of each other, Per Note and Shared (8.21.1 after the review)
+                INFO ((shared ? "Shared" : "Per Note") << ", note at " << n << ": Model A " << byModel[0] << ", Model B " << byModel[1]);
+                CHECK (std::abs (byModel[0] - byModel[1]) <= 0.5);
+            }
         }
     }
+}
+
+TEST_CASE ("Part: the latency pad holds the difference of the two chains with margin at 8, 11.025 and 16 kHz; both models' edges agree there", "[bside][part][latency]")
+{
+    // 8.21.1 after the review: the pad delays the shorter chain by the difference of the two chains (63 internal samples
+    // at 8 and 11.025 kHz, where the chains are 134 and 71 samples long: longer than the old ring of 64 themselves)
+    for (const double rate : { 8000.0, 11025.0, 16000.0 })
+        for (const int factor : { 4, 2, 1 })
+        {
+            const HostConfig h { rate, factor };
+            Rig a (h, [] { bs::PartParams p; p.chipModel = 0; return p; }());
+            Rig b (h, [] { bs::PartParams p; p.chipModel = 1; return p; }());
+            const int difference = b.part->getChainLatency (chip::Model::A) - b.part->getChainLatency (chip::Model::B);
+            INFO (rate << " Hz x" << factor << ": chains " << b.part->getChainLatency (chip::Model::A) << " and " << b.part->getChainLatency (chip::Model::B)
+                       << ", pad " << b.part->getPadDelay() << " of " << bs::Part::padCapacity());
+            CHECK (a.part->getLatencySamples() == b.part->getLatencySamples());
+            CHECK (a.part->getPadDelay() == 0);
+            CHECK (b.part->getPadDelay() == difference);
+            CHECK (difference > 0);
+            CHECK (2 * difference <= bs::Part::padCapacity()); // margin: twice what is needed
+            // the pad does its work: the first edge of a note lands at the same place on both models, at the reported latency
+            double byModel[2] {};
+            for (const int model : { 0, 1 })
+            {
+                byModel[model] = measuredDelay (h, model, false, 150);
+                INFO ("model " << (model == 0 ? "A" : "B") << ": edge delay " << byModel[model] << " host samples, reported " << b.part->getLatencySamples());
+                REQUIRE (std::isfinite (byModel[model]));
+                CHECK (std::abs (byModel[model] - b.part->getLatencySamples()) <= 1.0);
+            }
+            CHECK (std::abs (byModel[0] - byModel[1]) <= 0.5);
+        }
 }
 
 // ---- block lengths ---------------------------------------------------------------------------------------------

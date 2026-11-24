@@ -140,7 +140,8 @@ void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor,
         chainLatency[static_cast<std::size_t> (m)] = (*protoChain)[static_cast<std::size_t> (m)].latencySamples();
     }
     maxChainLatency = std::max (chainLatency[0], chainLatency[1]);
-    jassert (maxChainLatency < kPadRing);
+    // what the pad needs: the difference of the two chains (the longer one is not delayed), with margin
+    jassert (2 * (maxChainLatency - std::min (chainLatency[0], chainLatency[1])) <= kPadRing);
 
     // The decimator (Vintage's, unchanged) and the one latency of both models (8.21.1).
     oversampler.reset();
