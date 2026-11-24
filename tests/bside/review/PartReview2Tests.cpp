@@ -964,13 +964,23 @@ TEST_CASE ("Review2: Shared, a note on a chip that All Sound Off stopped: the ou
 
 // ==== 7. Shared: the held notes' level when a note of another velocity joins =======================================
 
-TEST_CASE ("Review2: Shared: a soft note that joins does not change the level of a held loud note's filtered sound", "[review2][shared][velocity]")
+TEST_CASE ("Review2: Shared: a note of another velocity that joins moves a held note's filtered sound to the mean of the note gains, without a step", "[review2][shared][velocity]")
 {
-    // The contract: a note that joins does not disturb a held note beyond its own sound. Each chip's output, its share of
-    // the shared filter's output included, is multiplied by its OWN note gain (Part::mixVoice): the held note's
-    // filtered sound is heard at the share-weighted mean of the note gains. Measured on the held note's fundamental
-    // (130.8 Hz; the joining note's partials are multiples of 277.2 Hz, none near it), over whole periods, before and
-    // after the join, Per Note and Shared.
+    // The contract (8.21.1 "Shared, levels"; Part.h "SHARES"): each chip's output, its share of the shared filter's output
+    // included, is multiplied by its OWN note gain (Part::mixVoice), so the held note's filtered sound is heard at the
+    // share-weighted mean of the note gains; a note of another velocity that joins moves that level over the 3 ms fade,
+    // without a step. Per Note it does not move.
+    //  - Level: the held note's fundamental (130.8 Hz; the joining note's partials are multiples of 277.2 Hz, none near
+    //    it), over whole periods, before and after a note at velocity 0.01 joins. After the join the two shares are one
+    //    half each, so the gains move it by (g1 + g2) / (2 g1), g = 1 - vel.volume (1 - velocity). Model A's stages also
+    //    move it by their own curves when ANY note joins (the two stages see half the filter's output each, 8.5; about
+    //    -1.2 dB here, the same at equal velocities), so the gains' part is the soft join's change over the change of the
+    //    same join at the held note's velocity. Model B's stages are close to linear: there the change itself is checked
+    //    against the prediction too.
+    //  - No step: the same join with a joining note that has no sound of its own (its table never opens the gate),
+    //    minus the render without the join. That difference grows from 0 to the settled change over the fade; its largest
+    //    sample-to-sample step during the move is no larger than the settled difference's own (the held note's own steps
+    //    scaled by the move). A level that jumped would step by the whole move times the signal in one sample.
     const auto partial = [] (const std::vector<float>& y, std::size_t from, double hz, double rate) {
         const auto period = rate / hz;
         const auto n = static_cast<std::size_t> (std::floor (40.0 * period));
@@ -983,12 +993,15 @@ TEST_CASE ("Review2: Shared: a soft note that joins does not change the level of
         }
         return 2.0 * std::sqrt (re * re + im * im) / static_cast<double> (n);
     };
+    const auto silent = compile ("bside-table 1\n[wave1]\n    wave saw +0\n    end\n");
+    const HostConfig h { 48000.0, 2 };
+    const int join = 48000, fade = 144, settle = fade + 96; // host samples: the 3 ms fade; the fade and the part's latency, with room
     for (const int model : { 1, 0 })
         for (const float velVolume : { 0.5f, 1.0f })
         {
-            double ratio[2] { 0.0, 0.0 };
-            for (const int topology : { 0, 1 })
-            {
+            const double g1 = 1.0, g2 = 1.0 - static_cast<double> (velVolume) * (1.0 - 0.01);
+            const double predicted = db ((g1 + g2) / (2.0 * g1));
+            const auto params = [&] (int topology) {
                 bs::PartParams p;
                 p.chipModel = model;
                 p.filterTopology = topology;
@@ -996,17 +1009,62 @@ TEST_CASE ("Review2: Shared: a soft note that joins does not change the level of
                 p.filterCutoff = 1400.0f;
                 p.velVolume = velVolume;
                 p.osc1Wave = 2; // saw
-                const HostConfig h { 48000.0, 2 };
-                Rig rig (h, p, 512);
-                const auto y = rig.run (96000, { on (0, 48, 1.0f), on (48000, 61, 0.01f) });
-                const double before = partial (y, 30000, 130.8127826502993, h.rate);
-                const double after = partial (y, 60000, 130.8127826502993, h.rate);
-                ratio[topology] = after / before;
+                return p;
+            };
+            const auto change = [&] (int topology, float joinVelocity) {
+                Rig rig (h, params (topology), 512);
+                const auto y = rig.run (96000, { on (0, 48, 1.0f), on (join, 61, joinVelocity) });
+                return db (partial (y, 60000, 130.8127826502993, h.rate) / partial (y, 30000, 130.8127826502993, h.rate));
+            };
+            const double perNote = change (0, 0.01f), shared = change (1, 0.01f), sharedEqual = change (1, 1.0f);
+
+            // the move, Shared: a held triangle through the low-pass (a smooth signal), the join of a note without sound of
+            // its own, minus the render without it
+            std::vector<float> y[2];
+            for (const int withJoin : { 0, 1 })
+            {
+                auto p = params (1);
+                p.osc1Wave = 1; // triangle
+                p.filterCutoff = 500.0f;
+                Rig rig (h, p, 48);
+                y[withJoin] = rig.run (join, { on (0, 48, 1.0f) }, 48);
+                rig.part->setProgram (&silent);
+                const auto tail = rig.run (4800, withJoin != 0 ? std::vector<vs::NoteEvent> { on (0, 61, 0.01f) } : std::vector<vs::NoteEvent> {}, 48);
+                y[withJoin].insert (y[withJoin].end(), tail.begin(), tail.end());
             }
-            std::printf ("[review2 velocity] Model %s, vel.volume %.1f: the held note's fundamental after a soft note joins: Per Note %+.2f dB, Shared %+.2f dB\n",
-                         model == 0 ? "A" : "B", static_cast<double> (velVolume), db (ratio[0]), db (ratio[1]));
-            INFO ("Model " << (model == 0 ? "A" : "B") << ", vel.volume " << velVolume << ": Per Note " << db (ratio[0]) << " dB, Shared " << db (ratio[1]) << " dB");
-            CHECK (std::abs (db (ratio[0])) < 0.2);
-            CHECK (std::abs (db (ratio[1]) - db (ratio[0])) < 0.5);
+            const auto at = [&] (const std::vector<float>& v, int i) { return static_cast<double> (v[static_cast<std::size_t> (i)]); };
+            const auto d = [&] (int i) { return at (y[1], i) - at (y[0], i); };
+            double before = 0.0, stepMove = 0.0, stepAfter = 0.0, moved = 0.0;
+            const double peak = peakOf (y[0], static_cast<std::size_t> (join), static_cast<std::size_t> (join + 2400));
+            for (int i = join - 4800; i < join; ++i)
+                before = std::max (before, std::abs (d (i)));
+            for (int i = join; i < join + 2400; ++i)
+            {
+                double& worst = i < join + settle ? stepMove : stepAfter;
+                worst = std::max (worst, std::abs (d (i + 1) - d (i)));
+                if (i >= join + settle)
+                    moved = std::max (moved, std::abs (d (i)) / peak); // the settled move, as a fraction of the signal
+            }
+            // d = (r - 1) y with r moving from 1 to its settled value over the fade: a step of d is at most the settled
+            // difference's own largest step plus the signal's peak times the ramp's step (the move over the fade's
+            // samples); half as much again for the decimator's and the stages' shaping. A jump of r steps d by the whole
+            // move times the signal at once.
+            const double bound = stepAfter + 1.5 * moved * peak / static_cast<double> (fade);
+
+            std::printf ("[review2 velocity] Model %s, vel.volume %.1f: the held note's fundamental when a note joins: Per Note %+.2f dB; Shared %+.2f dB (velocity 0.01), "
+                         "%+.2f dB (velocity 1), the gains' part %+.2f dB, the mean of the note gains predicts %+.2f dB; the move (%.3f of the signal): largest step of "
+                         "the difference %.6f during it, %.6f after it, bound %.6f\n",
+                         model == 0 ? "A" : "B", static_cast<double> (velVolume), perNote, shared, sharedEqual, shared - sharedEqual, predicted, moved, stepMove, stepAfter,
+                         bound);
+            INFO ("Model " << (model == 0 ? "A" : "B") << ", vel.volume " << velVolume << ": Per Note " << perNote << " dB, Shared " << shared << " dB, at equal velocities "
+                           << sharedEqual << " dB, predicted " << predicted << " dB; steps of the difference during the move " << stepMove << ", after it " << stepAfter
+                           << ", bound " << bound);
+            CHECK (std::abs (perNote) < 0.1);
+            CHECK (std::abs (shared - sharedEqual - predicted) < 0.5);
+            if (model == 1)
+                CHECK (std::abs (shared - predicted) < 0.5);
+            CHECK (before <= 0.0);
+            CHECK (moved > 0.1);
+            CHECK (stepMove <= bound);
         }
 }
