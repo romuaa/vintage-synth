@@ -447,6 +447,7 @@ differ), the late-note timing, the switch fade or real-time safety.
 | 3 | `kChipGain` | Recalibrated once so that Init measures within 1 dB of Vintage's Init on the same phrase, in place of the onset-peak rule of S4a: two instruments of one maker should sit at the same loudness, and the onset peak said little about how loud a held note is. The owner hears the before and after in the audition. (review) |
 | 4 | Goldens | Six programs through the shared render harness (one lead, one bass, one arpeggio, one percussion sound, one Model A pad, the Dual layer), regenerated once after the audition if sounds change. (review) |
 | 5 | Windows CI time | S4b's default tests may add at most 20 s locally, and the step reports where the Windows test time goes, because S4a's Windows x64 job was cancelled at its 60-minute limit. A workflow change, if needed, is its own pull request. (review) |
+| 6 | `mix.level` as built | A linear per-sample ramp over 5 ms, not steps at the control points; exactly unity within 0.001 dB of 0 dB so that a host round trip of the default changes no bit; the fingerprint that pins "0 dB changes nothing" is checked on macOS arm64 only (other targets' maths libraries may differ in a last bit). The parameter count is 204; the two IDs are appended to each part's block, so `upper.*` and `chip.clock` move by index, not by ID. (review) |
 
 ## B-Side S3a round 2: the review's findings (2026-11-20, all review)
 
