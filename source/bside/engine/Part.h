@@ -67,6 +67,13 @@
 // long ago, so the fade takes none away, and the others' extra share arrives as a DC step. Measured on Model A with 16
 // voices: a step of 0.03 at a chord peak of 0.08. During a steal's 3 ms fade the audible sum therefore dips by at most
 // a quarter of the fading chip's share, at mid-fade.)
+// LEVELS (8.21.1 "Shared, levels", second review): each chip's share of the filter's output is heard at that chip's OWN
+// note gain (mixVoice; volume stays per note, 8.5), so the filtered sum is heard at the share-weighted mean of the note
+// gains. A note of another velocity that joins or leaves moves that level smoothly over the 3 ms fade, without a step.
+// This is a property of the topology, accepted as such. Measured on the held note's fundamental, a note at velocity 1
+// held and one at velocity 0.01 joining, vel.volume 100 %: -5.9 dB on Model B, -7.2 dB on Model A; nothing from the
+// gains at equal velocities (Model A's stages move the held note by their own curves, about -1.2 dB, whenever a second
+// note joins, the same at equal velocities). Pinned by the [review2][velocity] test.
 //
 // LATENCY (8.21.1, review): one figure for both models, fixed in prepare: the longer chain's latency
 // (ChipVoice::latencySamples) at the internal rate, the shorter chain padded to it by whole samples, plus the

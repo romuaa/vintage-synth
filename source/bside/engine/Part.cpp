@@ -703,15 +703,18 @@ void Part::noteOffVoice (NoteVoice& v) noexcept
 
 void Part::killVoice (NoteVoice& v) noexcept
 {
-    // All Sound Off: silent now; the chip's gates are cleared and the idle writes made, so a later note starts clean
+    // All Sound Off: silent now; the chip's gates are cleared and the idle writes made, so a later note starts clean.
+    // The chain stops FIRST: a write to a rendering chip at a sample boundary starts the next sample (it takes that
+    // sample's cycles from the clock), and suspend would then finish it, leaving the chip one internal sample ahead of
+    // the part's clock. Written while suspended, the writes are part of the state the next note starts on.
     if (v.active)
     {
+        v.chain.suspend();
         if (v.engine.isRunning())
         {
             v.engine.noteOff (v.chain.chip().cycle(), v.sink);
             v.engine.enterIdle (v.chain.chip().cycle(), v.restart, policy(), v.sink);
         }
-        v.chain.suspend();
     }
     v.active = v.held = v.idleSent = false;
     v.pending = false;
@@ -1203,12 +1206,14 @@ void Part::renderShared (int len) noexcept
             }
         }
         m = std::max (1, m);
-        // every chip renders the same m samples (no tick inside them)
+        // every chip renders the same m samples (no tick inside them). No cycle limit: m <= kSegment = kBlock, so each
+        // chip renders exactly the m samples whose buses are read below, in every build type; a chip at the part's
+        // cycle has no tick inside them anyway (the bound on m above), so the limit would change nothing for it.
         for (int a = 0; a < nAct; ++a)
         {
             auto& v = (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])];
-            const int got = v.chain.renderBusesUntil (m, v.engine.nextTickCycle());
-            jassert (got == m);
+            const int got = v.chain.renderBusesUntil (m, std::numeric_limits<std::uint64_t>::max());
+            jassert (got == m && v.chain.chip().cycle() == cycAt[static_cast<std::size_t> (pos + m)]); // lockstep: at the part's cycle
             juce::ignoreUnused (got);
         }
         // the shared filter, per bus sample: the sum of the chips' filterInputAc and the most recent note's static DC

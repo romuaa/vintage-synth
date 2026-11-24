@@ -1104,6 +1104,10 @@ TEST_CASE ("Part Shared: a note that joins the sum does not disturb a held note 
     // while B's share comes up (the 3 ms fade) is no larger than afterwards, when the two chips share the output half
     // and half (what remains then is the two stages' curves seeing half the signal each: the topology's own, 8.5). A
     // share that jumped, or weights that did not add up to 1, would show a larger difference in the join's window.
+    // Both notes have the same velocity ON PURPOSE: each chip's share of the filter's output is heard at that chip's own
+    // note gain, so a note of another velocity moves the held note's filtered level to the share-weighted mean of the
+    // note gains (8.21.1 "Shared, levels"; Part.h "SHARES"). That level move is pinned by the [review2][velocity] test;
+    // this test isolates the hand-over of the shares.
     const auto silent = compile ("bside-table 1\n[wave1]\n    wave saw +0\n    end\n");
     for (const int model : { 1, 0 })
     {
