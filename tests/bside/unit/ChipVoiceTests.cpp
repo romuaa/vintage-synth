@@ -1964,6 +1964,15 @@ struct PartSetup
     std::uint8_t route = 0x43; // 0x17 of every chip: resonance 4, oscillators 1 and 2 to the filter
     std::vector<PartWrite> writes;
     int samples = 16000;
+    // Shared through finishSharedWeighted (docs/architecture.md 8.21.1 after the review): chip k's weight at output
+    // sample i (null: finishShared with the count n)
+    double (*weight) (int chip, int chips, int sample) = nullptr;
+    bool othersSilent = false; // chips 1 .. n - 1 keep their gates closed (no sound of their own)
+    // the cost round's block path (ChipVoice::fastBlock): off runs every sample through the per-sample path; the number
+    // of samples that took the block path, summed over the chips, is written to blockSamples when it is not null
+    double rate = 96000.0;
+    bool blockPath = true;
+    std::uint64_t* blockSamples = nullptr;
 };
 
 /** n chips at 96 kHz, each on its own notes (chip k: oscillator 1 a saw, triangle or pulse a fifth-spaced step above
@@ -1973,7 +1982,7 @@ struct PartSetup
     handed over per sample), rendered in owner blocks of blockLen samples; the summed output. */
 std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
 {
-    const double rate = 96000.0;
+    const double rate = s.rate;
     std::vector<std::unique_ptr<ChipVoice>> v;
     std::vector<std::unique_ptr<Filter>> f;
     for (int k = 0; k < s.n; ++k)
@@ -1984,6 +1993,7 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
         cfg.volumeDc = s.vdc;
         v.push_back (std::make_unique<ChipVoice>());
         v.back()->prepare (cfg);
+        v.back()->blockPathEnabled (s.blockPath);
         if (! shared || k == 0)
         {
             f.push_back (std::make_unique<Filter>());
@@ -2004,10 +2014,11 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
         ChipVoice& x = *v[static_cast<std::size_t> (k)];
         const double hz = 110.0 * std::pow (2.0, static_cast<double> (k * 5 % 19) / 12.0);
         const auto wave = static_cast<std::uint8_t> (k % 3 == 0 ? ctrl::saw : (k % 3 == 1 ? ctrl::triangle : ctrl::pulse));
-        osc (x, 0, hz * 16777216.0 / 985248.0, 1500.0f + 100.0f * static_cast<float> (k), static_cast<std::uint8_t> (wave | ctrl::gate));
-        osc (x, 1, 1.5 * hz * 16777216.0 / 985248.0, 1500.0f + 100.0f * static_cast<float> (k), static_cast<std::uint8_t> (wave | ctrl::gate));
+        const std::uint8_t gate = s.othersSilent && k > 0 ? std::uint8_t { 0 } : ctrl::gate;
+        osc (x, 0, hz * 16777216.0 / 985248.0, 1500.0f + 100.0f * static_cast<float> (k), static_cast<std::uint8_t> (wave | gate));
+        osc (x, 1, 1.5 * hz * 16777216.0 / 985248.0, 1500.0f + 100.0f * static_cast<float> (k), static_cast<std::uint8_t> (wave | gate));
         if (s.osc3)
-            osc (x, 2, 2.25 * hz * 16777216.0 / 985248.0, 0.0f, static_cast<std::uint8_t> (ctrl::saw | ctrl::gate));
+            osc (x, 2, 2.25 * hz * 16777216.0 / 985248.0, 0.0f, static_cast<std::uint8_t> (ctrl::saw | gate));
         x.write (0x15, 900 & 7);
         x.write (0x16, 900 >> 3);
         x.write (0x17, s.route);
@@ -2043,8 +2054,17 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
                     ss[static_cast<std::size_t> (i)] = sf.staticOutput (dc);
                     sh[static_cast<std::size_t> (i)] = sf.outputShapeCoefficients();
                 }
-                for (auto& x : v)
-                    x->finishShared (sh.data(), so.data(), sl.data(), ss.data(), s.n, y.data(), want);
+                if (s.weight == nullptr)
+                    for (auto& x : v)
+                        x->finishShared (sh.data(), so.data(), sl.data(), ss.data(), s.n, y.data(), want);
+                else
+                    for (int k = 0; k < s.n; ++k)
+                    {
+                        std::array<double, ChipVoice::kBlock> w {};
+                        for (int i = 0; i < want; ++i)
+                            w[static_cast<std::size_t> (i)] = s.weight (k, s.n, done + i);
+                        v[static_cast<std::size_t> (k)]->finishSharedWeighted (sh.data(), so.data(), sl.data(), ss.data(), w.data(), y.data(), want);
+                    }
             }
             out.insert (out.end(), y.begin(), y.begin() + want);
             done += want;
@@ -2055,6 +2075,12 @@ std::vector<double> renderPart (const PartSetup& s, bool shared, int blockLen)
                 x->write (s.writes[next].reg, s.writes[next].value);
             ++next;
         }
+    }
+    if (s.blockSamples != nullptr)
+    {
+        *s.blockSamples = 0;
+        for (auto& x : v)
+            *s.blockSamples += x->blockPathSamples();
     }
     return out;
 }
@@ -2106,6 +2132,138 @@ TEST_CASE ("chain: Shared is exact per sample (one chip is Per Note bit for bit;
                 CHECK (sameBits (a, b));
             }
         }
+}
+
+TEST_CASE ("chain: the block path and the per-sample path give the same bits (writes of every kind, any call length, three rates)", "[chain][cost]")
+{
+    // The cost round (docs/architecture.md 8.21.1 after the review): Per Note, renderUntil takes a block of samples in
+    // one loop when nothing can happen inside it (ChipVoice::fastBlock) and falls back to the per-sample path around
+    // every write. Both must be the same arithmetic: with the block path off (every sample through chainSample) the
+    // output is the same bits, across routing, mute, volume, mode, resonance and cutoff writes (a single cutoff write,
+    // and bursts close enough to make the cutoff move), for calls of 64, 17 and 1 samples, at 48, 96 and 192 kHz, with
+    // volume DC on and off, one chip and three. And the block path is really taken: for most samples of these renders.
+    std::vector<PartWrite> writes { { 3000, 0x17, 0x41 }, { 5017, 0x18, 0x9f }, { 7033, 0x17, 0x45 }, { 9001, 0x18, 0x1f },
+                                    { 11000, 0x18, 0x19 }, { 13000, 0x17, 0x43 }, { 14000, 0x16, 0x50 }, { 14500, 0x17, 0xa3 },
+                                    { 15001, 0x18, 0x2f }, { 15003, 0x17, 0x33 }, { 15010, 0x16, 0x71 }, { 15020, 0x15, 0x05 } };
+    for (int k = 0; k < 12; ++k) // a moving cutoff: writes 40 samples apart, then it stands still again
+        writes.push_back ({ 17000 + 40 * k, 0x16, static_cast<std::uint8_t> (0x40 + 3 * k) });
+    writes.push_back ({ 19000, 0x18, 0x1f });
+    for (const double rate : { 48000.0, 96000.0, 192000.0 })
+        for (const Model m : { Model::B, Model::A })
+            for (const bool vdc : { false, true })
+                for (const int n : { 1, 3 })
+                {
+                    PartSetup s;
+                    s.rate = rate;
+                    s.m = m;
+                    s.vdc = vdc;
+                    s.n = n;
+                    s.writes = writes;
+                    s.samples = 22000;
+                    PartSetup perSample = s;
+                    perSample.blockPath = false;
+                    std::uint64_t none = 1;
+                    perSample.blockSamples = &none;
+                    const auto ref = renderPart (perSample, false, 64);
+                    INFO ((m == Model::A ? "Model A" : "Model B") << ", " << rate << " Hz, volume DC " << (vdc ? "on" : "off") << ", " << n << " chips");
+                    CHECK (none == 0);
+                    for (const int block : { 64, 17, 1 })
+                    {
+                        std::uint64_t taken = 0;
+                        s.blockSamples = &taken;
+                        const auto y = renderPart (s, false, block);
+                        INFO ("calls of " << block << " samples: " << taken << " of " << static_cast<std::uint64_t> (n) * 22000u << " samples took the block path; largest difference "
+                                          << maxAbsDiff (y, ref));
+                        CHECK (sameBits (y, ref));
+                        CHECK (taken > static_cast<std::uint64_t> (n) * 22000u * 6u / 10u);
+                    }
+                }
+}
+
+TEST_CASE ("chain: Shared by weight (finishSharedWeighted): weight 1 is Per Note bit for bit, 1 / n is finishShared, 0 is the chip's own output", "[chain][shared]")
+{
+    // The part's entry point for shares that move when a chip joins or leaves the sum (docs/architecture.md 8.21.1 after
+    // the independent review): the owner gives each chip its weight per bus sample instead of the whole count.
+    const std::vector<PartWrite> writes { { 3000, 0x17, 0x41 }, { 5017, 0x18, 0x9f }, { 7033, 0x17, 0x45 },
+                                          { 9001, 0x18, 0x1f }, { 11000, 0x18, 0x19 }, { 13000, 0x17, 0x43 } };
+    for (const Model m : { Model::B, Model::A })
+        for (const bool vdc : { false, true })
+        {
+            INFO ((m == Model::A ? "Model A" : "Model B") << ", volume DC " << (vdc ? "on" : "off"));
+            PartSetup s;
+            s.m = m;
+            s.vdc = vdc;
+            s.writes = writes;
+            // (1) one chip, weight 1: Per Note bit for bit (and so finishShared (..., 1, ...)), any owner block
+            s.n = 1;
+            const auto pn = renderPart (s, false, 64);
+            PartSetup one = s;
+            one.weight = [] (int, int, int) { return 1.0; };
+            for (const int block : { 64, 17, 1 })
+                CHECK (sameBits (renderPart (one, true, block), pn));
+            // (2) n chips at weight 1 / n: finishShared with the count n (a multiplication in place of a division: the
+            // same to rounding)
+            for (const int n : { 2, 16 })
+            {
+                PartSetup counted = s;
+                counted.n = n;
+                PartSetup weighted = counted;
+                weighted.weight = [] (int, int chips, int) { return 1.0 / static_cast<double> (chips); };
+                const auto a = renderPart (counted, true, 64), b = renderPart (weighted, true, 64);
+                INFO ("n = " << n << ": weights 1 / n against the count: largest difference " << maxAbsDiff (a, b));
+                CHECK (maxAbsDiff (a, b) <= 1.0e-11);
+                // a weighted render does not depend on the owner's block length either
+                CHECK (sameBits (renderPart (weighted, true, 17), b));
+            }
+        }
+    // (3) weight 0 is the chip's own output, nothing of the shared filter's signal: two chips, the second with its
+    // gates closed (no sound of its own; volume DC off, so its static level is 0 at the output). Chip 1 at weight 1 and
+    // chip 2 at weight 0 give what chip 1 gives alone; with the output shared half and half they do not (each stage's
+    // curve sees half the signal). And a share that moves from one chip to the other over 288 samples (the part's 3 ms
+    // at 96 kHz) with the weights adding up to 1 stays between the two.
+    for (const Model m : { Model::B, Model::A })
+    {
+        PartSetup alone;
+        alone.m = m;
+        alone.vdc = false;
+        alone.samples = 72000;
+        PartSetup two = alone;
+        two.n = 2;
+        two.othersSilent = true;
+        PartSetup all = two, halves = two, moving = two;
+        all.weight = [] (int chip, int, int) { return chip == 0 ? 1.0 : 0.0; };
+        halves.weight = [] (int, int, int) { return 0.5; };
+        moving.weight = [] (int chip, int, int sample) {
+            const double t = std::clamp ((static_cast<double> (sample) - 60000.0) / 288.0, 0.0, 1.0); // 0 .. 1 over 288 samples
+            return chip == 0 ? 1.0 - 0.5 * t : 0.5 * t;
+        };
+        const auto ref = renderPart (alone, true, 64);
+        const auto a = renderPart (all, true, 64), h = renderPart (halves, true, 64), mv = renderPart (moving, true, 64);
+        // from 0.5 s on: the second chip's power-on envelopes have run out and its board high-pass has let go of them
+        // (a 133 ms time constant: what is left is the tolerance of the "own output" checks below)
+        auto diff = [&] (const std::vector<double>& x, const std::vector<double>& y, std::size_t from, std::size_t to) {
+            double w = 0.0;
+            for (std::size_t i = from; i < to; ++i)
+                w = std::max (w, std::abs (x[i] - y[i]));
+            return w;
+        };
+        const double own = diff (a, ref, 48000, 60000), shared = diff (h, ref, 48000, 60000);
+        const double before = diff (mv, ref, 48000, 60000), during = diff (mv, ref, 60000, 60000 + 288 + 64), after = diff (mv, h, 60000 + 288 + 64, 72000);
+        double peak = 0.0;
+        for (std::size_t i = 48000; i < ref.size(); ++i)
+            peak = std::max (peak, std::abs (ref[i]));
+        std::printf ("[shared] weights, Model %s: (1, 0) differs from one chip by %.3g, (1/2, 1/2) by %.3g; a share moving over 288 samples: %.3g before, %.3g during, "
+                     "%.3g from the halves after (peak %.3g)\n", m == Model::A ? "A" : "B", own, shared, before, during, after, peak);
+        INFO ((m == Model::A ? "Model A" : "Model B") << ": weights (1, 0) differ from one chip by " << own << ", halves by " << shared << "; moving: before " << before
+                                                     << ", during " << during << ", after (from the halves) " << after << "; peak " << peak);
+        REQUIRE (peak > 0.05);
+        CHECK (shared > 1.0e-3 * peak); // sharing is not nothing: the test can see a share
+        CHECK (own <= 0.01 * shared);
+        CHECK (before <= 0.01 * shared);
+        CHECK (during <= 1.2 * shared); // on its way from one to the other, never beyond
+        // afterwards it is the half-and-half render (the board high-pass's memory of the way there decays)
+        CHECK (diff (mv, h, 70000, 72000) <= 0.2 * shared);
+    }
 }
 
 TEST_CASE ("chain: the Shared topology with different notes differs from Per Note by the documented amount (Model B, n = 2)", "[chain][shared]")

@@ -33,8 +33,9 @@
 // STRUCTURAL SWITCHES (8.21.1, review): chip.model, filter.topology, chip.clock, chip.resolution, chip.volume_dc. A
 // change fades the part's sounding voices over 3 ms; when the fade ends every voice is reset into the new
 // configuration (ChipVoice prototypes and filters built in prepare: no design work on the audio thread) and is idle;
-// held keys do not retrigger (the allocator gets voiceIdle). A note started during the fade starts after it, its
-// release as late.
+// held keys do not retrigger (the allocator gets voiceIdle). A note started during the fade starts after it and is
+// released as much later as it started (its length is kept; the same after a steal's fade); the fade is applied after
+// the latency pad, so it reaches the output in full.
 //
 // SHARED (8.5, 8.19.4, 8.21.1): the part runs one Filter for its chips, fed per bus sample with the sum of their
 // filterInputAc and the most recent note's staticFilterBusDc, and hands each chip its share (ChipVoice::finishShared).
@@ -43,6 +44,29 @@
 // ChipVoice::sharedSwitchSample () names (the nearest sample; the blend of ChipVoice.h "TOPOLOGY" is not built: the
 // deviation of 8.19.4 is recorded). The voices render in lockstep: a segment is split where any voice's tick falls.
 // One voice in Shared equals Per Note bit for bit (with no mode or resonance write after its start).
+// SHARES (8.21.1 after the review). Each chip of the sum hears the shared filter's output through its own stage with a
+// weight (ChipVoice::finishSharedWeighted); the weights of the chips in the sum always add up to 1, and they MOVE when
+// the membership changes, over the 3 ms fade, never step:
+// - every chip has a share m (NoteVoice::share, 0 .. 1) that ramps linearly to its target in 3 ms; its weight is
+//   m / (the sum of the shares). A note that starts while other chips carry the filter's output starts at m = 0 and
+//   ramps to 1 (it joins silently); a note that starts with no one carrying it (the first note, chips started in the
+//   same sample) starts at 1 (so one voice is Per Note bit for bit).
+// - a chip that goes idle (8.5: its envelopes at 0, no lane can gate) while another chip carries the output hands its
+//   share on: its target is 0. From then on its output is its OWN contribution only (its direct bus and its static
+//   level; its input to the shared filter is 0 by the idle rule), and the quiet criterion of the idle rule is judged on
+//   that: it leaves as it would Per Note and never carries the other notes' sound out with it. With no other carrier
+//   (every chip idle) it keeps its share and is judged on its whole output, which then is its own decaying sound, as
+//   Per Note. A note that starts takes the share of every idle chip.
+// - a chip whose OUTPUT fades (a steal's fade, the leave fade of the 500 ms rule) while another chip carries the output
+//   hands its share on over the same 3 ms (target 0), and its input to the shared filter fades with its output; its
+//   weight is 0 when the fade ends (a stolen chip's new note then joins from 0). With no chip to take it, it keeps its
+//   share and the fade is the sound's own fade, as Per Note.
+// The weights that go into the chips' stages always add up to 1, so the filter's output, its DC included, is conserved
+// through every chip's board filters. (Scaling the other chips up by what a fading chip's output gain takes away would
+// keep the audible sum exact during a fade, but not the DC: a chip's board high-pass has removed the DC of its share
+// long ago, so the fade takes none away, and the others' extra share arrives as a DC step. Measured on Model A with 16
+// voices: a step of 0.03 at a chord peak of 0.08. During a steal's 3 ms fade the audible sum therefore dips by at most
+// a quarter of the fading chip's share, at mid-fade.)
 //
 // LATENCY (8.21.1, review): one figure for both models, fixed in prepare: the longer chain's latency
 // (ChipVoice::latencySamples) at the internal rate, the shorter chain padded to it by whole samples, plus the
@@ -127,6 +151,9 @@ public:
     int getControlInterval() const noexcept { return controlInterval; }
     int getChainLatency (vs::bside::chip::Model m) const noexcept { return chainLatency[m == vs::bside::chip::Model::A ? 0 : 1]; }
     int getMaxChainLatency() const noexcept { return maxChainLatency; }
+    /** The latency pad: how many internal samples it delays the current model's chain by, and what its ring holds. */
+    int getPadDelay() const noexcept { return padDelay; }
+    static constexpr int padCapacity() noexcept { return kPadRing; }
     std::int64_t getRenderedSamples() const noexcept { return partSample; }
     int numActiveVoices() const noexcept;
     const NoteVoice& getVoice (int i) const noexcept { return (*voices)[static_cast<std::size_t> (i)]; }
@@ -209,6 +236,9 @@ private:
     CtlState liveState() const noexcept;
     void startNote (NoteVoice& v, int index, const vs::VoiceAction& a, bool stolen, const CtlState& c) noexcept;
     void startNote (NoteVoice& v, int index, const vs::VoiceAction& a, bool stolen) noexcept { startNote (v, index, a, stolen, liveState()); }
+    /** A note that waited (a steal's fade, a structural switch) starts at part sample `at`: it remembers how late, and a
+        release that came while it waited is scheduled as long after the start as it came after the note-on. */
+    void startWaiting (NoteVoice& v, int index, bool stolen, const CtlState& c, std::int64_t at) noexcept;
     void noteOffVoice (NoteVoice& v) noexcept;
     void killVoice (NoteVoice& v) noexcept;
     void leaveSum (NoteVoice& v) noexcept;
@@ -240,6 +270,11 @@ private:
     void sharedWrite (int voice, NoteVoiceSink::FilterWrite what) noexcept;
     void applySharedWrite (const SharedWrite& w, std::int64_t at) noexcept;
     void setMostRecent (int voice) noexcept;
+    /** The weights of the active chips `act[0 .. nAct)` for bus samples 0 .. m of a segment that is at its sample `pos`
+        (shareW; shareIn when it returns true: a fading chip's input factor), and the shares advanced by m samples. */
+    bool sharedWeights (const std::array<int, kVoices>& act, int nAct, int pos, int m) noexcept;
+    /** Whether another chip of the sum carries the shared filter's output and is not fading out (it can take a share). */
+    bool carriedByOthers (const NoteVoice& v) const noexcept;
     void sharedFollowVoice (int voice) noexcept;
     int mostRecentActive() const noexcept;
 
@@ -296,7 +331,13 @@ private:
     std::array<CtlState, kMaxControls> ctlStates {};
     std::array<int, kVoices> leftAt {};
     std::array<std::array<double, kSegment>, kVoices> voiceOut {}; // Shared: each voice's output of a segment
-    static constexpr int kPadRing = 64;
+    std::array<std::array<double, kSegment>, kVoices> shareW {};   // Shared: each voice's weight per bus sample
+    std::array<std::array<double, kSegment>, kVoices> shareIn {};  // Shared: a fading voice's input factor per bus sample
+    // the pad delays the shorter chain by the DIFFERENCE of the two chains (never by a chain's whole length): at most
+    // 2 x HalfBandDesign::kMaxPairs - 1 = 63 internal samples (Model A's 2x part, reached at host rates of 8 and
+    // 11.025 kHz); the ring holds twice that, at every host rate the shell accepts (8.21.1 after the review)
+    static constexpr int kPadRing = 128;
+    static_assert (kPadRing >= 4 * vs::bside::chip::HalfBandDesign::kMaxPairs && (kPadRing & (kPadRing - 1)) == 0);
     std::array<double, kPadRing> pad {};
     int padPos = 0, padDelay = 0;
     vs::bside::chip::render::OutputRounding rounding {};

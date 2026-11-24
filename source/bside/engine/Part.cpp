@@ -140,7 +140,8 @@ void Part::prepare (double sampleRate, int maxBlockSize, int oversamplingFactor,
         chainLatency[static_cast<std::size_t> (m)] = (*protoChain)[static_cast<std::size_t> (m)].latencySamples();
     }
     maxChainLatency = std::max (chainLatency[0], chainLatency[1]);
-    jassert (maxChainLatency < kPadRing);
+    // what the pad needs: the difference of the two chains (the longer one is not delayed), with margin
+    jassert (2 * (maxChainLatency - std::min (chainLatency[0], chainLatency[1])) <= kPadRing);
 
     // The decimator (Vintage's, unchanged) and the one latency of both models (8.21.1).
     oversampler.reset();
@@ -203,8 +204,13 @@ void Part::configureVoices() noexcept
         v.fadeLeft = 0;
         v.fadeKind = NoteVoice::Fade::none;
         v.pending = false;
+        v.pendingRelease = -1;
         v.releaseCountdown = -1;
+        v.startDelay = 0;
         v.late = false;
+        v.share = 1.0;
+        v.shareUp = true;
+        v.startedAt = 0;
     }
     refClock.prepare (clockHz, internalRate);
     refCycle = 0;
@@ -322,32 +328,51 @@ void Part::finishSwitch() noexcept
     // the voices that sounded become idle; a note that waits starts in the new configuration (late)
     std::array<bool, kVoices> waiting {};
     std::array<vs::VoiceAction, kVoices> actions {};
-    std::array<int, kVoices> countdown {};
+    std::array<std::int64_t, kVoices> since {}, released {};
     for (int i = 0; i < kVoices; ++i)
     {
         auto& v = (*voices)[static_cast<std::size_t> (i)];
         waiting[static_cast<std::size_t> (i)] = v.pending;
         actions[static_cast<std::size_t> (i)] = v.pendingAction;
-        countdown[static_cast<std::size_t> (i)] = v.releaseCountdown;
+        since[static_cast<std::size_t> (i)] = v.pendingAt;
+        released[static_cast<std::size_t> (i)] = v.pendingRelease;
     }
     configureVoices();
     ++switches;
     for (int i = 0; i < kVoices; ++i)
         if (! waiting[static_cast<std::size_t> (i)] && allocator.isVoiceBusy (i))
             allocator.voiceIdle (i); // held keys do not retrigger
+    const CtlState now = liveState();
     for (int i = 0; i < kVoices; ++i)
         if (waiting[static_cast<std::size_t> (i)])
         {
             auto& v = (*voices)[static_cast<std::size_t> (i)];
-            startNote (v, i, actions[static_cast<std::size_t> (i)], false);
-            v.late = true;
-            v.releaseCountdown = countdown[static_cast<std::size_t> (i)];
-            if (v.releaseCountdown == 0)
-            {
-                v.releaseCountdown = -1; // released while it waited, at the very end: released at once
-                noteOffVoice (v);
-            }
+            v.pendingAction = actions[static_cast<std::size_t> (i)];
+            v.pendingAt = since[static_cast<std::size_t> (i)];
+            v.pendingRelease = released[static_cast<std::size_t> (i)];
+            startWaiting (v, i, false, now, partSample); // the fade ended at this sample
         }
+}
+
+void Part::startWaiting (NoteVoice& v, int index, bool stolen, const CtlState& c, std::int64_t at) noexcept
+{
+    const vs::VoiceAction a = v.pendingAction;
+    const std::int64_t waited = std::clamp<std::int64_t> (at - v.pendingAt, 0, 1 << 30);
+    const std::int64_t released = v.pendingRelease;
+    startNote (v, index, a, stolen, c); // clears the waiting state and the delay of the note before
+    v.startDelay = static_cast<int> (waited);
+    v.late = waited > 0;
+    if (released == 0)
+    {
+        v.late = false; // note-on and note-off in one sample: released at once
+        noteOffVoice (v);
+    }
+    else if (released > 0)
+    {
+        // released while it waited: as long after its start as the release came after its note-on
+        v.late = false;
+        v.releaseCountdown = static_cast<int> (std::min<std::int64_t> (released, 1 << 30));
+    }
 }
 
 // ---- reset, resume, release ------------------------------------------------------------------------------------
@@ -499,31 +524,39 @@ void Part::execute (const vs::VoiceAction& a) noexcept
         case vs::VoiceAction::Type::Start:
         case vs::VoiceAction::Type::Steal:
             v.releaseCountdown = -1; // a new note cancels a delayed release of the old one
+            v.pendingRelease = -1;
             if (switchPending || v.pending)
             {
                 v.pending = true; // starts after the switch or the steal fade
                 v.pendingAction = a;
+                v.pendingAt = partSample;
             }
             else if (a.type == vs::VoiceAction::Type::Steal && v.active)
             {
+                if (current.shared && carriedByOthers (v))
+                    v.shareUp = false; // Shared: its share goes to the others as it fades (its new note joins from 0)
                 v.fadeKind = NoteVoice::Fade::steal;
                 v.fadeLeft = fadeSamples;
                 v.fadeStep = v.fade / static_cast<double> (fadeSamples);
                 v.pending = true;
                 v.pendingAction = a;
+                v.pendingAt = partSample;
             }
             else
-            {
                 startNote (v, index, a, false);
-                v.late = false;
-            }
             break;
 
         case vs::VoiceAction::Type::Retarget:
             if (v.pending)
-                v.pendingAction.note = a.note;
+            {
+                v.pendingAction.note = a.note; // the waiting note is this one now: its delay counts from here
+                v.pendingAt = partSample;
+            }
             else if (v.active)
             {
+                // the note that started late is over: the one retargeted to came on time, and so does its release
+                v.late = false;
+                v.startDelay = 0;
                 const bool glide = glideFactor > 0.0 && a.glideFrom == vs::VoiceAction::kGlideFromCurrent;
                 v.glide = glide ? static_cast<double> (v.note) + v.glide - static_cast<double> (a.note) : 0.0;
                 v.note = a.note;
@@ -536,10 +569,18 @@ void Part::execute (const vs::VoiceAction& a) noexcept
             break;
 
         case vs::VoiceAction::Type::Release:
-            if (v.pending || v.late)
+            if (v.pending)
             {
+                // released while it waits: remembered as a length, scheduled when the note starts (startWaiting)
+                if (v.pendingRelease < 0)
+                    v.pendingRelease = std::max<std::int64_t> (0, partSample - v.pendingAt);
+            }
+            else if (v.late && v.active)
+            {
+                // a late note is released as much later as it started (not a fixed fade length later)
+                v.late = false;
                 if (v.releaseCountdown < 0)
-                    v.releaseCountdown = fadeSamples; // a late note is released as late as it started
+                    v.releaseCountdown = v.startDelay;
             }
             else if (v.active)
                 noteOffVoice (v);
@@ -612,6 +653,9 @@ void Part::startNote (NoteVoice& v, int index, const vs::VoiceAction& a, bool st
     v.fadeStep = 0.0;
     v.fadeKind = NoteVoice::Fade::none;
     v.pending = false;
+    v.pendingRelease = -1;
+    v.startDelay = 0;
+    v.late = false; // a delay belongs to one note: the callers that start a note late set it after this
     v.active = true;
     v.held = true;
     v.idleSent = false;
@@ -620,7 +664,23 @@ void Part::startNote (NoteVoice& v, int index, const vs::VoiceAction& a, bool st
     if (current.model == 0)
         v.filter.setVariation (map::percentToFraction (static_cast<float> (c.v[sVariation])));
     if (current.shared)
+    {
+        // its share of the shared filter's output (Part.h "SHARES"): from 0 when other chips carry it already (it joins
+        // over the 3 ms fade), in full when none does; every idle chip hands its share on to it
+        bool carried = false;
+        for (auto& u : *voices)
+            if (&u != &v && u.active)
+            {
+                carried = carried || (u.share > 0.0 && u.startedAt < partSample);
+                if (u.idleSent)
+                    u.shareUp = false;
+            }
+        if (fromIdle || stolen)
+            v.share = carried ? 0.0 : 1.0;
+        v.shareUp = true;
+        v.startedAt = partSample;
         setMostRecent (index);
+    }
 
     const program::Program& table = program != nullptr ? *program : emptyTable();
     v.restart = table.restart;
@@ -655,7 +715,9 @@ void Part::killVoice (NoteVoice& v) noexcept
     }
     v.active = v.held = v.idleSent = false;
     v.pending = false;
+    v.pendingRelease = -1;
     v.releaseCountdown = -1;
+    v.startDelay = 0;
     v.late = false;
     v.fade = 1.0;
     v.fadeLeft = 0;
@@ -862,18 +924,20 @@ void Part::renderInternal (float* dst, int count) noexcept
 
 void Part::postProcess (float* dst, int len) noexcept
 {
-    // the switch fade, the latency pad, the gain, the one conversion to float (8.20.1)
+    // the latency pad, the switch fade, the gain, the one conversion to float (8.20.1)
     for (int i = 0; i < len; ++i)
     {
-        double s = sum[static_cast<std::size_t> (i)];
+        const double s = sum[static_cast<std::size_t> (i)];
+        pad[static_cast<std::size_t> (padPos)] = s;
+        double delayed = pad[static_cast<std::size_t> ((padPos - padDelay + kPadRing) & (kPadRing - 1))];
+        padPos = (padPos + 1) & (kPadRing - 1);
         if (switchPending)
         {
-            s *= static_cast<double> (switchLeft) / static_cast<double> (fadeSamples);
+            // the switch's fade AFTER the pad (8.21.1 after the review): it reaches the output in full, and what the
+            // pad still holds when the fade ends (the old configuration's last samples) is behind a gain of 0
+            delayed *= static_cast<double> (switchLeft) / static_cast<double> (fadeSamples);
             switchLeft = std::max (0, switchLeft - 1);
         }
-        pad[static_cast<std::size_t> (padPos)] = s;
-        const double delayed = pad[static_cast<std::size_t> ((padPos - padDelay + kPadRing) & (kPadRing - 1))];
-        padPos = (padPos + 1) & (kPadRing - 1);
         dst[i] = rounding.next (delayed * kChipGain);
         silentRun = s < 0.0 || s > 0.0 ? 0 : silentRun + 1;
     }
@@ -976,11 +1040,7 @@ void Part::renderSpanPerNote (float* dst, int count) noexcept
         if (v.active)
             renderVoiceSpan (v, i, count, nCtl, start);
         else
-        {
             v.skipPending += count;
-            if (v.releaseCountdown > 0) // a note waiting for a switch keeps its release time running
-                v.releaseCountdown = std::max (0, v.releaseCountdown - count);
-        }
     }
     refCycle += refClock.nextSamples (static_cast<std::uint64_t> (count));
 
@@ -1044,14 +1104,10 @@ void Part::renderVoiceSpan (NoteVoice& v, int index, int count, int nCtl, const 
         {
             if (v.fadeKind == NoteVoice::Fade::steal)
             {
-                const vs::VoiceAction a = v.pendingAction;
-                const int countdown = v.releaseCountdown;
                 v.chain.suspend();
                 v.active = false;
                 v.skipPending = 0;
-                startNote (v, index, a, true, now);
-                v.late = true;
-                v.releaseCountdown = countdown;
+                startWaiting (v, index, true, now, partSample + pos);
             }
             else
             {
@@ -1115,9 +1171,13 @@ void Part::renderShared (int len) noexcept
         sharedChanged = sharedMoving = false;
         return;
     }
+    std::array<bool, kVoices> shedding {}; // chips that still hand a share on in this segment
     for (int a = 0; a < nAct; ++a)
-        std::fill (voiceOut[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])].begin(),
-                   voiceOut[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])].begin() + len, 0.0);
+    {
+        const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
+        std::fill (voiceOut[vi].begin(), voiceOut[vi].begin() + len, 0.0);
+        shedding[vi] = ! (*voices)[vi].shareUp && (*voices)[vi].share > 0.0;
+    }
 
     int pos = 0;
     while (pos < len)
@@ -1171,6 +1231,8 @@ void Part::renderShared (int len) noexcept
                 v.chain.settleShared (linS, lpS);
             }
         }
+        // the chips' shares of the filter's output over these samples, and a fading chip's input factor
+        const bool inputFades = sharedWeights (act, nAct, pos, m);
         for (int i = 0; i < m; ++i)
         {
             const std::int64_t p = partSample + pos + i;
@@ -1187,8 +1249,15 @@ void Part::renderShared (int len) noexcept
             }
             const double dc = dcChain.staticFilterBusDc (i);
             double in = dc;
-            for (int a = 0; a < nAct; ++a)
-                in += (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])].chain.filterInputAc (i);
+            if (! inputFades)
+                for (int a = 0; a < nAct; ++a)
+                    in += (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])].chain.filterInputAc (i);
+            else
+                for (int a = 0; a < nAct; ++a)
+                {
+                    const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
+                    in += shareIn[vi][static_cast<std::size_t> (i)] * (*voices)[vi].chain.filterInputAc (i);
+                }
             if (sharedSettle)
             {
                 sharedFilter.primeSteady (dc); // the static level: the voices' DC, no audio, envelopes 0
@@ -1203,8 +1272,8 @@ void Part::renderShared (int len) noexcept
         for (int a = 0; a < nAct; ++a)
         {
             const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
-            (*voices)[vi].chain.finishShared (shShape.data(), shLinear.data(), shLowPass.data(), shStatic.data(), nAct,
-                                              voiceOut[vi].data() + pos, m);
+            (*voices)[vi].chain.finishSharedWeighted (shShape.data(), shLinear.data(), shLowPass.data(), shStatic.data(), shareW[vi].data(),
+                                                      voiceOut[vi].data() + pos, m);
         }
         pos += m;
     }
@@ -1212,7 +1281,76 @@ void Part::renderShared (int len) noexcept
     {
         const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
         mixVoice ((*voices)[vi], voiceOut[vi].data(), sum.data(), len);
+        // the quiet criterion is judged on the chip's own contribution (8.21.1 after the review): not while it still
+        // carried a share that it is handing on
+        if (shedding[vi])
+            (*voices)[vi].quiet = 0;
     }
+}
+
+bool Part::carriedByOthers (const NoteVoice& v) const noexcept
+{
+    for (const auto& u : *voices)
+        if (&u != &v && u.active && u.shareUp && u.fadeLeft == 0)
+            return true;
+    return false;
+}
+
+bool Part::sharedWeights (const std::array<int, kVoices>& act, int nAct, int pos, int m) noexcept
+{
+    const double step = 1.0 / static_cast<double> (fadeSamples);
+    bool moving = false;
+    double total = 0.0;
+    for (int a = 0; a < nAct; ++a)
+    {
+        const auto& v = (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])];
+        moving = moving || (v.shareUp ? v.share < 1.0 : (v.share > 0.0 || v.fadeLeft > 0));
+        total += v.share;
+    }
+    if (! moving)
+    {
+        // nothing moves: each chip's share of the sum (one chip, or equal chips: 1 / n; an idle chip that handed on: 0)
+        for (int a = 0; a < nAct; ++a)
+        {
+            const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
+            const double w = total > 0.0 ? (*voices)[vi].share / total : 0.0;
+            std::fill (shareW[vi].begin(), shareW[vi].begin() + m, w);
+        }
+        return false;
+    }
+    bool inputFades = false;
+    std::array<double, kVoices> share {};
+    for (int i = 0; i < m; ++i)
+    {
+        // sample i: every share i steps on its way to its target; the weights are the shares over their sum
+        double all = 0.0;
+        for (int a = 0; a < nAct; ++a)
+        {
+            const auto& v = (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])];
+            const double moved = static_cast<double> (i) * step;
+            const double s = v.shareUp ? std::min (1.0, v.share + moved) : std::max (0.0, v.share - moved);
+            share[static_cast<std::size_t> (a)] = s;
+            all += s;
+        }
+        for (int a = 0; a < nAct; ++a)
+        {
+            const auto vi = static_cast<std::size_t> (act[static_cast<std::size_t> (a)]);
+            const auto& v = (*voices)[vi];
+            shareW[vi][static_cast<std::size_t> (i)] = all > 0.0 ? share[static_cast<std::size_t> (a)] / all : 0.0;
+            // a chip that fades out while others carry the filter's output: its input to the filter fades with it (the
+            // output gain mixVoice applies at this sample)
+            const bool fading = v.fadeLeft > 0 && ! v.shareUp;
+            shareIn[vi][static_cast<std::size_t> (i)] = fading ? std::max (0.0, v.fade - static_cast<double> (pos + i) * v.fadeStep) : 1.0;
+            inputFades = inputFades || fading;
+        }
+    }
+    for (int a = 0; a < nAct; ++a)
+    {
+        auto& v = (*voices)[static_cast<std::size_t> (act[static_cast<std::size_t> (a)])];
+        const double moved = static_cast<double> (m) * step;
+        v.share = v.shareUp ? std::min (1.0, v.share + moved) : std::max (0.0, v.share - moved);
+    }
+    return inputFades;
 }
 
 Part::CtlState Part::partControl() noexcept
@@ -1282,6 +1420,13 @@ bool Part::voiceControl (NoteVoice& v, const CtlState& c) noexcept
             v.idleSent = true;
             v.sinceIdle = 0;
             v.quiet = 0;
+            if (current.shared)
+            {
+                // Shared: it hands its share of the filter's output on to the chips that carry it (Part.h "SHARES"),
+                // so that its own contribution is what the quiet criterion below sees
+                if (carriedByOthers (v))
+                    v.shareUp = false;
+            }
         }
         return false;
     }
@@ -1295,6 +1440,8 @@ bool Part::voiceControl (NoteVoice& v, const CtlState& c) noexcept
     const auto leaveAfter = static_cast<std::int64_t> (std::llround (kLeaveSeconds * internalRate));
     if (v.sinceIdle >= leaveAfter)
     {
+        if (current.shared && carriedByOthers (v))
+            v.shareUp = false; // Shared: what it still carries of the filter's output goes to the others as it fades
         v.fadeKind = NoteVoice::Fade::leave;
         v.fadeLeft = fadeSamples;
         v.fadeStep = v.fade / static_cast<double> (fadeSamples);
@@ -1319,6 +1466,21 @@ void Part::controlPoint() noexcept
 void Part::afterSegment (int len) noexcept
 {
     tapPartSample = partSample;
+
+    // delayed releases of late notes, first: the segment's samples count for the notes that sounded in it, not for a
+    // note that starts below (its countdown is its whole length)
+    for (auto& v : *voices)
+        if (v.releaseCountdown > 0)
+        {
+            v.releaseCountdown -= len;
+            if (v.releaseCountdown <= 0)
+            {
+                v.releaseCountdown = -1;
+                if (v.active && ! v.pending)
+                    noteOffVoice (v);
+            }
+        }
+
     if (switchPending && switchLeft <= 0)
         finishSwitch();
 
@@ -1332,14 +1494,10 @@ void Part::afterSegment (int len) noexcept
             continue;
         if (v.fadeKind == NoteVoice::Fade::steal)
         {
-            const vs::VoiceAction a = v.pendingAction;
-            const int countdown = v.releaseCountdown;
             v.chain.suspend(); // the new note starts settled
             v.active = false;
             v.skipPending = 0;
-            startNote (v, i, a, true);
-            v.late = true;
-            v.releaseCountdown = countdown;
+            startWaiting (v, i, true, liveState(), partSample);
         }
         else
         {
@@ -1350,19 +1508,6 @@ void Part::afterSegment (int len) noexcept
     for (int k = 0; k < numLeft; ++k)
         allocator.voiceIdle (leftVoices[static_cast<std::size_t> (k)]);
     numLeft = 0;
-
-    // delayed releases of late notes
-    for (auto& v : *voices)
-        if (v.releaseCountdown > 0)
-        {
-            v.releaseCountdown -= len;
-            if (v.releaseCountdown <= 0)
-            {
-                v.releaseCountdown = -1;
-                if (v.active && ! v.pending)
-                    noteOffVoice (v);
-            }
-        }
 }
 
 // ---- Shared ----------------------------------------------------------------------------------------------------

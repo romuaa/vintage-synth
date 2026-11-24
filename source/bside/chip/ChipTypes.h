@@ -5,6 +5,21 @@
 #include <array>
 #include <cstdint>
 
+/** Inlined into the per-sample paths whatever the compiler's size budget: the chip's envelope steps (Chip.h) and the
+    "...Inline" forms of the chain's per-sample pieces (the filter's step, the half-band filters, the mixer curve, the
+    board filters), which ChipVoice's block path calls: out of line they cost the chain a call each per sample, about
+    1.5 ns together (docs/architecture.md 8.21.1, the cost round). Each plain form calls its Inline form, so there is
+    one arithmetic path, and every other caller is compiled as before (forcing the plain forms inline made chip_bench's
+    s3bB loop 0.3 ns slower). Inlining changes no arithmetic: no compiler here contracts across statements
+    (CMakeLists.txt, bs_chip_fp_rules).
+    MSVC: plain inline (__forceinline raises C4714 wherever it cannot inline, e.g. in a Debug build, and warnings
+    are errors). */
+#if defined(_MSC_VER)
+    #define BS_CHIP_INLINE inline
+#else
+    #define BS_CHIP_INLINE inline __attribute__ ((always_inline))
+#endif
+
 namespace vs::bside::chip
 {
 enum class Model : std::uint8_t { A, B };
