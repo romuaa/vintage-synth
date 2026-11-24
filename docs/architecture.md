@@ -2539,6 +2539,50 @@ rebuilds per resonance write (`ChipVoice.h`, "RESONANCE") and the part's own ove
   and the code, never the author's conclusions), fixes, the orchestrator's full gate and one
   dispatched CI run for Windows and Linux x86_64.
 
+- **After the independent review (2026-11-24; these win over the points above; all review):**
+  - **Shared, a voice's own output.** In Shared a chip's output carries its share of the shared
+    filter's output, which holds the other notes. The quiet criterion of the idle rule is
+    therefore judged on the voice's **own** contribution: its static and direct output and its
+    own input to the shared filter, not its share of the filter's output. An idle voice in
+    Shared leaves within the same times as in Per Note and stops costing CPU.
+  - **Shared, membership changes are silent.** When a chip joins or leaves the shared sum, the
+    filter's output heard through the remaining chips does not step: the shares move to their
+    new values over the 3 ms fade (the weights always sum to 1), and a leaving chip's weight
+    reaches 0 before it leaves. Gate: a held note with a second note played, released and gone
+    idle differs from the same render without the second note's leave by no more after the
+    leave than before it (both models, the reviewer's test); the same when a note joins, beyond
+    the new note's own sound. One voice in Shared still equals Per Note bit for bit.
+  - **A structural switch ends without a step.** The 3 ms fade reaches the part's output in
+    full: nothing after the fade (the latency pad) is cleared while it still holds faded
+    samples. Gate: the output divided by a no-switch reference never steps by more than 3/288
+    of the signal at the fade's end, from either model, for every structural switch.
+  - **A note keeps its length across a delayed start.** A note whose start was delayed (by a
+    steal's fade or a switch's fade) is released as much later as it started, not a fixed fade
+    length later; a delay flag does not outlive its note. Gate: played length equals sounded
+    length within 1 internal sample for a note-on anywhere inside a switch's fade.
+  - **Latency includes every delay of the chain**, the board filters' measured delay too (the
+    formula above gains that term; without it the edge is 1.39 host samples late at 192 kHz
+    without oversampling). The latency test compares the two models in Per Note as well.
+  - **The pad covers every host rate the shell accepts.** The ring holds the largest difference
+    between the two chains with margin at every rate from 8 kHz up; the assertion checks what
+    the pad needs (the difference), and a test prepares at 8, 11.025 and 16 kHz.
+  - **Tempo:** the host's tempo while the host plays and gives a tempo and a position (the
+    shell's arpeggiator rule), else `arp.tempo`. This replaces "while the host gives one".
+  - **`chip.clock` is global:** switching it switches both parts. "The other part is not
+    touched" holds for the four per-part switches.
+  - **Tests the review found missing or weak** are added or tightened: `restart.policy` changes
+    the output; the switch test measures the step at the fade's end against a reference; the
+    Shared test covers releases and leaves in any order. The reviewer's tests join the suite
+    unchanged and pass.
+  - **CPU.** The gates above stand. Measured at the orchestrator's bench (2026-11-24): 16 voices
+    on Model B 5.15 to 5.22 % (gate 5 %), Dual 10.34 to 10.51 % (gate 10 %); Model A 10.97 to
+    11.00 % and 21.89 to 22.10 %, at its gates with no margin; `chainB` 31.6 to 31.8 ns
+    against 30.6 to 30.9 ns on `main`. One more cost round, by a stronger model: first whether
+    the chain itself got slower with the new entry points (the settle checks in the per-sample
+    path) and what the part adds around it (per-voice buffer passes, the up-sampling of a
+    silent block, the per-interval host inputs). The gate is read as the best of three runs
+    inside one invocation, passing in three invocations in a row.
+
 #### 8.21.2 S4b: patches, level rule, goldens, audition (outline; completed before it starts)
 - 10 to 20 factory programs in `presets/bside/factory/` with their tables: drums, a chip arpeggio,
   a pulse lead, a filter bass, sync and ring leads, Model A pads (8.10). Own names; no
