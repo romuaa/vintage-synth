@@ -132,6 +132,10 @@ public:
     double peekWithCutoffLinearDouble (double in, float registerValue, const Filter& stateOf, double& lowPass) noexcept;
     /** The state (two values) and setting it (a mixture of steps taken from one state: ChipVoice). */
     std::array<double, 2> state() const noexcept { return { s1, s2 }; }
+    /** The state process () settles to for the constant input `in` with this filter's parameters (its fixed point),
+        set now: a chain that starts from idle starts settled on its static level (docs/architecture.md 8.21.1). The
+        input passes the input guard first; a filter without a fixed point (never: every setting is stable) is reset. */
+    void primeSteady (double in) noexcept;
     void setState (const std::array<double, 2>& s) noexcept
     {
         s1 = s[0];
@@ -155,7 +159,9 @@ public:
         functions of (0 on Model B); processDouble (x) = processLinearDouble (x, lp) + outputShape (lp), the state advanced alike.
         The trapezoidal state-variable filter written as its state-space form (identical arithmetic in exact numbers, a
         shorter dependency chain per sample): every output a linear form in x, s1, s2. */
-    double processLinearDouble (double in, double& lowPass) noexcept
+    double processLinearDouble (double in, double& lowPass) noexcept { return processLinearDoubleInline (in, lowPass); }
+    /** processLinearDouble, inlined into its caller whatever its size (ChipVoice's block path; ChipTypes.h). */
+    BS_CHIP_INLINE double processLinearDoubleInline (double in, double& lowPass) noexcept
     {
         const double x = guard (in);
         const double out = ox * x + o1 * s1 + o2 * s2;

@@ -86,15 +86,9 @@
 #include <cassert>
 #include <cstdint>
 
-/** Inlined into the fast path whatever the compiler's size budget (envAdvance, envSteps: skip calls them per
-    envelope for every jump; out of line they cost the digital core about 2 ns per call, render cost step).
-    MSVC: plain inline (__forceinline raises C4714 wherever it cannot inline, e.g. in a Debug build, and warnings
-    are errors). */
-#if defined(_MSC_VER)
-    #define BS_CHIP_INLINE inline
-#else
-    #define BS_CHIP_INLINE inline __attribute__ ((always_inline))
-#endif
+// BS_CHIP_INLINE (ChipTypes.h): inlined into the fast path whatever the compiler's size budget (envAdvance, envSteps:
+// skip calls them per envelope for every jump; out of line they cost the digital core about 2 ns per call, render cost
+// step).
 
 namespace vs::bside::chip
 {
@@ -480,6 +474,23 @@ public:
     const combined::ShapeTables& shapeTables() const noexcept { return *shapes; }
     float cutoffSmooth() const noexcept { return cutoff; }
     std::uint8_t registerValue (std::uint8_t r) const noexcept { return r < reg::kWritable ? regs[r] : std::uint8_t { 0 }; }
+
+    // ---- entry points of the part (docs/architecture.md 8.21.1, S4a): an idle voice's time keeps running ----
+
+    /** Stops the band-limited renderer and keeps the digital state, cycle () and the sample clock: a sample left in
+        progress is completed digitally first (its remaining cycles advanced, no audio). The next render starts from
+        the state then, as the first render after reset does (its first samples hold that state). */
+    void renderStop() noexcept;
+    /** Whether the renderer is running (false after reset and renderStop until the next render call). */
+    bool renderActive() const noexcept { return rs.active; }
+    /** The digital state over n whole internal samples without audio: the cycles of the n samples from the sample
+        clock, then one advanceCycles. Equal to advanceSamples (n) (tested). The renderer must be stopped (renderStop;
+        a running one is stopped first). Returns the cycles advanced. */
+    std::uint64_t skipSamples (int n) noexcept;
+    /** Sets the accumulator of every oscillator to acc24 (24 bits, fraction 0), now: the start offset of a unison
+        voice (8.5). Not a chip operation (like powerOnKeepingTime: no event); the pulse comparison and the rise flags
+        are taken from the new value, and a running renderer places the jump at the current cycle. */
+    void setAccumulators (std::uint32_t acc24) noexcept;
 
 private:
     struct Osc

@@ -46,6 +46,47 @@ void Chip::powerOnKeepingTime() noexcept
     }
 }
 
+void Chip::renderStop() noexcept
+{
+    // a sample in progress has taken its cycles from the clock already: advance the rest of them digitally, so the
+    // state is at a sample boundary again (where skipSamples and the next render's first sample start)
+    if (rs.active && rs.inProgress)
+    {
+        const std::uint64_t end = rs.start + rs.cycles;
+        rs = RenderState {};
+        if (end > cycleCount)
+            advanceCycles (end - cycleCount);
+    }
+    rs = RenderState {};
+}
+
+std::uint64_t Chip::skipSamples (int n) noexcept
+{
+    if (rs.active)
+        renderStop();
+    if (n <= 0)
+        return 0;
+    const std::uint64_t total = clock.nextSamples (static_cast<std::uint64_t> (n)); // the sum of n nextSample () calls
+    advanceCycles (total); // no write inside: one call equals one per sample (the fast path splits its own jumps)
+    return total;
+}
+
+void Chip::setAccumulators (std::uint32_t acc24) noexcept
+{
+    if (rs.active)
+        renderBeforeChange();
+    const std::uint64_t phase = (static_cast<std::uint64_t> (acc24 & 0xffffffu) << kFractionBits) & kPhaseMask;
+    for (int n = 0; n < 3; ++n)
+    {
+        Osc& o = osc[idx (n)];
+        o.phase = phase;
+        o.rise = false;
+        o.pulseHigh = pulseCompare (n, acc24 & 0xffffffu);
+    }
+    if (rs.active)
+        renderAfterChange (7); // every accumulator was set: rendered and digital phase agree again
+}
+
 void Chip::clearEnvelopeCounters (int n) noexcept
 {
     if (n < 0 || n > 2)

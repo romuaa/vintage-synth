@@ -994,6 +994,8 @@ The filter object is a separate class (`chip/Filter.h`) that the chip uses by re
 - **CPU (S4 gate):** 16 note voices, all three oscillators sounding (pulse, saw, a combined
   waveform), filter on, Model A, 48 kHz (2×): **≤ 5 % of one core**; 32 (Dual) ≤ 10 %; with the
   effects ≤ 15 %; at 192 kHz (1×) within 15 %. `chip_bench`, non-LTO, best of 3.
+  **Superseded by 8.21 (owner decision O11, 2026-11-24):** these figures are Model B's; Model A
+  has its own.
 - S5 adds the hardware layouts (8.11): Shared Chip and chord-into-one-voice.
 
 ### 8.6 Patch program engine
@@ -2383,6 +2385,237 @@ Full record: `docs/decisions.md` "B-Side alias follow-up step" (rows 1-13). Revi
   compiler and not another, so low output bits can differ between builds; no test compares
   output bits across builds.
 - **Still open:** defects 3 and 4 of 8.18.1.
+
+### 8.21 S4 in two steps (contract, 2026-11-24; refines 8.5 and the S4 row of 8.10; owner decision O11)
+S4 turns the chip chain into the instrument. Two steps, each its own pull request: **S4a**, the
+part and its wiring into the plugin; **S4b**, the factory patches, the level rule, the render
+goldens and the owner's audition. S4b starts when S4a has merged, and its detail (8.21.2) is
+completed here before it starts. The readings marked (review) are `docs/decisions.md`, "B-Side
+S4 contract", rows 1 to 9.
+
+**CPU gates (O11; these win over 8.5).** Host rate 48 kHz (2×) unless stated, the gate patch of
+8.5 (all three oscillators sounding: pulse with a width write every tick, sawtooth, a combined
+waveform; oscillators through the filter, low-pass), every voice held, non-LTO, best of 3, with no
+other build running. Share of one core:
+
+| Case | Model B | Model A |
+|---|---|---|
+| 16 note voices, one part, through the part's `render` | ≤ 5 % | ≤ 11 % |
+| 32 note voices (Dual), both parts | ≤ 10 % | ≤ 22 % |
+| 32 note voices with chorus, delay and reverb on, through `processBlock` | ≤ 15 % | ≤ 27 % |
+| 16 note voices at a 192 kHz host (1×) | ≤ 15 % | ≤ 30 % |
+| 16 idle voices, one part | ≤ 0.1 % | ≤ 0.1 % |
+
+Also gated, so that the part cannot hide a slower chain: `chip_bench` `chainB` ≤ 32 ns and
+`chainA` ≤ 67 ns per internal sample at 96 kHz, and `s3bB` ≤ 7 ns (unchanged). A figure over its
+gate is reported with its output and goes to the owner; no gate is widened and nothing audible is
+traded for it. If Model B misses 5 %, the first candidates are the two avoidable cutoff-table
+rebuilds per resonance write (`ChipVoice.h`, "RESONANCE") and the part's own overhead.
+
+#### 8.21.1 S4a: the part and its wiring
+- **Files.** New: the part and its note voice in `source/bside/engine/` (`Part.*`, `NoteVoice.*`,
+  or the names the code suggests). Changed: `source/bside/PluginProcessor.*` (the part type,
+  `BSideParams`, the hooks), `engine/ChipProgramSink.h` (see "Sink"), `bside/params/PartMappings.h`
+  (conversions only), the source lists, the tests and the benchmark. `TestTonePart` and its test
+  file are removed; every other test that ran through it runs through the real part with the
+  same assertions (listed per file in the report; none removed or weakened).
+  `source/bside/chip/`: only entry points the wiring needs (a start offset for an accumulator, a
+  cheap setter where `prepare` is the only way today, the avoidable table rebuilds), every chip
+  gate passing unchanged, and not by the agent that touches `tests/bside/unit/IndependentModel.h`
+  (nobody needs to). `source/common/`: untouched, unless the part needs the block's tempo from
+  the shell: then one `noexcept` hook, with Vintage's raw render dumps identical before and after
+  (8.2.4, item 1). **No parameter is added, renamed or reordered; `stateVersion` stays 1.**
+- **The chain of one part** (everything in double precision up to the conversion, 8.20.1):
+  per note voice `ProgramEngine` → sink → `ChipVoice` (its own `Filter` Per Note) → × note gain →
+  the part's sum → the latency pad → × `kChipGain` → **one** conversion to float through
+  `render::OutputRounding` → the decimator (factors of 4.4) → `out`, mono, at the host rate. The
+  part satisfies `shell::PartEngine`. `kChipGain` is one constant for both models, set so that one
+  note of the Init program at velocity 1 peaks at -12 dBFS ± 0.5 dB at the part's output on
+  Model B; S4b's level rule may move it once.
+- **Sink.** The engine's writes go to `ChipVoice` (`write`, `setOscillator`, `setFilterInput`,
+  `powerOnKeepingTime`), not to the `Chip` inside it: only the voice lands filter and stage writes
+  at their place in the delayed signal. `ChipProgramSink` is changed or given a sibling;
+  `ProgramEngineChipTests` keep proving the engine and the chip together.
+- **Time.** As 8.4.2: chip time is an integer and no decision depends on the host's block length.
+  An event at host sample k of a block acts at internal sample k × factor. A note's tick 0 runs at
+  its note-on cycle, later ticks at `nextTickCycle ()`; a voice renders up to the next tick, the
+  next control point or the next event, whichever comes first. **An idle voice's chip time keeps
+  running:** when a note starts, the chip's digital state is what it would be had the chip run
+  through the idle time (the restart policies of 8.6.4 depend on the lead), without rendering
+  audio for it. The cost at a note start is bounded and reported.
+- **Control interval (review).** N = round (internal rate / 1000) internal samples, counted on the
+  part's own sample count from prepare and reset. At each control point, in this order: the
+  smoothed parameters, glide and the vibrato oscillator advance; every sounding voice gets its
+  host inputs (`setHost`) and a `sync` at its current cycle. A tick on the same cycle runs first.
+  Continuous parameters (the F entries of `PartParamList.h` that reach the chip or the gain) are
+  smoothed over 5 ms and are at their target after a reset, a resume and the first block;
+  switches and integers are never smoothed. Both resolutions (8.4.6).
+- **Host parameters to chip values** (conversions in `PartMappings.h`, shared with the display):
+
+  | Parameters | Chip value |
+  |---|---|
+  | `oscN.wave` | Off: the oscillator is not enabled; else control bits 4 to 7 |
+  | `oscN.sync`, `oscN.ring`, `oscN.attack` … `oscN.release` | control bits 1 and 2; the two envelope registers |
+  | `oscN.pw` + `macro.pw_offset` | 0 … 4095, the offset added after the lane value (8.16), clamped |
+  | `oscN.filter`, `osc3.mute`, `filter.resonance`, `chip.volume` | routing bits, bit 7 of 0x18, the two nibbles |
+  | `filter.mode` | Off 0, Low 1, Band 2, High 4, Low+Band 3, Band+High 6, Low+High 5, All 7 (bits 4 to 6 of 0x18) |
+  | `filter.cutoff` + key follow + velocity + `macro.cutoff_offset` | 0 … 2047: cutoff + `filter.key_follow` × 16 × (note − 60) − `vel.cutoff` × (1 − velocity) × 1024, then the macro offset, clamped (key follow: review) |
+  | `macro.sweep_depth` | `HostMacros::sweepDepth` (1 at 100 %) |
+  | `chip.variation` | `Filter::setVariation` on Model A voices, smoothed, at control points while it moves; its cost while moving is reported |
+- **Pitch** as 8.5: note + glide + bend × `bend.range` + vibrato + coarse + fine + unison detune,
+  per oscillator, as `HostOscillator::semitones`. Glide: `porta.time` and `porta.mode` with
+  Vintage's time mapping and Legato rule. Vibrato (review): one sine oscillator per part at
+  `vibrato.rate`, free-running from prepare and reset, depth = mod wheel × `mod.wheel_vibrato`
+  (0 … 100 ct). Unison: n chips with the detune spread and the phase pattern of 3.2 as accumulator
+  start offsets, each at 1/√n level.
+- **Allocation, velocity, pan.** `common/engine/VoiceAllocator` as it is (`assign.mode`,
+  `assign.unison_voices`, pedal, Solo's legato return, the 3 ms steal fade). Note gain =
+  1 − `vel.volume` × (1 − velocity), smoothed over 5 ms on a retrigger, times the unison level.
+  `mix.pan` through `partPan`. A note starts with the part's committed table (8.14), copied into
+  the voice; no table means host parameters only.
+- **Ticks.** `tickPeriodCycles` from `tick.rate`, `tick.free_hz`, `tick.mult`, `tick.sync` and
+  `chip.clock`, given to every engine once per block (it applies from the tick after the one
+  already scheduled, 8.16). Tempo: the host's tempo while the host gives one, else `arp.tempo`.
+- **Idle (8.5; the last step is review).** A voice is idle when, after its note-off, all three
+  envelope counters are 0 in release and no wave lane can gate again, or 30 s after its
+  note-off. It then gets `enterIdle`, renders on until its output has stayed below -120 dB re
+  full scale for one control interval (at most 500 ms, then a 3 ms fade), and leaves the sum; the
+  allocator gets `voiceIdle`. **A voice that starts from idle starts settled** on the chip's
+  static level: with Volume DC on, a Model A note with attack 15 holds nothing above -80 dB re
+  one full-level voice in its first 50 ms beyond its own envelope.
+- **Structural switches (review).** A change of `chip.model`, `filter.topology`, `chip.clock`,
+  `chip.resolution` or `chip.volume_dc` fades the part's sounding voices over 3 ms, resets them
+  and continues in the new configuration; held keys do not retrigger; the other part is not
+  touched. **Nothing on the audio thread runs the design work of `ChipVoice::prepare` or
+  `Filter::prepare`** (0.5 to 8 ms): whatever a switch can select is built in `prepareParts`.
+  The switch itself costs at most 50 µs per voice, measured and reported, as is the memory per
+  part.
+- **Shared topology (8.5, 8.19.4).** The part owns the shared filter, sums `filterInputAc` of its
+  chips and one chip's `staticFilterBusDc` into it per bus sample, and hands each voice its share
+  (`finishShared`). Cutoff, resonance and mode come from the most recently started note's engine;
+  a cutoff write takes effect `filterLagSamples ()` after its sample, a mode or resonance write at
+  `sharedSwitchSample ()` (review: the nearest sample, within 0.5 samples, 0.6 on Model A's
+  output; the blend of `ChipVoice.h` is not built and the deviation is recorded). One voice in
+  Shared equals Per Note bit for bit at the part's output.
+- **Latency (review).** One figure for both models and both parts, fixed in `prepareParts`:
+  the longest `ChipVoice::latencySamples ()` of the two models at the internal rate, a shorter
+  chain padded to it by a whole-sample delay, plus the decimator's measured delay, rounded to
+  the nearest host sample. `getLatencySamples ()` returns it and the shell reports it. Tested: the
+  first edge of a directly routed pulse note (attack 0) started at host sample n appears at
+  n + latency within 1 host sample, on both models within 0.5 samples of each other, Per Note and
+  Shared, at every factor of 4.4.
+- **Tail.** `synthTailSeconds` from the parameter atomics: the longest release among the enabled
+  oscillators of the parts that can sound (3 × the nominal time of 8.7), capped by the shell.
+- **Alias gate after the decimator (8.17, 8.20.1).** At the part's output, every rate
+  configuration of 4.4, the band of 8.4.5: single notes at 1, 2 and 3.85 kHz, sawtooth and pulse,
+  all direct and through the low-pass at resonance 0, within the budgets of 8.4.5 on both models;
+  the exact measurement of narrow Model B pulses (widths 1 and 4095 included) through the whole
+  path with 1 chip and with 16 chips in unison, within -100 dB. The decimator must not be what
+  limits it (the conversion's shaped rounding noise lies above the band, 8.20.1): if the shared
+  decimator of `common/engine/Oversampler.h` does, B-Side gets its own; Vintage's is not changed.
+  Model A's pinned overdriven rows (8.19.4) stay a gate of the chain, not of the part.
+- **Behaviour gates** (each test shown to fail on a mutation of what it guards):
+  1. every parameter of 8.7 marked S3 or S4 changes the output as this section says (one test
+     per parameter or mapping row); the parameter dump is identical to `main`'s;
+  2. block lengths 1, 7, 61 and 512: digital state and ticks exact, audio within -120 dB;
+     two instances given the same input are bit-identical;
+  3. no allocation, lock or system call in `processBlock` with notes, steals, unison, a table
+     applied while playing, and every structural switch (the existing allocation test's method);
+  4. random event streams (notes, pedal, mode and switch changes, program applies) never hang a
+     note; after all notes off the part reaches silence and every voice goes idle;
+  5. Whole mode: Upper costs nothing and is silent; Dual equals the sum of both parts rendered
+     apart within float tolerance; a structural switch on Lower leaves Upper's output
+     bit-identical;
+  6. latency, idle, settled start, Shared and the alias gate as above; the CPU gates;
+  7. state and preset round-trip unchanged (`state` and files saved from `main` load to the same
+     values); `host_smoke_bside` updated for the latency and a rendered chip note.
+- **Unchanged, all green:** every existing gate of both plugins; Vintage's sources and outputs
+  (no file of `source/vintage/` changes); `scripts/preflight.sh` in full; pluginval strictness 10
+  and the VST3 validator on both bundles; both sanitizer runs; the Linux ARM64 container; the
+  skill `realtime-review` on everything reachable from `processBlock`. The default test run of
+  the sanitizer job stays inside its time (8.19.4, "Run time"): long scans are hidden by tag and
+  run before hand-over.
+- **Order of work:** build, then an independent review with its own harness (given this section
+  and the code, never the author's conclusions), fixes, the orchestrator's full gate and one
+  dispatched CI run for Windows and Linux x86_64.
+
+- **After the independent review (2026-11-24; these win over the points above; all review):**
+  - **Shared, a voice's own output.** In Shared a chip's output carries its share of the shared
+    filter's output, which holds the other notes. The quiet criterion of the idle rule is
+    therefore judged on the voice's **own** contribution: its static and direct output and its
+    own input to the shared filter, not its share of the filter's output. An idle voice in
+    Shared leaves within the same times as in Per Note and stops costing CPU.
+  - **Shared, membership changes are silent.** When a chip joins or leaves the shared sum, the
+    filter's output heard through the remaining chips does not step: the shares move to their
+    new values over the 3 ms fade (the weights always sum to 1), and a leaving chip's weight
+    reaches 0 before it leaves. Gate: a held note with a second note played, released and gone
+    idle differs from the same render without the second note's leave by no more after the
+    leave than before it (both models, the reviewer's test); the same when a note joins, beyond
+    the new note's own sound. One voice in Shared still equals Per Note bit for bit.
+  - **Shared, levels (second review, 2026-11-24).** "Does not step" means no discontinuity. The
+    level may move: each chip's share of the filter's output is heard at that chip's own note
+    gain (8.5: volume stays per note), so the filtered sum is heard at the share-weighted mean
+    of the note gains, and a note of another velocity that joins or leaves moves that level
+    smoothly over the 3 ms fade (measured: a held note at velocity 1 with `vel.volume` at
+    100 % falls by 5.9 dB on Model B and 7.2 dB on Model A when a note at velocity 0.01 joins;
+    at equal velocities nothing on Model B and 1.2 dB on Model A, where each chip's output
+    curve sees its share, 8.19.4). This is a property of the topology, stated in `Part.h` and
+    pinned by a test (the part of the change that comes from the gains is the mean gain's
+    within 0.5 dB, and the move has no step). During a steal the weights' arithmetic lets the
+    filtered sound heard through the other chips dip smoothly by t(1 − t)/(n − t) of it (0.26
+    of the stolen chip's weight with 16 carriers, 0.34 with 2). Measured at the part's output
+    with 16 voices the dip is 0.30 of the weight (0.0185 of the chord), which holds more than
+    the weights (the stages and the measure against a reference); the steal test's bound stays
+    at 0.4 of the weight and is not tightened to a figure the measurement does not meet.
+  - **All Sound Off keeps the part's clock.** A voice stopped by All Sound Off (or by any other
+    path that suspends a chain) is at the part's cycle afterwards, like a voice that went idle:
+    every chip of the part is at the same cycle after every block, in both topologies, whatever
+    happened to it. In Shared a lockstep segment never reads bus samples it did not render:
+    a chip that returns fewer samples than the segment asks for is a defect caught in every
+    build type, not only by a debug assertion. Gate: the second reviewer's three tests
+    (chips at the part's cycle after All Sound Off; a note on a stopped chip does not depend
+    on the host's blocks; the random Shared streams with All Sound Off).
+  - **A structural switch ends without a step.** The 3 ms fade reaches the part's output in
+    full: nothing after the fade (the latency pad) is cleared while it still holds faded
+    samples. Gate: the output divided by a no-switch reference never steps by more than 3/288
+    of the signal at the fade's end, from either model, for every structural switch.
+  - **A note keeps its length across a delayed start.** A note whose start was delayed (by a
+    steal's fade or a switch's fade) is released as much later as it started, not a fixed fade
+    length later; a delay flag does not outlive its note. Gate: played length equals sounded
+    length within 1 internal sample for a note-on anywhere inside a switch's fade.
+  - **Latency includes every delay of the chain**, the board filters' measured delay too (the
+    formula above gains that term; without it the edge is 1.39 host samples late at 192 kHz
+    without oversampling). The latency test compares the two models in Per Note as well.
+  - **The pad covers every host rate the shell accepts.** The ring holds the largest difference
+    between the two chains with margin at every rate from 8 kHz up; the assertion checks what
+    the pad needs (the difference), and a test prepares at 8, 11.025 and 16 kHz.
+  - **Tempo:** the host's tempo while the host plays and gives a tempo and a position (the
+    shell's arpeggiator rule), else `arp.tempo`. This replaces "while the host gives one".
+  - **`chip.clock` is global:** switching it switches both parts. "The other part is not
+    touched" holds for the four per-part switches.
+  - **Tests the review found missing or weak** are added or tightened: `restart.policy` changes
+    the output; the switch test measures the step at the fade's end against a reference; the
+    Shared test covers releases and leaves in any order. The reviewer's tests join the suite
+    unchanged and pass.
+  - **CPU.** The gates above stand. Measured at the orchestrator's bench (2026-11-24): 16 voices
+    on Model B 5.15 to 5.22 % (gate 5 %), Dual 10.34 to 10.51 % (gate 10 %); Model A 10.97 to
+    11.00 % and 21.89 to 22.10 %, at its gates with no margin; `chainB` 31.6 to 31.8 ns
+    against 30.6 to 30.9 ns on `main`. One more cost round, by a stronger model: first whether
+    the chain itself got slower with the new entry points (the settle checks in the per-sample
+    path) and what the part adds around it (per-voice buffer passes, the up-sampling of a
+    silent block, the per-interval host inputs). The gate is read as the best of three runs
+    inside one invocation, passing in three invocations in a row.
+
+#### 8.21.2 S4b: patches, level rule, goldens, audition (outline; completed before it starts)
+- 10 to 20 factory programs in `presets/bside/factory/` with their tables: drums, a chip arpeggio,
+  a pulse lead, a filter bass, sync and ring leads, Model A pads (8.10). Own names; no
+  third-party names of any kind.
+- The level rule of 6b.4, restated for B-Side's programs and tested for every program;
+  `kChipGain` may move once.
+- `bside_render`: render-regression goldens for 6 programs (it moves from the future to the
+  required sanitizer targets).
+- An audition render per program with a contact sheet, outside the repository, for the owner's
+  audition gate.
 
 ## 9. M7 — custom editor
 

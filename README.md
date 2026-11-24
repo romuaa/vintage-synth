@@ -102,8 +102,8 @@ The plugin is at `build/mac/VintageSynth_artefacts/Release/VST3/Exitium Vintage 
 `~/Library/Audio/Plug-Ins/VST3/` to use it in a DAW.
 
 **Two plugins.** The same build also produces **Exitium B-Side**, the second instrument (a chip synth, in
-development: the plugin is still a shell around test tones while its chip model is built and tested
-as a library, see the [Roadmap](#roadmap)), at
+development: it plays its chip model with two parts of 16 voices, but has no factory sounds and no
+editor of its own yet, see the [Roadmap](#roadmap)), at
 `build/mac/BSide_artefacts/Release/VST3/Exitium B-Side.vst3`. `-DVS_BUILD_BSIDE=OFF` builds only
 Exitium Vintage Synth and its tests, exactly as before B-Side existed. Build one plugin with
 `cmake --build build/mac --target VintageSynth_VST3` or `--target BSide_VST3`.
@@ -183,7 +183,11 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
   44.1/48/96 kHz and state save/restore (`host_smoke --profile vintage|bside <bundle>`; ctest runs
   `host_smoke` and `host_smoke_bside`).
 - **BSideTests** (`tests/bside/`) test Exitium B-Side's shell: the skeleton contract, parameters,
-  programs, state, bypass, the guard, the arpeggiator and no allocation in `processBlock`.
+  programs, state, bypass, the guard, the arpeggiator and no allocation in `processBlock`; and its
+  part (`PartTests`, `PartAliasTests`, and the two independent reviews' own tests in
+  `tests/bside/review/`): parameter mappings read back from the chip, block-length independence,
+  latency, idle and settled starts, structural switches, the Shared filter and the alias gate at the
+  part's output. `part_bench` measures the part against its CPU gates.
 - **bside_unit** and **bside_trace** (ctest labels `bside`, `trace`) test the B-Side chip model as a
   library: the digital core replays the committed reference data (`tests/bside/reference/`: register
   traces with the reference emulator's digital state and audio features,

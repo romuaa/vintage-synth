@@ -2,7 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include "bside/engine/TestTonePart.h"
+#include "bside/engine/Part.h"
 #include "bside/params/ParameterLayout.h"
 #include "bside/params/StateVersion.h"
 #include "bside/program/ProgramHandover.h"
@@ -14,22 +14,25 @@ namespace bs
 {
 class BSideTables;
 
-/** B-Side's parameters in one block's read: both parts and the instrument's globals. Nothing yet:
-    the shell has only the shared globals (docs/architecture.md 8.3); S2 adds the per-part parameters. */
+/** B-Side's parameters in one block's read: both parts' 63 parameters, the instrument's global (chip.clock) and the
+    tables claimed in the same seqlock window (docs/architecture.md 8.14, 8.21.1). No field reuses a shared name
+    (8.2.5). Trivially copyable. */
 struct BSideParams
 {
+    PartParams lowerParams {}, upperParams {};
+    int chipClockIndex = 0;
+    const vs::bside::program::Program* claimedTables[2] { nullptr, nullptr };
 };
 
 /**
     Exitium B-Side (docs/architecture.md section 8). Everything instrument-independent (block
     chunking, MIDI, key modes, arp/seq, mixer, effects, output stage, bypass, programs, state) is the
-    shared skeleton (common/shell/BiTimbralProcessor.h); this class supplies the two parts, the
-    parameter layout, the preset schema and the identity. Until S2 and S4 the parts are test tones
-    (engine/TestTonePart.h).
+    shared skeleton (common/shell/BiTimbralProcessor.h); this class supplies the two chip parts
+    (engine/Part.h), the parameter layout, the preset schema and the identity.
 */
-class BSideProcessor final : public vs::shell::BiTimbralProcessor<BSideProcessor, TestTonePart, BSideParams>
+class BSideProcessor final : public vs::shell::BiTimbralProcessor<BSideProcessor, Part, BSideParams>
 {
-    using Base = vs::shell::BiTimbralProcessor<BSideProcessor, TestTonePart, BSideParams>;
+    using Base = vs::shell::BiTimbralProcessor<BSideProcessor, Part, BSideParams>;
     friend Base;
 
 public:
@@ -50,18 +53,29 @@ public:
         inside the same ApplyGate hold as the parameters. Valid for the processor's lifetime. */
     vs::bside::program::ProgramHandover& tableHandover (int part) noexcept;
 
+    /** The tempo the parts' Tempo tick rate used in the last block: the host's while it plays, else arp.tempo. */
+    double getTickTempo() const noexcept { return tickTempo; }
+
 private:
     // ---- Hooks for the skeleton (once per block or chunk, never per sample) ----
-    void readInstrumentParams (BSideParams&) const noexcept {}
-    void applyInstrumentParams (const BSideParams&) noexcept {}
-    float partPan (const BSideParams&, int) const noexcept { return 0.0f; } // S4: mix.pan per part
+    void readInstrumentParams (BSideParams&) const noexcept;
+    void applyInstrumentParams (const BSideParams&) noexcept;
+    float partPan (const BSideParams& p, int part) const noexcept { return part == 0 ? p.lowerParams.mixPan : p.upperParams.mixPan; }
     void prepareParts (double hostRate, int maxBlock, int osFactor, int realtimeOsFactor);
-    double synthTailSeconds() const noexcept { return TestTonePart::kReleaseSeconds; }
-    TestTonePart& part (int p) noexcept { return parts[static_cast<size_t> (p == 0 ? 0 : 1)]; }
-    const TestTonePart& part (int p) const noexcept { return parts[static_cast<size_t> (p == 0 ? 0 : 1)]; }
+    double synthTailSeconds() const noexcept;
+    Part& part (int p) noexcept { return parts[static_cast<size_t> (p == 0 ? 0 : 1)]; }
+    const Part& part (int p) const noexcept { return parts[static_cast<size_t> (p == 0 ? 0 : 1)]; }
 
-    std::array<TestTonePart, 2> parts; // 0 Lower, 1 Upper
+    /** Ends the claims of the last read that no apply committed (a held block): the writer may reuse those buffers. */
+    void abortStaleClaims() const noexcept;
+    double hostOrArpTempo() const noexcept;
+
+    std::array<Part, 2> parts; // 0 Lower, 1 Upper
+    PartParamBinding lowerBinding, upperBinding;
+    ChipClockBinding clockBinding;
     BSideTables* tables = nullptr; // owned by the preset manager (initPresets)
+    mutable std::array<bool, 2> claimOpen { false, false }; // audio thread: a beginAcquire not yet committed or aborted
+    double tickTempo = 120.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BSideProcessor)
 };

@@ -305,6 +305,25 @@ void Filter::reset() noexcept
     s2 = 0.0;
 }
 
+void Filter::primeSteady (double in) noexcept
+{
+    // s = A s + b x at the fixed point: (I - A) s = b x, solved by Cramer's rule (2 x 2)
+    const double x = guard (in);
+    const double m11 = 1.0 - a11, m12 = -a12, m21 = -a21, m22 = 1.0 - a22;
+    const double det = m11 * m22 - m12 * m21;
+    if (! (std::abs (det) > 1e-300) || ! std::isfinite (det))
+    {
+        reset();
+        return;
+    }
+    const double b1 = a1x * x, b2 = a2x * x;
+    s1 = (b1 * m22 - m12 * b2) / det;
+    s2 = (m11 * b2 - m21 * b1) / det;
+    if (! std::isfinite (s1) || ! std::isfinite (s2))
+        reset();
+    settle();
+}
+
 void Filter::setCutoff (float registerValue) noexcept
 {
     const float v = std::isfinite (registerValue) ? std::clamp (registerValue, 0.0f, 2047.0f) : 0.0f;

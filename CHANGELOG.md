@@ -5,6 +5,37 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S4a: the chip part plays in the plugin (2026-11-24)
+- **Exitium B-Side now plays its chip.** The test tone is gone: each part is 16 note voices, each a whole chip chain
+  (renderer, filter, output stage), with the allocator, glide, bend, one vibrato oscillator per part, unison, velocity
+  to volume and to cutoff, key follow, the three macros, tick rate from the host's tempo or `arp.tempo`, pan and a
+  tail from the release times. Every parameter of 8.7 marked S3 or S4 is wired; the parameter list (202), the state
+  and saved programs are byte-identical to before.
+- **Latency is reported:** one figure for both models and both parts (Model A's chain; Model B is padded), every
+  delay of the chain included: 31 / 22 / 41 samples at 44.1 / 48 / 96 kHz with the default oversampling.
+- **Idle voices cost nothing and return silently:** a released voice renders on until it is below -120 dB (at most
+  500 ms, then a 3 ms fade), the chip's time keeps running while it is idle, and a note starts settled on the chip's
+  static level. Structural switches (model, filter topology, clock, resolution, volume DC) fade the part over 3 ms and
+  continue in the new configuration with no design work on the audio thread (15 to 19 us per voice).
+- **Shared filter topology:** one filter per part, the chips' shares moving over 3 ms when a note joins or leaves.
+  A property of the topology, pinned by a test: the filtered sum is heard at the mean of the note gains, so a note of
+  another velocity moves the held notes' filtered level smoothly (up to 5.9 dB on Model B and 7.2 dB on Model A at the
+  extreme of velocity 1 against 0.01 with `vel.volume` at 100 %).
+- **Cost** (share of one core at 48 kHz, non-LTO test build, the orchestrator's bench): 16 voices 4.39 to 4.51 % on
+  Model B (gate 5 %) and 9.71 to 9.73 % on Model A (gate 11 %, owner decision O11); Dual 8.80 to 8.82 % and 19.47 to
+  19.49 % (gates 10 and 22 %); Dual with the effects 9.47 to 9.62 % and 20.07 to 20.19 % (gates 15 and 27 %); 16 idle
+  voices 0.08 %. The chip chain got a block path for stretches where nothing changes (the same bits, 47.8 million
+  samples compared): `chainB` 26.7 to 26.9 ns and `chainA` 57.9 to 59.6 ns per internal sample at 96 kHz (were 30.6 to
+  30.9 and 63.4 to 64.2).
+- **Two independent reviews** with their own tests (`tests/bside/review/`) found and had fixed: a bump on held notes
+  when a released note left a Shared filter, a click at the end of a structural switch on Model B, a note that came
+  out up to 3 ms long after a delayed start, a latency pad without margin at host rates below 16 kHz, and All Sound
+  Off leaving chips one internal sample ahead of the part (in Shared the output then depended on the host's block
+  length).
+- **Known, for the owner's ear in S4b:** a stolen voice restarts from the chip's power-on envelope value, as 8.6.4
+  asks, which is a thump on every steal with many held notes; `kChipGain` is calibrated on the note's onset peak, so
+  a steady pulse sits near -17.9 dBFS. No factory sounds yet (S4b).
+
 ### B-Side: Model A's cutoff jump at code 512 fixed; below 480 unchanged (2026-11-23)
 - Scope by owner decision: only the jump at cutoff code 512 and the converter's boundaries above it. For every
   register value up to and including 479.0 Model A's corner is bit-identical to the previous form (pinned by a test

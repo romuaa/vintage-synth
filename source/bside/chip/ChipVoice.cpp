@@ -35,6 +35,7 @@ ChipVoice::ChipVoice() noexcept
 void ChipVoice::prepare (const Config& config) noexcept
 {
     cfg = config;
+    blockSamples = 0;
     c.prepare (cfg);
     c.renderBendVoices (true); // Model A's voice bend in the renderer ("ALIAS"; no effect on Model B)
     st = OutputStage {};
@@ -113,11 +114,13 @@ void ChipVoice::reset() noexcept
     upLow.reset();
     down.reset();
     freshPre = freshPost = true;
+    settle = false;
     preDcNow = 0.0;
     postRing = {};
     countRing = {};
     shapeRing = {};
     postPos = countPos = 0;
+    ringsClean = false;
     lastFilterIn = lastFilterOut = 0.0;
     injected = 0;
     st.setModeVolume (0);
@@ -127,6 +130,64 @@ void ChipVoice::reset() noexcept
         filter->reset();
         setFilter (filter);
     }
+}
+
+void ChipVoice::suspend() noexcept
+{
+    c.renderStop();
+    // what is still waiting takes effect now, in order: the blends and the dynamics' places end (the newest
+    // resonance written so far is the filter's), then the queued cutoff, resonance, mode and volume writes
+    dynHead = dynCount = 0;
+    nConfigs = 0;
+    outDiffers = false;
+    if (filter != nullptr)
+        filter->setResonance (resonanceNow >> 4);
+    for (int k = 0; k < paramCount; ++k)
+        applyNow (params[static_cast<std::size_t> ((paramHead + k) % kMaxPending)]);
+    for (int k = 0; k < configCount; ++k)
+        applyNow (configs[static_cast<std::size_t> ((configHead + k) % kMaxPending)]);
+    paramHead = paramCount = configHead = configCount = 0;
+    lastCutoffChange = 0;
+    cutoffChanged = false;
+    moving = false;
+    if (filter != nullptr)
+    {
+        filter->setCutoff (cutoffValue);
+        filter->reset(); // set to its fixed point at the first sample (settle)
+    }
+    st.setRouting (c.registerValue (reg::resonanceRouting));
+    st.setModeVolume (modeVolumeNow);
+    st.reset(); // the board filters: settled at the first sample
+    lastFv = lastDv = -1.0;
+    rounding = render::OutputRounding {};
+    mixFir.reset();
+    preAc.reset();
+    preDc.reset();
+    preDirect.reset();
+    upLin.reset();
+    upLow.reset();
+    down.reset();
+    freshPre = freshPost = true;
+    settle = true;
+    preDcNow = 0.0;
+    postRing = {};
+    countRing = {};
+    shapeRing = {};
+    postPos = countPos = 0;
+    ringsClean = false;
+    lastFilterIn = lastFilterOut = 0.0;
+    refreshStaticDc();
+}
+
+void ChipVoice::reconfigure (std::uint32_t clockHz, bool authentic, bool volumeDc) noexcept
+{
+    cfg.clockHz = clockHz;
+    cfg.authentic = authentic;
+    cfg.volumeDc = volumeDc;
+    c.prepare (cfg); // the tables are process-wide and built: the clock's increment and a reset only
+    c.renderBendVoices (true);
+    st.setVolumeDc (volumeDc);
+    reset();
 }
 
 // ---- inputs ----
@@ -512,9 +573,10 @@ void ChipVoice::prepareBlock (int n) noexcept
         const double di = st.directSumWith (da[j], de[j], dv[j]);
         if (freshPre)
         {
-            preAc.prime (ac);
+            // after suspend the static level (no audio, envelopes 0: the voices' DC only), else the first input
+            preAc.prime (settle ? 0.0 : ac);
             preDc.prime (dc);
-            preDirect.prime (di);
+            preDirect.prime (settle ? st.directSumWith (0.0, 0.0, dv[j]) : di);
             for (auto& r : countRing)
                 r = { fv[j], dv[j] };
             freshPre = false;
@@ -533,7 +595,7 @@ void ChipVoice::prepareBlock (int n) noexcept
 }
 
 double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass,
-                               const double* sharedStaticOut, int chips) noexcept
+                               const double* sharedStaticOut, int chips, const double* sharedWeight) noexcept
 {
     const auto j = static_cast<std::size_t> (i);
     const bool modelA = cfg.model == Model::A;
@@ -551,6 +613,7 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
 
     // the filter: its linear output and low-pass value per configuration (Per Note) or the owner's (Shared); the share
     double lin = 0.0, lp = 0.0, so = 0.0, pScale = 1.0;
+    double settleLin = 0.0, settleLp = 0.0; // after suspend (Per Note): the filter's output on the static level
     std::array<double, kMaxConfigs> linOld {};
     Filter::Shape shapeNow {}; // the output function of the filter in effect (Per Note: the voice's; Shared: the owner's)
     if (! shared)
@@ -561,6 +624,14 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
             refreshStaticDc();
         }
         const double in = modelA ? pAc[j] + pDc[j] : st.filterInput (fa[j], fe[j]);
+        if (settle)
+        {
+            // after suspend: the filter starts on its fixed point for the static level (the voices' DC, no audio, the
+            // envelopes at 0), and what it outputs there primes the stages after it
+            const double inStatic = modelA ? pDc[j] : st.filterInput (0.0, 0.0);
+            filter->primeSteady (inStatic);
+            settleLin = outParams().peekLinearDouble (inStatic, *filter, settleLp);
+        }
         if (nConfigs == 0 && ! outDiffers)
             lin = runFilter (*filter, in, lp); // no write in flight: one step, as always
         else
@@ -590,13 +661,38 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
             old[static_cast<std::size_t> (k)].stage.setFilterStaticDc (so);
         lin = sharedLinear[j];
         lp = sharedLowPass != nullptr ? sharedLowPass[j] : 0.0;
-        if (chips > 1)
+        if (sharedWeight != nullptr)
         {
-            // this chip's share (OutputStage "SHARED"): the static output in full, 1/n of the rest (the output function's
-            // part through pScale)
-            const double n = static_cast<double> (chips);
-            lin = (lin - so) / n + so;
-            pScale = 1.0 / n;
+            // this chip's share as a weight (finishSharedWeighted): the static output in full, w of the rest; a weight
+            // of 1 is the filter's output itself (no arithmetic on it: bit for bit Per Note)
+            const double w = sharedWeight[j];
+            if (settle)
+            {
+                settleLin = w < 1.0 ? (sharedSettleLin - so) * w + so : sharedSettleLin;
+                settleLp = sharedSettleLp;
+            }
+            if (w < 1.0)
+            {
+                lin = (lin - so) * w + so;
+                pScale = w;
+            }
+        }
+        else
+        {
+            if (settle)
+            {
+                // after suspend: the owner's filter on this chip's static level (settleShared)
+                settleLin = chips > 1 ? (sharedSettleLin - so) / static_cast<double> (chips) + so : sharedSettleLin;
+                settleLp = sharedSettleLp;
+            }
+            if (chips > 1)
+            {
+                // this chip's share (OutputStage "SHARED"): the static output in full, 1/n of the rest (the output
+                // function's part through pScale)
+                const double n = static_cast<double> (chips);
+                lin = (lin - so) / n + so;
+                pScale = 1.0 / n;
+            }
         }
         for (int k = 0; k < nConfigs; ++k)
             linOld[static_cast<std::size_t> (k)] = lin;
@@ -651,12 +747,23 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
     }
 
     // the anti-alias stages; the post-curve coefficients delayed with the signal
+    double settleMix = 0.0; // after suspend (Per Note): the mixer's value on the static level
     if (freshPost)
     {
-        mixFir.prime (x);
-        upLin.prime (x);
-        upLow.prime (lp);
-        down.prime (st.mixerCurve (x + shapeWith (shape, lp, lpMin, lpMax)));
+        double xp = x, lpp = lp;
+        if (settle && nConfigs == 0)
+        {
+            xp = st.gainFactor() * (settleLin + st.directSumWith (0.0, 0.0, modelA ? cD[j] : dv[j]));
+            lpp = settleLp;
+            const double ms = st.mixerCurve (xp + shapeWith (shape, lpp, lpMin, lpMax));
+            settleMix = pa * ms + pb;
+        }
+        else if (settle)
+            settleMix = pa * st.mixerCurve (x + shapeWith (shape, lp, lpMin, lpMax)) + pb; // a write in flight: the first value
+        mixFir.prime (xp);
+        upLin.prime (xp);
+        upLow.prime (lpp);
+        down.prime (st.mixerCurve (xp + shapeWith (shape, lpp, lpMin, lpMax)));
         for (auto& r : postRing)
             r = { pa, pb, pp };
         for (auto& r : shapeRing)
@@ -665,6 +772,7 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
     }
     postPos = (postPos + 1) & (kDelayRing - 1);
     postRing[static_cast<std::size_t> (postPos)] = { pa, pb, pp };
+    ringsClean = false; // fastBlock looks at the rings again before it relies on them
     const auto& post = postRing[static_cast<std::size_t> ((postPos + kDelayRing - postDelay) & (kDelayRing - 1))];
     double m = 0.0;
     if (! modelA)
@@ -688,6 +796,11 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
         m = down.process (m0, m1);
     }
     const double mix = post[0] * m + post[1];
+    if (settle)
+    {
+        st.primeBoard (settleMix); // after suspend: the board filters start on their steady state for the static level
+        settle = false;
+    }
     return board ? st.board (mix, post[2]) : mix * post[2];
 }
 
@@ -707,13 +820,139 @@ int ChipVoice::renderUntil (double* out, int maxSamples, std::uint64_t untilCycl
         blockStart = c.renderSampleIndex();
         const int n = c.renderBusesUntil (block(), want, untilCycle);
         prepareBlock (n);
-        for (int i = 0; i < n; ++i)
-            out[done + i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1);
+        const std::int64_t q0 = static_cast<std::int64_t> (blockStart) - kRingLag;
+        if (! fastBlock (n, q0, out + done))
+            for (int i = 0; i < n; ++i)
+                out[done + i] += chainSample (i, q0 + i, false, nullptr, nullptr, nullptr, nullptr, 1, nullptr);
         done += n;
         if (n < want)
             break;
     }
     return done;
+}
+
+bool ChipVoice::ringsUniform (const std::array<double, 3>& postNow, const std::array<double, 5>& shapeNow) noexcept
+{
+    if (ringsClean)
+    {
+        // nothing has written the rings since they were found uniform: only the current values can have moved (a write
+        // applied outside a sample, the owner's setVariation on the lent filter)
+        const auto& last = postRing[static_cast<std::size_t> (postPos)];
+        bool same = sameBits (last[0], postNow[0]) && sameBits (last[1], postNow[1]) && sameBits (last[2], postNow[2]);
+        if (same && cfg.model == Model::A)
+        {
+            const auto& sh = shapeRing[static_cast<std::size_t> (postPos)];
+            for (std::size_t k = 0; k < 5; ++k)
+                same = same && sameBits (sh[k], shapeNow[k]);
+        }
+        return same;
+    }
+    // every entry a sample of this block can read: the newest postDelay (the output function's: shapeDelay + 1)
+    for (int d = 0; d <= postDelay; ++d)
+    {
+        const auto& e = postRing[static_cast<std::size_t> ((postPos + kDelayRing - d) & (kDelayRing - 1))];
+        if (! (sameBits (e[0], postNow[0]) && sameBits (e[1], postNow[1]) && sameBits (e[2], postNow[2])))
+            return false;
+    }
+    if (cfg.model == Model::A)
+        for (int d = 0; d <= shapeDelay + 1; ++d)
+        {
+            const auto& e = shapeRing[static_cast<std::size_t> ((postPos + kDelayRing - d) & (kDelayRing - 1))];
+            for (std::size_t k = 0; k < 5; ++k)
+                if (! sameBits (e[k], shapeNow[k]))
+                    return false;
+        }
+    // the whole of both rings now counts as holding these values: entries older than a sample can read are never read
+    // before they are written again, and fastBlock leaves the rings alone
+    ringsClean = true;
+    return true;
+}
+
+bool ChipVoice::fastBlock (int n, std::int64_t q0, double* out) noexcept
+{
+    if (n <= 0)
+        return true;
+    if (! blockPath || settle || freshPost || nConfigs != 0 || outDiffers || dynCount != 0 || moving || filter == nullptr)
+        return false;
+    // nothing becomes due before the block's last sample (advanceTo's conditions at the filter's signal time)
+    const std::int64_t tLast = q0 + n - 1 - preDelay;
+    if (paramCount > 0 && static_cast<std::int64_t> (params[static_cast<std::size_t> (paramHead)].sample) <= tLast)
+        return false;
+    if (configCount > 0)
+    {
+        const Pending& p = configs[static_cast<std::size_t> (configHead)];
+        if (static_cast<std::int64_t> (p.sample) + p.first <= tLast)
+            return false;
+    }
+    // the voice counts as the stage has them (a routing or mute write moves them: setVoices), Model A's pre-filtered
+    // voice DC as the stage's static DC was taken for
+    const bool modelA = cfg.model == Model::A;
+    bool steady = true;
+    for (int i = 0; i < n; ++i)
+    {
+        const auto j = static_cast<std::size_t> (i);
+        steady = steady && sameBits (cF[j], lastFv) && sameBits (cD[j], lastDv);
+    }
+    if (modelA)
+        for (int i = 0; i < n; ++i)
+            steady = steady && sameBits (pDc[static_cast<std::size_t> (i)], preDcNow);
+    if (! steady)
+        return false;
+
+    Filter& f = *filter;
+    const double g = st.gainFactor();
+    const double pa = st.postScale(), pb = st.postOffset(), pp = st.postGain();
+    std::array<double, 5> shape {};
+    if (modelA)
+    {
+        // chainSample: shape[m] = g * pScale * p[m] with pScale = 1 (Per Note)
+        const auto p = shapeOf (f.outputShapeCoefficients());
+        for (std::size_t m = 0; m < 5; ++m)
+            shape[m] = g * p[m];
+    }
+    if (! ringsUniform ({ pa, pb, pp }, shape))
+        return false;
+
+    double in = 0.0, lin = 0.0, lp = 0.0;
+    if (! modelA)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const auto j = static_cast<std::size_t> (i);
+            in = st.filterInput (fa[j], fe[j]);
+            lin = f.processLinearDoubleInline (in, lp);
+            const double di = st.directSumWith (da[j], de[j], dv[j]);
+            const double x = g * (lin + di);
+            const double m = st.mixerCurveInline (mixFir.processInline (x));
+            const double mix = pa * m + pb;
+            out[i] += board ? st.boardInline (mix, pp) : mix * pp;
+        }
+    }
+    else
+    {
+        // the delayed coefficients all equal `shape`, so the interpolated sample's mean of two of them is `shape` too
+        // (0.5 * (s + s) = s exactly)
+        for (int i = 0; i < n; ++i)
+        {
+            const auto j = static_cast<std::size_t> (i);
+            in = pAc[j] + pDc[j];
+            lin = f.processLinearDoubleInline (in, lp);
+            const double di = pDi[j];
+            const double x = g * (lin + di);
+            double l0 = 0.0, l1 = 0.0, p0 = 0.0, p1 = 0.0;
+            upLin.processInline (x, l0, l1);
+            upLow.processInline (lp, p0, p1);
+            const double m0 = st.mixerCurveInline (l0 + shapeWith (shape, p0, lpMin, lpMax));
+            const double m1 = st.mixerCurveInline (l1 + shapeWith (shape, p1, lpMin, lpMax));
+            const double m = down.processInline (m0, m1);
+            const double mix = pa * m + pb;
+            out[i] += board ? st.boardInline (mix, pp) : mix * pp;
+        }
+    }
+    lastFilterIn = in;
+    lastFilterOut = lin + f.outputShape (lp);
+    blockSamples += static_cast<std::uint64_t> (n);
+    return true;
 }
 
 void ChipVoice::render (double* out, int numInternalSamples) noexcept
@@ -733,7 +972,7 @@ int ChipVoice::renderUntil (float* out, int maxSamples, std::uint64_t untilCycle
         const int n = c.renderBusesUntil (block(), want, untilCycle);
         prepareBlock (n);
         for (int i = 0; i < n; ++i)
-            out[done + i] += rounding.next (chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1));
+            out[done + i] += rounding.next (chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1, nullptr));
         done += n;
         if (n < want)
             break;
@@ -777,7 +1016,14 @@ void ChipVoice::finishShared (const Filter::Shape* sharedShape, const double* sh
                               int chips, double* out, int n) noexcept
 {
     for (int i = 0; i < n && i < kBlock; ++i)
-        out[i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, true, sharedShape, sharedLinear, sharedLowPass, filterStaticOut, chips);
+        out[i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, true, sharedShape, sharedLinear, sharedLowPass, filterStaticOut, chips, nullptr);
+}
+
+void ChipVoice::finishSharedWeighted (const Filter::Shape* sharedShape, const double* sharedLinear, const double* sharedLowPass,
+                                      const double* filterStaticOut, const double* weight, double* out, int n) noexcept
+{
+    for (int i = 0; i < n && i < kBlock; ++i)
+        out[i] += chainSample (i, static_cast<std::int64_t> (blockStart) + i - kRingLag, true, sharedShape, sharedLinear, sharedLowPass, filterStaticOut, 1, weight);
 }
 
 void ChipVoice::processBuses (const Chip::BusBlock& in, int n, double* out) noexcept
@@ -801,7 +1047,7 @@ void ChipVoice::processBuses (const Chip::BusBlock& in, int n, double* out) noex
         }
         prepareBlock (k);
         for (int i = 0; i < k; ++i)
-            out[done + i] += chainSample (i, static_cast<std::int64_t> (injected++) - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1);
+            out[done + i] += chainSample (i, static_cast<std::int64_t> (injected++) - kRingLag, false, nullptr, nullptr, nullptr, nullptr, 1, nullptr);
         done += k;
     }
 }
