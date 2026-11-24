@@ -486,7 +486,7 @@ TEST_CASE ("Review: random parameters every block (incl. out-of-range values), r
         }
         INFO (h.rate << " x" << h.factor << ": peak " << worst);
         CHECK (finite);
-        CHECK (worst < 4.0);
+        CHECK (worst < 5.3); // 4.0 until kChipGain moved (8.21.2): x1.3166 = 5.27; measured 4.81, 5.01 and 5.17
         rig.run (96, { control (0, vs::EventType::SustainPedal, 0.0f), control (0, vs::EventType::AllNotesOff) }, 96);
         rig.run (static_cast<int> (31.0 * h.rate), {}, 96);
         CHECK (rig.part->numActiveVoices() == 0);

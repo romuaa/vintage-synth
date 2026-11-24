@@ -112,10 +112,13 @@ public:
     /** Internal samples per span at most Per Note: each voice renders a whole span on its own (its control points,
         ticks, fades inside), so its chip's state stays in the cache for the span. */
     static constexpr int kSpan = 1024;
-    /** The one gain between the chip's units and the part's output, both models (8.21.1): one note of the Init
-        program at velocity 1 peaks at -12 dBFS +-0.5 dB at the part's output on Model B (tested; S4b's level rule
-        may move it once). */
-    static constexpr double kChipGain = 0.9739;
+    /** The one gain between the chip's units and the part's output, both models (8.21.1, moved once by 8.21.2): the Init
+        program's Chord phrase (C4 E4 G4 C5 held 3 s, velocity 100) measures within 1 dB (unweighted RMS) of Exitium
+        Vintage Synth's Init on the same phrase, through the processor with the limiter off at the default master volume
+        and 48 kHz (-23.53 dB for Vintage, -23.53 dB here; docs/bside-factory-sounds.md, tests/bside/integration/
+        PartTests.cpp). Before S4b it was 0.9739, calibrated so that one Init note at velocity 1 peaked at -12 dBFS at the
+        part's output; the move is x1.3166 (+2.39 dB). */
+    static constexpr double kChipGain = 1.2822;
     static constexpr double kFadeSeconds = 0.003;          // steal, leave and structural-switch fades
     static constexpr double kSmoothSeconds = 0.005;        // continuous parameters, the note gain on a retrigger
     static constexpr double kQuietLevel = 1.0e-6;          // -120 dB re full scale at the part's output

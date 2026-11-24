@@ -5,6 +5,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "BankSound.h"
 #include "PartTestSupport.h"
 
 #include <array>
@@ -20,11 +21,6 @@ namespace chip = vs::bside::chip;
 
 namespace
 {
-bs::PartParams initParams()
-{
-    return bs::PartParams {};
-}
-
 /** The first host sample from `from` at which y crosses the middle of its levels before (lo) and after (hi) an edge
     near `expected`, interpolated; NaN if none. */
 double edgeAt (const std::vector<float>& y, double expected)
@@ -81,17 +77,29 @@ double measuredDelay (HostConfig h, int model, bool shared, int n)
 
 // ---- level ---------------------------------------------------------------------------------------------------
 
-TEST_CASE ("Part: one note of the Init program at velocity 1 peaks at -12 dBFS +-0.5 dB on Model B (kChipGain)", "[bside][part][level]")
+TEST_CASE ("Part: Init's Chord phrase is within 1 dB of Vintage's Init, and a full-velocity eight-note chord stays below 0 dBFS (kChipGain)", "[bside][part][level]")
 {
-    for (const int note : { 48, 60, 72 })
-    {
-        Rig rig ({ 48000.0, 2 }, initParams());
-        const auto y = rig.run (48000, { on (0, note, 1.0f) });
-        const double peak = db (peakOf (y));
-        INFO ("note " << note << ": peak " << peak << " dBFS");
-        CHECK (peak > -12.5);
-        CHECK (peak < -11.5);
-    }
+    // The rule of 8.21.2 (it replaces 8.21.1's "one Init note peaks at -12 dBFS +-0.5 dB"): the Chord phrase of the bank
+    // tests (C4 E4 G4 C5 held 3 s, velocity 100), through the real BSideProcessor at 48 kHz, the limiter off, the default
+    // master volume, unweighted RMS of both channels from the first note-on to the last note-off.
+    // Exitium Vintage Synth's Init on the same phrase, measured with its own tooling (tests/preset_unit/FactorySound.h:
+    // FactoryRig (0, false), phraseFor, measure; the hidden "Render m6b_factory audition and measurements" printed
+    // -23.530 dB, 2026-11-24, macOS arm64): a constant here, never an include of Vintage (docs/bside-factory-sounds.md).
+    constexpr double kVintageInitChordRmsDb = -23.530;
+    bsbank::Rig rig (0, false);
+    const auto perf = bsbank::phrase (bsbank::Phrase::Chord);
+    const auto m = bsbank::measure (rig.play (perf, 0.0), perf);
+    INFO ("B-Side Init, Chord phrase: " << m.rmsDb << " dB RMS (Vintage's Init: " << kVintageInitChordRmsDb << " dB)");
+    CHECK (std::abs (m.rmsDb - kVintageInitChordRmsDb) <= 1.0);
+
+    // Headroom, which wins over the match when the two cannot both hold: eight notes at velocity 127 on Init peak below
+    // 0 dBFS at the processor's output, measured like the rule (limiter off, default master volume). (The part's own
+    // output, before the master volume and the trim, is not what the rule limits: eight notes peak above 1.0 there.)
+    bsbank::Rig chordRig (0, false);
+    const auto chord = bsbank::fullVelocityChord();
+    const auto cm = bsbank::measure (chordRig.play (chord, 0.0), chord);
+    INFO ("eight-note chord through the processor: peak " << cm.peakDb << " dBFS");
+    CHECK (cm.peakDb < 0.0);
 }
 
 // ---- latency -------------------------------------------------------------------------------------------------
@@ -1246,7 +1254,10 @@ TEST_CASE ("Part Shared: an idle voice is judged on its own contribution: it lea
     }
     std::printf ("[shared idle] a silent idle voice leaves %d ms after going idle Per Note, %d ms in Shared\n", leftAfter[0], leftAfter[1]);
     CHECK (leftAfter[0] <= 10);
-    CHECK (leftAfter[1] <= leftAfter[0] + 5); // the 3 ms hand-over of its share, then quiet for a control interval
+    // the 3 ms hand-over of its share, then quiet for a control interval. The bound was +5 until kChipGain moved (8.21.2): the quiet
+    // level is -120 dB at the part's output, so the +2.39 dB of gain asks 2.4 dB more decay of the voice's own signal (measured 9 ms,
+    // Per Note 1 ms).
+    CHECK (leftAfter[1] <= leftAfter[0] + 8);
 }
 
 TEST_CASE ("Part Shared: the filter takes the most recent note's cutoff even when its engine writes nothing new", "[bside][part][shared]")

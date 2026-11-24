@@ -73,11 +73,12 @@ TEST_CASE ("Part level: at 0 dB the output is bit-identical to a part that never
     const auto a = reference.run (kTotal, playing());
     REQUIRE (peakOf (a) > 0.1);
     // The output of the part before the level existed (this render's fingerprint, taken with the gain not in the chain at
-    // all): a gain of exactly 1.0 must not change a bit.
+    // all): a gain of exactly 1.0 must not change a bit. Regenerated when kChipGain moved from 0.9739 to 1.2822 (8.21.2; it
+    // was 0x1eec9dec60bde539 before): the fingerprint is of this render at the new gain, with the level at 0 dB.
     // (Taken on macOS arm64; the other targets' libm may differ in a last bit of the chip's tables, so they skip it.)
 #if defined(__APPLE__) && defined(__aarch64__)
     INFO ("fingerprint " << fingerprint (a));
-    CHECK (fingerprint (a) == 0x1eec9dec60bde539ull);
+    CHECK (fingerprint (a) == 0xcc5c9c3f74e56c40ull);
 #endif
 
     // an explicit 0 dB from the start, whatever the block length; and what a host hands over as 0 dB: the normalised
