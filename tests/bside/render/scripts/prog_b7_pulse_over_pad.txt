@@ -1,0 +1,14 @@
+# B-Side factory program B7 (Pulse Over Pad, Dual: Lower a Model B pulse lead, Upper a Model A pad, panned apart):
+# a chord.
+rate 48000
+channels 2
+length 4.0
+
+0.00 program B7
+
+0.10 on 60 100
+0.10 on 64 100
+0.10 on 67 100
+3.00 off 60
+3.00 off 64
+3.00 off 67

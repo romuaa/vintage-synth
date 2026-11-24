@@ -1,0 +1,13 @@
+# B-Side factory program A2 (Moving Pulse, a Model B pulse lead: pulse-width sweep from the pulse lane, delayed
+# vibrato from the frequency lane, Solo with glide): loaded through the real preset path, then a held note and a
+# legato pair (the second key goes down before the first comes up, so the glide runs).
+rate 48000
+channels 2
+length 3.6
+
+0.00 program A2
+
+0.10 on 60 100
+1.60 on 67 100
+1.65 off 60
+2.80 off 67

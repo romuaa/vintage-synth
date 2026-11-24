@@ -185,4 +185,8 @@ if(VS_BUILD_BSIDE)
     add_executable(part_bench benchmarks/PartBench.cpp)
     target_link_libraries(part_bench PRIVATE bs_test_core)
     set_target_properties(part_bench PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+
+    # bside_render (ctest label render): golden renders of six factory programs through the shared render harness
+    # (tests/bside/render/CMakeLists.txt).
+    add_subdirectory(render)
 endif()
