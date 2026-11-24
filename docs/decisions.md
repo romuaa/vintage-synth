@@ -426,6 +426,18 @@ this round is not yet in.
 | 7 | Cost round | One change: Per Note, the chain runs a block of bus samples in one loop when nothing can happen inside it (no write in flight or due, cutoff standing still, not the first samples after a reset or suspend), otherwise per sample as before; the same bits, shown by a direct comparison test and by every chip test passing unchanged. Shared and the float variant stay per sample. The suspected slowdown of the chain against `main` was not reproduced (measurement noise). The part's own overhead (about 0.15 % of a core) was left alone. (review) |
 | 8 | Steal thump (open, for the owner's ear) | A stolen voice restarts with its envelopes at the chip's power-on value, as 8.6.4 asks under Clean and Precondition: with 16 held notes a steal differs from the no-steal render by about 0.16 within 10 ms. Not changed in S4a; to be judged in the S4b audition. (review) |
 
+### S4a: after the second review (2026-11-24, all review)
+
+A second reviewer checked the fix round with its own tests (`PartReview2Tests.cpp`). It found
+no defect in the block path (47.8 million samples compared against the per-sample path, none
+differ), the late-note timing, the switch fade or real-time safety.
+
+| # | Finding | Call (reason) |
+|---|---|---|
+| 1 | All Sound Off leaves the stopped chips one internal sample ahead of the part's clock; in Shared a later note on such a chip makes the output depend on the host's block length (up to -21.6 dB). Older than the fix round. | A defect: fixed, and a Shared segment must never read bus samples it did not render, in any build type (8.21.1). (review) |
+| 2 | Shared: a note of another velocity that joins or leaves changes the level of the held notes' filtered sound (5.9 dB on Model B, 7.2 dB on Model A for velocity 1 against 0.01 at `vel.volume` 100 %), smoothly over 3 ms. | Accepted as a property of the topology and written into the contract: volume stays per note (8.5), so the filtered sum is heard at the share-weighted mean of the note gains. The alternatives (dividing the share by the note gain, or scaling each note's input to the filter) either overdrive Model A's output stage with mixed velocities or break "one voice in Shared equals Per Note bit for bit". Pinned by a test; for the owner's ear in the S4b audition. (review) |
+| 3 | The steal dip of the fix round's reading 3 was understated: the true bound is t(1 − t)/(n − t) of the stolen chip's weight, 0.26 with 16 carriers and 0.34 with 2; smooth, not a click. | The contract carries the true bound and the steal test asserts it. (review) |
+
 ## B-Side S3a round 2: the review's findings (2026-11-20, all review)
 
 What round 2 changed, what it measured and what stays open. Fitting traces (never committed, under the developer cache):
