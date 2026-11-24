@@ -2613,8 +2613,11 @@ marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
 
 - **One new parameter, first and alone (skill `add-parameter`; serial step).** `mix.level`
   ("Level") per part, -24 to +6 dB, default 0 dB, appended to `PartParamList.h`; a smoothed
-  gain (5 ms, at the control points) on the part's sum before the one conversion to float.
-  At 0 dB the output is bit-identical to before. It is the only thing the level rule trims
+  gain on the part's sum before the one conversion to float. As built (review): the gain ramps
+  linearly per sample over 5 ms from a target latched at the block's start (steps at the 1 ms
+  control points would be up to 19 % of the signal); within 0.001 dB of 0 dB the gain is
+  exactly 1, because a host's normalised round trip of 0 dB reads back as 3.6e-7 dB.
+  At 0 dB the output is bit-identical to before (pinned by a fingerprint on macOS arm64). It is the only thing the level rule trims
   (review: the chip's volume register has 16 steps and moves Model A's DC, so it cannot trim).
   B-Side has had no release: appending is free; `stateVersion` stays 1; state and programs
   saved before load with 0 dB (tested). The parameter count becomes 204 and the gate "the
