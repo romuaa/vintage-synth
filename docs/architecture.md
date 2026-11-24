@@ -2660,6 +2660,31 @@ marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
   (sustained, percussive, bass); with the limiter on at its defaults no phrase reaches its
   knee. Programs are trimmed with `mix.level` only. Phrases, groups and measured figures go
   into a new `docs/bside-factory-sounds.md`.
+- **After the drafting (2026-11-24; these win over the points above; all review):**
+  - **Level groups.** The table arpeggios (A7, A8) are one held voice and belong to the
+    **sustained** group, not the percussive one. **Percussion is judged by its peak:** a drum
+    hit's phrase peak is within 2 dB of the median phrase peak of the sustained group, so a
+    drum sits as loud as a lead note. For percussion the eight-note chord check is only
+    "below 0 dBFS with two keys down": eight identical fixed-pitch hits summing in phase is
+    not a playing situation and must not set the level (the draft had the drums and
+    arpeggios 13 dB below the leads for that reason). A program that cannot reach its level
+    inside `mix.level`'s range is raised in its content (chip volume, sustain), not by
+    widening the range.
+  - **Applying a program is silent.** A program applied while notes sound fades the part's
+    sounding voices over 3 ms and makes them idle, as a structural switch does, **before**
+    the new program's parameters and table take effect; held keys do not retrigger. Gate:
+    Vintage's step rule (the largest step after the apply is at most 3 times the largest
+    before it plus 0.002) for all 16 programs applied over three held keys, in both
+    directions; the drafting's hidden known-defect test becomes this default test, split so
+    that its other half stays documented: **a waveform parameter changed on a held note is a
+    register write and steps the output, as on the chip;** that is a property, stated in
+    `docs/bside-factory-sounds.md`, not a defect.
+  - **A3** steps oscillator 2's pitch row by row in its wave lane; no macro moves a lane's
+    pitch (a wave-lane pitch sweep scaled by `macro.sweep_depth` does not exist and is not
+    added in S4).
+  - **Assertions the gain moved by definition:** the Shared idle-leave bound (+5 to +8 ms: the
+    quiet level is a fixed -120 dB at the part's output) and the random-parameter peak bound
+    (4.0 to 5.3, the gain's factor).
 - **`kChipGain` moves once (review).** Its calibration changes from "the Init note's onset peak
   at -12 dBFS" (8.21.1) to: **Init's Chord phrase measures within 1 dB (unweighted RMS) of
   Exitium Vintage Synth's Init on the same phrase,** measured the same way, so the two
