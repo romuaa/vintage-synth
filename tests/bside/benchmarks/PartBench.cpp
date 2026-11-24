@@ -12,8 +12,7 @@
 //   proc32B / proc32A     32 note voices with chorus, delay and reverb on, through processBlock    gate 15 % / 27 %
 //   hi16B / hi16A         16 note voices at a 192 kHz host (1x)                                   gate 15 % / 30 %
 //   idle16B / idle16A     16 idle voices, one part (played, released, every voice idle)          gate 0.1 % / 0.1 %
-// Also reported (no gate): switchB / switchA, the cost of one structural switch per voice (microseconds; 8.21.1: at
-// most 50); noteStart, the cost of a note start after a long idle (microseconds); vibrato16B, part16B with the mod wheel
+// Also reported (no gate): switch, the cost of one structural switch per voice (microseconds; 8.21.1: at most 50); noteStart, the cost of a note start after a long idle (microseconds); vibrato16B, part16B with the mod wheel
 // up (a frequency write per voice and control point); variation16A, part16A with chip.variation moving; memory per part.
 // Arguments: case names to run only those (default: all).
 
@@ -238,30 +237,35 @@ Timing processorCase (int model)
     return t;
 }
 
-/** Microseconds per voice of a structural switch (chip.model to the other model) with 16 voices sounding: the time of
-    the block that completes it minus a plain block. */
-double switchMicros (int model)
+/** Microseconds per voice of a structural switch itself (every voice reset into the new configuration from the
+    prototypes: ChipVoice copy, reconfigure when the clock, resolution or volume DC differ, filter, engine): the block
+    that makes it minus a plain block, the part silent (with voices sounding the switch only adds its 3 ms fade first).
+    `what`: 0 chip.model, 1 chip.clock, 2 chip.volume_dc. Best and worst of 20 switches, divided by 16. */
+std::pair<double, double> switchMicros (int model, int what)
 {
-    double best = 1e300;
-    const auto prog = gateProgram();
-    for (int run = 0; run < kRepeats; ++run)
+    double best = 1e300, worst = 0.0;
+    auto part = std::make_unique<bs::Part>();
+    auto p = gateParams (model);
+    int clock = 0;
+    part->setParams (p);
+    part->prepare (48000.0, kBlock, 2, p, 0);
+    std::vector<float> out (kBlock);
+    for (int b = 0; b < 20; ++b)
+        part->render (out.data(), kBlock, {});
+    for (int k = 0; k < 20; ++k)
     {
-        auto part = std::make_unique<bs::Part>();
-        auto p = gateParams (model);
-        part->setParams (p);
-        part->setProgram (&prog);
-        part->prepare (48000.0, kBlock, 2, p, 0);
-        std::vector<float> out (kBlock);
-        part->render (out.data(), kBlock, chord (16));
-        for (int b = 0; b < 20; ++b)
-            part->render (out.data(), kBlock, {});
-        // a plain block, then the switch (its 3 ms fade ends inside the block)
         auto t0 = std::chrono::steady_clock::now();
         part->render (out.data(), kBlock, {});
         auto t1 = std::chrono::steady_clock::now();
         const double plain = std::chrono::duration<double, std::micro> (t1 - t0).count();
-        p.chipModel = 1 - model;
+        if (what == 0)
+            p.chipModel = 1 - p.chipModel;
+        else if (what == 1)
+            clock = 1 - clock;
+        else
+            p.chipVolumeDc = 1 - p.chipVolumeDc;
         part->setParams (p);
+        part->setChipClock (clock);
         const int before = part->switchesDone();
         t0 = std::chrono::steady_clock::now();
         part->render (out.data(), kBlock, {});
@@ -270,8 +274,9 @@ double switchMicros (int model)
             std::printf ("switch did not complete in one block\n");
         const double with = std::chrono::duration<double, std::micro> (t1 - t0).count();
         best = std::min (best, (with - plain) / 16.0);
+        worst = std::max (worst, (with - plain) / 16.0);
     }
-    return best;
+    return { best, worst };
 }
 
 /** Microseconds of a note start on a voice that was idle for `idleSeconds` (its chip time caught up first; the
@@ -341,10 +346,13 @@ int main (int argc, char** argv)
         print ("vibrato16B", partCase (1, 48000.0, 2, 1, 16, false, 1.0f), "part16B with the mod wheel up (vibrato writes)");
     if (wanted (argc, argv, "variation16A"))
         print ("variation16A", partCase (0, 48000.0, 2, 1, 16, false, 0.0f, true), "part16A with chip.variation moving all the time");
-    if (wanted (argc, argv, "switchB"))
-        std::printf ("%-12s %7.2f us per voice   (a chip.model switch B -> A, 16 voices sounding; 8.21.1: at most 50)\n", "switchB", switchMicros (1));
-    if (wanted (argc, argv, "switchA"))
-        std::printf ("%-12s %7.2f us per voice   (a chip.model switch A -> B, 16 voices sounding; 8.21.1: at most 50)\n", "switchA", switchMicros (0));
+    if (wanted (argc, argv, "switch"))
+        for (const int what : { 0, 1, 2 })
+        {
+            const auto r = switchMicros (1, what);
+            std::printf ("%-12s best %7.2f worst %7.2f us per voice   (a %s switch, 16 voices reset; 8.21.1: at most 50)\n", "switch", r.first, r.second,
+                         what == 0 ? "chip.model" : (what == 1 ? "chip.clock" : "chip.volume_dc"));
+        }
     if (wanted (argc, argv, "noteStart"))
         for (const double s : { 1.0, 60.0 })
             std::printf ("%-12s %7.2f us   (a note start after %.0f s idle, over a plain block)\n", "noteStart", noteStartMicros (s), s);

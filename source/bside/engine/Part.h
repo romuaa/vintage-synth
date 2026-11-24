@@ -133,6 +133,8 @@ public:
     const vs::VoiceAllocator& getAllocator() const noexcept { return allocator; }
     /** Bytes the part holds (its object, the voices, the prototypes; the decimator's buffers not counted). */
     static std::size_t memoryBytes() noexcept;
+    /** Test aid: the Shared topology's filter (its cutoff, resonance and mode follow the most recent note). */
+    const vs::bside::chip::Filter& getSharedFilter() const noexcept { return sharedFilter; }
     /** Structural switches completed since prepare. */
     int switchesDone() const noexcept { return switches; }
     /** Test aid: a pitch offset in semitones (double) added to every note's host pitch, so a test can place a note at an

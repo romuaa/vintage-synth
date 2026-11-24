@@ -6,6 +6,7 @@
 
 #include "bside/PluginProcessor.h"
 #include "bside/presets/BSidePresets.h"
+#include "bside/program/TableReader.h"
 #include "common/params/FxArpParams.h"
 #include "common/params/GlobalParams.h"
 
@@ -14,6 +15,7 @@
 #endif
 
 #include <cmath>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -84,6 +86,14 @@ juce::MidiBuffer on (int note, int sampleOffset = 0, int velocity = 100)
     m.addEvent (juce::MidiMessage::noteOn (1, note, static_cast<juce::uint8> (velocity)), sampleOffset);
     return m;
 }
+double peakOf (const std::vector<float>& v)
+{
+    double p = 0.0;
+    for (const float x : v)
+        p = std::max (p, std::abs (static_cast<double> (x)));
+    return p;
+}
+
 juce::MidiBuffer off (int note)
 {
     juce::MidiBuffer m;
@@ -341,6 +351,157 @@ TEST_CASE ("B-Side: program, tone and bank files carry B-Side's identity and ref
     dir.deleteRecursively();
 }
 
+// ---- the chip part in the shell (docs/architecture.md 8.21.1, behaviour gates 5 and 6) ------------------------
+
+namespace
+{
+/** Renders `blocks` blocks of the processor (stereo), `midi` in the first; returns left and right. */
+std::pair<std::vector<float>, std::vector<float>> renderStereo (Rig& rig, int blocks, juce::MidiBuffer midi = {}, int switchAt = -1,
+                                                                 std::function<void()> atSwitch = {})
+{
+    std::vector<float> l, r;
+    for (int b = 0; b < blocks; ++b)
+    {
+        if (b == switchAt && atSwitch)
+            atSwitch();
+        juce::AudioBuffer<float> buffer (2, kBlock);
+        buffer.clear();
+        juce::MidiBuffer m;
+        if (b == 0)
+            m = midi;
+        rig.proc.processBlock (buffer, m);
+        l.insert (l.end(), buffer.getReadPointer (0), buffer.getReadPointer (0) + kBlock);
+        r.insert (r.end(), buffer.getReadPointer (1), buffer.getReadPointer (1) + kBlock);
+    }
+    return { l, r };
+}
+
+juce::MidiBuffer chord (std::initializer_list<int> notes)
+{
+    juce::MidiBuffer m;
+    for (const int n : notes)
+        m.addEvent (juce::MidiMessage::noteOn (1, n, static_cast<juce::uint8> (127)), 7);
+    return m;
+}
+} // namespace
+
+TEST_CASE ("B-Side: Whole mode: Upper costs nothing and is silent", "[bside][shell][part]")
+{
+    Rig rig;
+    rig.set ("master.limiter", 0.0f);
+    renderStereo (rig, 100, chord ({ 48, 60, 67 }));
+    CHECK (rig.proc.getLowerPart().numActiveVoices() == 3);
+    CHECK_FALSE (rig.proc.isUpperRendering());
+    CHECK (rig.proc.getUpperPart().getRenderedSamples() == 0); // never rendered a sample
+    CHECK (rig.proc.getUpperPart().numActiveVoices() == 0);
+}
+
+TEST_CASE ("B-Side: Dual equals the sum of both parts rendered apart", "[bside][shell][part]")
+{
+    Rig rig;
+    rig.set ("master.limiter", 0.0f);
+    rig.set ("key.mode", 1.0f); // Dual
+    rig.set ("upper.chip.model", 0.0f);
+    rig.set ("upper.osc1.wave", 2.0f);
+    const auto out = renderStereo (rig, 60, chord ({ 48, 60, 67 }));
+
+    // the two parts on their own, with the parameters the processor gave them
+    bs::PartParams lower, upper;
+    upper.chipModel = 0;
+    upper.osc1Wave = 2;
+    std::vector<float> sum (out.first.size(), 0.0f);
+    for (int p = 0; p < 2; ++p)
+    {
+        bs::Part part;
+        part.setParams (p == 0 ? lower : upper);
+        part.prepare (kRate, kBlock, 2, p == 0 ? lower : upper, 0);
+        std::vector<vs::NoteEvent> ev;
+        for (const int n : { 48, 60, 67 })
+            ev.push_back ({ 7, vs::EventType::NoteOn, static_cast<std::uint8_t> (n), 1.0f });
+        std::vector<float> y (kBlock);
+        for (int b = 0; b < 60; ++b)
+        {
+            part.render (y.data(), kBlock, b == 0 ? std::span<const vs::NoteEvent> (ev) : std::span<const vs::NoteEvent> {});
+            for (int i = 0; i < kBlock; ++i)
+                sum[static_cast<std::size_t> (b * kBlock + i)] += y[static_cast<std::size_t> (i)];
+        }
+    }
+    // master volume -6 dB and the fixed trim (x 0.5); centre pan and balance are unity (the no-boost law)
+    const double g = std::pow (10.0, -6.0 / 20.0) * 0.5;
+    double worst = 0.0, peak = 0.0;
+    for (std::size_t i = 0; i < sum.size(); ++i)
+    {
+        worst = std::max (worst, std::abs (static_cast<double> (out.first[i]) - g * static_cast<double> (sum[i])));
+        worst = std::max (worst, std::abs (static_cast<double> (out.second[i]) - g * static_cast<double> (sum[i])));
+        peak = std::max (peak, std::abs (static_cast<double> (out.first[i])));
+    }
+    INFO ("peak " << peak << ", largest difference " << worst);
+    REQUIRE (peak > 0.01);
+    CHECK (worst <= 1.0e-6 * std::max (1.0, peak) * 8.0); // float tolerance: a few steps of the output
+}
+
+TEST_CASE ("B-Side: a structural switch on Lower leaves Upper's output bit-identical", "[bside][shell][part][switch]")
+{
+    // Lower panned hard left, Upper hard right (the no-boost law: the far side is exactly 0): the right channel is
+    // Upper alone. Every structural parameter of Lower switched while both play; chip.clock is global (both parts).
+    for (const char* id : { "lower.chip.model", "lower.filter.topology", "lower.chip.resolution", "lower.chip.volume_dc" })
+    {
+        auto run = [&] (bool doSwitch) {
+            Rig rig;
+            rig.set ("master.limiter", 0.0f);
+            rig.set ("key.mode", 1.0f);
+            rig.set ("lower.mix.pan", -1.0f);
+            rig.set ("upper.mix.pan", 1.0f);
+            auto* p = rig.proc.getState().getParameter (id);
+            const float flipped = p->getValue() > 0.5f ? 0.0f : 1.0f;
+            return renderStereo (rig, 60, chord ({ 52, 64 }), 20, [&] {
+                if (doSwitch)
+                    p->setValueNotifyingHost (flipped);
+            });
+        };
+        const auto a = run (false), b = run (true);
+        INFO (id);
+        CHECK (b.second == a.second); // Upper: bit-identical
+        CHECK (b.first != a.first);   // and the switch did act on Lower
+        CHECK (peakOf (b.second) > 0.01);
+    }
+}
+
+TEST_CASE ("B-Side: mix.pan pans each part with the no-boost law; the tail is 3 x the longest release of the parts that can sound", "[bside][shell][part]")
+{
+    Rig rig;
+    rig.set ("master.limiter", 0.0f);
+    rig.set ("lower.mix.pan", 1.0f);
+    const auto out = renderStereo (rig, 40, chord ({ 60 }));
+    const std::vector<float> left (out.first.begin() + 30 * kBlock, out.first.end()); // after the mixer's (exponential) smoothing
+    CHECK (peakOf (left) <= 0.0); // hard right: the left side is exactly 0
+    CHECK (peakOf (out.second) > 0.01);
+
+    // the tail: Lower's osc 1 release 6 (204 ms nominal) x 3, effects off; Upper counts in Dual only
+    Rig t (false);
+    CHECK (t.proc.getTailLengthSeconds() == Catch::Approx (3.0 * 0.204).margin (1e-9));
+    t.set ("upper.osc1.release", 15.0f); // 24 s nominal
+    CHECK (t.proc.getTailLengthSeconds() == Catch::Approx (3.0 * 0.204).margin (1e-9));
+    t.set ("key.mode", 1.0f);
+    CHECK (t.proc.getTailLengthSeconds() == Catch::Approx (30.0).margin (1e-9)); // 72 s, capped by the shell
+    t.set ("key.mode", 0.0f);
+    t.set ("lower.osc2.wave", 2.0f);
+    t.set ("lower.osc2.release", 9.0f); // 750 ms nominal
+    CHECK (t.proc.getTailLengthSeconds() == Catch::Approx (3.0 * 0.750).margin (1e-9));
+}
+
+TEST_CASE ("B-Side: the Tempo tick rate follows arp.tempo while the host gives no tempo", "[bside][shell][part]")
+{
+    Rig rig;
+    rig.set ("arp.tempo", 90.0f);
+    rig.set ("lower.tick.rate", 2.0f); // Tempo
+    rig.block ({});
+    CHECK (rig.proc.getTickTempo() == Catch::Approx (90.0));
+    renderStereo (rig, 2, chord ({ 60 }));
+    // 24 ticks per beat at 90 bpm, the 50 Hz system clock: 985248 x 60 / (90 x 24)
+    CHECK (rig.proc.getLowerPart().getVoice (0).engine.tickPeriod() == 27368u);
+}
+
 #if defined(VS_SEQ_COUNT_ALLOCATIONS) && VS_SEQ_COUNT_ALLOCATIONS // macOS without AddressSanitizer
 TEST_CASE ("B-Side: processBlock does not allocate (arp, effects, key modes, bypass, program change request)", "[bside][shell][realtime]")
 {
@@ -386,5 +547,70 @@ TEST_CASE ("B-Side: processBlock does not allocate (arp, effects, key modes, byp
             rig.proc.processBlock (buffer, blocks[static_cast<size_t> (b)]);
     }
     CHECK (counter.count() == base);
+}
+TEST_CASE ("B-Side: processBlock does not allocate with chip notes, steals, unison, a table applied while playing and every structural switch", "[bside][shell][realtime][part]")
+{
+    Rig rig;
+    rig.set ("key.mode", 1.0f); // Dual: both parts
+    auto& state = rig.proc.getState();
+    const auto table = vs::bside::program::readTable ("bside-table 1\n[restart]\nmode classic\n[wave1]\n    wave pulse+gate +0\nloop:\n    pitch +12\n    pitch +0\n    jump loop\n"
+                                                    "[pulse1]\n    set 512\n    pingpong 512 3584 48\n[filter]\n    cutoff 1500\n    sweep -30 x20\n");
+    REQUIRE (table.ok);
+    juce::AudioBuffer<float> buffer (2, kBlock);
+    std::vector<juce::MidiBuffer> blocks (260);
+    for (int b = 0; b < 260; ++b)
+    {
+        auto& m = blocks[static_cast<size_t> (b)];
+        if (b % 3 == 0)
+            for (int k = 0; k < 7; ++k) // more notes than voices: steals
+                m.addEvent (juce::MidiMessage::noteOn (1, 36 + (b * 5 + k * 7) % 60, static_cast<juce::uint8> (40 + k * 10)), (b * 13 + k * 31) % kBlock);
+        if (b % 5 == 0)
+            m.addEvent (juce::MidiMessage::noteOff (1, 36 + (b * 3) % 60), 11);
+        if (b % 17 == 0)
+            m.addEvent (juce::MidiMessage::pitchWheel (1, (b * 997) % 16384), 30);
+        if (b % 19 == 0)
+            m.addEvent (juce::MidiMessage::controllerEvent (1, 1, (b * 7) % 128), 40);
+        if (b % 23 == 0)
+            m.addEvent (juce::MidiMessage::controllerEvent (1, 64, (b / 23) % 2 == 0 ? 127 : 0), 50);
+    }
+    // what changes while playing, at fixed blocks (raw parameter values; written before the block)
+    struct Change
+    {
+        int block;
+        const char* id;
+        float value;
+    };
+    const std::vector<Change> changes {
+        { 20, "lower.assign.mode", 1.0f },    { 40, "lower.assign.unison_voices", 3.0f }, { 60, "lower.chip.model", 0.0f },
+        { 80, "lower.filter.topology", 1.0f }, { 100, "chip.clock", 1.0f },              { 120, "lower.chip.resolution", 1.0f },
+        { 140, "lower.chip.volume_dc", 1.0f },  { 150, "upper.chip.model", 0.0f },        { 160, "lower.assign.mode", 2.0f },
+        { 170, "lower.porta.time", 0.5f },      { 180, "lower.chip.variation", 90.0f },   { 190, "lower.filter.topology", 0.0f },
+        { 200, "lower.tick.rate", 2.0f },       { 210, "lower.assign.mode", 0.0f },
+    };
+    // the counter must see an allocation on this thread
+    vs::seq::test::AllocationCounter counter;
+    {
+        auto* probe = new int (3);
+        vs::seq::test::gEscape = probe;
+        delete probe;
+    }
+    const int base = counter.count();
+    REQUIRE (base > 0);
+    std::size_t next = 0;
+    for (int b = 0; b < 260; ++b)
+    {
+        while (next < changes.size() && changes[next].block == b)
+        {
+            state.getRawParameterValue (changes[next].id)->store (changes[next].value);
+            ++next;
+        }
+        if (b == 110)
+            rig.proc.tableHandover (0).publish (table.program); // a table applied while playing (inside no hold: the
+                                                                 // audio side's claim and commit run in processBlock)
+        buffer.clear();
+        rig.proc.processBlock (buffer, blocks[static_cast<size_t> (b)]);
+    }
+    CHECK (counter.count() == base);
+    CHECK (rig.proc.getLowerPart().switchesDone() >= 5);
 }
 #endif

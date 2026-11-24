@@ -52,12 +52,17 @@ struct Profile
     const char* program2;
     // Vintage only: a parameter that program 2 (A3) moves, to prove that a program's values are applied.
     const char* cutoffParameter;
+    // B-Side only (docs/architecture.md 8.21.1): the reported latency at 44.1, 48 and 96 kHz (real time: 2x, 2x, 1x)
+    // and the peak window of one Init note at velocity 0.8 (the chip part: -12 dBFS at velocity 1 x the note gain 0.9,
+    // master -6 dB, the trim 0.5; +-2 dB). Negative: not checked.
+    int latency[3];
+    float notePeakMin, notePeakMax;
 };
 
 // 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3 + 2 = 172 (docs/architecture.md 6c.2); B-Side: 75 shared + 2 * 63 per part + chip.clock = 202 (8.3, 8.7).
 constexpr Profile kVintage { "Exitium Vintage Synth", 2 + 2 * 48 + 3 + 11 + 10 + 16 * 3 + 2, 64, "Init", "Copper Fanfare", "Chorus Garden",
-                             "Low Sun Horns", "Lower VCF Cutoff" };
-constexpr Profile kBSide { "Exitium B-Side", 202, 64, "Init", "Init", "Init", "Init", nullptr };
+                             "Low Sun Horns", "Lower VCF Cutoff", { -1, -1, -1 }, -1.0f, -1.0f };
+constexpr Profile kBSide { "Exitium B-Side", 202, 64, "Init", "Init", "Init", "Init", nullptr, { 31, 22, 41 }, 0.045f, 0.072f };
 
 RenderStats render (juce::AudioPluginInstance& p, int numSamples, int blockSize, juce::MidiBuffer firstBlockMidi)
 {
@@ -184,6 +189,14 @@ int main (int argc, char** argv)
             const auto tag = juce::String (sr) + " Hz / " + juce::String (bs) + ": ";
             check (playing.finite && playing.peak > 0.01f && playing.peak < 1.0f, tag + "note renders, peak " + juce::String (playing.peak));
             check (after.finite && after.peak < 1.0e-4f, tag + "silent after release, peak " + juce::String (after.peak));
+            const int rateIndex = sr < 46000.0 ? (sr < 45000.0 ? 0 : 1) : (sr < 90000.0 ? 1 : 2);
+            if (profile->latency[rateIndex] >= 0)
+                check (plugin->getLatencySamples() == profile->latency[rateIndex],
+                       tag + "latency " + juce::String (plugin->getLatencySamples()) + " (expected " + juce::String (profile->latency[rateIndex]) + ")");
+            if (profile->notePeakMin >= 0.0f)
+                check (playing.peak >= profile->notePeakMin && playing.peak <= profile->notePeakMax,
+                       tag + "the chip note's level, peak " + juce::String (playing.peak) + " (window " + juce::String (profile->notePeakMin) + " .. "
+                           + juce::String (profile->notePeakMax) + ")");
             plugin->releaseResources();
         }
 

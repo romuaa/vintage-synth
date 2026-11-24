@@ -934,6 +934,28 @@ TEST_CASE ("Part Shared: several voices share one filter (their output differs f
     }
 }
 
+TEST_CASE ("Part Shared: the filter takes the most recent note's cutoff even when its engine writes nothing new", "[bside][part][shared]")
+{
+    // Key follow gives notes 48 and 72 their own cutoffs. Every voice plays once (All Sound Off makes each idle at
+    // once, so the next note takes the next voice); the 17th note lands on voice 0 again with the note it had: its
+    // engine finds its cutoff unchanged and writes none, while the shared filter still holds the 16th note's.
+    bs::PartParams p;
+    p.filterTopology = 1;
+    p.filterKeyFollow = 100.0f;
+    p.filterCutoff = 1000.0f;
+    Rig rig ({ 48000.0, 2 }, p);
+    for (int k = 0; k < 17; ++k)
+    {
+        rig.run (960, { on (0, k % 2 == 0 ? 48 : 72) });
+        if (k < 16)
+            rig.run (0, { control (0, vs::EventType::AllSoundOff) });
+    }
+    REQUIRE (rig.part->getVoice (0).active);
+    const double want = 1000.0 + 16.0 * (48 - 60);
+    CHECK (static_cast<double> (rig.part->getVoice (0).chain.chip().cutoffSmooth()) == Catch::Approx (want).margin (0.01));
+    CHECK (static_cast<double> (rig.part->getSharedFilter().cutoff()) == Catch::Approx (want).margin (0.01));
+}
+
 // ---- structural switches (8.21.1) --------------------------------------------------------------------------------
 
 TEST_CASE ("Part: a structural switch fades the sounding voices over 3 ms, resets them into the new configuration; held keys do not retrigger", "[bside][part][switch]")
