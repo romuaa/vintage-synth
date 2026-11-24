@@ -2558,11 +2558,15 @@ rebuilds per resonance write (`ChipVoice.h`, "RESONANCE") and the part's own ove
     of the note gains, and a note of another velocity that joins or leaves moves that level
     smoothly over the 3 ms fade (measured: a held note at velocity 1 with `vel.volume` at
     100 % falls by 5.9 dB on Model B and 7.2 dB on Model A when a note at velocity 0.01 joins;
-    nothing at equal velocities). This is a property of the topology, stated in `Part.h` and
-    pinned by a test (the level after the join is the mean gain's within 0.5 dB, and the move
-    has no step). During a steal the filtered sound heard through the other chips dips
-    smoothly by at most t(1 − t)/(n − t) of it (0.26 of the stolen chip's weight with 16
-    carriers, 0.34 with 2); the steal test asserts that bound.
+    at equal velocities nothing on Model B and 1.2 dB on Model A, where each chip's output
+    curve sees its share, 8.19.4). This is a property of the topology, stated in `Part.h` and
+    pinned by a test (the part of the change that comes from the gains is the mean gain's
+    within 0.5 dB, and the move has no step). During a steal the weights' arithmetic lets the
+    filtered sound heard through the other chips dip smoothly by t(1 − t)/(n − t) of it (0.26
+    of the stolen chip's weight with 16 carriers, 0.34 with 2). Measured at the part's output
+    with 16 voices the dip is 0.30 of the weight (0.0185 of the chord), which holds more than
+    the weights (the stages and the measure against a reference); the steal test's bound stays
+    at 0.4 of the weight and is not tightened to a figure the measurement does not meet.
   - **All Sound Off keeps the part's clock.** A voice stopped by All Sound Off (or by any other
     path that suspends a chain) is at the part's cycle afterwards, like a voice that went idle:
     every chip of the part is at the same cycle after every block, in both topologies, whatever
