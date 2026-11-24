@@ -221,8 +221,17 @@ if(VS_BUILD_BSIDE)
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/program/TableReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/program/TableWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/params/ParameterLayout.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/TestTonePart.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/ProgramEngine.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/chip/Chip.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/chip/ChipRender.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/chip/RenderTables.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/chip/CombinedWaveforms.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/chip/CombinedWaveformParams.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/chip/Filter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/chip/OutputStage.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/chip/HalfBand.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/chip/ChipVoice.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/ProgramEngine.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/bside/engine/Part.cpp)
     set(BS_PLUGIN_SOURCES ${VS_COMMON_SOURCES} ${BS_SOURCES})
     target_sources(BSide PRIVATE ${BS_PLUGIN_SOURCES})
     bs_chip_fp_rules(BSide)

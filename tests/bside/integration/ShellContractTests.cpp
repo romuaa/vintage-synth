@@ -21,9 +21,9 @@ struct JuceEnv
 
 /** A minimal second instrument on the skeleton, with switches for the two mistakes. It reuses
     B-Side's part, parameters and presets; only its identity differs. */
-class MiniProcessor final : public vs::shell::BiTimbralProcessor<MiniProcessor, bs::TestTonePart, bs::BSideParams>
+class MiniProcessor final : public vs::shell::BiTimbralProcessor<MiniProcessor, bs::Part, bs::BSideParams>
 {
-    using Base = vs::shell::BiTimbralProcessor<MiniProcessor, bs::TestTonePart, bs::BSideParams>;
+    using Base = vs::shell::BiTimbralProcessor<MiniProcessor, bs::Part, bs::BSideParams>;
     friend Base;
 
 public:
@@ -47,16 +47,16 @@ private:
     void readInstrumentParams (bs::BSideParams&) const noexcept {}
     void applyInstrumentParams (const bs::BSideParams&) noexcept {}
     float partPan (const bs::BSideParams&, int) const noexcept { return 0.0f; }
-    void prepareParts (double hostRate, int, int, int)
+    void prepareParts (double hostRate, int maxBlock, int osFactor, int)
     {
         for (auto& p : parts)
-            p.prepare (hostRate);
+            p.prepare (hostRate, maxBlock, osFactor, bs::PartParams {}, 0);
     }
     double synthTailSeconds() const noexcept { return 0.0; }
-    bs::TestTonePart& part (int p) noexcept { return parts[static_cast<size_t> (p == 0 ? 0 : 1)]; }
-    const bs::TestTonePart& part (int p) const noexcept { return parts[static_cast<size_t> (p == 0 ? 0 : 1)]; }
+    bs::Part& part (int p) noexcept { return parts[static_cast<size_t> (p == 0 ? 0 : 1)]; }
+    const bs::Part& part (int p) const noexcept { return parts[static_cast<size_t> (p == 0 ? 0 : 1)]; }
 
-    std::array<bs::TestTonePart, 2> parts;
+    std::array<bs::Part, 2> parts;
 };
 
 /** B-Side's layout without one group of the shared parameters (the appenders of common/params). */

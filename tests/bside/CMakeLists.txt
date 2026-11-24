@@ -158,12 +158,13 @@ if(VS_BUILD_BSIDE)
     bs_chip_fp_rules(bs_test_core)
 
     # BSideTests: the processor shell (parameters, state, presets, bypass, guard, arpeggiator through the
-    # test tone, real-time safety). The JUCE-free test executables (bside_unit: chip, program, trace) are
+    # chip part, real-time safety) and the part itself (integration/PartTests.cpp, 8.21.1). The JUCE-free test executables (bside_unit: chip, program, trace) are
     # added by S1c and S2 and link Catch2 only, not bs_test_core.
     add_executable(BSideTests
         integration/ShellContractTests.cpp
         integration/ShellTests.cpp
-        integration/TestTonePartTests.cpp
+        integration/PartTests.cpp
+        integration/PartAliasTests.cpp
         integration/TablePresetTests.cpp
         integration/ParamTests.cpp)
     target_link_libraries(BSideTests PRIVATE
@@ -172,4 +173,10 @@ if(VS_BUILD_BSIDE)
     set_target_properties(BSideTests PROPERTIES COMPILE_WARNING_AS_ERROR ON)
     # The prefix keeps ctest names unique next to VintageSynthTests' (both are discovered into one list).
     catch_discover_tests(BSideTests TEST_PREFIX "bside: ")
+
+    # part_bench: the CPU gates of S4 (docs/architecture.md 8.21) through the part and the processor (a benchmark, not
+    # a test: no ctest entry and no sanitizer run): `build/tests/bside/part_bench`.
+    add_executable(part_bench benchmarks/PartBench.cpp)
+    target_link_libraries(part_bench PRIVATE bs_test_core)
+    set_target_properties(part_bench PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 endif()

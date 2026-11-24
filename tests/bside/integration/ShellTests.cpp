@@ -1,6 +1,6 @@
 // Exitium B-Side's plugin shell as a host sees it (docs/architecture.md 8.3): identity, the 75
-// parameters, 64 programs, state, bypass, the non-finite guard, the arpeggiator in front of the test
-// tone, preset files of B-Side's own kind, and real-time safety of processBlock.
+// parameters, 64 programs, state, bypass, the non-finite guard, the arpeggiator in front of the chip
+// part, preset files of B-Side's own kind, and real-time safety of processBlock.
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -186,9 +186,12 @@ TEST_CASE ("B-Side: a note renders finite, audible sound and is silent after rel
     CHECK (held > 0.01f);
     CHECK (held < 1.0f);
     rig.block (off (60), &finite);
+    rig.seconds (1.0, &finite); // the chip's release, then the idle rule (silent for a control interval, or 500 ms and a fade)
     CHECK (rig.seconds (0.5, &finite) < 1.0e-4f);
     CHECK (finite);
-    CHECK (rig.proc.getLatencySamples() == 0);
+    // the part's one latency (docs/architecture.md 8.21.1): Model A's chain at 96 kHz, the board filters and the decimator
+    CHECK (rig.proc.getLatencySamples() == rig.proc.getLowerPart().getLatencySamples());
+    CHECK (rig.proc.getLatencySamples() == 22);
 }
 
 TEST_CASE ("B-Side: the state round-trips, carries its tag and version, and refuses another instrument's", "[bside][shell][state]")
@@ -271,7 +274,7 @@ TEST_CASE ("B-Side: the non-finite guard fires once and the output stays finite"
     CHECK (rig.seconds (0.1, &finite) > 0.01f);
 }
 
-TEST_CASE ("B-Side: the arpeggiator plays the test tone", "[bside][shell][arp]")
+TEST_CASE ("B-Side: the arpeggiator plays the chip part", "[bside][shell][arp]")
 {
     // Same chord, arp off and on (no host transport: the module runs on its own tempo, 120 bpm).
     const auto noteOns = [] (bool arpOn) {
