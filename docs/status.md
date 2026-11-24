@@ -16,10 +16,22 @@ first when resuming.
   contract", all marked for the owner's review; row 1 sets Model A's figures at 11 % (16
   voices), 22 % (Dual), 27 % (Dual with effects) and 30 % (16 voices at a 192 kHz host),
   where the owner was told "about 10 % and 20 %".
-- **S4a, state:** contract committed on `bside/s4a-part`; the build is with an agent in its own
-  worktree. Not yet: independent review, the orchestrator's full gate, the CI run for Windows
-  and Linux x86_64, the pull request. `main` holds B-Side S3a, S3b-1, S3b-2 and the
-  cutoff-jump fix (pull requests 41, 43, 44 and 45).
+- **S4a, state (2026-11-24, evening):** built, reviewed twice by independent reviewers with
+  their own tests, fixed twice, on `bside/s4a-part` with its pull request open. The
+  orchestrator's full `scripts/preflight.sh` passed on the final code (80 min, all seven steps)
+  and every CPU gate passed at the orchestrator's bench (16 voices: 4.39 to 4.51 % on Model B,
+  9.71 to 9.73 % on Model A). One CI run for Windows and Linux x86_64 was dispatched for the
+  branch: check its result with `gh run list --workflow build.yml` before trusting it. **It
+  merges only on the owner's word.** `main` holds B-Side S3a, S3b-1, S3b-2 and the cutoff-jump
+  fix (pull requests 41, 43, 44 and 45).
+- **After S4a merges: S4b** (factory patches, level rule, render goldens, the owner's
+  audition). Its contract (8.21.2) is an outline and is completed first. For the owner's ear
+  in that audition, recorded in `docs/decisions.md` ("S4a: readings of the fix round", "after
+  the second review"): the thump when a voice is stolen (the chip's power-on envelope value,
+  8.6.4); in Shared, a note of another velocity moving the held notes' filtered level; the
+  level of a steady note against the onset peak `kChipGain` is calibrated on.
+- **S4a's readings await the owner's review:** 20 by the implementer, 8 from the fix round and
+  the calls on both reviews, all in `docs/decisions.md` under "B-Side S4 contract".
 - **Owner decisions that bound S4** (`docs/decisions.md`, O1 to O10): Model B is accepted by
   ear; no further effort goes into Model A's sound (O10); its open points below are known
   deviations, not work items, unless the owner reopens them.
@@ -33,9 +45,8 @@ first when resuming.
   not accepted, exists nowhere else) and `study/crossmod-aliasing`. Developer-only material
   under `~/Library/Caches/bside-oracle/` (listening files, review harnesses) survives a
   restart; nothing else from the sessions needs to.
-- **Leftovers the owner may remove:** Docker images `ci-crash:d13`, `ci-crash:u2204` and
-  volume `vs-s3a-close-gcc13` from the agents' work. The images `vs-linux-check:*` belong to
-  the local gate and are rebuilt by it when missing.
+- **Docker:** the agents' leftovers were removed on 2026-11-24 (owner's word). The images
+  `vs-linux-check:*` belong to the local gate and are rebuilt by it when missing.
 
 **Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20; shown as the latest release on GitHub since 2026-11-21, owner's word;
 tag `v0.9.0` at commit `116c5f8`: three zips and `SHA256SUMS.txt`). **M8 is done.**
@@ -352,8 +363,8 @@ the orchestrator dispatches it (see "Decisions").
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
-2. **B-Side:** S3a and S3b are merged. **Next: S4, on the owner's word, starting with the
-   Model A budget options ("Resume here" at the top).** Then B-Side's own release work as
+2. **B-Side:** S3a and S3b are merged. **S4 is in flight: S4a awaits the owner's merge word, then
+   S4b ("Resume here" at the top).** Then B-Side's own release work as
    listed in the parked state.
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
