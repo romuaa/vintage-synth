@@ -196,6 +196,36 @@ public:
     /** Power-on state at cycle 0 of the chip, the stage's board filters, every pending write; the lent filter's state too. */
     void reset() noexcept;
 
+    // ---- the part's entry points (docs/architecture.md 8.21.1, S4a): an idle voice leaves the sum and its chip's
+    //      time keeps running; a structural switch selects another clock, resolution or volume DC without design work ----
+
+    /** Leaves the output: the renderer stops (Chip::renderStop: the digital state, cycle () and the sample clock are
+        kept), every write still waiting in the queues takes effect at once, and the chain after the renderer is
+        cleared. The next render call starts SETTLED from the state then: the renderer's first samples hold it
+        (Chip), the anti-alias filters are primed with their first input, the filter (Per Note) is set to its fixed
+        point for its first input (Filter::primeSteady) and the board filters to their steady state for the first
+        mixer value (OutputStage::primeBoard): a voice that starts from idle starts on the chip's static level, with
+        no transient of the voices' or the mixer's DC. Writes made while suspended are part of the state the next
+        render starts on (as before the first render). */
+    void suspend() noexcept;
+    bool isSuspended() const noexcept { return ! c.renderActive(); }
+    /** Whether the next output sample is the first after suspend (it settles the chain). */
+    bool settling() const noexcept { return settle; }
+    /** Shared: what the owner's filter outputs on this chip's static level (its linear output and low-pass value at its
+        fixed point for staticFilterBusDc), for the settled start after suspend; call before the first finishShared. */
+    void settleShared (double staticLinear, double staticLowPass) noexcept
+    {
+        sharedSettleLin = staticLinear;
+        sharedSettleLp = staticLowPass;
+    }
+    /** While suspended: the chip's digital state over n whole internal samples without audio (Chip::skipSamples). */
+    std::uint64_t skipSamples (int n) noexcept { return c.skipSamples (n); }
+    /** Another chip clock, resolution or volume DC for the same model, rate and variation, without the design work of
+        prepare (the chip's tables are process-wide and already built by prepare; the stage takes setVolumeDc); then
+        reset (). The lent filter is unchanged. */
+    void reconfigure (std::uint32_t clockHz, bool authentic, bool volumeDc) noexcept;
+    const Config& config() const noexcept { return cfg; }
+
     // ---- the chip's inputs, at the chip's current cycle ----
     void write (std::uint8_t reg, std::uint8_t value) noexcept;
     void setOscillator (int n, const OscInput& in) noexcept;
@@ -325,6 +355,8 @@ private:
     HalfBandUp upLin, upLow;                // Model A: the 2x part's inputs
     HalfBandDown down;                      // Model A
     bool freshPre = true, freshPost = true; // the filters are primed with their first input after reset
+    bool settle = false;                    // after suspend: the filter and the board filters settle on the first sample
+    double sharedSettleLin = 0.0, sharedSettleLp = 0.0; // settleShared
     double preDcNow = 0.0;                  // Model A: the pre-filtered voices' DC the filter's static output was taken for
     std::array<double, kBlock> pAc {}, pDc {}, pDi {}, cF {}, cD {}; // per bus sample of the block (Model A pre-filtered)
     std::array<std::array<double, 3>, kDelayRing> postRing {};   // (postScale, postOffset, postGain) blended

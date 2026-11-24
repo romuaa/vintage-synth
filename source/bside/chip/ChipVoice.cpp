@@ -113,6 +113,7 @@ void ChipVoice::reset() noexcept
     upLow.reset();
     down.reset();
     freshPre = freshPost = true;
+    settle = false;
     preDcNow = 0.0;
     postRing = {};
     countRing = {};
@@ -127,6 +128,63 @@ void ChipVoice::reset() noexcept
         filter->reset();
         setFilter (filter);
     }
+}
+
+void ChipVoice::suspend() noexcept
+{
+    c.renderStop();
+    // what is still waiting takes effect now, in order: the blends and the dynamics' places end (the newest
+    // resonance written so far is the filter's), then the queued cutoff, resonance, mode and volume writes
+    dynHead = dynCount = 0;
+    nConfigs = 0;
+    outDiffers = false;
+    if (filter != nullptr)
+        filter->setResonance (resonanceNow >> 4);
+    for (int k = 0; k < paramCount; ++k)
+        applyNow (params[static_cast<std::size_t> ((paramHead + k) % kMaxPending)]);
+    for (int k = 0; k < configCount; ++k)
+        applyNow (configs[static_cast<std::size_t> ((configHead + k) % kMaxPending)]);
+    paramHead = paramCount = configHead = configCount = 0;
+    lastCutoffChange = 0;
+    cutoffChanged = false;
+    moving = false;
+    if (filter != nullptr)
+    {
+        filter->setCutoff (cutoffValue);
+        filter->reset(); // set to its fixed point at the first sample (settle)
+    }
+    st.setRouting (c.registerValue (reg::resonanceRouting));
+    st.setModeVolume (modeVolumeNow);
+    st.reset(); // the board filters: settled at the first sample
+    lastFv = lastDv = -1.0;
+    rounding = render::OutputRounding {};
+    mixFir.reset();
+    preAc.reset();
+    preDc.reset();
+    preDirect.reset();
+    upLin.reset();
+    upLow.reset();
+    down.reset();
+    freshPre = freshPost = true;
+    settle = true;
+    preDcNow = 0.0;
+    postRing = {};
+    countRing = {};
+    shapeRing = {};
+    postPos = countPos = 0;
+    lastFilterIn = lastFilterOut = 0.0;
+    refreshStaticDc();
+}
+
+void ChipVoice::reconfigure (std::uint32_t clockHz, bool authentic, bool volumeDc) noexcept
+{
+    cfg.clockHz = clockHz;
+    cfg.authentic = authentic;
+    cfg.volumeDc = volumeDc;
+    c.prepare (cfg); // the tables are process-wide and built: the clock's increment and a reset only
+    c.renderBendVoices (true);
+    st.setVolumeDc (volumeDc);
+    reset();
 }
 
 // ---- inputs ----
@@ -512,9 +570,10 @@ void ChipVoice::prepareBlock (int n) noexcept
         const double di = st.directSumWith (da[j], de[j], dv[j]);
         if (freshPre)
         {
-            preAc.prime (ac);
+            // after suspend the static level (no audio, envelopes 0: the voices' DC only), else the first input
+            preAc.prime (settle ? 0.0 : ac);
             preDc.prime (dc);
-            preDirect.prime (di);
+            preDirect.prime (settle ? st.directSumWith (0.0, 0.0, dv[j]) : di);
             for (auto& r : countRing)
                 r = { fv[j], dv[j] };
             freshPre = false;
@@ -551,6 +610,7 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
 
     // the filter: its linear output and low-pass value per configuration (Per Note) or the owner's (Shared); the share
     double lin = 0.0, lp = 0.0, so = 0.0, pScale = 1.0;
+    double settleLin = 0.0, settleLp = 0.0; // after suspend (Per Note): the filter's output on the static level
     std::array<double, kMaxConfigs> linOld {};
     Filter::Shape shapeNow {}; // the output function of the filter in effect (Per Note: the voice's; Shared: the owner's)
     if (! shared)
@@ -561,6 +621,14 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
             refreshStaticDc();
         }
         const double in = modelA ? pAc[j] + pDc[j] : st.filterInput (fa[j], fe[j]);
+        if (settle)
+        {
+            // after suspend: the filter starts on its fixed point for the static level (the voices' DC, no audio, the
+            // envelopes at 0), and what it outputs there primes the stages after it
+            const double inStatic = modelA ? pDc[j] : st.filterInput (0.0, 0.0);
+            filter->primeSteady (inStatic);
+            settleLin = outParams().peekLinearDouble (inStatic, *filter, settleLp);
+        }
         if (nConfigs == 0 && ! outDiffers)
             lin = runFilter (*filter, in, lp); // no write in flight: one step, as always
         else
@@ -590,6 +658,12 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
             old[static_cast<std::size_t> (k)].stage.setFilterStaticDc (so);
         lin = sharedLinear[j];
         lp = sharedLowPass != nullptr ? sharedLowPass[j] : 0.0;
+        if (settle)
+        {
+            // after suspend: the owner's filter on this chip's static level (settleShared)
+            settleLin = chips > 1 ? (sharedSettleLin - so) / static_cast<double> (chips) + so : sharedSettleLin;
+            settleLp = sharedSettleLp;
+        }
         if (chips > 1)
         {
             // this chip's share (OutputStage "SHARED"): the static output in full, 1/n of the rest (the output function's
@@ -651,12 +725,23 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
     }
 
     // the anti-alias stages; the post-curve coefficients delayed with the signal
+    double settleMix = 0.0; // after suspend (Per Note): the mixer's value on the static level
     if (freshPost)
     {
-        mixFir.prime (x);
-        upLin.prime (x);
-        upLow.prime (lp);
-        down.prime (st.mixerCurve (x + shapeWith (shape, lp, lpMin, lpMax)));
+        double xp = x, lpp = lp;
+        if (settle && nConfigs == 0)
+        {
+            xp = st.gainFactor() * (settleLin + st.directSumWith (0.0, 0.0, modelA ? cD[j] : dv[j]));
+            lpp = settleLp;
+            const double ms = st.mixerCurve (xp + shapeWith (shape, lpp, lpMin, lpMax));
+            settleMix = pa * ms + pb;
+        }
+        else if (settle)
+            settleMix = pa * st.mixerCurve (x + shapeWith (shape, lp, lpMin, lpMax)) + pb; // a write in flight: the first value
+        mixFir.prime (xp);
+        upLin.prime (xp);
+        upLow.prime (lpp);
+        down.prime (st.mixerCurve (xp + shapeWith (shape, lpp, lpMin, lpMax)));
         for (auto& r : postRing)
             r = { pa, pb, pp };
         for (auto& r : shapeRing)
@@ -688,6 +773,11 @@ double ChipVoice::chainSample (int i, std::int64_t q, bool shared, const Filter:
         m = down.process (m0, m1);
     }
     const double mix = post[0] * m + post[1];
+    if (settle)
+    {
+        st.primeBoard (settleMix); // after suspend: the board filters start on their steady state for the static level
+        settle = false;
+    }
     return board ? st.board (mix, post[2]) : mix * post[2];
 }
 

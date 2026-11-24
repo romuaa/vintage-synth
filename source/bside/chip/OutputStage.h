@@ -76,6 +76,14 @@ public:
     void prepare (Model model, double internalRate, bool volumeDc) noexcept;
     /** Board-filter state to zero (the reference's power-on). */
     void reset() noexcept;
+    /** Board-filter state settled on the constant mixer value `mix` (board (mix, post) then returns 0, the high-pass's
+        steady output): a chain that starts from idle starts settled on its static level (docs/architecture.md 8.21.1). */
+    void primeBoard (double mix) noexcept
+    {
+        hpX = std::abs (mix) < 1e9 ? mix : 0.0;
+        hpY = 0.0;
+        lpS = 0.0;
+    }
 
     void setVolumeDc (bool on) noexcept;
     /** Register 0x17 (bits 0..2: oscillators 1..3 through the filter; the resonance nibble is ignored here). */

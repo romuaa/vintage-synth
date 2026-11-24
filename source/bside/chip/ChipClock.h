@@ -38,6 +38,23 @@ public:
         return t >> 32;
     }
 
+    /** Moves n samples on at once; returns the whole cycles crossed: exactly the sum of n nextSample () calls (the
+        fraction carries the same way), in chunks small enough that k x increment stays inside 64 bits for every
+        clock and rate prepare accepts (increment < 2^49). */
+    std::uint64_t nextSamples (std::uint64_t n) noexcept
+    {
+        std::uint64_t total = 0;
+        while (n > 0)
+        {
+            const std::uint64_t k = n < kChunk ? n : kChunk;
+            const std::uint64_t t = static_cast<std::uint64_t> (frac) + k * inc;
+            frac = static_cast<std::uint32_t> (t & 0xffffffffu);
+            total += t >> 32;
+            n -= k;
+        }
+        return total;
+    }
+
     /** Sub-sample position of the instant t = eventCycle - before in the sample that starts at chip time
         sampleStartCycle + sampleStartFraction / 2^32 and lasts increment / 2^32 cycles:
         (t - start) x 2^32 / increment. 0 is the sample's start, 1 the next sample's start. For a step
@@ -60,6 +77,7 @@ public:
     std::uint64_t increment() const noexcept { return inc; }
 
 private:
+    static constexpr std::uint64_t kChunk = std::uint64_t { 1 } << 14;
     std::uint64_t inc = 0;
     std::uint32_t frac = 0;
 };
