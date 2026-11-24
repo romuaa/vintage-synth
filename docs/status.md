@@ -16,15 +16,18 @@ first when resuming.
   contract", all marked for the owner's review; row 1 sets Model A's figures at 11 % (16
   voices), 22 % (Dual), 27 % (Dual with effects) and 30 % (16 voices at a 192 kHz host),
   where the owner was told "about 10 % and 20 %".
-- **S4a, state (2026-11-24, evening):** built, reviewed twice by independent reviewers with
-  their own tests, fixed twice, on `bside/s4a-part` with its pull request open. The
-  orchestrator's full `scripts/preflight.sh` passed on the final code (80 min, all seven steps)
-  and every CPU gate passed at the orchestrator's bench (16 voices: 4.39 to 4.51 % on Model B,
-  9.71 to 9.73 % on Model A). One CI run for Windows and Linux x86_64 was dispatched for the
-  branch: check its result with `gh run list --workflow build.yml` before trusting it. **It
-  merges only on the owner's word.** `main` holds B-Side S3a, S3b-1, S3b-2 and the cutoff-jump
-  fix (pull requests 41, 43, 44 and 45).
-- **After S4a merges: S4b** (factory patches, level rule, render goldens, the owner's
+- **S4a is merged (pull request 47, 2026-11-24, owner's word "merge").** Built, reviewed twice
+  by independent reviewers with their own tests, fixed twice. The orchestrator's full
+  `scripts/preflight.sh` passed on the final code (80 min, all seven steps) and every CPU gate
+  passed at the orchestrator's bench (16 voices: 4.39 to 4.51 % on Model B, 9.71 to 9.73 % on
+  Model A). **CI run 45455730779: Windows ARM64, Linux x86_64, Linux ARM64, the sanitizers and
+  the distro checks passed. Windows x64 is not a green job:** its build, unit tests and
+  pluginval steps all succeeded, but the job hit its 60-minute limit during clean-up and was
+  marked cancelled, so the Windows bundle job did not run. The owner chose to merge without a
+  rerun. **Open from this:** Windows unit tests take 26 to 28 minutes per job and the x64 build
+  took 28 minutes; the job needs room under its limit before the next run (look at what the
+  Windows tests spend their time on; a workflow change is its own pull request).
+- **Next: S4b** (factory patches, level rule, render goldens, the owner's
   audition). Its contract (8.21.2) is an outline and is completed first. For the owner's ear
   in that audition, recorded in `docs/decisions.md` ("S4a: readings of the fix round", "after
   the second review"): the thump when a voice is stolen (the chip's power-on envelope value,
