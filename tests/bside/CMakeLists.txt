@@ -171,6 +171,7 @@ if(VS_BUILD_BSIDE)
         integration/ParamTests.cpp
         integration/BankTests.cpp
         integration/BankRender.cpp
+        integration/BankAuditionPairs.cpp
         review/PartReviewTests.cpp
         review/PartReview2Tests.cpp)
     target_link_libraries(BSideTests PRIVATE
