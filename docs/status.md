@@ -6,17 +6,20 @@ first when resuming.
 
 ## Where the project is (2026-11-24) — read this first when resuming
 
-**Resume here (written 2026-11-24, before the owner restarted the machine).**
-- **Nothing is in flight.** No pull request is open, no agent, build or CI run is going, and
-  no worktree exists besides the main checkout. `main` holds B-Side S3a, S3b-1, S3b-2 and
-  the cutoff-jump fix (pull requests 41, 43, 44 and 45).
-- **The next step is S4, and it waits for the owner's word ("start S4").** It opens with the
-  owner's Model A budget question, to be laid out as options before any S4 work is planned:
-  measured at 96 kHz on the owner's machine, per internal sample, Model B's whole chain costs
-  30.6 to 30.9 ns and Model A's 63.4 to 64.2 ns (Model B's filter and output stage 6.3 to
-  6.4 ns against the budget of 7). Then the S4 contract in `docs/architecture.md`
-  (polyphony 8.5, wiring `ChipVoice` into the plugin, reported latency, the decimator with
-  the alias gate after it, factory patches, owner audition).
+**Resume here (written 2026-11-24, after the owner's "start S4").**
+- **S4 is in flight (owner's word, 2026-11-24).** The owner decided the Model A budget
+  (O11: Model A gets its own gate at its measured cost; Model B keeps 5 % / 10 %). The
+  contract is `docs/architecture.md` 8.21: **S4a** (the part and its wiring into the plugin,
+  branch `bside/s4a-part`, its own pull request) and then **S4b** (factory patches, level
+  rule, render goldens, the owner's audition; outline only, completed before it starts).
+  The orchestrator's nine readings in that contract are `docs/decisions.md`, "B-Side S4
+  contract", all marked for the owner's review; row 1 sets Model A's figures at 11 % (16
+  voices), 22 % (Dual), 27 % (Dual with effects) and 30 % (16 voices at a 192 kHz host),
+  where the owner was told "about 10 % and 20 %".
+- **S4a, state:** contract committed on `bside/s4a-part`; the build is with an agent in its own
+  worktree. Not yet: independent review, the orchestrator's full gate, the CI run for Windows
+  and Linux x86_64, the pull request. `main` holds B-Side S3a, S3b-1, S3b-2 and the
+  cutoff-jump fix (pull requests 41, 43, 44 and 45).
 - **Owner decisions that bound S4** (`docs/decisions.md`, O1 to O10): Model B is accepted by
   ear; no further effort goes into Model A's sound (O10); its open points below are known
   deviations, not work items, unless the owner reopens them.
