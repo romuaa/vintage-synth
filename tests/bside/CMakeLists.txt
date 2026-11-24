@@ -167,7 +167,8 @@ if(VS_BUILD_BSIDE)
         integration/PartAliasTests.cpp
         integration/StateDumpTests.cpp
         integration/TablePresetTests.cpp
-        integration/ParamTests.cpp)
+        integration/ParamTests.cpp
+        review/PartReviewTests.cpp)
     target_link_libraries(BSideTests PRIVATE
         bs_test_core
         Catch2::Catch2WithMain)
