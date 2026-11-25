@@ -463,6 +463,16 @@ differ), the late-note timing, the switch fade or real-time safety.
 | 19 | B3's silence check takes the RMS with the window's mean removed | The check "the last 150 ms before the key goes up are below -100 dB" measured -91.7 dB at the raised level, all of it a constant DC of 2.8e-5 (the slow tail of the board high-pass), against -107.2 dB at the old level; the window without its mean is -102.0 dB. The threshold is unchanged. Without this the +5 dB offset and a hat that is still short could not both pass. This is the one measure that was changed to make a test pass; it is stated in the test and in `docs/bside-factory-sounds.md`, and the orchestrator may prefer another reading (a hat that rings shorter, or a longer hold). (review) |
 | 20 | The gate's peak bound is met by content, on the gate phrase | A noise hit's peak is a draw (8.15.5: the noise register is not reset by the test bit). The bank's B1 to B3 were chosen for a spread under 1 dB on the contract's phrase (0.84, 0.80, 0.62 dB); at other hit spacings the same programs spread 0.7 to 1.9 dB. The gate says what the contract says and no more. (review) |
 | 21 | The drums "agree within 2 ms" | Compared by each drum's mean onset delay over the eight hits (0.59, 0.64 and 0.70 ms); each drum's own hits are within 1 ms. (review) |
+| 22 | The amounts behind "louder" | The owner gave no figures: B1 +3 dB, B3 +5 dB, B4 +3 dB, chosen by the orchestrator and confirmed or corrected in the second audition. (review) |
+| 23 | The 33 ms wait is fixed in the engine, as its own step | The contract promised that Clean never waits; the wait with a full lead is a defect any user's drum program meets, so a workaround in two factory programs is not enough. Clean now clears the envelope counters at every note start (8.21.2). B2 returns to its drafted restart section, which the owner kept; B3 keeps `mode off`. (review) |
+| 24 | Row 19's changed measure | Left for the independent review to accept or reject: it is the one check whose measure changed in this round. (review) |
+
+### S4b audition: the owner's decisions (2026-11-25)
+
+- **Programs:** A1, A3, A4, A5, A7, A8, B2, B5 ("just different"), B6, B7, B8 kept. A2: vibrato earlier and slower. A6: the blip a little longer. B1: louder and deeper. B3: too quiet and not in time. B4: louder.
+- **Steal (S4a's open point):** stays as it is under Clean and Authentic. The variant with a stealing key at velocity 1 was judged bad; it was a listening aid, not a candidate.
+- **Shared and unequal velocities:** the average of the notes' gains stays (option A). The owner heard the held note almost halve when a very soft note joined and accepted it after the explanation; no engine change.
+- **`kChipGain`:** the new, louder Init is better; 1.2822 stays.
 
 ## B-Side S3a round 2: the review's findings (2026-11-20, all review)
 
