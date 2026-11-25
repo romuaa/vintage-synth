@@ -2704,6 +2704,10 @@ marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
     The delay itself is as short as the program's restart allows and is reported.
   - The six goldens are regenerated once after these changes; the changed programs go to the
     owner as a second, short audition before the merge.
+  - **Second audition (2026-11-25, owner):** A6, B1, B3 and B4 are right as changed. **A2:**
+    the glide to the played note is faster (its time about 40 % shorter, measured), so the
+    target note sounds longer. **Kit balance** (the three drums played together): the offsets
+    become **B1 +4.5 dB, B2 +1.5 dB, B3 +3.5 dB.** Goldens that move are regenerated.
   - **Clean never waits (engine defect found by the timing gate; this wins over 8.6.4 and
     8.16).** With `[restart] mode classic, lead 2`, a note on a voice that had its full lead
     could still start 33 ms late (32 768 cycles: the envelope's rate counter above the new
