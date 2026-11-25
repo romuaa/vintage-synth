@@ -2704,6 +2704,17 @@ marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
     The delay itself is as short as the program's restart allows and is reported.
   - The six goldens are regenerated once after these changes; the changed programs go to the
     owner as a second, short audition before the merge.
+  - **Clean never waits (engine defect found by the timing gate; this wins over 8.6.4 and
+    8.16).** With `[restart] mode classic, lead 2`, a note on a voice that had its full lead
+    could still start 33 ms late (32 768 cycles: the envelope's rate counter above the new
+    period), on B3 at every second hit and on B2 at wider spacings. Under **Clean** the
+    envelope counters of all three oscillators are cleared directly at **every** note start
+    (tick 0, before the tick's writes), whether or not the voice had its full lead. Precondition
+    and Authentic are unchanged. Gate: for restart modes off, classic and phase, leads 1 to 8,
+    hit spacings 0.125 to 1.0 s and both models, every hit's onset is within 1 ms of the
+    first hit's under Clean; the hidden known-defect test becomes a default test. B2 goes back
+    to its drafted restart section (the owner kept it as drafted); B3 keeps `mode off`.
+    Goldens and reference data that move are regenerated and listed with the reason.
 - **`kChipGain` moves once (review).** Its calibration changes from "the Init note's onset peak
   at -12 dBFS" (8.21.1) to: **Init's Chord phrase measures within 1 dB (unweighted RMS) of
   Exitium Vintage Synth's Init on the same phrase,** measured the same way, so the two
