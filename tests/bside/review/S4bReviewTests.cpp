@@ -463,11 +463,15 @@ TEST_CASE ("S4b review: the drums' DC tail through the board high-pass: its size
 TEST_CASE ("S4b review: drum hit-peak spread at other spacings than the gate's phrase", "[.s4b-measure]")
 {
     for (const int slot : { 8, 9, 10 })
-        for (const double spacing : { 0.125, 0.2, 0.3, 0.5 })
+        for (const double spacing : { 0.125, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.7, 1.0 })
+            for (const bool shortHold : { false, true }) // held 0.8 of the spacing, or 0.2 s (at most 0.8 of the spacing)
         {
+            const double hold = shortHold ? std::min (0.2, 0.8 * spacing) : 0.8 * spacing;
+            if (shortHold && spacing < 0.26)
+                continue;
             Performance perf;
             for (int i = 0; i < 8; ++i)
-                addNote (perf, 0.05 + spacing * i, 0.05 + spacing * i + 0.8 * spacing, 48, kVelocity);
+                addNote (perf, 0.05 + spacing * i, 0.05 + spacing * i + hold, 48, kVelocity);
             finish (perf);
             Rig rig (slot, false);
             const auto hits = hitTimings (rig.play (perf, 0.5), perf);
@@ -479,7 +483,8 @@ TEST_CASE ("S4b review: drum hit-peak spread at other spacings than the gate's p
                 dlo = std::min (dlo, h.onsetMs);
                 dhi = std::max (dhi, h.onsetMs);
             }
-            std::printf ("%s spacing %.3f s: peak spread %.2f dB, onset spread %.2f ms\n", slot == 8 ? "B1" : slot == 9 ? "B2" : "B3", spacing, hi - lo, dhi - dlo);
+            std::printf ("%s spacing %.3f s held %.3f s: peak spread %.2f dB, onset spread %.2f ms\n", slot == 8 ? "B1" : slot == 9 ? "B2" : "B3", spacing, hold,
+                         hi - lo, dhi - dlo);
         }
 }
 
@@ -704,42 +709,73 @@ TEST_CASE ("S4b review: Clean's clear at every note start does not depend on the
 }
 
 // =====================================================================================================================
-// Contract statements the build does not meet (hidden)
+// An apply that changes only the table (8.21.2, review finding D1; default)
 // =====================================================================================================================
 
-TEST_CASE ("S4b review defect: a program that differs from the sounding one only in its table is applied without the fade; the held note keeps the old table",
-           "[.s4b-defect]")
+TEST_CASE ("S4b review: a program that differs from the sounding one only in its table is not faded: the held note is released into the old table's release, the next note plays the new table",
+           "[bside][s4b-review]")
 {
-    // 8.21.2 "Applying a program is silent": a program applied while notes sound fades the part's voices and makes them idle BEFORE the
-    // new program's parameters AND TABLE take effect. Part::applyBlockParams fades only when the parameters differ, so a program whose
-    // parameters equal the sounding one's (a user's variant of A7 with another chord in its wave lane) is not faded: the shell's
-    // preset-change release (BiTimbralProcessor::releaseForPresetChange) puts the held note into the OLD table's release instead, and
-    // it sounds on for the old program's release time (measured: no fade, the voice still active 0.3 s after the apply). No step
-    // results (the release is the envelope's), so this is the contract's wording against the build, not a click.
+    // 8.21.2 "An apply that changes only the table": nothing is faded (Part::applyBlockParams fades only when the parameters differ);
+    // the shell's preset-change release (BiTimbralProcessor::releaseForPresetChange) ends the held note in the OLD table's release,
+    // and the new table plays from the next note. Vintage's step rule holds for it as well.
     const auto& bank = factoryBank();
     auto variant = bank.programs[6]; // A7's parameters ...
     variant.data = bank.programs[7].data; // ... with A8's table (minor chord, pulse sweep)
     variant.meta.name = "A7 variant";
-    Rig rig (6, false);
-    std::vector<int> semis;
-    const auto& lower = rig.proc.getLowerPart();
-    rig.render (at (0.6), { noteOn (at (0.05), 60) }, 48, { { at (0.3), [&] { rig.presets().applyProgram (variant, 6, false); } } }, [&] (int) {
-        if (rig.now > at (0.31))
-            if (const auto* v = newestVoice (rig.proc, 0))
-            {
-                const auto& c = v->chain.chip();
-                const int f = c.registerValue (0) | (c.registerValue (1) << 8);
-                const int st = static_cast<int> (std::lround (12.0 * std::log2 (f * 985248.0 / 16777216.0 / hzOf (60))));
-                if (semis.empty() || semis.back() != st)
-                    semis.push_back (st);
-            }
-    });
-    std::string row;
-    for (int s : semis)
-        row += std::to_string (s) + " ";
-    INFO ("after the apply the held note steps through " << row << "(A7's table is 0 4 7 12, A8's 0 3 7 10 12); applies faded " << lower.appliesFaded()
-                                                          << ", voices active " << lower.numActiveVoices());
-    CHECK (lower.appliesFaded() == 1);
-    CHECK (lower.numActiveVoices() == 0);
-}
 
+    // The semitone steps (relative to key 60) the newest voice's pitch register passes through from `from` to the end of the render.
+    const auto semitoneSteps = [] (Rig& rig, std::vector<int>& semis, double from) {
+        return [&rig, &semis, from] (int) {
+            if (rig.now > at (from))
+                if (const auto* v = newestVoice (rig.proc, 0))
+                {
+                    const auto& c = v->chain.chip();
+                    const int f = c.registerValue (0) | (c.registerValue (1) << 8);
+                    const int st = static_cast<int> (std::lround (12.0 * std::log2 (f * 985248.0 / 16777216.0 / hzOf (60))));
+                    if (semis.empty() || semis.back() != st)
+                        semis.push_back (st);
+                }
+        };
+    };
+    const auto text = [] (const std::vector<int>& v) {
+        std::string row;
+        for (int s : v)
+            row += std::to_string (s) + " ";
+        return row;
+    };
+
+    Rig rig (6, false);
+    const auto& lower = rig.proc.getLowerPart();
+    int activeAt305 = -1;
+    const auto first = rig.render (at (1.0), { noteOn (at (0.05), 60) }, 48, { { at (0.3), [&] { rig.presets().applyProgram (variant, 6, false); } } },
+                                   [&] (int) {
+                                       if (rig.now > at (0.305) && activeAt305 < 0)
+                                           activeAt305 = lower.numActiveVoices();
+                                   });
+    CHECK (activeAt305 == 1); // released, not faded and idle (a fade is over after 3 ms)
+    const size_t s0 = static_cast<size_t> (at (0.3));
+    CHECK (lower.appliesFaded() == 0);
+    CHECK (lower.numActiveVoices() == 0); // the note ended in its release
+    CHECK (peakAbs (first.l, static_cast<size_t> (at (0.9)), first.l.size()) < 1.0e-3); // -60 dBFS: the board high-pass's DC tail (1.7e-4 here) is not the note
+    INFO ("largest step before " << maxStep (first.l, s0 - 9600, s0) << ", after " << maxStep (first.l, s0, first.l.size()));
+    CHECK (stepRuleHolds (maxStep (first.l, s0 - 9600, s0), maxStep (first.l, s0, first.l.size())));
+
+    // The next note plays the new table: A8's minor chord (0 3 7 10 12 ...), not A7's (0 4 7 12 ...); the same as a fresh instance
+    // that was given the variant before any note.
+    std::vector<int> next;
+    const auto t0 = static_cast<int> (rig.now);
+    rig.render (at (0.8), { noteOn (t0 + at (0.05), 60) }, 48, {}, semitoneSteps (rig, next, 0.0));
+    Rig fresh (6, false);
+    fresh.presets().applyProgram (variant, 6, false);
+    std::vector<int> expected;
+    fresh.render (at (0.8), { noteOn (at (0.05), 60) }, 48, {}, semitoneSteps (fresh, expected, 0.0));
+    Rig plain (6, false);
+    std::vector<int> major;
+    plain.render (at (0.8), { noteOn (at (0.05), 60) }, 48, {}, semitoneSteps (plain, major, 0.0));
+    INFO ("after the apply the new note steps through " << text (next) << "; the variant on a fresh instance " << text (expected) << "; A7 " << text (major));
+    CHECK (lower.appliesFaded() == 0);
+    CHECK (next == expected);
+    CHECK (next != major);
+    CHECK (std::find (next.begin(), next.end(), 3) != next.end());
+    CHECK (std::find (next.begin(), next.end(), 4) == next.end());
+}

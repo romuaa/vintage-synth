@@ -45,8 +45,8 @@ table rows); "Listen for" is an instruction to the listener, not a claim. Parame
 | B4 | Slow Saw Pad | Pad | W | Model A, Per Note: three sawtooths detuned by -14, 0 and +14 cents through the low-pass (cutoff 900, resonance 5); attack 9, sustain 12, release 9 | Play a four-note chord and follow how the sound arrives |
 | B5 | Shared Chord Pad | Pad | W | Model A, Shared: a sawtooth and a 35 % pulse (+7 cents) of every note into one low-pass (cutoff 1100, resonance 6); attack 8, sustain 12, release 9 | Play the four-note chord in this program and in B4 and compare how the chord sounds against the single notes |
 | B6 | Band Sweep | Sound FX | W | Noise through the band-pass (resonance 10); the filter lane sets the cutoff to 100 and adds 16 per tick for 120 ticks (to 2020); attack 5, release 11 (2.4 s nominal) | Hold a key for three seconds and then let go, and follow the sweep and the end |
-| B7 | Pulse Over Pad | Dual | D | Lower: the pulse lead of A2 without the glide (Model B, pan -0.6); Upper: a Model A pad of two sawtooths at -10 and +10 cents (pan +0.6); both parts play every key | Play a chord and follow which side each layer is on |
-| B8 | Bass And Lead | Split | S | Lower (below G3): the bass of A5; Upper (G3 and above): the lead of A2; both Solo | Play low keys with one hand and a melody above G3 with the other |
+| B7 | Pulse Over Pad | Dual | D | Lower: its own copy of the earlier pulse lead (Model B, pan -0.6): the pulse sweep of A2 (768 to 3328, +40 per tick) with the vibrato A2 had before the owner's audition (starts after 15 ticks, +-20 cents every 2 ticks, 12.53 Hz), no glide, cutoff 1500 resonance 3, `mix.level` -7.5; Upper: a Model A pad of two sawtooths at -10 and +10 cents (pan +0.6); both parts play every key | Play a chord and follow which side each layer is on |
+| B8 | Bass And Lead | Split | S | Lower (below G3): the bass of A5; Upper (G3 and above): its own copy of the earlier pulse lead (the same table as B7's Lower: vibrato after 15 ticks at 12.53 Hz, not A2's 8 ticks and 8.35 Hz) with a glide (`porta.time` 0.3, Legato; A2's is 0.232); both Solo | Play low keys with one hand and a melody above G3 with the other |
 
 ## Standard phrases and level groups
 
@@ -77,7 +77,7 @@ render read it): a program may sit a set number of dB above its group's target, 
 |---|---|---|---|
 | B1 | Short Kick | percussive | +4.5 (+3 before the second audition) |
 | B2 | Dry Snare | percussive | +1.5 (0 before) |
-| B3 | Tick Hat | percussive | +3.5 (+5 before) |
+| B3 | Tick Hat | percussive | +2.0 (+3.5 before the third audition, +5 before the second) |
 | B4 | Slow Saw Pad | sustained | +3 |
 | every other program | | | 0 |
 
@@ -127,7 +127,7 @@ is a further +3.4 dB), see below.
 
 ### Measured figures
 
-From `bside_metrics.tsv` of the hidden render (below), macOS arm64, 2026-11-25, after the second audition (rows B1 to B3 changed; A2's glide does not move its phrase figures).
+From `bside_metrics.tsv` of the hidden render (below), macOS arm64, 2026-11-25, after the third audition (the B3 row changed: `mix.level` 4.2 to 2.7, offset +3.5 to +2.0; the rows of B1 and B2 are those of the second audition; A2's glide does not move its phrase figures).
 `mix.level` is Lower / Upper in dB. Phrase RMS and peak with the limiter off. The chord is the eight-note
 chord of rule 2, for percussion the two-key chord (its RMS from 0.55 s says nothing for a drum, whose hits
 are over by then). The deviation is from the group's median RMS plus the offset, for percussion from the
@@ -145,7 +145,7 @@ sustained group's median peak plus the offset; the offset column is `kLevelOffse
 | A8 | A8-minor-steps | Minor Steps | Arpeggio | sustained | 0 | -2.2 | -31.99 | -26.89 | +0.03 (RMS) | -10.18 | -20.22 | 0.34 | -26.89 |
 | B1 | B1-short-kick | Short Kick | Percussion | percussive | +4.5 | +6.0 | -30.89 | -16.23 | -0.26 (peak) | -9.58 (two keys) | -92.84 | 0.61 | -16.23 |
 | B2 | B2-dry-snare | Dry Snare | Percussion | percussive | +1.5 | +3.2 | -32.54 | -18.97 | -0.00 (peak) | -12.29 (two keys) | -88.06 | 0.61 | -18.97 |
-| B3 | B3-tick-hat | Tick Hat | Percussion | percussive | +3.5 | +4.2 | -34.54 | -16.97 | -0.00 (peak) | -10.27 (two keys) | -105.41 | 0.61 | -16.97 |
+| B3 | B3-tick-hat | Tick Hat | Percussion | percussive | +2.0 | +2.7 | -36.04 | -18.47 | -0.00 (peak) | -11.77 (two keys) | -106.91 | 0.61 | -18.47 |
 | B4 | B4-slow-saw-pad | Slow Saw Pad | Pad | sustained | +3 | -3.1 | -29.01 | -15.66 | +0.01 (RMS) | -10.81 | -26.46 | 2.25 | -15.66 |
 | B5 | B5-shared-chord-pad | Shared Chord Pad | Pad | sustained | 0 | -2.4 | -32.04 | -18.60 | -0.02 (RMS) | -18.18 | -43.37 | 2.25 | -18.60 |
 | B6 | B6-band-sweep | Band Sweep | Sound FX | sustained | 0 | +2.7 | -32.02 | -15.87 | +0.00 (RMS) | -12.26 | -28.60 | 7.20 | -15.87 |
@@ -154,15 +154,15 @@ sustained group's median peak plus the offset; the offset column is `kLevelOffse
 
 Targets (programs with offset 0): sustained median RMS -32.02 dB, bass median RMS -33.51 dB, sustained median
 phrase peak -20.47 dBFS (the percussion target; A4's, the 5th of the nine sustained peaks with offset 0). With
-the offsets the targets are B1 -15.97 dBFS (peak), B2 -18.97 dBFS (peak), B3 -16.97 dBFS (peak) and B4 -29.02 dB (RMS).
-Loudest phrase peak: B4, -15.66 dBFS (B6 -15.87, B1 -16.23, B3 -16.97; the limiter's knee is at -4 dBFS). Highest eight-note chord peak of the
+the offsets the targets are B1 -15.97 dBFS (peak), B2 -18.97 dBFS (peak), B3 -18.47 dBFS (peak; -16.97 before the third audition) and B4 -29.02 dB (RMS).
+Loudest phrase peak: B4, -15.66 dBFS (B6 -15.87, B1 -16.23, B3 -18.47; the limiter's knee is at -4 dBFS). Highest eight-note chord peak of the
 designed programs: A3, -8.53 dBFS, 1.42 dB inside the -7.11 dBFS limit (Init's own is -10.11 dBFS); then A8
 (-10.18) and A7 (-10.88). A3's chord is the sum of eight sawtooths whose accumulators all start at the same
 cycle, so their peaks coincide. Before this rule the drums and the arpeggios were trimmed 13 dB below the
 leads by that eight-note chord (eight identical absolute-pitch hits, in phase); with two keys a drum peaks at
 -13.7 dBFS or below.
 
-The level rule with offsets can fail (figures of the first audition round's offsets, +5 for B3): B3 with `mix.level` 2.5 dB lower (+3.1) fails the level test with a
+The level rule with offsets can fail (figures of the first audition round's offsets, +5 for B3; not repeated for the third audition's +2.0, whose test is the same code): B3 with `mix.level` 2.5 dB lower (+3.1) fails the level test with a
 deviation of -2.60 dB from its target plus offset (-15.47 dBFS), and B4 at its earlier `mix.level` (-6.1,
 before its +3 dB offset) with a deviation of -3.0 dB from -29.02 dB (both run on 2026-11-25, then restored).
 
@@ -186,10 +186,14 @@ equal-tempered frequency to within one register step (0.059 Hz). Each line is a 
   oscillator 1: constant for ticks 0 to 7 (159.6 ms), then in cents against the key `+19.7 +19.7 +19.7 -20.3
   -20.3 -20.3` repeating (the register's step is 0.4 cent) from tick 8: a six-tick period, 119.7 ms, 8.35 Hz.
   Before the owner's audition: constant for ticks 0 to 14 (299.3 ms), `+19.7 +19.7 -20.3 -20.3` from tick 15,
-  a four-tick period, 79.8 ms, 12.53 Hz. Assign mode Solo and `porta.time` 0.3 (0.232 after the second audition, see there) read from the
-  parameters the audio thread used; with a second key pressed over the first (C4 then G4) the pitch passes
-  through 251 one-millisecond blocks between the two keys (0.4 to 0.9 s after the second note-on), against 0
-  with `porta.time` 0; it ends 7.08 semitones above C4 (0.2 + 7 = the table's last vibrato step).
+  a four-tick period, 79.8 ms, 12.53 Hz. Assign mode Solo and `porta.time` 0.232 (0.3 before the second audition, see there), Legato glide. The
+  test presses C4 at 0.1 s, G4 at 0.4 s and lets go of C4 at 0.41 s, renders to 0.8 s, and reads the frequency register of the voice every
+  1 ms (48 samples). It uses the program's own `porta.time` (it set 0.3 explicitly until the review; the control run sets 0). The window is
+  the 401 reads from the second note-on to the end of the 0.8 s render, not 0.4 to 0.9 s after the second note-on. In it the pitch is between
+  0.5 and 6.5 semitones above C4 for 150 reads (150 ms), against 0 with `porta.time` 0 (and 272 reads with 0.3; the figure of 251 reads that
+  stood here fitted neither). The first read is +0.20 semitones (C4 with the table's vibrato at +20 cents) and the last is +7.19 (G4 with the
+  vibrato at +19 cents: the glide has arrived, the 0.2 is the vibrato, not part of the interval). With 0.3 the last read was +7.08: the
+  glide had not finished its approach, and 7.08 is not "0.2 + 7" of any table step.
 - **A3** (C4, 1.5 s). Oscillator 2's control register 0x23 (sawtooth, sync, gate), oscillator 1's 0x00 with F
   at C4 (261.63 Hz). Oscillator 2 above oscillator 1 per tick, in semitones: `3 3 4 4 5 5 ... 24 24 23 23 22
   22 ...` (two ticks per step, up to +24 at ticks 42 and 43, then down). The same note with the table's
@@ -314,7 +318,7 @@ glide, and B8's lead is its own table; neither changed.
 |---|---|---|---|---|---|---|
 | B1 Short Kick | +4.5 | -15.97 | +4.8 / +6.0 | -17.43 / -16.23 | -32.09 / -30.89 | -0.26 dB |
 | B2 Dry Snare | +1.5 | -18.97 | +1.7 / +3.2 | -20.47 / -18.97 | -34.04 / -32.54 | 0.00 dB |
-| B3 Tick Hat | +3.5 | -16.97 | +5.6 / +4.2 | -15.57 / -16.97 | -33.14 / -34.54 | 0.00 dB |
+| B3 Tick Hat | +3.5 (+2.0 after the third audition) | -16.97 (-18.47) | +5.6 / +4.2 (+2.7) | -15.57 / -16.97 (-18.47) | -33.14 / -34.54 (-36.04) | 0.00 dB |
 
 B1 is at the top of `mix.level`'s range (+6 dB), 0.26 dB under its target, which is inside the test's 2 dB and which
 `mix.level` cannot close. Raising B1 in content was tried and rejected (the files are not kept): a third oscillator
@@ -340,13 +344,37 @@ table below):
 |---|---|---|---|---|---|---|---|---|---|
 | B1 | 0.56 / -16.58 | 0.65 / -16.76 | 0.60 / -16.23 | 0.62 / -16.93 | 0.56 / -16.30 | 0.60 / -17.07 | 0.56 / -16.91 | 0.54 / -16.56 | 0.10 ms, 0.84 dB |
 | B2 | 0.56 / -19.29 | 0.67 / -18.97 | 0.71 / -19.52 | 0.67 / -19.63 | 0.73 / -19.39 | 0.56 / -19.77 | 0.62 / -19.08 | 0.62 / -19.39 | 0.17 ms, 0.80 dB |
-| B3 | 0.90 / -17.26 | 0.81 / -17.45 | 0.67 / -17.49 | 0.67 / -16.97 | 0.67 / -17.35 | 0.58 / -17.26 | 0.62 / -17.22 | 0.65 / -17.60 | 0.31 ms, 0.62 dB |
+| B3 (second audition) | 0.90 / -17.26 | 0.81 / -17.45 | 0.67 / -17.49 | 0.67 / -16.97 | 0.67 / -17.35 | 0.58 / -17.26 | 0.62 / -17.22 | 0.65 / -17.60 | 0.31 ms, 0.62 dB |
+| B3 (third audition) | 0.90 / -18.76 | 0.81 / -18.95 | 0.67 / -18.99 | 0.67 / -18.47 | 0.67 / -18.85 | 0.58 / -18.76 | 0.62 / -18.72 | 0.65 / -19.10 | 0.31 ms, 0.63 dB |
 
 Mean onset delays: B1 0.59 ms, B2 0.64 ms, B3 0.70 ms. The two-key headroom peaks are -9.58 (B1), -12.29 (B2) and
--10.27 dBFS (B3). Goldens: `prog_a2_moving_pulse` and `prog_b2_dry_snare` are regenerated (A2: the glide; B2: +1.5 dB);
+-10.27 dBFS (B3; -11.77 after the third audition). Goldens: `prog_a2_moving_pulse` and `prog_b2_dry_snare` are regenerated (A2: the glide; B2: +1.5 dB);
 A5, A7, B4 and B7 are byte-identical, B1 and B3 have no golden. Each regenerated golden fails on a changed parameter
 (A2 with `porta.time` 0.3, the old sound: cells over 3 dB 2.4 %, 245 % of the limit; B2 with `mix.level` 0: 94 % of
 cells, level 3.2 dB).
+
+### Third audition (2026-11-25): the hat 1.5 dB down
+
+The owner's verdict (`docs/architecture.md` 8.21.2, "Third audition"): A2 is right; the hat goes down another 1.5 dB, B3's
+offset becomes +2.0 dB, and with that the kit and the bank are accepted. Only `mix.level` of B3 moved, 4.2 to 2.7 dB (the table
+and the content are unchanged), so every spectral figure of B3 and its onsets are those of the second audition. Measured on
+macOS arm64, 2026-11-25 (`bside_metrics.tsv`, `Bank B1 to B3 in time ...`, `Bank B3 Tick Hat ...`):
+
+| | offset | target peak | `mix.level` before / after | peak before / after dBFS | RMS before / after dB | deviation after | two-key chord peak before / after dBFS |
+|---|---|---|---|---|---|---|---|
+| B3 Tick Hat | +3.5 / +2.0 | -16.97 / -18.47 | +4.2 / +2.7 | -16.97 / -18.47 | -34.54 / -36.04 | 0.00 dB | -10.27 / -11.77 |
+
+The level test, the in-time gate, the headroom check, the limiter-knee check and the silence check of B3 pass at the new level.
+Percussion in time, B3 after the third audition (onset ms / peak dBFS; the onsets are those of the table below):
+
+| Program | Hit 1 | Hit 2 | Hit 3 | Hit 4 | Hit 5 | Hit 6 | Hit 7 | Hit 8 | Spread |
+|---|---|---|---|---|---|---|---|---|---|
+| B3 | 0.90 / -18.76 | 0.81 / -18.95 | 0.67 / -18.99 | 0.67 / -18.47 | 0.67 / -18.85 | 0.58 / -18.76 | 0.62 / -18.72 | 0.65 / -19.10 | 0.31 ms, 0.63 dB |
+
+Mean onset delay B3 0.70 ms (unchanged), reported tail 0.61 s. The loudest phrase peak of the bank stays B4's (-15.66 dBFS);
+B3's is now below B1's (-16.23) and B6's (-15.87). The kit of the three drums: peaks -16.23, -18.97 and -18.47 dBFS, each on its target
+plus offset (B1 0.26 dB short, the rest 0.00). The silence check of B3 measures -94.6 dB over its last 150 ms with the DC, -104.9 dB with the
+mean removed, and a mean of -95.0 dBFS (see "The silence check of B3").
 
 ### Percussion in time (B1 to B3)
 
@@ -430,22 +458,31 @@ milliseconds, so it varies from hit to hit by an amount that depends on the cont
 two oscillators: 3.64 dB spread; B1 with its previous table: 1.23 dB) and on the spacing of the hits. The values
 above are what the gate phrase gives with the content now in the bank; they are deterministic (the render is),
 and the bank was chosen among variants for a peak spread under 1 dB with some margin (B3 0.62 dB, B1 0.84 dB, B2
-0.80 dB). At other spacings of the same hits (0.125 to 1.0 s, notes held 0.2 s or 0.8 of the spacing) the peak spread is 0.8
-to 1.9 dB (B1), 0.7 to 1.5 dB (B2) and 0.7 to 1.6 dB (B3), and 0 at 1.0 s for B2 and B3 (every hit the same);
-only the phrase of the contract is gated.
+0.80 dB). At other spacings of the same hits (re-measured in the review, `[.s4b-measure]`: spacings 0.125, 0.15, 0.2, 0.25, 0.3,
+0.4, 0.5, 0.7 and 1.0 s, notes held 0.8 of the spacing and, from 0.3 s on, also 0.2 s; B3 at its level after the third audition) the peak
+spread is 0.83 to 2.14 dB for B1 (2.14 dB at 0.2 s held 0.16 s; 0.84 dB at 0.25 s), 0.75 to 1.47 dB for B2 (and 0 at 1.0 s held 0.2 s) and
+0.62 to 1.58 dB for B3 (1.58 dB at 0.15 s; 0 at 1.0 s). The hold changes the figure only for B2 at 1.0 s (1.06 dB held 0.8 s, 0 held 0.2 s).
+The earlier statement (0.8 to 1.9 dB for B1, 0.7 to 1.5 dB for B2, 0.7 to 1.6 dB for B3) missed the 0.2 s spacing for B1. The onset spread
+over the same cases stays at or below 0.90 ms (B3 at 0.125 s), inside the 1 ms bound; B1's and B2's are 0.62 ms or below; only the phrase of the contract is gated.
 
 **The gate can fail.** On the previous bank the same test reported the B3 line above (onset spread 33.25 ms, peak
 spread 3.64 dB; it also failed B1's 1 dB peak bound with 1.23 dB), and a second default test feeds the measurement
 a synthetic late hit (34 ms) and a weak one (3 dB) and checks that it sees both.
 
 **The silence check of B3.** `Bank B3 Tick Hat` asks that the audio of the last 150 ms before the key goes up
-(350 to 500 ms after the note-on) be below -100 dB. The measure is now the RMS of that window with its mean
-removed, the threshold is the same -100 dB. Reason (a measurement): the window holds a constant DC of 2.8e-5
-(-91 dB), the slow tail (the board's 1.2 Hz high-pass: e-fold every 0.13 s) of the DC that the envelope pushed
-through during the hit; it grows with the drum's level and with the number of oscillators (B3's DC residual in the
-window: -111.9 dB with one oscillator, -99.9 dB with two and -92.9 dB with three at the same cutoff, against
-peaks of -25.8, -19.8 and -16.4 dBFS), and it had been -107.2 dB at the level before the owner's audition. With the
-mean removed the window measures -102.0 dB; with it, -91.7 dB. Nothing in the window moves.
+(350 to 500 ms after the note-on) be below -100 dB. The measure is the RMS of that window with its mean
+removed, the threshold the same -100 dB. Reason (a measurement): the window holds a constant DC, the slow tail (the
+board's 1.2 Hz high-pass: e-fold every 0.13 s) of the DC that the envelope pushed through during the hit; it grows with the
+drum's level and with the number of oscillators (B3's DC residual in the window: -111.9 dB with one oscillator, -99.9 dB with two
+and -92.9 dB with three at the same cutoff, against peaks of -25.8, -19.8 and -16.4 dBFS), and it had been -107.2 dB at the level
+before the owner's audition. At the level of the second audition (`mix.level` 4.2) the window measured -102.0 dB with the mean
+removed and -91.7 dB with it; at the third audition's (2.7) it measures -104.9 dB and -94.6 dB, and the mean is -95.0 dBFS.
+Nothing in the window moves.
+
+With the mean removed the RMS would pass any constant offset (review, W1). The same test therefore also asks that the absolute value of the
+window's mean (the larger of the two channels) be below -80 dBFS (the DC tail is 15 dB under that). It can fail: with a constant 5.0e-4
+added to the left channel before the measure (a temporary edit, reverted), the RMS check passed (-104.9 dB) and the mean bound failed
+(-66.3 dBFS, against -80).
 
 ## The measuring and rendering tool
 
@@ -544,6 +581,14 @@ parameter moved by hand or by automation, the pedal, All Notes Off, a key-mode c
 (which changes no parameter) never fade the part.
 **A waveform parameter changed by hand on a held note is a register write and steps the output at once, as on
 the chip: that is a property of the instrument, not a defect.**
+
+**A program that differs from the sounding one only in its table** (its parameters equal the ones in force; for example A7's parameters
+with A8's table) is not faded (`docs/architecture.md` 8.21.2, "An apply that changes only the table", review finding D1). The shell
+releases the held notes as for any preset change; they end in the old table's release (A7's release lane: `gate off`), and the new table
+plays from the next note. Measured (`S4bReviewTests.cpp`, a default test): `appliesFaded()` stays 0; the voice is still active 5 ms after
+the apply and idle by 1 s; the largest step after the apply is within Vintage's rule (3 x the largest before + 0.002); a note played after it
+steps through the new table's semitones (A8's `0 3 7 10 12 ...`, the same as an instance that had the variant from the start), not the old
+one's (`0 4 7 12 ...`).
 
 Measured with three keys held (C3 G3 E4, velocity 100) and the change 0.25 s later; the largest sample step in
 the 9 600 samples before the change and in the 4 800 after it, against Vintage's rule (after at most 3 x before

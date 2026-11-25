@@ -187,6 +187,20 @@ double rmsDbOf (const Stereo& s, int from, int to)
     return 10.0 * std::log10 (std::max (acc / std::max (1, to - from), 1.0e-20));
 }
 
+/** The larger of the two channels' absolute means over [from, to), in dBFS (20 log10 |mean|). */
+double meanAbsDbOf (const Stereo& s, int from, int to)
+{
+    double worst = 0.0;
+    for (const auto* ch : { &s.l, &s.r })
+    {
+        double mean = 0.0;
+        for (int i = from; i < to; ++i)
+            mean += static_cast<double> ((*ch)[static_cast<size_t> (i)]);
+        worst = std::max (worst, std::abs (mean / std::max (1, to - from)));
+    }
+    return 20.0 * std::log10 (std::max (worst, 1.0e-20));
+}
+
 /** The RMS of both channels over [from, to) with each channel's mean over the window removed. */
 double acRmsDbOf (const Stereo& s, int from, int to)
 {
@@ -521,7 +535,8 @@ TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato s
     // where the same program without glide jumps at once
     const auto glide = [&] (float portaTime) {
         Rig g (1, false);
-        g.set ("lower.porta.time", portaTime);
+        if (portaTime >= 0.0f) // negative: the program's own porta.time
+            g.set ("lower.porta.time", portaTime);
         const std::vector<Midi> midi { noteOn (at (0.1), 60), noteOn (at (0.4), 67), noteOff (at (0.41), 60) };
         const auto pr = probeMidi (g, 0, midi, 0.8);
         std::vector<double> semis; // the pitch of osc 1 in semitones above C4, every block from the second note-on
@@ -530,7 +545,7 @@ TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato s
                 semis.push_back (semitonesBetween (freqHz (s, 0), hzOfNote (60)));
         return semis;
     };
-    const auto withGlide = glide (0.3f), without = glide (0.0f);
+    const auto withGlide = glide (-1.0f), without = glide (0.0f);
     REQUIRE (withGlide.size() > 50);
     REQUIRE (without.size() > 50);
     int intermediate = 0;
@@ -539,9 +554,17 @@ TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato s
     int jumpedAtOnce = 0;
     for (const double x : without)
         jumpedAtOnce += x > 0.5 && x < 6.5 ? 1 : 0;
-    SAY ("A2 glide: %d blocks between C4 and G4 with porta.time 0.3, %d without; first/last %.2f %.2f st\n", intermediate, jumpedAtOnce, withGlide.front(),
-         withGlide.back());
-    CHECK (intermediate >= 100); // over 100 ms of the pitch between the two keys (porta.time 0.3: 99 % of the interval in 0.45 s)
+    SAY ("A2 glide: %d blocks (1 ms each, of %zu from the second note-on to the end of the 0.8 s render) between C4 and G4 with the program's porta.time "
+         "(%.3f), %d without; first/last %.2f %.2f st\n",
+         intermediate, withGlide.size(), 0.232, jumpedAtOnce, withGlide.front(), withGlide.back());
+    {
+        const auto before = glide (0.3f); // the program's value before the second audition, for the comparison
+        int n = 0;
+        for (const double x : before)
+            n += x > 0.5 && x < 6.5 ? 1 : 0;
+        SAY ("A2 glide with porta.time 0.3: %d blocks between C4 and G4; first/last %.2f %.2f st\n", n, before.front(), before.back());
+    }
+    CHECK (intermediate >= 100); // over 100 ms of the pitch between the two keys
     CHECK (jumpedAtOnce <= 2);
     CHECK (withGlide.back() > 6.5); // it arrives (the vibrato of the table moves it by 0.2 semitones either way)
 
@@ -1000,8 +1023,12 @@ TEST_CASE ("Bank B3 Tick Hat: short noise at a high pitch, decay only, mostly ab
     // threshold, -100 dB, is the one it had.
     const double lastDb = rmsDbOf (p.audio, at (0.1 + 0.35), at (0.1 + 0.5));
     const double lastAcDb = acRmsDbOf (p.audio, at (0.1 + 0.35), at (0.1 + 0.5));
-    SAY ("B3 audio RMS in the last 150 ms before the key goes up: %.1f dB with its DC, %.1f dB without\n", lastDb, lastAcDb);
+    // The mean removed, the RMS would pass any constant offset (review W1): so the window's mean has its own bound, -80 dBFS (the DC
+    // tail measures about -90 dB).
+    const double lastMeanDb = meanAbsDbOf (p.audio, at (0.1 + 0.35), at (0.1 + 0.5));
+    SAY ("B3 audio RMS in the last 150 ms before the key goes up: %.1f dB with its DC, %.1f dB without; |mean| %.1f dBFS\n", lastDb, lastAcDb, lastMeanDb);
     CHECK (lastAcDb < -100.0);
+    CHECK (lastMeanDb < -80.0);
     Performance perf;
     addNote (perf, 0.05, 0.5, 48, kVelocity);
     finish (perf);

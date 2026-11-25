@@ -9,7 +9,9 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 - **A2 Moving Pulse:** the glide to the played note is 40 % shorter (`porta.time` 0.3 to 0.232; a legato octave step is
   within 50 cents of the target after 166 ms, was 280 ms). Nothing else in A2 changed.
 - **Kit balance:** the drums' offsets become B1 +4.5 dB, B2 +1.5 dB, B3 +3.5 dB; only `mix.level` moved (B1 +6.0, 0.26 dB
-  under its target at the top of the range; B2 +3.2; B3 +4.2). Tables, tone and timing are unchanged.
+  under its target at the top of the range; B2 +3.2; B3 +4.2). Tables, tone and timing are unchanged. Third audition: the hat
+  goes down another 1.5 dB, B3 offset +2.0 dB, `mix.level` +2.7 (peak -18.47 dBFS, RMS -36.04 dB, two-key chord peak -11.77 dBFS,
+  hit peak spread 0.63 dB, onset spread 0.31 ms; the other figures are unchanged).
 - The render goldens of A2 and B2 are regenerated; A5, A7, B4 and B7 are bit-identical. Figures in
   `docs/bside-factory-sounds.md`.
 
