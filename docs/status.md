@@ -4,7 +4,7 @@ Where the project is, what is parked, what comes next, and the history of what w
 The orchestrator keeps this file current; `CLAUDE.md` links here. Read "Where the project is"
 first when resuming.
 
-## Where the project is (2026-11-24) — read this first when resuming
+## Where the project is (2026-11-25) — read this first when resuming
 
 **Resume here (written 2026-11-24, after the owner's "start S4").**
 - **S4 is in flight (owner's word, 2026-11-24).** The owner decided the Model A budget
@@ -27,12 +27,29 @@ first when resuming.
   rerun. **Open from this:** Windows unit tests take 26 to 28 minutes per job and the x64 build
   took 28 minutes; the job needs room under its limit before the next run (look at what the
   Windows tests spend their time on; a workflow change is its own pull request).
-- **Next: S4b** (factory patches, level rule, render goldens, the owner's
-  audition). Its contract (8.21.2) is an outline and is completed first. For the owner's ear
-  in that audition, recorded in `docs/decisions.md` ("S4a: readings of the fix round", "after
-  the second review"): the thump when a voice is stolen (the chip's power-on envelope value,
-  8.6.4); in Shared, a note of another velocity moving the held notes' filtered level; the
-  level of a steady note against the onset peak `kChipGain` is calibrated on.
+- **S4b is built and awaits its CI run and the owner's merge word (2026-11-25, branch
+  `bside/s4b-sounds`).** `mix.level` per part (204 parameters), `kChipGain` 1.2822 (Init as
+  loud as Vintage's Init), 16 factory programs with the level rule and per-program offsets,
+  a program apply that fades the part, `bside_render` goldens for six programs. **The owner
+  auditioned the bank in three rounds and accepted it** (`docs/decisions.md`, "S4b audition:
+  the owner's decisions"): the steal stays as it is, Shared keeps the average of the notes'
+  gains, the new Init level stays; A2, A6, B1, B3 and B4 were changed to the owner's ear and
+  the kit balance set (offsets B1 +4.5, B2 +1.5, B3 +2.0, B4 +3 dB). **An engine defect was
+  found by the hat and fixed:** under Clean a note could start 33 ms late; Clean now clears
+  the envelope counters at every note start (8.21.2). An independent review with its own
+  tests found no click and no real-time defect; its findings are fixed or written into the
+  contract. The orchestrator's full `scripts/preflight.sh` passed on commit `4907ba4`
+  (85 min, all seven steps, 1,235 tests on macOS) and every CPU gate passed at the
+  orchestrator's bench (16 voices: 4.33 to 4.36 % on Model B, 9.59 to 9.63 % on Model A;
+  chain 26.7 to 26.9 ns and 57.4 to 57.5 ns). **Not yet confirmed: Windows and Linux x86_64
+  (one CI run).** Known risks for that run: the Windows x64 job's 60-minute limit (the new
+  default tests add about 20 s locally) and the B4 golden's thin margin.
+- **S4b's readings await the owner's review:** rows 1 to 38 in `docs/decisions.md`, "S4b
+  contract: orchestrator's calls".
+- **Open after S4b:** B1 has no level trim left upwards (`mix.level` at +6 dB); the drums'
+  hit-to-hit peak spread is within 1 dB only on the gate's phrase (up to 2.1 dB at other
+  spacings: noise peaks are a draw); under Precondition and Authentic a note can still wait
+  33 ms, as on the chip.
 - **S4a's readings await the owner's review:** 20 by the implementer, 8 from the fix round and
   the calls on both reviews, all in `docs/decisions.md` under "B-Side S4 contract".
 - **Owner decisions that bound S4** (`docs/decisions.md`, O1 to O10): Model B is accepted by
@@ -366,8 +383,8 @@ the orchestrator dispatches it (see "Decisions").
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
-2. **B-Side:** S3a and S3b are merged. **S4 is in flight: S4a awaits the owner's merge word, then
-   S4b ("Resume here" at the top).** Then B-Side's own release work as
+2. **B-Side:** S3a and S3b are merged. **S4a is merged; S4b awaits its CI run and the owner's merge
+   word ("Resume here" at the top).** Then B-Side's own release work as
    listed in the parked state.
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
