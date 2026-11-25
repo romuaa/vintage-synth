@@ -1078,7 +1078,7 @@ The filter object is a separate class (`chip/Filter.h`) that the chip uses by re
 
 | Policy | Behaviour |
 |---|---|
-| Clean (default) | As Precondition; and when a note starts on a voice that did not get the full lead (retrigger, steal, no restart section), the rate counter and divider are set to 0 directly (not a chip operation): the envelope never waits. |
+| Clean (default) | As Precondition; and at every note start the rate counter and divider of all three oscillators are set to 0 directly (not a chip operation), before tick 0's writes: the envelope never waits (8.21.2). |
 | Precondition | An idle voice gets the restart writes as soon as it is idle and stays in that state; a note on it then starts normally. A voice re-used sooner may show the envelope delay quirk. |
 | Authentic | No preconditioning and no reset: only what the table's rows do. |
 | Look-ahead (S5) | Notes are delayed by `gateoff` ticks so the restart runs before each note; the latency is reported. |
@@ -1693,8 +1693,8 @@ The full list of readings, with reasons, is `docs/decisions.md` "B-Side S2c" (ro
 - **Restart section and policies (8.6.4):** Authentic applies no part of the restart section
   (no idle writes, no tick-0 writes, no `firstwave`, no reset on a steal, no direct clear).
   Precondition and Clean write the restart state when the voice goes idle, and at tick 0 on a
-  retrigger that was not preconditioned; Clean also clears the envelope counters directly when
-  the voice did not get the full lead. A stolen voice is reset (keeping time) and then gets the
+  retrigger that was not preconditioned; Clean also clears the envelope counters directly at
+  every note start (8.21.2). A stolen voice is reset (keeping time) and then gets the
   restart writes. Without a restart section, Precondition and Clean clear a still-high gate
   before a retrigger (owner to confirm). `firstwave` applies per active oscillator and ends at
   the table's first control write, at tick 1 or at note-off, whichever comes first.
@@ -2710,8 +2710,8 @@ marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
     become **B1 +4.5 dB, B2 +1.5 dB, B3 +3.5 dB.** Goldens that move are regenerated.
   - **Clean never waits (engine defect found by the timing gate; this wins over 8.6.4 and
     8.16).** With `[restart] mode classic, lead 2`, a note on a voice that had its full lead
-    could still start 33 ms late (32 768 cycles: the envelope's rate counter above the new
-    period), on B3 at every second hit and on B2 at wider spacings. Under **Clean** the
+    could still start 33 ms late (about 32 770 cycles: the idle rate counter keeps looping, and in one phase of ten the
+    gate write's one-step decay compare lets it step past the attack match), on B3 at every second hit and on B2 at wider spacings. Under **Clean** the
     envelope counters of all three oscillators are cleared directly at **every** note start
     (tick 0, before the tick's writes), whether or not the voice had its full lead. Precondition
     and Authentic are unchanged. Gate: for restart modes off, classic and phase, leads 1 to 8,
