@@ -2708,6 +2708,8 @@ marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
     the glide to the played note is faster (its time about 40 % shorter, measured), so the
     target note sounds longer. **Kit balance** (the three drums played together): the offsets
     become **B1 +4.5 dB, B2 +1.5 dB, B3 +3.5 dB.** Goldens that move are regenerated.
+    **Third audition (same day):** A2 is right; the hat goes down another 1.5 dB
+    (**B3 +2.0 dB**), and with that the owner accepts the kit and the bank.
   - **Clean never waits (engine defect found by the timing gate; this wins over 8.6.4 and
     8.16).** With `[restart] mode classic, lead 2`, a note on a voice that had its full lead
     could still start 33 ms late (about 32 770 cycles: the idle rate counter keeps looping, and in one phase of ten the
