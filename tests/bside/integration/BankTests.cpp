@@ -445,6 +445,9 @@ TEST_CASE ("Bank level rule: every program loads, sounds, is finite, keeps its c
     std::map<Group, double> target;
     for (const auto& [g, v] : byGroup)
         target[g] = judgedByPeak (g) ? medianOf (sustainedPeaks) : medianOf (v);
+    // a peak-judged group needs no program of its own with offset 0 (with every drum carrying an offset the group is empty)
+    if (! sustainedPeaks.empty())
+        target[Group::Percussive] = medianOf (sustainedPeaks);
     REQUIRE (sustainedPeaks.size() >= 3);
     for (int slot = 1; slot < kBankSize; ++slot)
     {
@@ -541,6 +544,31 @@ TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato s
     CHECK (intermediate >= 100); // over 100 ms of the pitch between the two keys (porta.time 0.3: 99 % of the interval in 0.45 s)
     CHECK (jumpedAtOnce <= 2);
     CHECK (withGlide.back() > 6.5); // it arrives (the vibrato of the table moves it by 0.2 semitones either way)
+
+    // The time the glide takes on a legato octave step (second owner audition: about 40 % shorter than porta.time 0.3's 279.5 ms).
+    // Measured from the second note-on until osc 1's frequency register is first within 50 cents of the played note: the table's
+    // vibrato (+-20 cents once it has started) makes the first crossing of a 10-cent window depend on its phase (215 ms now, 399 ms
+    // before), so the figure that scales with the glide is the 50-cent one; the 10-cent first crossing is reported beside it.
+    {
+        Rig g (1, false);
+        const std::vector<Midi> midi { noteOn (at (0.1), 60), noteOn (at (0.4), 72), noteOff (at (0.41), 60) };
+        const auto pr = probeMidi (g, 0, midi, 1.2, 12);
+        double within50 = -1.0, within10 = -1.0;
+        for (const auto& s : pr.samples)
+            if (s.seconds >= 0.4 && s.voiceFound)
+            {
+                const double err = std::abs (semitonesBetween (freqHz (s, 0), hzOfNote (72)));
+                if (within50 < 0.0 && err < 0.5)
+                    within50 = s.seconds - 0.4;
+                if (within10 < 0.0 && err < 0.1)
+                    within10 = s.seconds - 0.4;
+            }
+        SAY ("A2 glide: octave step within 50 cents after %.1f ms (279.5 before), first within 10 cents after %.1f ms (399.2 before), porta.time %.3f\n",
+             within50 * 1000.0, within10 * 1000.0, g.get ("lower.porta.time"));
+        REQUIRE (within50 > 0.0);
+        CHECK (within50 == Catch::Approx (0.1677).margin (0.004)); // 60 % of 279.5 ms
+        CHECK (within10 > 0.0);
+    }
 }
 
 TEST_CASE ("Bank A3 Synced Climb: oscillator 2 synced to 1, oscillator 1 silent, the synced pitch stepping up and down by table", "[bside][bank][program]")

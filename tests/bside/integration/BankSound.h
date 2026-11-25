@@ -52,7 +52,7 @@ enum class Group { Reference, Sustained, Percussive, Bass };
     group's target, by the owner's ear. The level test holds each program within 2 dB of its group's target plus its offset, and a
     group's target (its median) is taken over the programs with offset 0. Indexed by slot (A1 = 0 ... B8 = 15). */
 inline constexpr double kLevelOffsetDb[16] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  // A1 .. A8
-                                             3.0, 0.0, 5.0, 3.0, 0.0, 0.0, 0.0, 0.0 }; // B1 Short Kick +3, B2, B3 Tick Hat +5, B4 Slow Saw Pad +3, B5 .. B8
+                                             4.5, 1.5, 3.5, 3.0, 0.0, 0.0, 0.0, 0.0 }; // B1 Short Kick +4.5, B2 Dry Snare +1.5, B3 Tick Hat +3.5, B4 Slow Saw Pad +3, B5 .. B8
 inline double levelOffsetDb (int slot) { return slot >= 0 && slot < 16 ? kLevelOffsetDb[slot] : 0.0; }
 inline bool hasLevelOffset (int slot) { return levelOffsetDb (slot) > 0.0 || levelOffsetDb (slot) < 0.0; }
 
