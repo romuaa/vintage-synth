@@ -2685,6 +2685,25 @@ marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
   - **Assertions the gain moved by definition:** the Shared idle-leave bound (+5 to +8 ms: the
     quiet level is a fixed -120 dB at the part's output) and the random-parameter peak bound
     (4.0 to 5.3, the gain's factor).
+- **After the owner's audition (2026-11-25; owner decisions; these win over the points above):**
+  - **Kept as drafted:** A1, A3, A4, A5, A7, A8, B2, B5, B6, B7, B8. **The steal** stays as it
+    is under Clean and under Authentic (no softening). **`kChipGain`** stays at its new value.
+  - **A2 Moving Pulse:** the vibrato starts earlier and is slower. **A6 Blip Bass:** the blip
+    at the note's start is a little longer; nothing else changes. Each change is stated with
+    its measured figure before and after in `docs/bside-factory-sounds.md`.
+  - **Level offsets.** A program may carry an offset from its group's target, set by the
+    owner's ear and listed per program in `docs/bside-factory-sounds.md`; the level test holds
+    each program within 2 dB of its group's target plus its offset, and a group's median is
+    taken over the programs with offset 0. First offsets: **B1 Short Kick +3 dB** (and deeper:
+    more of its energy below 125 Hz, measured), **B3 Tick Hat +5 dB, B4 Slow Saw Pad +3 dB.**
+    The headroom checks hold unchanged. Whatever `mix.level` cannot give is raised in content.
+  - **Percussion is in time (new gate, B1 to B3).** Over the eight hits of the percussion
+    phrase, the onset of every hit (the first sample above -30 dB of that hit's peak) comes
+    the same time after its note-on within 1 ms, every hit's peak is within 1 dB of the
+    others', and the three drums' onset delays agree within 2 ms, so a kit plays together.
+    The delay itself is as short as the program's restart allows and is reported.
+  - The six goldens are regenerated once after these changes; the changed programs go to the
+    owner as a second, short audition before the merge.
 - **`kChipGain` moves once (review).** Its calibration changes from "the Init note's onset peak
   at -12 dBFS" (8.21.1) to: **Init's Chord phrase measures within 1 dB (unweighted RMS) of
   Exitium Vintage Synth's Init on the same phrase,** measured the same way, so the two
