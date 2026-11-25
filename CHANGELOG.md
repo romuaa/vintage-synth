@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S4b: the second audition (2026-11-25)
+- **A2 Moving Pulse:** the glide to the played note is 40 % shorter (`porta.time` 0.3 to 0.232; a legato octave step is
+  within 50 cents of the target after 166 ms, was 280 ms). Nothing else in A2 changed.
+- **Kit balance:** the drums' offsets become B1 +4.5 dB, B2 +1.5 dB, B3 +3.5 dB; only `mix.level` moved (B1 +6.0, 0.26 dB
+  under its target at the top of the range; B2 +3.2; B3 +4.2). Tables, tone and timing are unchanged.
+- The render goldens of A2 and B2 are regenerated; A5, A7, B4 and B7 are bit-identical. Figures in
+  `docs/bside-factory-sounds.md`.
+
 ### B-Side S4b: the owner's audition round (2026-11-25)
 - **Factory bank, after the owner's audition (programs A2, A6, B1, B2, B3, B4):** A2 Moving Pulse's vibrato starts
   after 8 ticks (159.6 ms, was 299.3 ms) at 8.35 Hz (was 12.53 Hz); A6 Blip Bass's octave blip lasts two ticks
@@ -12,7 +20,7 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   against -4.2 dB); B3 Tick Hat has three oscillators at `=E7` through a high-pass at 500 with resonance 2, no
   restart section; B2 Dry Snare keeps its drafted restart section (`classic`, lead 2); B4 Slow Saw Pad is 3 dB louder. Figures before and after in
   `docs/bside-factory-sounds.md`.
-- **Level offsets:** the level rule takes a per-program offset from its group's target (B1 +3 dB, B3 +5 dB, B4 +3 dB;
+- **Level offsets:** the level rule takes a per-program offset from its group's target (B1 +3 dB, B3 +5 dB, B4 +3 dB, B1 to B3 changed in the second audition above;
   a group's median over the programs with offset 0). `mix.level` is still -24 to +6 dB.
 - **Percussion in time (new gate):** over the eight hits of the percussion phrase every onset delay is the same within
   1 ms, every peak within 1 dB, and the three drums' delays agree within 2 ms (B1 to B3: 0.54 to 0.90 ms, spread 0.62
