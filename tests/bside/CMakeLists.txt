@@ -173,7 +173,8 @@ if(VS_BUILD_BSIDE)
         integration/BankRender.cpp
         integration/BankAuditionPairs.cpp
         review/PartReviewTests.cpp
-        review/PartReview2Tests.cpp)
+        review/PartReview2Tests.cpp
+        review/S4bReviewTests.cpp)
     target_link_libraries(BSideTests PRIVATE
         bs_test_core
         Catch2::Catch2WithMain)
