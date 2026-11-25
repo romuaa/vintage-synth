@@ -11,6 +11,7 @@ model B
 0 13 00
 0 14 00
 0 12 00
+# 29484 direct: rate counters and dividers cleared
 29484 00 67
 29484 01 11
 29484 05 00

@@ -11,6 +11,7 @@ model B
 0 13 00
 0 14 00
 0 12 08
+# 14742 direct: rate counters and dividers cleared
 14742 00 67
 14742 01 11
 14742 05 00
