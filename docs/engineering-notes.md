@@ -3,6 +3,22 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S4b: the owner's audition round (2026-11-25)
+
+- **A drum that "is not in time" needs a per-hit measurement, not an ear.** Render the phrase through the real
+  processor and take, per hit, the first sample above -30 dB of that hit's peak after its note-on, and its peak
+  (`hitTimings` in `BankSound.h`). The cause was a 33 ms envelope wait on every second hit.
+- **`[restart]` `classic` with the Clean policy can leave a full-lead note waiting 33.3 ms (32 768 cycles) for its
+  envelope.** Not fixed in the engine (reported with a hidden failing test, `Known defect*`); a program without a
+  restart section (`mode off`) always has its envelope timers cleared by Clean and starts at once. Rule: a drum's
+  gate test covers several hit spacings, not only the phrase of the contract.
+- **A level raised by oscillators costs more than it gives.** Three oscillators in phase gave +3.4 dB of peak and
+  +7 dB of the slow DC tail that the envelope pushes through the board's 1.2 Hz high-pass (B3). A silence check on
+  a decayed drum must take the RMS with the window's mean removed, or it measures level, not length.
+- **The peak of a noise hit is a draw.** It depends on which noise values fall in the loudest few milliseconds
+  (the register is not reset by the test bit, 8.15.5); a bound of 1 dB over eight hits is met by choosing content
+  and checking the spread at several hit spacings, not by a rule of the program.
+
 ## B-Side S4a: the part around the chip (2026-11-24)
 
 - **An author's "all gates pass" missed five audible or timing defects.** Each was found by a

@@ -5,6 +5,21 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S4b: the owner's audition round (2026-11-25)
+- **Factory bank, after the owner's audition (programs A2, A6, B1, B2, B3, B4):** A2 Moving Pulse's vibrato starts
+  after 8 ticks (159.6 ms, was 299.3 ms) at 8.35 Hz (was 12.53 Hz); A6 Blip Bass's octave blip lasts two ticks
+  (39.0 ms, was 19.0 ms); B1 Short Kick falls to 38.9 Hz over eight ticks (more of its energy below 125 Hz: -2.1 dB
+  against -4.2 dB); B3 Tick Hat has three oscillators at `=E7` through a high-pass at 500 with resonance 2, no
+  restart section; B2 Dry Snare has no restart section; B4 Slow Saw Pad is 3 dB louder. Figures before and after in
+  `docs/bside-factory-sounds.md`.
+- **Level offsets:** the level rule takes a per-program offset from its group's target (B1 +3 dB, B3 +5 dB, B4 +3 dB;
+  a group's median over the programs with offset 0). `mix.level` is still -24 to +6 dB.
+- **Percussion in time (new gate):** over the eight hits of the percussion phrase every onset delay is the same within
+  1 ms, every peak within 1 dB, and the three drums' delays agree within 2 ms (B1 to B3: 0.54 to 0.90 ms, spread 0.62
+  to 0.84 dB; B3 had hits 33.9 ms late on every second hit). The cause is an envelope wait in the engine's restart
+  handling, reported with a hidden failing test; the programs avoid it by content.
+- The six render goldens are regenerated (A2, B2 and B4 changed; A5, A7 and B7 are bit-identical).
+
 ### B-Side S4a: the chip part plays in the plugin (2026-11-24)
 - **Exitium B-Side now plays its chip.** The test tone is gone: each part is 16 note voices, each a whole chip chain
   (renderer, filter, output stage), with the allocator, glide, bend, one vibrato oscillator per part, unison, velocity
