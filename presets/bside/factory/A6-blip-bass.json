@@ -20,7 +20,7 @@
     "lower": [
       "bside-table 1",
       "[wave1]",
-      "    wave pulse+gate +12",
+      "    wave pulse+gate +12 ticks 2",
       "    pitch +0",
       "    end",
       "[pulse1]",

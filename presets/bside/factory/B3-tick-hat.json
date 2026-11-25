@@ -9,8 +9,10 @@
   "lower": {
     "osc1.wave": 4,
     "osc2.wave": 4,
+    "osc3.wave": 4,
     "filter.mode": 3,
-    "filter.cutoff": 1500,
+    "filter.cutoff": 500,
+    "filter.resonance": 2,
     "mix.level": 5.6
   },
   "upper": {},
@@ -18,13 +20,15 @@
     "lower": [
       "bside-table 1",
       "[restart]",
-      "mode classic",
-      "lead 2",
+      "mode off",
       "[wave1]",
-      "    adsr 0 6 0 6, wave noise+gate =C7",
+      "    adsr 0 6 0 6, wave noise+gate =E7",
       "    end",
       "[wave2]",
-      "    adsr 0 6 0 6, wave noise+gate =C7",
+      "    adsr 0 6 0 6, wave noise+gate =E7",
+      "    end",
+      "[wave3]",
+      "    adsr 0 6 0 6, wave noise+gate =E7",
       "    end"
     ]
   }

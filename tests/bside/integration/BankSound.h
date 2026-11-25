@@ -48,6 +48,14 @@ enum class Phrase
     against the median phrase peak of the sustained group (a drum hit sits as loud as a lead note). */
 enum class Group { Reference, Sustained, Percussive, Bass };
 
+/** The owner's level offsets (8.21.2 after the owner's audition, docs/bside-factory-sounds.md): a program may sit this many dB above its
+    group's target, by the owner's ear. The level test holds each program within 2 dB of its group's target plus its offset, and a
+    group's target (its median) is taken over the programs with offset 0. Indexed by slot (A1 = 0 ... B8 = 15). */
+inline constexpr double kLevelOffsetDb[16] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  // A1 .. A8
+                                             3.0, 0.0, 5.0, 3.0, 0.0, 0.0, 0.0, 0.0 }; // B1 Short Kick +3, B2, B3 Tick Hat +5, B4 Slow Saw Pad +3, B5 .. B8
+inline double levelOffsetDb (int slot) { return slot >= 0 && slot < 16 ? kLevelOffsetDb[slot] : 0.0; }
+inline bool hasLevelOffset (int slot) { return levelOffsetDb (slot) > 0.0 || levelOffsetDb (slot) < 0.0; }
+
 /** Whether a group is judged by its phrase peak (against the sustained group's median peak) rather than its RMS. */
 inline bool judgedByPeak (Group g) { return g == Group::Percussive; }
 
@@ -289,6 +297,53 @@ inline Measured measure (const Stereo& s, const Performance& p)
         endPeak = std::max ({ endPeak, static_cast<double> (std::abs (s.l[i])), static_cast<double> (std::abs (s.r[i])) });
     m.endPeakDb = dbOf (endPeak);
     return m;
+}
+
+/** One hit of a percussion phrase: how long after its note-on the sound begins, and how loud it is (8.21.2 after the owner's audition). */
+struct HitTiming
+{
+    double onsetMs = -1.0;  // first sample at or above -30 dB of this hit's peak, minus the hit's note-on (ms); -1: the hit is silent
+    double peakDb = -200.0; // this hit's sample peak (both channels), dBFS, from its note-on to the next hit's note-on (or the end)
+};
+
+/** The note-ons of a performance in time order. */
+inline std::vector<int> noteOnPositions (const Performance& p)
+{
+    std::vector<int> v;
+    for (const auto& m : p.midi)
+        if (m.msg.isNoteOn())
+            v.push_back (m.pos);
+    std::sort (v.begin(), v.end());
+    return v;
+}
+
+/** The timing and peak of every hit (note-on) of `p` in `s`: the window of a hit runs to the next note-on (the last to the end). */
+inline std::vector<HitTiming> hitTimings (const Stereo& s, const Performance& p)
+{
+    const auto ons = noteOnPositions (p);
+    std::vector<HitTiming> out;
+    for (size_t h = 0; h < ons.size(); ++h)
+    {
+        const size_t a = static_cast<size_t> (ons[h]);
+        const size_t b = std::min (h + 1 < ons.size() ? static_cast<size_t> (ons[h + 1]) : s.l.size(), s.l.size());
+        double peak = 0.0;
+        for (size_t i = a; i < b; ++i)
+            peak = std::max ({ peak, std::abs (static_cast<double> (s.l[i])), std::abs (static_cast<double> (s.r[i])) });
+        HitTiming t;
+        t.peakDb = dbOf (peak);
+        if (peak > 0.0)
+        {
+            const double threshold = peak * std::pow (10.0, -30.0 / 20.0);
+            for (size_t i = a; i < b; ++i)
+                if (std::max (std::abs (static_cast<double> (s.l[i])), std::abs (static_cast<double> (s.r[i]))) >= threshold)
+                {
+                    t.onsetMs = 1000.0 * static_cast<double> (i - a) / kFs;
+                    break;
+                }
+        }
+        out.push_back (t);
+    }
+    return out;
 }
 
 /** The largest sample-to-sample step of x over [from, to). */

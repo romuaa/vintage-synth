@@ -117,14 +117,14 @@ double hzOfNote (double note) { return 440.0 * std::exp2 ((note - 69.0) / 12.0);
 double semitonesBetween (double f, double ref) { return 12.0 * std::log2 (f / ref); }
 double msOfTicks (std::uint32_t period, double ticks) { return 1000.0 * ticks * static_cast<double> (period) / 985248.0; }
 
-/** Oscillator 2 doubles oscillator 1 (the drums, raised in their content to reach their level, 8.21.2 after the drafting): its seven
-    registers and its envelope counter are oscillator 1's, so the two sum in phase. */
-bool doublesOscillator1 (const RegisterSample& s)
+/** Oscillator n (1 = oscillator 2, 2 = oscillator 3) doubles oscillator 1 (the drums, raised in their content to reach their level,
+    8.21.2 after the drafting): its seven registers and its envelope counter are oscillator 1's, so the two sum in phase. */
+bool doublesOscillator1 (const RegisterSample& s, int n = 1)
 {
     for (int r = 0; r < 7; ++r)
-        if (osc (s, 1, r) != osc (s, 0, r))
+        if (osc (s, n, r) != osc (s, 0, r))
             return false;
-    return s.env[1] == s.env[0];
+    return s.env[n] == s.env[0];
 }
 
 /** The table lines of a program's part with every occurrence of `token` removed (the same program without a feature). */
@@ -184,6 +184,25 @@ double rmsDbOf (const Stereo& s, int from, int to)
     double acc = 0.0;
     for (int i = from; i < to; ++i)
         acc += 0.5 * (static_cast<double> (s.l[static_cast<size_t> (i)]) * s.l[static_cast<size_t> (i)] + static_cast<double> (s.r[static_cast<size_t> (i)]) * s.r[static_cast<size_t> (i)]);
+    return 10.0 * std::log10 (std::max (acc / std::max (1, to - from), 1.0e-20));
+}
+
+/** The RMS of both channels over [from, to) with each channel's mean over the window removed. */
+double acRmsDbOf (const Stereo& s, int from, int to)
+{
+    double acc = 0.0;
+    for (const auto* ch : { &s.l, &s.r })
+    {
+        double mean = 0.0;
+        for (int i = from; i < to; ++i)
+            mean += static_cast<double> ((*ch)[static_cast<size_t> (i)]);
+        mean /= std::max (1, to - from);
+        for (int i = from; i < to; ++i)
+        {
+            const double d = static_cast<double> ((*ch)[static_cast<size_t> (i)]) - mean;
+            acc += 0.5 * d * d;
+        }
+    }
     return 10.0 * std::log10 (std::max (acc / std::max (1, to - from), 1.0e-20));
 }
 
@@ -381,9 +400,10 @@ TEST_CASE ("Bank level rule: every program loads, sounds, is finite, keeps its c
         CHECK (m.endPeakDb < -80.0); // nothing stuck: silent 0.75 s after the reported tail has passed
         rms[static_cast<size_t> (slot)] = m.rmsDb;
         peak[static_cast<size_t> (slot)] = m.peakDb;
-        if (info.group != Group::Reference)
+        // a group's median is taken over the programs with offset 0 (8.21.2 after the owner's audition)
+        if (info.group != Group::Reference && ! hasLevelOffset (slot))
             byGroup[info.group].push_back (judgedByPeak (info.group) ? m.peakDb : m.rmsDb);
-        if (info.group == Group::Sustained)
+        if (info.group == Group::Sustained && ! hasLevelOffset (slot))
             sustainedPeaks.push_back (m.peakDb);
 
         // chord headroom: eight notes at full velocity; for percussion two keys, below full scale only
@@ -432,19 +452,20 @@ TEST_CASE ("Bank level rule: every program loads, sounds, is finite, keeps its c
         const auto g = categoryInfo (prog.meta.category).group;
         const bool byPeak = judgedByPeak (g);
         const double value = byPeak ? peak[static_cast<size_t> (slot)] : rms[static_cast<size_t> (slot)];
-        const double dev = value - target[g];
-        SAY ("%s %s [%s]: %s %.2f dB, target %.2f dB, deviation %+.2f dB\n", kBank[slot].slot, kBank[slot].name, groupName (g),
-             byPeak ? "phrase peak" : "phrase RMS", value, target[g], dev);
+        const double offset = levelOffsetDb (slot);
+        const double dev = value - (target[g] + offset);
+        SAY ("%s %s [%s]: %s %.2f dB, target %.2f dB + offset %.1f dB, deviation %+.2f dB\n", kBank[slot].slot, kBank[slot].name, groupName (g),
+             byPeak ? "phrase peak" : "phrase RMS", value, target[g], offset, dev);
         INFO (prog.meta.name << " [" << groupName (g) << "]: " << (byPeak ? "phrase peak " : "phrase RMS ") << value << " dB, target "
-                             << (byPeak ? "(the sustained group's median peak) " : "(the group's median RMS) ") << target[g] << " dB, deviation "
-                             << dev << " dB");
+                             << (byPeak ? "(the sustained group's median peak, offset-0 programs) " : "(the group's median RMS, offset-0 programs) ")
+                             << target[g] << " dB + the program's offset " << offset << " dB, deviation " << dev << " dB");
         CHECK (std::abs (dev) <= kGroupToleranceDb);
     }
 }
 
 // ---- A2 to A8 ----------------------------------------------------------------------------------------------------
 
-TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato starts after 15 ticks, Solo with glide", "[bside][bank][program]")
+TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato starts after 8 ticks and runs at 8.35 Hz, Solo with glide", "[bside][bank][program]")
 {
     Rig rig (1, false);
     CHECK (rig.get ("lower.assign.mode") == Catch::Approx (2.0f)); // Solo
@@ -467,24 +488,31 @@ TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato s
     CHECK (pulseWidth (t[65], 0) == 3288);
     CHECK (pulseWidth (t[71], 0) == 3328 - 40 * 7);
 
-    // the frequency lane: no vibrato for 15 ticks, then +-20 cents every two ticks
+    // the frequency lane (after the owner's audition; it was 15 ticks of delay and +-20 cents every two ticks): no vibrato for 8 ticks,
+    // then +-20 cents every three ticks
     const double f0 = freqHz (t[0], 0);
     CHECK (f0 == Catch::Approx (hzOfNote (60)).margin (0.06));
-    for (int k = 0; k < 15; ++k)
+    for (int k = 0; k < 8; ++k)
         CHECK (freqRegister (t[static_cast<size_t> (k)], 0) == freqRegister (t[0], 0));
     std::string cents;
-    for (int k = 12; k < 30; ++k)
+    for (int k = 5; k < 30; ++k)
     {
         const double c = 100.0 * semitonesBetween (freqHz (t[static_cast<size_t> (k)], 0), f0);
         cents += juce::String (c, 1).toStdString() + " ";
-        if (k >= 15)
+        if (k >= 8)
         {
-            const double want = ((k - 15) / 2) % 2 == 0 ? 20.0 : -20.0;
+            const double want = ((k - 8) / 3) % 2 == 0 ? 20.0 : -20.0;
             INFO ("tick " << k << ": " << c << " cents, want " << want);
             CHECK (std::abs (c - want) < 1.0);
         }
     }
-    SAY ("A2 vibrato in cents (ticks 12 to 29): %s\n", cents.c_str());
+    SAY ("A2 vibrato in cents (ticks 5 to 29): %s\n", cents.c_str());
+    // the onset delay and the rate follow from the tick period: 8 ticks and a six-tick period (it was 15 ticks and a four-tick one)
+    const double tickMs = msOfTicks (t[0].tickPeriod, 1.0);
+    SAY ("A2 vibrato onset %.1f ms (%.1f ms before), rate %.2f Hz (%.2f Hz before); tick %.2f ms\n", 8.0 * tickMs, 15.0 * tickMs, 1000.0 / (6.0 * tickMs),
+         1000.0 / (4.0 * tickMs), tickMs);
+    CHECK (8.0 * tickMs == Catch::Approx (159.6).margin (0.5));
+    CHECK (1000.0 / (6.0 * tickMs) == Catch::Approx (8.35).margin (0.02));
 
     // Solo with glide: a second key pressed while the first is held reaches its pitch over several tens of milliseconds,
     // where the same program without glide jumps at once
@@ -673,7 +701,7 @@ TEST_CASE ("Bank A5 Closing Door: sawtooth and pulse through the low-pass, a tab
     CHECK (early.centroidHz > 1.3 * late.centroidHz);
 }
 
-TEST_CASE ("Bank A6 Blip Bass: a one-tick octave-up blip from the wave lane, then a narrow pulse, no filter", "[bside][bank][program]")
+TEST_CASE ("Bank A6 Blip Bass: a two-tick octave-up blip from the wave lane, then a narrow pulse, no filter", "[bside][bank][program]")
 {
     Rig rig (5, false);
     const auto p = probe (rig, 0, { 60 }, 0.3, 0.1);
@@ -681,12 +709,13 @@ TEST_CASE ("Bank A6 Blip Bass: a one-tick octave-up blip from the wave lane, the
     for (const auto& s : t)
         REQUIRE (s.voiceFound);
     const double f0 = hzOfNote (60);
-    CHECK (freqHz (t[0], 0) == Catch::Approx (2.0 * f0).margin (0.06)); // tick 0: an octave up
-    for (int k = 1; k < 12; ++k)
-        CHECK (freqHz (t[static_cast<size_t> (k)], 0) == Catch::Approx (f0).margin (0.06)); // tick 1 on: the key
-    SAY ("A6 oscillator 1 frequency tick 0 %.2f Hz, tick 1 %.2f Hz; pulse width %d (%.1f %%); routing %d\n", freqHz (t[0], 0), freqHz (t[1], 0), pulseWidth (t[1], 0),
-         100.0 * pulseWidth (t[1], 0) / 4096.0, routing (t[1]));
-    // exactly one tick long: the time from the first sample at 2 x f0 to the first at f0 is one tick period
+    CHECK (freqHz (t[0], 0) == Catch::Approx (2.0 * f0).margin (0.06)); // ticks 0 and 1: an octave up (one tick before the owner's audition)
+    CHECK (freqHz (t[1], 0) == Catch::Approx (2.0 * f0).margin (0.06));
+    for (int k = 2; k < 12; ++k)
+        CHECK (freqHz (t[static_cast<size_t> (k)], 0) == Catch::Approx (f0).margin (0.06)); // tick 2 on: the key
+    SAY ("A6 oscillator 1 frequency tick 0 %.2f Hz, tick 1 %.2f Hz, tick 2 %.2f Hz; pulse width %d (%.1f %%); routing %d\n", freqHz (t[0], 0), freqHz (t[1], 0),
+         freqHz (t[2], 0), pulseWidth (t[2], 0), 100.0 * pulseWidth (t[2], 0) / 4096.0, routing (t[2]));
+    // exactly two ticks long: the time from the first sample at 2 x f0 to the first at f0 is two tick periods
     double tBlip = -1.0, tBack = -1.0;
     for (const auto& s : p.samples)
     {
@@ -696,11 +725,11 @@ TEST_CASE ("Bank A6 Blip Bass: a one-tick octave-up blip from the wave lane, the
             tBack = s.seconds;
     }
     const double tickMs = msOfTicks (t[0].tickPeriod, 1.0);
-    SAY ("A6 blip lasts %.1f ms (one tick = %.2f ms)\n", 1000.0 * (tBack - tBlip), tickMs);
-    CHECK (std::abs (1000.0 * (tBack - tBlip) - tickMs) < 1.5); // one tick, to within a block
-    CHECK (control (t[1], 0) == 0x41);                           // pulse, gated
-    CHECK (pulseWidth (t[1], 0) == 512);                         // 12.5 %: narrow
-    CHECK ((routing (t[1]) & 1) == 0);                           // not through the filter: no filter
+    SAY ("A6 blip lasts %.1f ms (one tick = %.2f ms; 19.0 ms, one tick, before the owner's audition)\n", 1000.0 * (tBack - tBlip), tickMs);
+    CHECK (std::abs (1000.0 * (tBack - tBlip) - 2.0 * tickMs) < 1.5); // two ticks, to within a block
+    CHECK (control (t[2], 0) == 0x41);                                 // pulse, gated
+    CHECK (pulseWidth (t[2], 0) == 512);                               // 12.5 %: narrow
+    CHECK ((routing (t[2]) & 1) == 0);                                 // not through the filter: no filter
 }
 
 TEST_CASE ("Bank A7 and A8: the arpeggio is the wave lane's, at the tick rate, one key plays the chord; A8 is the minor counterpart at twice the rate with a pulse-width step per tick",
@@ -780,9 +809,9 @@ TEST_CASE ("Bank A7 and A8: the arpeggio is the wave lane's, at the tick rate, o
 
 // ---- B1 to B8 ----------------------------------------------------------------------------------------------------
 
-TEST_CASE ("Bank B1 Short Kick: a noise tick, then a triangle falling in pitch by table within six ticks, the same for every key", "[bside][bank][program]")
+TEST_CASE ("Bank B1 Short Kick: a noise tick, then a triangle falling in pitch by table within eight ticks, the same for every key", "[bside][bank][program]")
 {
-    const int notes[] { 96, 64, 55, 48, 43, 40, 38 }; // the table's absolute pitches (=C7, =64 ...)
+    const int notes[] { 96, 55, 43, 36, 33, 31, 29, 28, 27 }; // the table's absolute pitches (=C7, =55 ...)
     std::vector<double> fallHz;
     for (const int key : { 36, 60 })
     {
@@ -795,7 +824,7 @@ TEST_CASE ("Bank B1 Short Kick: a noise tick, then a triangle falling in pitch b
         std::string hz;
         for (int k = 0; k < 12; ++k)
         {
-            const int m = k < 7 ? notes[k] : 38;
+            const int m = k < 9 ? notes[k] : 27;
             CHECK (freqHz (t[static_cast<size_t> (k)], 0) == Catch::Approx (hzOfNote (m)).margin (0.06));
             if (k >= 1)
                 CHECK (control (t[static_cast<size_t> (k)], 0) == 0x11); // then the triangle
@@ -814,10 +843,54 @@ TEST_CASE ("Bank B1 Short Kick: a noise tick, then a triangle falling in pitch b
             SAY ("B1 oscillator 1 frequency (Hz) per tick (tick = %.2f ms): %s\n", msOfTicks (t[0].tickPeriod, 1.0), hz.c_str());
         CHECK (msOfTicks (t[0].tickPeriod, 1.0) < 10.5); // tick.mult 2
     }
-    // the fall in Hz per tick, strictly down for ticks 1 to 6 and then flat
-    for (size_t k = 2; k <= 6; ++k)
+    // the fall in Hz per tick, strictly down for ticks 1 to 8 and then flat
+    for (size_t k = 2; k <= 8; ++k)
         CHECK (fallHz[k] < fallHz[k - 1]);
-    CHECK (fallHz[7] == Catch::Approx (fallHz[6]));
+    CHECK (fallHz[9] == Catch::Approx (fallHz[8]));
+
+    // Deeper than before the owner's audition (8.21.2): the same drum with the table it had then (the triangle falling from =64 to =38
+    // in six ticks) put more of the energy of the phrase above 125 Hz. The low band is the 0 to 125 Hz band of the spectrum summary
+    // (BankSound.h); the length is the time from the note-on to the last 5 ms of the hit within 40 dB of its peak.
+    const std::vector<std::string> before {
+        "bside-table 1",      "[restart]",         "mode classic",
+        "lead 2",             "[wave1]",           "    adsr 0 8 0 8, wave noise+gate =C7",
+        "    wave tri+gate =64", "    wave tri+gate =55", "    wave tri+gate =48",
+        "    wave tri+gate =43", "    wave tri+gate =40", "    wave tri+gate =38 ticks 255",
+        "    end",            "[wave2]",           "    adsr 0 8 0 8, wave noise+gate =C7",
+        "    wave tri+gate =64", "    wave tri+gate =55", "    wave tri+gate =48",
+        "    wave tri+gate =43", "    wave tri+gate =40", "    wave tri+gate =38 ticks 255",
+        "    end"
+    };
+    const auto perf = phrase (Phrase::Percussion);
+    // one hit (C3 held 0.2 s, 2 s of tail): its length is the time from the note-on to the end of the last 5 ms of the audio whose RMS is
+    // within 43 dB of the hit's sample peak
+    const auto lengthOf = [&] (const std::function<std::unique_ptr<Rig>()>& makeRig) {
+        Performance one;
+        addNote (one, 0.05, 0.25, 48, kVelocity);
+        finish (one);
+        const auto rig = makeRig();
+        const auto out = rig->play (one, 2.0);
+        double peak = 0.0;
+        for (size_t i = 0; i < out.l.size(); ++i)
+            peak = std::max ({ peak, static_cast<double> (std::abs (out.l[i])), static_cast<double> (std::abs (out.r[i])) });
+        const int step = at (0.005);
+        int last = one.firstOn;
+        for (int i = one.firstOn; i + step <= static_cast<int> (out.l.size()); i += step)
+            if (rmsDbOf (out, i, i + step) > dbOf (peak) - 43.0)
+                last = i + step;
+        return 1000.0 * (last - one.firstOn) / kFs;
+    };
+    const auto bandsOf = [&] (Rig& rig) { return measure (rig.play (perf, 0.5), perf); };
+    Rig now (8, false);
+    auto old = rigWithTable (8, before);
+    const auto mNow = bandsOf (now), mOld = bandsOf (*old);
+    const double lengthNow = lengthOf ([] { return std::make_unique<Rig> (8, false); });
+    const double lengthOld = lengthOf ([&] { return rigWithTable (8, before); });
+    SAY ("B1 low band (0 to 125 Hz) %.2f dB now, %.2f dB before; 125 to 250 Hz %.2f / %.2f dB; length %.0f ms now, %.0f ms before\n", mNow.bandDb[0], mOld.bandDb[0],
+         mNow.bandDb[1], mOld.bandDb[1], lengthNow, lengthOld);
+    CHECK (mNow.bandDb[0] > mOld.bandDb[0] + 1.5); // clearly more of the energy below 125 Hz
+    CHECK (mNow.bandDb[0] > -3.0);                  // more than half of it
+    CHECK (lengthNow <= 1.5 * lengthOld);          // still a short kick
 }
 
 TEST_CASE ("Bank B2 Dry Snare: noise and pulse alternating by table, then noise alone", "[bside][bank][program]")
@@ -853,15 +926,19 @@ TEST_CASE ("Bank B3 Tick Hat: short noise at a high pitch, decay only, mostly ab
     const auto t = tickSamples (p.samples, 3);
     REQUIRE (t[0].voiceFound);
     CHECK (control (t[0], 0) == 0x81);
-    CHECK (freqHz (t[0], 0) == Catch::Approx (hzOfNote (96)).margin (0.06)); // =C7
+    CHECK (freqHz (t[0], 0) == Catch::Approx (hzOfNote (100)).margin (0.06)); // =E7 (=C7 before the owner's audition)
     CHECK (t[0].reg[5] == 0x06); // attack 0, decay 6
     CHECK (t[0].reg[6] == 0x06); // sustain 0: decay only
     CHECK (filterMode (t[0]) == 4);    // high-pass
-    CHECK ((routing (t[0]) & 1) == 1); // oscillator 1 through it
-    CHECK ((routing (t[0]) & 2) == 2); // and oscillator 2, which doubles it (the level)
+    CHECK (cutoffRegister (t[0]) == 500);
+    CHECK (resonance (t[0]) == 2);
+    CHECK (routing (t[0]) == 7); // oscillator 1 through it, and oscillators 2 and 3, which double it (the level)
     for (const auto& s : p.samples)
         if (s.voiceFound)
-            CHECK (doublesOscillator1 (s));
+        {
+            CHECK (doublesOscillator1 (s, 1));
+            CHECK (doublesOscillator1 (s, 2));
+        }
     // the envelope: it rises at once, falls through the decay and is at 0 long before the key goes up
     double peakAt = -1.0, below128 = -1.0, below16 = -1.0, zeroAt = -1.0;
     int top = 0;
@@ -888,10 +965,15 @@ TEST_CASE ("Bank B3 Tick Hat: short noise at a high pitch, decay only, mostly ab
     CHECK (zeroAt > 0.0);
     CHECK (zeroAt < 0.5);
     CHECK (below16 < 0.35);
-    // short: the audio of the last 150 ms before the key goes up is silent
+    // short: the audio of the last 150 ms before the key goes up is silent. The measure is the RMS of the window with its mean removed
+    // (review, docs/decisions.md): the output carries the slow tail of the DC that the hit's envelope pushed through the board's
+    // 1.2 Hz high-pass (a constant 2.8e-5 here, -91 dB, decaying by e every 0.13 s), which grows with the drum's level (-107 dB at the
+    // level before the owner's audition, -92 dB at +5 dB and a third oscillator) and says nothing about how long the hat rings; the
+    // threshold, -100 dB, is the one it had.
     const double lastDb = rmsDbOf (p.audio, at (0.1 + 0.35), at (0.1 + 0.5));
-    SAY ("B3 audio RMS in the last 150 ms before the key goes up: %.1f dB\n", lastDb);
-    CHECK (lastDb < -100.0);
+    const double lastAcDb = acRmsDbOf (p.audio, at (0.1 + 0.35), at (0.1 + 0.5));
+    SAY ("B3 audio RMS in the last 150 ms before the key goes up: %.1f dB with its DC, %.1f dB without\n", lastDb, lastAcDb);
+    CHECK (lastAcDb < -100.0);
     Performance perf;
     addNote (perf, 0.05, 0.5, 48, kVelocity);
     finish (perf);
@@ -899,6 +981,88 @@ TEST_CASE ("Bank B3 Tick Hat: short noise at a high pitch, decay only, mostly ab
     const auto m = measure (audio.play (perf, 0.0), windowOf (0.05, 0.3));
     SAY ("B3 centroid %.0f Hz, %.0f %% of the energy at or above 4 kHz\n", m.centroidHz, 100.0 * shareAbove (m, 4000.0));
     CHECK (shareAbove (m, 4000.0) > 0.5);
+}
+
+TEST_CASE ("Bank B1 to B3 in time: over the eight hits every onset delay is the same within 1 ms, every peak within 1 dB, and the three drums agree within 2 ms",
+           "[bside][bank][program][time]")
+{
+    // 8.21.2 after the owner's audition: the onset of a hit is the first sample at or above -30 dB of that hit's peak, counted from its note-on.
+    const auto perf = phrase (Phrase::Percussion);
+    double meanDelay[3] {};
+    for (int d = 0; d < 3; ++d)
+    {
+        Rig rig (8 + d, false);
+        const auto hits = hitTimings (rig.play (perf, 0.5), perf);
+        REQUIRE (hits.size() == 8);
+        double loD = 1.0e9, hiD = -1.0e9, loP = 1.0e9, hiP = -1.0e9, sum = 0.0;
+        std::string row;
+        for (const auto& h : hits)
+        {
+            REQUIRE (h.onsetMs >= 0.0);
+            loD = std::min (loD, h.onsetMs);
+            hiD = std::max (hiD, h.onsetMs);
+            loP = std::min (loP, h.peakDb);
+            hiP = std::max (hiP, h.peakDb);
+            sum += h.onsetMs;
+            row += juce::String (h.onsetMs, 2).toStdString() + "/" + juce::String (h.peakDb, 2).toStdString() + " ";
+        }
+        meanDelay[d] = sum / 8.0;
+        SAY ("%s hits (onset ms / peak dBFS): %s\n   onset spread %.3f ms, peak spread %.3f dB, mean onset %.3f ms\n", kBank[8 + d].slot, row.c_str(), hiD - loD,
+             hiP - loP, meanDelay[d]);
+        INFO (kBank[8 + d].slot << " " << kBank[8 + d].name << ": hits (onset ms / peak dBFS) " << row);
+        CHECK (hiD - loD <= 1.0);
+        CHECK (hiP - loP <= 1.0);
+    }
+    INFO ("mean onset delays B1 " << meanDelay[0] << " ms, B2 " << meanDelay[1] << " ms, B3 " << meanDelay[2] << " ms");
+    CHECK (std::max ({ meanDelay[0], meanDelay[1], meanDelay[2] }) - std::min ({ meanDelay[0], meanDelay[1], meanDelay[2] }) <= 2.0);
+}
+
+TEST_CASE ("Bank B1 to B3 in time: the measurement sees a late hit and a weak hit", "[bside][bank][program][time]")
+{
+    // The gate above can fail: three synthetic hits (a noise burst each, 0.25 s apart), the second starting 34 ms late, the third 3 dB lower.
+    Performance perf;
+    for (int i = 0; i < 3; ++i)
+        addNote (perf, 0.05 + 0.25 * i, 0.05 + 0.25 * i + 0.2, 48, kVelocity);
+    finish (perf);
+    Stereo s;
+    s.l.assign (static_cast<size_t> (at (1.0)), 0.0f);
+    s.r = s.l;
+    juce::Random rnd (7);
+    const double delayMs[] { 0.5, 34.5, 0.5 };
+    const double gain[] { 0.1, 0.1, 0.1 * std::pow (10.0, -3.0 / 20.0) };
+    for (int h = 0; h < 3; ++h)
+        for (int i = 0; i < at (0.02); ++i)
+        {
+            const auto n = static_cast<size_t> (perf.midi[static_cast<size_t> (2 * h)].pos + at (delayMs[h] / 1000.0) + i);
+            s.l[n] = s.r[n] = static_cast<float> (gain[h] * (2.0 * rnd.nextDouble() - 1.0) * (1.0 - i / static_cast<double> (at (0.02))));
+        }
+    const auto hits = hitTimings (s, perf);
+    REQUIRE (hits.size() == 3);
+    CHECK (hits[1].onsetMs - hits[0].onsetMs > 30.0);   // the late hit is 34 ms later: the 1 ms bound sees it
+    CHECK (hits[0].peakDb - hits[2].peakDb > 2.0);      // the weak hit is about 3 dB down: the 1 dB bound sees it
+    CHECK (std::abs (hits[1].peakDb - hits[0].peakDb) < 1.0); // and a hit that is only late is not weak
+}
+
+TEST_CASE ("Known defect (engine, hidden): a hat with [restart] classic, lead 2 waits 34 ms on a hit whose voice has had its full lead", "[.known-defect]")
+{
+    // Run by name ("Known defect*"); it FAILS on purpose and documents what docs/bside-factory-sounds.md reports. B3 with the restart section it had
+    // before the owner's audition (two oscillators, mode classic, lead 2 of 19.95 ms ticks = 39.9 ms), two hits 0.5 s apart: after the first, the voice
+    // is idle for about 240 ms, five times the lead, so the second note gets the full lead (Part/ProgramEngine: restart state older than the lead,
+    // the envelope timers are NOT cleared) and the envelope still waits 32768 cycles (33.3 ms) before its attack starts.
+    const std::vector<std::string> classic {
+        "bside-table 1", "[restart]", "mode classic", "lead 2", "[wave1]", "    adsr 0 6 0 6, wave noise+gate =E7", "    end",
+        "[wave2]", "    adsr 0 6 0 6, wave noise+gate =E7", "    end",
+    };
+    auto rig = rigWithTable (10, classic);
+    rig->set ("lower.osc3.wave", 0.0f);
+    Performance perf;
+    addNote (perf, 0.05, 0.25, 48, kVelocity);
+    addNote (perf, 0.55, 0.75, 48, kVelocity);
+    finish (perf);
+    const auto hits = hitTimings (rig->play (perf, 0.5), perf);
+    REQUIRE (hits.size() == 2);
+    std::printf ("known defect: onset of hit 1 %.2f ms, onset of hit 2 %.2f ms\n", hits[0].onsetMs, hits[1].onsetMs);
+    CHECK (std::abs (hits[1].onsetMs - hits[0].onsetMs) <= 1.0);
 }
 
 TEST_CASE ("Bank B4 Slow Saw Pad: Model A, three detuned sawtooths through the low-pass with resonance, a slow attack, Per Note", "[bside][bank][program]")

@@ -66,7 +66,7 @@ TEST_CASE ("Render bside_bank audition and measurements", "[.render]")
     constexpr double kAuditionTail = 4.0, kGap = 0.4;
     std::vector<float> allL, allR;
     juce::String index, table;
-    table << "slot\tname\tcategory\tgroup\tmix_level_dB\tpeak_dBFS\trms_dB\tdev_dB\tcentroid_Hz\tchord_peak_dBFS\tchord_rms_dB\t"
+    table << "slot\tname\tcategory\tgroup\toffset_dB\tmix_level_dB\tpeak_dBFS\trms_dB\tdev_dB\tcentroid_Hz\tchord_peak_dBFS\tchord_rms_dB\t"
              "reported_tail_s\tlim_on_peak_dBFS\tlim_on_chord_peak_dBFS";
     for (int b = 0; b < kBands; ++b)
         table << "\tband" << static_cast<int> (kBandEdges[b]) << "_dB";
@@ -77,6 +77,7 @@ TEST_CASE ("Render bside_bank audition and measurements", "[.render]")
         juce::String line;
         Group group;
         double rms, peak;
+        int slot;
     };
     std::vector<Row> rows;
     std::map<Group, std::vector<double>> byGroup;
@@ -111,17 +112,17 @@ TEST_CASE ("Render bside_bank audition and measurements", "[.render]")
         const double level = std::max (rig.get ("lower.mix.level"), rig.get ("upper.mix.level"));
         juce::String line;
         line << pos << "\t" << prog.meta.name << "\t" << prog.meta.category << "\t" << groupName (info.group) << "\t"
-             << fmt (rig.get ("lower.mix.level"), 1) << "/" << fmt (rig.get ("upper.mix.level"), 1) << "\t" << fmt (m.peakDb) << "\t"
+             << fmt (levelOffsetDb (slot), 1) << "\t" << fmt (rig.get ("lower.mix.level"), 1) << "/" << fmt (rig.get ("upper.mix.level"), 1) << "\t" << fmt (m.peakDb) << "\t"
              << fmt (m.rmsDb) << "\t%DEV%\t" << fmt (m.centroidHz, 0) << "\t" << fmt (cm.peakDb) << "\t" << fmt (cm.rmsDb) << "\t"
              << fmt (reported) << "\t" << fmt (mOn.peakDb) << "\t" << fmt (cmOn.peakDb);
         for (int b = 0; b < kBands; ++b)
             line << "\t" << fmt (m.bandDb[b], 1);
         line << "\n";
         (void) level;
-        rows.push_back ({ line, info.group, m.rmsDb, m.peakDb });
-        if (info.group != Group::Reference)
+        rows.push_back ({ line, info.group, m.rmsDb, m.peakDb, slot });
+        if (info.group != Group::Reference && ! hasLevelOffset (slot)) // a group's median is over the programs with offset 0
             byGroup[info.group].push_back (m.rmsDb);
-        if (info.group == Group::Sustained)
+        if (info.group == Group::Sustained && ! hasLevelOffset (slot))
             sustainedPeaks.push_back (m.peakDb);
         CHECK (m.finite);
 
@@ -158,7 +159,10 @@ TEST_CASE ("Render bside_bank audition and measurements", "[.render]")
     const double peakTarget = sustainedPeaks.empty() ? 0.0 : medianOf (sustainedPeaks);
     for (const auto& row : rows)
     {
-        const double dev = row.group == Group::Reference ? 0.0 : (judgedByPeak (row.group) ? row.peak - peakTarget : row.rms - median[row.group]);
+        // the deviation from the group's target plus the program's offset (8.21.2 after the owner's audition)
+        const double dev = row.group == Group::Reference ? 0.0
+                                                          : (judgedByPeak (row.group) ? row.peak - (peakTarget + levelOffsetDb (row.slot))
+                                                                                      : row.rms - (median[row.group] + levelOffsetDb (row.slot)));
         table << row.line.replace ("%DEV%", fmt (dev));
     }
     for (const auto& [g, med] : median)

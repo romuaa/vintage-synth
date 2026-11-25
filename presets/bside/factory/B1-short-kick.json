@@ -12,7 +12,7 @@
     "osc2.wave": 1,
     "osc2.filter": 0,
     "tick.mult": 2,
-    "mix.level": 1.9
+    "mix.level": 4.8
   },
   "upper": {},
   "tables": {
@@ -23,21 +23,25 @@
       "lead 2",
       "[wave1]",
       "    adsr 0 8 0 8, wave noise+gate =C7",
-      "    wave tri+gate =64",
       "    wave tri+gate =55",
-      "    wave tri+gate =48",
       "    wave tri+gate =43",
-      "    wave tri+gate =40",
-      "    wave tri+gate =38 ticks 255",
+      "    wave tri+gate =36",
+      "    wave tri+gate =33",
+      "    wave tri+gate =31",
+      "    wave tri+gate =29",
+      "    wave tri+gate =28",
+      "    wave tri+gate =27 ticks 255",
       "    end",
       "[wave2]",
       "    adsr 0 8 0 8, wave noise+gate =C7",
-      "    wave tri+gate =64",
       "    wave tri+gate =55",
-      "    wave tri+gate =48",
       "    wave tri+gate =43",
-      "    wave tri+gate =40",
-      "    wave tri+gate =38 ticks 255",
+      "    wave tri+gate =36",
+      "    wave tri+gate =33",
+      "    wave tri+gate =31",
+      "    wave tri+gate =29",
+      "    wave tri+gate =28",
+      "    wave tri+gate =27 ticks 255",
       "    end"
     ]
   }
