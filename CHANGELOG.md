@@ -10,14 +10,20 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   after 8 ticks (159.6 ms, was 299.3 ms) at 8.35 Hz (was 12.53 Hz); A6 Blip Bass's octave blip lasts two ticks
   (39.0 ms, was 19.0 ms); B1 Short Kick falls to 38.9 Hz over eight ticks (more of its energy below 125 Hz: -2.1 dB
   against -4.2 dB); B3 Tick Hat has three oscillators at `=E7` through a high-pass at 500 with resonance 2, no
-  restart section; B2 Dry Snare has no restart section; B4 Slow Saw Pad is 3 dB louder. Figures before and after in
+  restart section; B2 Dry Snare keeps its drafted restart section (`classic`, lead 2); B4 Slow Saw Pad is 3 dB louder. Figures before and after in
   `docs/bside-factory-sounds.md`.
 - **Level offsets:** the level rule takes a per-program offset from its group's target (B1 +3 dB, B3 +5 dB, B4 +3 dB;
   a group's median over the programs with offset 0). `mix.level` is still -24 to +6 dB.
 - **Percussion in time (new gate):** over the eight hits of the percussion phrase every onset delay is the same within
   1 ms, every peak within 1 dB, and the three drums' delays agree within 2 ms (B1 to B3: 0.54 to 0.90 ms, spread 0.62
-  to 0.84 dB; B3 had hits 33.9 ms late on every second hit). The cause is an envelope wait in the engine's restart
-  handling, reported with a hidden failing test; the programs avoid it by content.
+  to 0.84 dB; B3 had hits 33.9 ms late on every second hit).
+- **Clean never waits (engine fix):** under the Clean restart policy a note on a voice that had its full lead could
+  start 33.3 ms late (32 768 cycles): the idle restart state keeps the envelope's rate counter looping, and a gate edge
+  that met it at its match stepped it past an attack-0 match. Clean now clears the envelope counters of all three
+  oscillators at every note start; Precondition and Authentic are unchanged. New gate: restart modes off, classic and
+  phase, leads 1 to 8, hit spacings 0.125 to 1.0 s, both models: every onset within 1 ms of the first (was up to
+  33.25 ms). The former hidden known-defect test is a default test; B2 at 0.35, 0.5 and 0.7 s is within 0.19 ms (was
+  33.3 ms). Twelve model-derived engine write traces gain one direct-clear marker each; no register write moved.
 - The six render goldens are regenerated (A2, B2 and B4 changed; A5, A7 and B7 are bit-identical).
 
 ### B-Side S4a: the chip part plays in the plugin (2026-11-24)

@@ -40,7 +40,7 @@ table rows); "Listen for" is an instruction to the listener, not a claim. Parame
 | A7 | Major Steps | Arpeggio | W | Chip arpeggio in the wave lane (the shell's arpeggiator is off): one key steps +0 +4 +7 +12 +7 +4 semitones, one pitch per tick, repeating; tick rate Tempo, 12 ticks per beat, multiplier 1; pulse width 25 %. The note-off clears the gate and ends the lane | Hold C4 for four seconds, then change `arp.tempo` and play it again |
 | A8 | Minor Steps | Arpeggio | W | The minor counterpart: +0 +3 +7 +10 +12 +10 +7 +3, tick multiplier 2 (twice the rate of A7), and the pulse lane ping-pongs the width between 640 and 3200 at 128 per tick | Hold C4 for four seconds and compare the pace and the width movement with A7 |
 | B1 | Short Kick | Percussion | W | One noise tick (tick 0, `=C7`) and then a triangle whose pitch falls by table `=55 =43 =36 =33 =31 =29 =28 =27` over eight ticks of 9.98 ms (tick multiplier 2) to 38.9 Hz; absolute pitches, so every key plays the same drum; decay 8, sustain 0; oscillator 2 doubles oscillator 1 in phase (the level) | Play three different keys and compare the drum |
-| B2 | Dry Snare | Percussion | W | Noise and pulse alternate by table (`noise =D7`, `pulse =G3`, `noise =C7`, `pulse =E3`, then `noise =B6` held, the gate cleared at tick 10), pulse width 1536, tick multiplier 2; absolute pitches; oscillator 2 doubles oscillator 1 in phase (the level); the restart section is `mode off` (see "After the owner's audition") | Play three different keys and compare the drum |
+| B2 | Dry Snare | Percussion | W | Noise and pulse alternate by table (`noise =D7`, `pulse =G3`, `noise =C7`, `pulse =E3`, then `noise =B6` held, the gate cleared at tick 10), pulse width 1536, tick multiplier 2; absolute pitches; oscillator 2 doubles oscillator 1 in phase (the level); the restart section is `mode classic`, `lead 2`, as drafted (restored once Clean stopped waiting, see "Percussion in time") | Play three different keys and compare the drum |
 | B3 | Tick Hat | Percussion | W | Noise at `=E7` through the high-pass (cutoff 500, resonance 2), decay 6, sustain 0: decay only; oscillators 2 and 3 double oscillator 1 in phase, also through the high-pass (the level); the restart section is `mode off` (see "After the owner's audition") | Play eight hits and follow how long each one rings |
 | B4 | Slow Saw Pad | Pad | W | Model A, Per Note: three sawtooths detuned by -14, 0 and +14 cents through the low-pass (cutoff 900, resonance 5); attack 9, sustain 12, release 9 | Play a four-note chord and follow how the sound arrives |
 | B5 | Shared Chord Pad | Pad | W | Model A, Shared: a sawtooth and a 35 % pulse (+7 cents) of every note into one low-pass (cutoff 1100, resonance 6); attack 8, sustain 12, release 9 | Play the four-note chord in this program and in B4 and compare how the chord sounds against the single notes |
@@ -305,27 +305,61 @@ Mean onset delays after: B1 0.59 ms, B2 0.64 ms, B3 0.70 ms (the three drums wit
 onset is 0.90 ms (B3's first hit). These are the times from the note-on to the point where a hit reaches -30 dB
 of its peak (attack 0).
 
-**Diagnosis of B3.** Hits 2, 4, 6 and 8 began 33.9 ms after their note-on, hits 1, 3, 5, 7 at 0.7 to 1.0 ms:
-the envelope counter read back every millisecond stayed at 0 for 32 ms with the gate set and then rose: 33.3 ms
-is 32 768 cycles, the wait of the envelope's rate counter. The hits that waited had come to the note-on 42 ms
-after their voice went idle (idle at 258 ms, note-on at 300 ms), which is more than the full lead of `[restart]
-mode classic, lead 2` (2 ticks of 19.95 ms = 39.9 ms); as `ProgramEngine::noteOn` reads, a note that has had the
-full lead does not clear the envelope timers under Clean (8.6.4) and a note that has not does clear them, so the
-hits with the full lead waited and the others did not. The lead is not the way out: with `lead 4` (79.9 ms) the
-same 33.9 ms wait appears on a hit that follows the previous one by 0.5 s (second hit) and by 0.7 s (fourth hit)
-with the notes held 0.2 s (B3 with two oscillators), so a restart state that is older than the lead does not
-leave the envelope ready to start. The first hit of the old B3 (-24.02 dBFS) equals every hit when the hits are
-1.0 s apart (the voice is back at its power-on state), 3 dB below the hits that follow it in the phrase. B2 (tick multiplier 2, lead 2 = 20 ms) shows the same wait on a hit at spacings of
-0.35, 0.5 and 0.7 s (33.83 ms), and B1 did not at any spacing from 0.125 to 1.0 s. The behaviour belongs to the
-engine's restart and envelope handling, not to a value in a table or a parameter; it is reported to the
-orchestrator with a hidden failing test (`Known defect (engine, hidden)` in `BankTests.cpp`: B3's previous
-restart section, two hits 0.5 s apart, the second 33.0 ms later than the first). The engine is not changed here.
+**Diagnosis of B3 (the audition round).** Hits 2, 4, 6 and 8 began 33.9 ms after their note-on, hits 1, 3, 5,
+7 at 0.7 to 1.0 ms: the envelope counter read back every millisecond stayed at 0 for 32 ms with the gate set and
+then rose: 33.3 ms is 32 768 cycles, the wait of the envelope's rate counter. The hits that waited had come to the
+note-on 42 ms after their voice went idle (idle at 258 ms, note-on at 300 ms), more than the full lead of
+`[restart] mode classic, lead 2` (2 ticks of 19.95 ms = 39.9 ms), and `ProgramEngine::noteOn` cleared the envelope
+counters under Clean only for a note without the full lead. With `lead 4` (79.9 ms) the same wait appeared on a hit
+0.5 s (second hit) and 0.7 s (fourth hit) after the previous one (notes held 0.2 s, B3 with two oscillators). B2
+(tick multiplier 2, lead 2 = 20 ms) showed it at spacings of 0.35, 0.5 and 0.7 s; B1 at no spacing from 0.125 to
+1.0 s. The first hit of the old B3 (-24.02 dBFS) equals every hit when the hits are 1.0 s apart (the voice is back
+at its power-on state), 3 dB below the hits that follow it in the phrase. For the audition B2 and B3 were given
+`[restart]` `mode off` (a note on a voice with no restart state was always cleared).
 
-**Content that avoids it: `[restart]` `mode off` (B3 and B2).** With no restart section no voice is left in a
-restart state, so every note on a voice is a note without the full lead, which under Clean clears the envelope
-timers: B3 at spacings of 0.125, 0.3, 0.35, 0.5, 0.7 and 1.0 s has every onset within 0.9 ms; B2 (restart section removed too, the gate phrase's figures are unchanged) within 0.75 ms
-at the same spacings. Under the Precondition and Authentic policies the timers are not cleared by a note (8.6.4);
-the drums were not measured under them.
+**The mechanism, proven in the engine (S4b, after the audition).** The round above inferred that the restart
+state, once older than the lead, should leave the envelope ready and that only the missing clear was at fault. An
+engine-and-chip test (`ProgramEngineChipTests.cpp`, "Clean never waits: the mechanism") shows why the lead cannot
+help: the restart state's `sr 00` (release rate 0, match position 8) keeps the idle voice's rate counter looping over
+positions 0 to 8 for as long as it is idle (a ten-cycle loop: 8 is held one more cycle with its reset pending), so
+an old restart state is not a fixed state. The note's gate edge starts the envelope's two-step phase pipeline,
+whose first step sets the compare to the **decay** match (decay 6: 266) and whose second sets the attack match
+(attack 0: 8). When the note's cycle finds the counter AT 8 with its reset not yet pending, the first step moves it
+to 9 under the decay compare, the second sets the compare to 8 with the counter at 10, and the counter runs through
+all 32 767 positions before it meets 8 again: the attack's first step comes 32 771 cycles after the note instead of
+fewer than 16 (12 with the clear; both models, leads 2, 4 and 8 alike; one phase in ten). It needs an attack-0 tone (a longer attack's
+match is above the loop) whose decay is not 0. The writes that matter are the note's gate (its pipeline), on the
+note's cycle; the counter's phase at that cycle depends only on how long the voice has been idle, which the spacing
+of the hits sets. A clear on the note's cycle before tick 0's writes therefore cures it (the counter starts at 0
+and is at 2 when the attack match arrives): the contract's remedy is right, the inferred cause ("the lead was
+thought to suffice") is what was wrong.
+
+**The fix: Clean never waits (8.21.2).** Under Clean the engine clears the envelope counters of all three
+oscillators at every note start, full lead or not (`ProgramEngine::noteOn`; Precondition and Authentic unchanged).
+The gate (`Clean never waits: every hit starts as soon as the first ...`, `bside_unit`, engine and chip, digital
+only, about 2.8 s): restart modes off, classic and phase, leads 1 to 8, spacings 0.125, 0.25, 0.35, 0.5, 0.7 and
+1.0 s, Models A and B, two attack-0 tones (B3's hat, a host-envelope pulse), five hits each (576 cases): every
+onset within 1 ms of the first hit's. Before the fix the largest difference was 33.25 ms (64 cases: the hat at
+0.7 and 1.0 s in modes classic and phase); after it 0.10 ms. The former hidden test (B3's old restart section, two
+hits 0.5 s apart) is now a default test: 33.04 ms before, 0.90 / 0.67 ms after.
+
+**B2 back to its drafted restart section** (`mode classic`, `lead 2`, as on commit 7d78b61; the owner kept it as
+drafted). Six hits held 0.2 s at each spacing, through the processor (`Bank B2 in time at wider spacings`, a
+default test), onset ms per hit:
+
+| B2, spacing | Hit 1 | Hit 2 | Hit 3 | Hit 4 | Hit 5 | Hit 6 | Largest difference |
+|---|---|---|---|---|---|---|---|
+| 0.35 s, engine before the fix | 0.56 | 0.65 | 0.65 | **33.83** | 0.65 | 0.69 | 33.27 ms |
+| 0.35 s, after | 0.56 | 0.65 | 0.65 | 0.58 | 0.65 | 0.69 | 0.12 ms |
+| 0.5 s, engine before the fix | 0.56 | 0.71 | **33.83** | 0.67 | 0.65 | 0.69 | 33.27 ms |
+| 0.5 s, after | 0.56 | 0.71 | 0.73 | 0.67 | 0.65 | 0.69 | 0.17 ms |
+| 0.7 s, engine before the fix | 0.56 | **33.81** | 0.67 | 0.60 | 0.75 | 0.69 | 33.25 ms |
+| 0.7 s, after | 0.56 | 0.65 | 0.67 | 0.62 | 0.75 | 0.69 | 0.19 ms |
+
+The percussion phrase's B2 line above is unchanged by the restored section (the same eight onsets and peaks), and
+so is B2's render golden (every feature 0.000 from the reference). B3 keeps `mode off` (the owner's audition
+verdict). Under Precondition and Authentic a note does not clear the counters (8.6.4), so the wait can still
+happen there; the drums were not measured under them.
 
 **Peaks.** The peak of a noise hit depends on which values of the noise register fall in its loudest few
 milliseconds, so it varies from hit to hit by an amount that depends on the content (B3 with `=C7`, cutoff 1500,
@@ -480,6 +514,11 @@ before this round): the level test 12.0 s, the percussion-in-time gate 0.36 s, t
 under 0.01 s, the rewritten B1 test 0.63 s (it renders the earlier table too), B3 0.21 s. The hidden known-defect
 test and the audition render are not in the default run.
 
+Clean never waits (S4b, after the audition; one binary, run with and without the new cases, `time`, macOS arm64
+Release): `BSideTests` 94.9 s without and 96.5 s with them (the hat test, formerly hidden, 0.18 s; B2 at three
+spacings 0.43 s); `bside_unit` 256.0 s without and 255.4 s with them (the noise of the machine; `--durations yes`
+gives the gate 2.83 s and the mechanism test 0.04 s). The default B-Side run grows by about 3.5 s.
+
 ## Deliberate exclusions
 
 - The shell's arpeggiator and step sequencer are off in every program: A7 and A8 show the chip technique (the
@@ -506,8 +545,8 @@ Computed from the files (each row: programs that use the feature in a part that 
 | Wave lane pitch rows | A2 A3 A4 A6 A7 A8 B1 B2 B3 B7 B8 |
 | Wave lane absolute pitch | B1 B2 B3 |
 | Filter lane (sweep, set) | A5 B6 B8 |
-| Hard restart section | B1 |
-| Restart section with `mode off` (no restart state) | B2 B3 |
+| Hard restart section | B1 B2 |
+| Restart section with `mode off` (no restart state) | B3 |
 | Tick rate Tempo | A7 A8 |
 | Tick multiplier above 1 | A8 B1 B2 |
 | Two oscillators doubled in phase (the level) | B1 B2 |
