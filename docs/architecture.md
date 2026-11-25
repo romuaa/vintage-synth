@@ -1249,6 +1249,7 @@ Per part (63), N = 1, 2, 3, the three `oscN.*` blocks in order:
 Global, appended last: `chip.clock` (Chip Clock: 50 Hz system, 60 Hz system; default 50 Hz system), S2.
 
 **Host parameter count after S2: 75 + 2 × 63 + 1 = 202.**
+**After S4b: 75 + 2 × 64 + 1 = 204** (`mix.level` appended per part, 8.21.2).
 
 - **Automatable:** every host parameter. **Macros over table data:** `tick.*` (speed of every
   lane), `macro.pw_offset`, `macro.cutoff_offset` (added after the lane value, smoothed),
@@ -2679,6 +2680,11 @@ marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
     that its other half stays documented: **a waveform parameter changed on a held note is a
     register write and steps the output, as on the chip;** that is a property, stated in
     `docs/bside-factory-sounds.md`, not a defect.
+  - **An apply that changes only the table (review finding D1).** When the new program's
+    parameters equal the ones in force, nothing is faded: the shell releases the held notes
+    as for any preset change, they end in the old table's release, and the new table plays
+    from the next note. The step rule holds for it as well (tested). The fade above is for
+    applies whose parameters differ.
   - **A3** steps oscillator 2's pitch row by row in its wave lane; no macro moves a lane's
     pitch (a wave-lane pitch sweep scaled by `macro.sweep_depth` does not exist and is not
     added in S4).
