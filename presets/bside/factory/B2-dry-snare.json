@@ -19,7 +19,8 @@
     "lower": [
       "bside-table 1",
       "[restart]",
-      "mode off",
+      "mode classic",
+      "lead 2",
       "[wave1]",
       "    adsr 0 7 0 7, wave noise+gate =D7",
       "    wave pulse+gate =G3",
