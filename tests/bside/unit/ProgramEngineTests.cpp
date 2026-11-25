@@ -829,13 +829,15 @@ TEST_CASE ("engine: a preconditioned idle voice has the restart state in place; 
         CHECK (writesText (rec) == at (0, kR9) + at (T (3), kWave1));
         CHECK (directKinds (rec).empty());
     }
-    SECTION ("Clean with the full lead: no direct clear")
+    SECTION ("Clean with the full lead: the same writes, and the direct clear all the same (8.21.2, Clean never waits)")
     {
         auto s = scenario (restartTable ("classic"), T (3), RestartPolicy::clean);
         s.events = { idleAt (0, RestartPolicy::clean), noteOn (T (2), RestartPolicy::clean) }; // exactly the lead
         const auto rec = play (s);
         CHECK (writesText (rec) == at (0, kR9) + at (T (2), kWave1));
-        CHECK (directKinds (rec).empty());
+        REQUIRE (directKinds (rec).size() == 1);
+        CHECK (rec.log()[rec.log().size() - 4].kind == pe::RegisterRecorder::Kind::clearEnvelopeTimers); // before tick 0's three writes
+        CHECK (rec.log()[rec.log().size() - 4].cycle == T (2));
     }
     SECTION ("Clean sooner than the lead: the rate counters are cleared directly; Precondition leaves them")
     {

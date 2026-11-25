@@ -199,7 +199,6 @@ private:
     bool restartActive = false;   // this note uses the restart section (mode on and policy not Authentic)
     // Restart state of an idle voice (Precondition, Clean)
     bool inRestartState = false;
-    std::uint64_t restartCycle = 0;
     program::Restart restartState;
 };
 } // namespace vs::bside::engine

@@ -1043,12 +1043,13 @@ TEST_CASE ("Bank B1 to B3 in time: the measurement sees a late hit and a weak hi
     CHECK (std::abs (hits[1].peakDb - hits[0].peakDb) < 1.0); // and a hit that is only late is not weak
 }
 
-TEST_CASE ("Known defect (engine, hidden): a hat with [restart] classic, lead 2 waits 34 ms on a hit whose voice has had its full lead", "[.known-defect]")
+TEST_CASE ("Bank, Clean never waits: a hat with [restart] classic, lead 2 starts on time on a hit whose voice has had its full lead", "[bside][bank][program][time]")
 {
-    // Run by name ("Known defect*"); it FAILS on purpose and documents what docs/bside-factory-sounds.md reports. B3 with the restart section it had
-    // before the owner's audition (two oscillators, mode classic, lead 2 of 19.95 ms ticks = 39.9 ms), two hits 0.5 s apart: after the first, the voice
-    // is idle for about 240 ms, five times the lead, so the second note gets the full lead (Part/ProgramEngine: restart state older than the lead,
-    // the envelope timers are NOT cleared) and the envelope still waits 32768 cycles (33.3 ms) before its attack starts.
+    // Was the hidden known defect of the owner's audition round (8.21.2 "Clean never waits"). B3 with the restart section it had before the
+    // owner's audition (two oscillators, mode classic, lead 2 of 19.95 ms ticks = 39.9 ms), two hits 0.5 s apart: after the first, the voice is
+    // idle for about 240 ms, five times the lead, so the second note gets the full lead. Before the fix Clean cleared the envelope counters only
+    // without the full lead, and this hit waited 32768 cycles (33.0 ms here): the idle counter loops over 0..8 in the restart state, and a gate
+    // edge that finds it at 8 steps it past the attack's match (tests/bside/unit/ProgramEngineChipTests.cpp, "Clean never waits: the mechanism").
     const std::vector<std::string> classic {
         "bside-table 1", "[restart]", "mode classic", "lead 2", "[wave1]", "    adsr 0 6 0 6, wave noise+gate =E7", "    end",
         "[wave2]", "    adsr 0 6 0 6, wave noise+gate =E7", "    end",
@@ -1061,8 +1062,38 @@ TEST_CASE ("Known defect (engine, hidden): a hat with [restart] classic, lead 2 
     finish (perf);
     const auto hits = hitTimings (rig->play (perf, 0.5), perf);
     REQUIRE (hits.size() == 2);
-    std::printf ("known defect: onset of hit 1 %.2f ms, onset of hit 2 %.2f ms\n", hits[0].onsetMs, hits[1].onsetMs);
+    SAY ("hat, classic, lead 2: onset of hit 1 %.2f ms, onset of hit 2 %.2f ms\n", hits[0].onsetMs, hits[1].onsetMs);
     CHECK (std::abs (hits[1].onsetMs - hits[0].onsetMs) <= 1.0);
+}
+
+TEST_CASE ("Bank B2 in time at wider spacings: with its restart section (classic, lead 2), every onset is within 1 ms of the first at 0.35, 0.5 and 0.7 s",
+           "[bside][bank][program][time]")
+{
+    // The spacings at which B2 waited 33 ms before Clean cleared the envelope counters at every note start (docs/bside-factory-sounds.md).
+    for (const double spacing : { 0.35, 0.5, 0.7 })
+    {
+        Performance perf;
+        for (int i = 0; i < 6; ++i)
+            addNote (perf, 0.05 + spacing * i, 0.05 + spacing * i + 0.2, 48, kVelocity);
+        finish (perf);
+        Rig rig (9, false);
+        const auto hits = hitTimings (rig.play (perf, 0.5), perf);
+        REQUIRE (hits.size() == 6);
+        std::string row;
+        double spread = 0.0;
+        for (const auto& h : hits)
+        {
+            row += juce::String (h.onsetMs, 2).toStdString() + " ";
+            spread = std::max (spread, std::abs (h.onsetMs - hits[0].onsetMs));
+        }
+        SAY ("B2 at %.2f s: onsets (ms) %s, largest difference from the first %.2f ms\n", spacing, row.c_str(), spread);
+        INFO ("B2 at " << spacing << " s: onsets (ms) " << row);
+        for (const auto& h : hits)
+        {
+            CHECK (h.onsetMs >= 0.0);
+            CHECK (std::abs (h.onsetMs - hits[0].onsetMs) <= 1.0);
+        }
+    }
 }
 
 TEST_CASE ("Bank B4 Slow Saw Pad: Model A, three detuned sawtooths through the low-pass with resonance, a slow attack, Per Note", "[bside][bank][program]")
