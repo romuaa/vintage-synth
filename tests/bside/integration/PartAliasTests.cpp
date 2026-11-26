@@ -99,7 +99,7 @@ std::vector<Row> rows (const std::vector<HostConfig>& hosts)
 }
 } // namespace
 
-TEST_CASE ("Part alias: single notes after the decimator meet the budgets of 8.4.5 (reduced set: 48 kHz x2, 96 kHz x1)", "[bside][part][alias]")
+TEST_CASE ("Part alias: single notes after the decimator meet the budgets of 8.4.5 (reduced set: 48 kHz x2, 96 kHz x1)", "[bside][part][alias][slow]")
 {
     Worst w;
     for (const auto& r : rows ({ { 48000.0, 2 }, { 96000.0, 1 } }))
@@ -108,7 +108,7 @@ TEST_CASE ("Part alias: single notes after the decimator meet the budgets of 8.4
     CHECK (w.rows == 2 * 2 * 2 * 2 * 3);
 }
 
-TEST_CASE ("Part alias: narrow Model B pulses after the decimator meet -100 dB exactly, 1 chip and 16 in unison (reduced set)", "[bside][part][alias]")
+TEST_CASE ("Part alias: narrow Model B pulses after the decimator meet -100 dB exactly, 1 chip and 16 in unison (reduced set)", "[bside][part][alias][slow]")
 {
     Worst w;
     for (const float width : { 1.0f, 4095.0f })

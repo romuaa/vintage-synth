@@ -372,7 +372,7 @@ TEST_CASE ("B-Side tables: line, byte and shape limits of one table", "[bside][t
     CHECK_FALSE (parseProgram (schema, "{\"format\":1,\"instrument\":\"b-side\",\"kind\":\"program\",\"tables\":{\"lower\":[\"bside-table 1\\n# x\"]}}").ok);
 }
 
-TEST_CASE ("B-Side tables: the largest legitimate bank fits the caps", "[bside][tables][presets][files]")
+TEST_CASE ("B-Side tables: the largest legitimate bank fits the caps", "[bside][tables][presets][files][slow][serial]")
 {
     Rig rig;
     const auto& schema = rig.schema();
@@ -634,7 +634,7 @@ TEST_CASE ("B-Side tables: error messages are valid UTF-8, cut between character
     }
 }
 
-TEST_CASE ("B-Side tables: files over the caps, and hostile files, are refused with bounded time and memory", "[bside][tables][presets][files][security]")
+TEST_CASE ("B-Side tables: files over the caps, and hostile files, are refused with bounded time and memory", "[bside][tables][presets][files][security][serial]")
 {
     Rig rig;
     const auto& schema = rig.schema();
@@ -774,7 +774,7 @@ TEST_CASE ("B-Side tables: the session carries them verbatim and restores them w
     CHECK (stateXmlAfter->getChildByName ("Tables")->getStringAttribute ("lower").isEmpty());
 }
 
-TEST_CASE ("B-Side tables: a malformed table in a session gives that part an empty table and an error", "[bside][tables][state][security]")
+TEST_CASE ("B-Side tables: a malformed table in a session gives that part an empty table and an error", "[bside][tables][state][security][slow][serial]")
 {
     Rig a, b;
     a.presets().applyProgram (programWith (a.schema(), kTableA, kTableB), 0, false);
@@ -840,7 +840,7 @@ TEST_CASE ("B-Side tables: a malformed table in a session gives that part an emp
     // branch is reached through a ValueTree in tests/preset_unit/PresetTableManagerTests.cpp.)
 }
 
-TEST_CASE ("B-Side tables: duplicate Tables and Preset children of a hostile session are all removed", "[bside][tables][state][security]")
+TEST_CASE ("B-Side tables: duplicate Tables and Preset children of a hostile session are all removed", "[bside][tables][state][security][serial]")
 {
     Rig a, b;
     a.presets().applyProgram (programWith (a.schema(), kTableA, kTableB), 2, false);
@@ -888,7 +888,7 @@ TEST_CASE ("B-Side tables: duplicate Tables and Preset children of a hostile ses
     CHECK (b.compiled (1) == prog::emptyProgram()); // its missing "upper" means no table
 }
 
-TEST_CASE ("B-Side tables: parameters and tables of an apply are one consistent set for the audio thread", "[bside][tables][threads][handover]")
+TEST_CASE ("B-Side tables: parameters and tables of an apply are one consistent set for the audio thread", "[bside][tables][threads][handover][slow][serial]")
 {
     // The reader does what a block does (presets/ApplyGate.h, program/ProgramHandover.h): read the
     // parameters and the table inside one seqlock window, and use them only if the window held. The
@@ -975,7 +975,7 @@ TEST_CASE ("B-Side tables: parameters and tables of an apply are one consistent 
     CHECK (gate.holdDepth() == 0);
 }
 
-TEST_CASE ("B-Side tables: two parts in one seqlock window commit both tables or neither", "[bside][tables][threads][handover]")
+TEST_CASE ("B-Side tables: two parts in one seqlock window commit both tables or neither", "[bside][tables][threads][handover][slow][serial]")
 {
     // The protocol of program/ProgramHandover.h for two parts: claim both, then decide once. Each program
     // has the same tag in the split point, the Lower table and the Upper table (the Upper one mirrored), so a
@@ -1056,7 +1056,7 @@ TEST_CASE ("B-Side tables: two parts in one seqlock window commit both tables or
     CHECK (aborted.load() > 0); // the abort path of both parts really ran
 }
 
-TEST_CASE ("B-Side tables: applying programs and restoring states with tables while the audio thread renders", "[bside][tables][threads][realtime]")
+TEST_CASE ("B-Side tables: applying programs and restoring states with tables while the audio thread renders", "[bside][tables][threads][realtime][slow][serial]")
 {
     Rig rig;
     rig.proc.setNonRealtime (false);

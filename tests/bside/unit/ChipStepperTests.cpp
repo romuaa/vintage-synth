@@ -888,7 +888,7 @@ TEST_CASE ("stepper: the five formerly ambiguous cases follow 8.15 (regression s
         }
 }
 
-TEST_CASE ("chip digital core equals the naive per-cycle stepper (10^7 cycles per model)", "[bside][chip][stepper]")
+TEST_CASE ("chip digital core equals the naive per-cycle stepper (10^7 cycles per model)", "[bside][chip][stepper][slow]")
 {
     runModel (Model::A, 10'000'000, 0x5eed0001, true);
     runModel (Model::B, 10'000'000, 0x5eed0002, true);

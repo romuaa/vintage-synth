@@ -189,7 +189,7 @@ const char* modeName (int mode)
 }
 } // namespace
 
-TEST_CASE ("filter: finite and bounded at every setting and internal rate, with full-scale noise", "[filter][stability]")
+TEST_CASE ("filter: finite and bounded at every setting and internal rate, with full-scale noise", "[filter][stability][slow]")
 {
     // every resonance, every mode combination, cutoffs from 0 to 2047 (Model A: across its converter's steps),
     // variation 0 / 0.5 / 1, every internal rate of 4.4: 3000 samples of full-scale noise each. Bound: 60 render
@@ -261,7 +261,7 @@ TEST_CASE ("filter and output stage: a cutoff, resonance, mode or routing write 
         }
 }
 
-TEST_CASE ("filter: after a loud input, silence decays below -120 dB with no limit cycle and no denormal", "[filter][stability]")
+TEST_CASE ("filter: after a loud input, silence decays below -120 dB with no limit cycle and no denormal", "[filter][stability][slow]")
 {
     // 0.1 s of full-scale noise, then a constant input (0, or the voices' DC): the output must settle on the
     // constant's static output (Filter::staticOutput) to within 1e-6 (-120 dB re 1); no output sample on the way
@@ -690,18 +690,18 @@ void rateGate (Model m)
 } // namespace
 
 TEST_CASE ("filter: Model B's response does not depend on the internal rate: within 0.5 dB and 30 degrees of the analog prototype (8.19.3)",
-           "[filter][rate]")
+           "[filter][rate][slow]")
 {
     rateGate (Model::B);
 }
 
 TEST_CASE ("filter: Model A's linear response does not depend on the internal rate: within 0.5 dB and 30 degrees of the analog prototype (8.19.3)",
-           "[filter][rate]")
+           "[filter][rate][slow]")
 {
     rateGate (Model::A);
 }
 
-TEST_CASE ("filter: the linear part the rate gate measures is the class's own response (impulse at sample points)", "[filter][rate]")
+TEST_CASE ("filter: the linear part the rate gate measures is the class's own response (impulse at sample points)", "[filter][rate][slow]")
 {
     // Filter::response (linearPart ()) and (linearPartWithCutoff (FC)) against the DFT of the class's impulse response
     // through process and processWithCutoff (amplitude 1e-6, where Model A's static functions are linear to 1e-7), at
@@ -748,7 +748,7 @@ TEST_CASE ("filter: the linear part the rate gate measures is the class's own re
     WARN ("largest relative difference between the closed-form response and the impulse response: " << worst << " (allowed 1e-4)");
 }
 
-TEST_CASE ("filter: Model A's processWithCutoff follows the mapping at and around the converter's boundaries (8.19.3)", "[filter][rate]")
+TEST_CASE ("filter: Model A's processWithCutoff follows the mapping at and around the converter's boundaries (8.19.3)", "[filter][rate][slow]")
 {
     // The cutoff converter falls back at every multiple of 32 (Filter.cpp kAConverter). processWithCutoff computes the
     // corner from the register value exactly as setCutoff does and reads only the parameters that depend smoothly on
@@ -1089,7 +1089,7 @@ SharedRun sharedRun (Model m, int n, bool shared, const SharedCase& sc)
 }
 } // namespace
 
-TEST_CASE ("filter and output stage: the Shared topology's DC and audio for 1 to 16 chips (OutputStage.h SHARED)", "[filter][output]")
+TEST_CASE ("filter and output stage: the Shared topology's DC and audio for 1 to 16 chips (OutputStage.h SHARED)", "[filter][output][slow]")
 {
     // OutputStage.h "SHARED": n = 1 is Per Note exactly; Model B (a linear filter): n Shared chips give the output of n
     // Per Note chips, n = 1 .. 16, in every condition below: with volume DC on, the DC step of a volume write with held

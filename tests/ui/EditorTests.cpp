@@ -439,7 +439,7 @@ TEST_CASE ("Editor meter: the output meter follows the feed at most 30 times per
 // Lifetime
 // =================================================================================================
 
-TEST_CASE ("Editor open/close 200 times; two instances with open editors stay independent", "[ui][editor][lifetime]")
+TEST_CASE ("Editor open/close 200 times; two instances with open editors stay independent", "[ui][editor][lifetime][slow]")
 {
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
     EditorRig a;

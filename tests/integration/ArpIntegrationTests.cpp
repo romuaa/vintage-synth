@@ -71,7 +71,7 @@ int busyVoices (const vs::Part& part)
 // Step timing and host transport
 // =================================================================================================
 
-TEST_CASE ("Arp through the processor: steps on the host grid, sample-exact, at every rate configuration", "[wave3][arp][timing]")
+TEST_CASE ("Arp through the processor: steps on the host grid, sample-exact, at every rate configuration", "[wave3][arp][timing][slow]")
 {
     const double fs = GENERATE (48000.0, 96000.0, 192000.0);
     const double bpm = GENERATE (120.0, 133.7);
@@ -119,7 +119,7 @@ TEST_CASE ("Arp through the processor: steps on the host grid, sample-exact, at 
     CHECK (rig.partEvents[1].empty()); // Whole mode, Upper gets nothing
 }
 
-TEST_CASE ("Host transport: start, stop, loop jump, tempo change and missing information", "[wave3][arp][transport]")
+TEST_CASE ("Host transport: start, stop, loop jump, tempo change and missing information", "[wave3][arp][transport][slow]")
 {
     const double fs = GENERATE (48000.0, 96000.0, 192000.0);
     const int block = GENERATE (512, 37);
@@ -330,7 +330,7 @@ TEST_CASE ("Host transport: a tempo ramp is drift, not a jump: no step repeated,
     CHECK (rig.countType (0, vs::EventType::NoteOff) == static_cast<int> (on.size()));
 }
 
-TEST_CASE ("Chunked rendering: a host block above the prepared size keeps the step timing", "[wave3][arp][transport]")
+TEST_CASE ("Chunked rendering: a host block above the prepared size keeps the step timing", "[wave3][arp][transport][slow]")
 {
     const double fs = GENERATE (48000.0, 96000.0);
     const int big = GENERATE (1500, 5000);
@@ -793,7 +793,7 @@ TEST_CASE ("Fast arpeggio at 16 voices: steals use the 3 ms fade, no clicks", "[
 // Random streams, block-size independence, allocation
 // =================================================================================================
 
-TEST_CASE ("Block-size independence with arp and effects on, both parts, full Vintage", "[wave3][arp][fx][blocksize]")
+TEST_CASE ("Block-size independence with arp and effects on, both parts, full Vintage", "[wave3][arp][fx][blocksize][slow]")
 {
     const double fs = GENERATE (48000.0, 96000.0, 192000.0);
     const bool hostSynced = GENERATE (true, false);

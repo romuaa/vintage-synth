@@ -206,7 +206,7 @@ TEST_CASE ("Tables: wrong types and shapes are rejected", "[presets][tables]")
     CHECK_FALSE (parseProgram (schema, programText ("\"tables\":{\"\xff\":[]}")).ok);
 }
 
-TEST_CASE ("Tables: line, byte and JSON limits are enforced before any validator work", "[presets][tables][security]")
+TEST_CASE ("Tables: line, byte and JSON limits are enforced before any validator work", "[presets][tables][security][serial]")
 {
     const auto schema = tableSchema(); // 64 lines, 2000 bytes
     int validatorCalls = 0;

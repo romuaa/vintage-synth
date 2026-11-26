@@ -406,7 +406,7 @@ TEST_CASE ("buses: a routing write moves the oscillator between the buses as a b
         }
 }
 
-TEST_CASE ("buses: bit-identical for any block split, stops that are not writes, and with batching off", "[render][buses][split]")
+TEST_CASE ("buses: bit-identical for any block split, stops that are not writes, and with batching off", "[render][buses][split][slow]")
 {
     for (const Model m : { Model::A, Model::B })
         for (std::uint64_t seed = 1; seed <= 6; ++seed)

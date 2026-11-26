@@ -351,7 +351,7 @@ Result run (const char* name, int publishes, int blocks)
 }
 } // namespace
 
-TEST_CASE ("handover model: the real protocol holds in every interleaving", "[bside][handover][model]")
+TEST_CASE ("handover model: the real protocol holds in every interleaving", "[bside][handover][model][slow]")
 {
     const auto r = run<0> ("the protocol as shipped", 3, 2);
     CHECK (r.violation.empty());
@@ -359,7 +359,7 @@ TEST_CASE ("handover model: the real protocol holds in every interleaving", "[bs
     CHECK (r.states > 500);
 }
 
-TEST_CASE ("handover model: commit() that clears the claim before storing the committed index is caught", "[bside][handover][model]")
+TEST_CASE ("handover model: commit() that clears the claim before storing the committed index is caught", "[bside][handover][model][slow]")
 {
     const auto r = run<1> ("mutant 1: claim cleared first", 3, 2);
     CHECK (r.violation.find ("writer writes buffer") != std::string::npos);
@@ -371,7 +371,7 @@ TEST_CASE ("handover model: beginAcquire without the re-check of published is ca
     CHECK (r.violation.find ("writer writes buffer") != std::string::npos);
 }
 
-TEST_CASE ("handover model: a writer that reads the committed index before the claim is caught", "[bside][handover][model]")
+TEST_CASE ("handover model: a writer that reads the committed index before the claim is caught", "[bside][handover][model][slow]")
 {
     const auto r = run<3> ("mutant 3: in-use read before claim", 3, 2);
     CHECK_FALSE (r.violation.empty());

@@ -205,7 +205,7 @@ std::uint64_t modelAgainstChip (chip::Model model, std::uint64_t cycles, std::ui
 }
 } // namespace
 
-TEST_CASE ("independent model: replays every committed d_*, a_* and no-table c_9_*/c_a_* trace exactly", "[bside][chip][independent]")
+TEST_CASE ("independent model: replays every committed d_*, a_* and no-table c_9_*/c_a_* trace exactly", "[bside][chip][independent][slow]")
 {
     const auto names = exactTraces();
     REQUIRE (names.size() >= 50);
@@ -248,7 +248,7 @@ TEST_CASE ("independent model: a deliberate rule change makes the replay fail", 
     CHECK (failing == 2);
 }
 
-TEST_CASE ("independent model: equals the chip (stepCycle and advanceCycles) in every state field, 2 x 10^7 random cycles per model", "[bside][chip][independent]")
+TEST_CASE ("independent model: equals the chip (stepCycle and advanceCycles) in every state field, 2 x 10^7 random cycles per model", "[bside][chip][independent][slow]")
 {
     for (const auto model : { chip::Model::A, chip::Model::B })
     {

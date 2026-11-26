@@ -165,17 +165,17 @@ std::vector<Row> combinedRows (Model m)
 
 } // namespace
 
-TEST_CASE ("render: alias budget, triangle / saw / pulse incl. sync, ring and chains, Model B converter (<= -100 dB to 3.85 kHz)", "[render][alias]")
+TEST_CASE ("render: alias budget, triangle / saw / pulse incl. sync, ring and chains, Model B converter (<= -100 dB to 3.85 kHz)", "[render][alias][slow]")
 {
     runBudget ("Model B", basicRows (Model::B), -100.0, -100.0);
 }
 
-TEST_CASE ("render: alias budget, Model A converter (<= -96 dB to 2 kHz, <= -80 dB to 3.85 kHz)", "[render][alias]")
+TEST_CASE ("render: alias budget, Model A converter (<= -96 dB to 2 kHz, <= -80 dB to 3.85 kHz)", "[render][alias][slow]")
 {
     runBudget ("Model A", basicRows (Model::A), -96.0, -80.0);
 }
 
-TEST_CASE ("render: alias budget, combined waveforms, both models (<= -96 dB to 2 kHz, <= -80 dB to 3.85 kHz)", "[render][alias]")
+TEST_CASE ("render: alias budget, combined waveforms, both models (<= -96 dB to 2 kHz, <= -80 dB to 3.85 kHz)", "[render][alias][slow]")
 {
     // Model A's combined waveforms use the long kernel (docs/decisions.md S2b-2); with the short one they
     // missed the budget by up to 10 dB (-85.9 dB)
@@ -301,7 +301,7 @@ AliasResult measureWrites (Model m, int mode, double hz, const RateConfig& rc, s
 }
 } // namespace
 
-TEST_CASE ("render: alias budget, write discontinuities every tick (<= -90 dB to 2 kHz)", "[render][alias][writes]")
+TEST_CASE ("render: alias budget, write discontinuities every tick (<= -90 dB to 2 kHz)", "[render][alias][writes][slow]")
 {
     // modes (measureWrites): 0 waveform switch, 1 test-bit reset, 2 a pulse deselected (its held output
     // fading, on the long kernel), 3 a noise combination after noise (per-cycle output, on the short kernel)

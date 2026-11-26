@@ -136,7 +136,7 @@ TEST_CASE ("handover: the buffer in use and a claimed buffer are never overwritt
     }
 }
 
-TEST_CASE ("handover: with the writer publishing flat out, the reader only ever sees whole programs, in order", "[bside][handover][threads]")
+TEST_CASE ("handover: with the writer publishing flat out, the reader only ever sees whole programs, in order", "[bside][handover][threads][slow][serial]")
 {
     auto h = std::make_unique<ProgramHandover>();
     std::atomic<bool> stop { false };

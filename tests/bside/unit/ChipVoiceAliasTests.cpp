@@ -752,7 +752,7 @@ TEST_CASE ("alias gate: the static curves through the chain, the full set of 8.1
     }
 }
 
-TEST_CASE ("alias gate: the static curves through the chain, the normal run: every listed row at its worst constellation and the reset, a reduced set of the others", "[chain][alias][gate]")
+TEST_CASE ("alias gate: the static curves through the chain, the normal run: every listed row at its worst constellation and the reset, a reduced set of the others", "[chain][alias][gate][slow]")
 {
     // The full set over every constellation runs by its tag ("[.chain-alias-full]") before every hand-over; the normal
     // run (8.19.4 after the round over phases: under 45 s on the development machine, as it also runs under the
@@ -1039,7 +1039,7 @@ std::vector<std::complex<double>> exactPeriod (F&& f, int m)
 }
 } // namespace
 
-TEST_CASE ("alias: the wanted signal's pass band through the chain: within +-0.05 dB from 20 Hz to 20 kHz, as the designs say", "[chain][alias][wanted]")
+TEST_CASE ("alias: the wanted signal's pass band through the chain: within +-0.05 dB from 20 Hz to 20 kHz, as the designs say", "[chain][alias][wanted][slow]")
 {
     // A sine of 1e-3 (the curves linear around their operating point) on the direct bus, through the whole chain (board
     // filters off), at 20 Hz .. 20 kHz: its gain against the gain at 1 kHz within +-0.05 dB (8.19.4), and within 0.002 dB
@@ -1078,7 +1078,7 @@ TEST_CASE ("alias: the wanted signal's pass band through the chain: within +-0.0
         }
 }
 
-TEST_CASE ("alias: the wanted signal: a 6.6 kHz sine and a sine pair, the curves' products within 0.5 dB of the exact curves", "[chain][alias][wanted]")
+TEST_CASE ("alias: the wanted signal: a 6.6 kHz sine and a sine pair, the curves' products within 0.5 dB of the exact curves", "[chain][alias][wanted][slow]")
 {
     // 8.19.4: the products of a sine (6.6 kHz) and a sine pair (6.6 + 8.1 kHz) through the curves, against the exact
     // curves applied to the continuous sinusoids (one common period sampled finely, its FFT): every product in 20 Hz ..
@@ -1188,7 +1188,7 @@ TEST_CASE ("alias: the wanted signal: a 6.6 kHz sine and a sine pair, the curves
     CHECK (compared > 50);
 }
 
-TEST_CASE ("alias: the wanted signal: sawtooth and square harmonics above -40 dB within 0.5 dB of the exact curve on band-limited voices", "[chain][alias][wanted]")
+TEST_CASE ("alias: the wanted signal: sawtooth and square harmonics above -40 dB within 0.5 dB of the exact curve on band-limited voices", "[chain][alias][wanted][slow]")
 {
     // 8.19.4: a band-limited sawtooth and square (every harmonic below half the internal rate; Model A's bent as the
     // renderer bends them) on the direct bus through the chain, against the exact mixer curve applied to the same
@@ -1253,7 +1253,7 @@ TEST_CASE ("alias: the wanted signal: sawtooth and square harmonics above -40 dB
 
 // ---- latency, and the configurations blended across a write ----
 
-TEST_CASE ("alias: the chain's latency is where the signal lands: an impulse through the anti-alias stages, a step through the whole chain (Per Note and Shared)", "[chain][alias][latency]")
+TEST_CASE ("alias: the chain's latency is where the signal lands: an impulse through the anti-alias stages, a step through the whole chain (Per Note and Shared)", "[chain][alias][latency][slow]")
 {
     // latencySamples () = the renderer's 8 + the anti-alias stages' delay (ChipVoice.h "LATENCY"). (1) An impulse of 1e-3
     // on the direct bus (ChipVoice::processBuses, every stage linear-phase and the curves smooth): the centre of gravity
@@ -1450,7 +1450,7 @@ TEST_CASE ("alias: configurations blended across a volume write share the anti-a
 }
 
 
-TEST_CASE ("alias: the voice bend folded into the renderer keeps the harmonics of the exact bend of the band-limited voice", "[chain][alias][wanted][bend]")
+TEST_CASE ("alias: the voice bend folded into the renderer keeps the harmonics of the exact bend of the band-limited voice", "[chain][alias][wanted][bend][slow]")
 {
     // Chip.h "BEND", 8.19.4: Model A, a saw and a square (sustain 15: envelope value 1) at about 1 kHz and 3 kHz, the
     // buses with the bend folded in (renderBendVoices) against the same chip's unbent buses bent sample by sample
@@ -1711,7 +1711,7 @@ std::vector<double> timingRun (Model m, double rate, const TimingCase& c, int ch
 }
 } // namespace
 
-TEST_CASE ("alias: every write lands where latencySamples () says: volume, routing, mode, resonance, both models, Per Note and Shared (0.02 samples)", "[chain][alias][latency][writes]")
+TEST_CASE ("alias: every write lands where latencySamples () says: volume, routing, mode, resonance, both models, Per Note and Shared (0.02 samples)", "[chain][alias][latency][writes][slow]")
 {
     // 8.19.4 (after the review): a write's step, the centre of gravity of its first difference, lies within 0.02 internal
     // samples of (cycle - 1) / cycles per sample + latencySamples () (the analog registers' writes lead an oscillator
@@ -1767,7 +1767,7 @@ namespace
 {
 } // namespace
 
-TEST_CASE ("alias: Shared mode and resonance writes against Per Note: the owner's switch at the nearest sample (0.5 samples), the same outside the window", "[chain][alias][shared][writes]")
+TEST_CASE ("alias: Shared mode and resonance writes against Per Note: the owner's switch at the nearest sample (0.5 samples), the same outside the window", "[chain][alias][shared][writes][slow]")
 {
     // ChipVoice.h "TOPOLOGY" (8.19.4 after the second review): the owner of a shared filter switches its mode or
     // resonance at ChipVoice::sharedSwitchSample (), the bus sample nearest the write's place; Per Note blends the two

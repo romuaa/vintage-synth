@@ -66,7 +66,7 @@ bool detected (const Features& ref, const std::function<void (Script&)>& change,
 }
 } // namespace
 
-TEST_CASE ("Render regression: every script matches its golden reference", "[render]")
+TEST_CASE ("Render regression: every script matches its golden reference", "[render][slow]")
 {
     const auto files = scriptDir().findChildFiles (juce::File::findFiles, false, "*.txt");
     REQUIRE (files.size() > 0);
@@ -183,7 +183,7 @@ TEST_CASE ("Render regression: script parser", "[render]")
     CHECK_THROWS (renderScript (parseScript ("length 0.1\nparam no.such.param 1\n"), 256));
 }
 
-TEST_CASE ("Render regression: a render matches itself and other block sizes", "[render]")
+TEST_CASE ("Render regression: a render matches itself and other block sizes", "[render][slow]")
 {
     const auto script = loadScript ("selftest_basic");
     const auto ref = featuresOf (script, kGoldenBlock);
@@ -228,7 +228,7 @@ TEST_CASE ("Render regression: numeric noise is tolerated", "[render]")
     }
 }
 
-TEST_CASE ("Render regression: deliberate sound changes are detected", "[render]")
+TEST_CASE ("Render regression: deliberate sound changes are detected", "[render][slow]")
 {
     const auto ref = featuresOf (loadScript ("selftest_basic"), kGoldenBlock);
 
