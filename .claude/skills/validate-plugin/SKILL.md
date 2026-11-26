@@ -6,15 +6,24 @@ description: Run unit tests, golden-render regression tests, CPU benchmarks, plu
 # Validate
 
 **Run `scripts/preflight.sh` instead of the individual commands below** (they remain as reference):
-`--quick` (hygiene, macOS build + tests + pluginval, Linux container) while iterating; the default set
+`--quick` (hygiene, macOS build + smoke tests + pluginval, Linux container) while iterating; the default set
 (adds the security scan, the VST3 validator, and both sanitizer builds) before handing over; `--only <step>`
 for one step, `--list` for the steps, `--clean` to remove its caches. The VST3 validator is built once from
 the pinned SDK commit into `~/Library/Caches/vs-preflight/` and passes on `Result: N tests passed, 0 tests
 failed`. Windows and Linux x86_64 are CI only, by a manual dispatch; agents never trigger CI.
 
+**Two test tiers, run in parallel** (docs/architecture.md 7.1). *smoke* = every test not tagged `[slow]`
+(`ctest -LE slow`, minutes); *full* = every test (`ctest`, the gate). A Catch2 test that takes 1 s or longer
+in a Release build gets the tag `[slow]` when it is written; one whose result depends on elapsed time or the
+scheduler gets `[serial]` and runs alone. `preflight.sh --quick` runs smoke, everything else full;
+`--tests smoke|full` chooses (smoke is refused for the default and `--full` runs). Every ctest call runs
+`--parallel` with `scripts/test-jobs.sh` jobs (logical cores; `VS_TEST_JOBS=<n>` overrides, `1` = serial).
+A test must pass at any job count and order: its own temp folder names (a UUID), no shared fixed files.
+
 Run these in order and stop at the first failure. Report each step as pass, fail, or not run, with the reason.
 
-1. **Unit tests + host smoke:** `ctest --test-dir build/mac --output-on-failure`. This includes
+1. **Unit tests + host smoke:** `ctest --test-dir build/mac --output-on-failure --parallel $(scripts/test-jobs.sh)`
+   (add `-LE slow` for the smoke tier, `-L slow` for the slow tests alone). This includes
    `host_smoke`, which loads the real `.vst3` through JUCE's VST3 host (identity, parameter count,
    rendering at 44.1/48/96 kHz, silence after release, state round-trip). It doesn't replace pluginval.
 2. **Golden renders** (part of the local gate): `ctest --test-dir build/mac -L render`.
@@ -54,15 +63,16 @@ Run these in order and stop at the first failure. Report each step as pass, fail
    included. 4× is offline only and has no real-time budget. Flag any regression above 5 %.
 
 **Linux pre-flight (before pushing engine or test changes):** `scripts/linux-check.sh` builds
-everything with GCC (warnings as errors, all errors shown) and runs the full ctest in a native
-Linux ARM64 container; `scripts/linux-check.sh --sanitize` is the Clang ASan + UBSan run that
+everything with GCC (warnings as errors, all errors shown) and runs the full ctest (parallel, as many
+jobs as the container has CPUs; `--tests smoke` for the smoke tier) in a native Linux ARM64 container; `scripts/linux-check.sh --sanitize` is the Clang ASan + UBSan run that
 mirrors CI. About 1 min warm, 3 min cold; `--clean` removes its image and volume. It copies the
 working tree by content, so it is safe across branch switches.
 
 Linux and sanitizers in CI: the `linux-x64` row (ubuntu-22.04, GCC) runs everything including
 pluginval and the validator; the `linux-sanitizers` job (ubuntu-24.04, Clang, ASan + UBSan,
 `halt_on_error`) runs the tests without `host_smoke` in every CI tier. A Linux-only manual run:
-`gh workflow run build.yml --ref <branch> -f targets=linux`.
+`gh workflow run build.yml --ref <branch> -f targets=linux`. The input `tests` (`full`, the default, or
+`smoke`) picks the tier; only a `full` run on the branch tip confirms a merge, and a release run needs `full`.
 
 Windows and Linux x86_64: a push starts no build. The orchestrator dispatches one run per
 merge-ready branch (`gh workflow run build.yml --ref <branch> -f targets=no-macos`) and reads it
