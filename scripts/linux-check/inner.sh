@@ -5,6 +5,7 @@
 #   /list   file list (NUL separated) of the files to snapshot
 set -euo pipefail
 mode=${1:?mode}
+tier=${2:-full}   # smoke = every test not tagged [slow] (ctest -LE slow); full = every test
 
 export CCACHE_DIR=/work/ccache CCACHE_MAXSIZE=3G
 src=/work/src
@@ -31,6 +32,14 @@ sort -z /list | sed -z 's|^|./|' > /work/want.lst
 mem_gb=$(awk '/MemTotal/ { print int($2 / 1048576) }' /proc/meminfo)
 jobs=$(nproc)
 if [ "$mem_gb" -ge 1 ] && [ "$jobs" -gt "$mem_gb" ]; then jobs=$mem_gb; fi
+# Tests: one job per CPU the container sees (scripts/test-jobs.sh; VS_TEST_JOBS overrides), no memory cap.
+test_jobs=$(bash /repo/scripts/test-jobs.sh)
+tier_args=()
+[ "$tier" = smoke ] && tier_args=(-LE slow)
+run_ctest() { # run_ctest <build dir> [more ctest arguments]
+  echo "test run: tier=$tier jobs=$test_jobs (container sees $(nproc) CPUs, $mem_gb GB)"
+  xvfb-run -a ctest --test-dir "$1" --output-on-failure --parallel "$test_jobs" "${tier_args[@]+"${tier_args[@]}"}" "${@:2}"
+}
 extra=()   # (the GCC/ARM64 warning in JUCE's bundled codec is handled in CMakeLists.txt)
 t0=$(date +%s)
 step() { echo; echo "=== $* ($(( $(date +%s) - t0 ))s elapsed)"; }
@@ -60,7 +69,7 @@ gcc)
     echo "Highest glibc symbol version: $(objdump -T "$so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
   done
   step "ctest under xvfb (includes host_smoke and host_smoke_bside)"
-  xvfb-run -a ctest --test-dir "$b" --output-on-failure
+  run_ctest "$b"
   ;;
 sanitize)
   # Mirrors the linux-sanitizers job in .github/workflows/build.yml.
@@ -85,7 +94,7 @@ sanitize)
   san_report "$b"
   ccache --show-stats || true
   step "ctest (ASan + UBSan), host_smoke and host_smoke_bside excluded as in CI"
-  xvfb-run -a ctest --test-dir "$b" --output-on-failure -E '^(host_smoke|host_smoke_bside)$'
+  run_ctest "$b" -E '^(host_smoke|host_smoke_bside)$'
   ;;
 shell)
   cd "$src"
