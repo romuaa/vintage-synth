@@ -68,14 +68,35 @@ a feature branch is not readable from another branch). The limit is not raised (
 - **Orchestrator's gate on `05e175e`:** the full `scripts/preflight.sh` passed in 13m20s, all
   seven steps, full tier, 18 jobs (the same gate took 85 minutes on the S4b branch). Read from
   the gate's summary; `--quick` took 2m33s at the implementer's run.
-- **Not verified until the first dispatched run:** the workflow change itself, the guard script
-  under Git Bash on the Windows runners, the changed test files on MSVC and GCC x86_64, and the
-  CI targets (smoke within 10 minutes per row, full within 20, warm cache).
+- **CI run 45892104628 on `56d4092` (`targets=no-macos`, `tests=full`, owner's "dispatch"):
+  green after one rerun of one job.** All four build rows and the sanitizer job passed at the
+  first attempt, so the workflow change, the guard script under Git Bash and the changed test
+  files on MSVC and GCC x86_64 are confirmed. Measured:
+
+  | Job | Build | Smoke tests | Slow tests | Job total |
+  |---|---|---|---|---|
+  | Windows x64 (compiler cache still cold) | 27m45s | 0m57s | 10m58s | 43m02s |
+  | Windows ARM64 | 8m43s | 0m49s | 6m41s | 18m00s |
+  | Linux x86_64 | 5m36s | 0m37s | 6m30s | 14m41s |
+  | Linux ARM64 | 6m12s | 0m33s | 5m43s | 13m15s |
+  | Linux sanitizers | 4m19s | - | 25m01s (all tests) | 30m12s |
+
+  Smoke meets its target (within 10 minutes per row) once the build is warm. **Two rows miss the
+  20-minute full target:** Windows x64, expected until the run on `main` refreshes its cache,
+  and the sanitizer job, whose tests take 25 minutes on four cores (46 minutes before).
+- **The one failed job, `distro debian-13`:** pluginval's host crashed with the known signature
+  (`docs/engineering-notes.md`, "pluginval 1.0.4 crashes at teardown") but between "Open plugin
+  (cold)" and "Open plugin (warm)" of B-Side, not after the last test, so the wrapper rejected
+  it as designed. The branch changes no plugin source. The rerun of that job passed; the
+  accepted signature is unchanged.
 - **After the merge, in this order:** one run on `main` (`-f targets=no-macos`, owner's "yes") to
   refresh the compiler caches; bring `main` into `bside/s4b-sounds` and tag that branch's own
   slow tests (about 25 tests exist only there; `bside: Bank level rule` takes 37 s); one run
   there for Windows x64; then the owner's merge word for pull request 48.
-- **Open:** the two slowest tests (115 s and 77 s in CI) and the other heavy gates could be made
+- **Open:** the sanitizer job's 25 minutes of tests (candidates: a larger runner, or splitting
+  its tests over two jobs); whether the pluginval host crash in the middle of a run returns (seen
+  once; then decide between a retry of the whole pluginval call and nothing); the two slowest
+  tests (115 s and 77 s in CI) and the other heavy gates could be made
   cheaper, each a judgement on what a smaller set still gates; the slow tests could get a job of
   their own beside the build row if a full run misses 20 minutes.
 
