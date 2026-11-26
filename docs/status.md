@@ -27,23 +27,23 @@ first when resuming.
   rerun. **Open from this:** Windows unit tests take 26 to 28 minutes per job and the x64 build
   took 28 minutes; the job needs room under its limit before the next run (look at what the
   Windows tests spend their time on; a workflow change is its own pull request).
-- **RESUME EXACTLY HERE (written 2026-11-26): S4b is pull request 48 (branch
-  `bside/s4b-sounds`, open, mergeable); it waits for ONE owner answer, asked and not yet
-  answered: how to handle Windows x64.** CI run 45706438078 (dispatched once, on commit
-  `274bf15`): Linux x86_64, Linux ARM64, Windows ARM64, the Linux sanitizers and the seven
-  distro checks passed; the pull request's security scan and CodeQL passed. **Windows x64 was
-  cancelled by its 60-minute limit while the unit tests were still running** (build 31 min,
-  tests cut off after 26 min; pluginval did not run there), so the Windows and Linux bundle
-  jobs were skipped. No Windows x64 failure was seen and no pass either. The options put to
-  the owner: **A (recommended)** a separate one-line pull request raising the build job's
-  `timeout-minutes` from 60 to 90 in `.github/workflows/build.yml` (line 177), merged on the
-  owner's word, brought into `bside/s4b-sounds`, then one run with `-f targets=windows`
-  (warn the owner first), then the owner's merge word for pull request 48; **B** merge
-  pull request 48 now and record here that it merged without Windows x64 verification.
-  After the merge: delete the branch, update this file, and the Windows test time
-  (26 to 28 min per job) stays an open item. Nothing is running; no agent, worktree or
-  background job is left. The audition files are outside the repository (the developer
-  folder of `docs/bside-oracle-adapter.md`, subfolders `s4b-audition`, `-2`, `-3`).
+- **RESUME EXACTLY HERE (written 2026-11-27): S4b is pull request 48 (branch
+  `bside/s4b-sounds`); it waits for its one CI run on the new workflow and then the owner's
+  merge word.** History: CI run 45706438078 (on `274bf15`) passed on Linux x86_64, Linux ARM64,
+  Windows ARM64, the sanitizers and the seven distro checks, but **Windows x64 was cancelled by
+  its 60-minute limit while the unit tests were still running** (no failure seen, no pass
+  either). The owner did not raise the limit; the tests were made faster instead ("Faster
+  tests" below, pull request 49, merged 2026-11-26). Since then, on this branch: `main` is
+  merged in (only `CHANGELOG.md` conflicted; both sides kept), `bside_render` is registered
+  through `vs_discover_tests`, and 30 of the branch's own test cases are tagged `[slow]`
+  (measured here at 0.3 s or more; tag strings only, no test body or threshold changed; none
+  needed `[serial]`). The branch has 1,235 tests, 212 of them slow. The orchestrator's full
+  `scripts/preflight.sh` passed on `1f6f139` (13m05s, all seven steps, full tier, 18 jobs).
+  **The CI run for this branch and its result are in the pull request; never claim Windows x64
+  green for S4b without it.** After the merge: delete the branches `bside/s4b-sounds` and
+  `bside/s4b-tiers` and the worktrees under `.claude/worktrees/`, and update this file. The
+  audition files are outside the repository (the developer folder of
+  `docs/bside-oracle-adapter.md`, subfolders `s4b-audition`, `-2`, `-3`).
 - **S4b is built (2026-11-25, branch `bside/s4b-sounds`); its state before the CI run:** `mix.level` per part (204 parameters), `kChipGain` 1.2822 (Init as
   loud as Vintage's Init), 16 factory programs with the level rule and per-program offsets,
   a program apply that fades the part, `bside_render` goldens for six programs. **The owner
@@ -121,10 +121,13 @@ a feature branch is not readable from another branch). The limit is not raised (
   (cold)" and "Open plugin (warm)" of B-Side, not after the last test, so the wrapper rejected
   it as designed. The branch changes no plugin source. The rerun of that job passed; the
   accepted signature is unchanged.
-- **After the merge, in this order:** one run on `main` (`-f targets=no-macos`, owner's "yes") to
-  refresh the compiler caches; bring `main` into `bside/s4b-sounds` and tag that branch's own
-  slow tests (about 25 tests exist only there; `bside: Bank level rule` takes 37 s); one run
-  there for Windows x64; then the owner's merge word for pull request 48.
+- **Run on `main` after the merge (45898183484 on `5fa04c4`, owner's "yes"): green at the first
+  attempt, every job.** It refreshed all five compiler caches. Windows x64 itself still built
+  cold in this run (28 minutes, 0 % hits of 705 compiles, job total 43m25s) and saved the new
+  cache at 22:10 UTC; the next Windows x64 run is the first that can show a warm build. Other
+  job totals: Linux ARM64 13m19s, Windows ARM64 17m29s, Linux x86_64 23m20s (its build took
+  9m12s and its slow tests 11m19s here, against 5m36s and 6m30s in the run before: runner
+  variance, not measured further), sanitizers 26m06s.
 - **Open:** the sanitizer job's 25 minutes of tests (candidates: a larger runner, or splitting
   its tests over two jobs); whether the pluginval host crash in the middle of a run returns (seen
   once; then decide between a retry of the whole pluginval call and nothing); the two slowest
