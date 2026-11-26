@@ -66,7 +66,7 @@ std::vector<vs::NoteEvent> playing()
 }
 } // namespace
 
-TEST_CASE ("Part level: at 0 dB the output is bit-identical to a part that never had the parameter set", "[bside][part][level]")
+TEST_CASE ("Part level: at 0 dB the output is bit-identical to a part that never had the parameter set", "[bside][part][level][slow]")
 {
     constexpr int kTotal = 48000;
     Rig reference ({ 48000.0, 2 }, bs::PartParams {});
@@ -129,7 +129,7 @@ TEST_CASE ("Part level: at 0 dB the output is bit-identical to a part that never
     CHECK_FALSE (identical (steady, returned, kSplit)); // the ramp itself differs: the test can tell
 }
 
-TEST_CASE ("Part level: at -6, -12, -24 and +6 dB a held note's level moves by that amount within 0.05 dB", "[bside][part][level]")
+TEST_CASE ("Part level: at -6, -12, -24 and +6 dB a held note's level moves by that amount within 0.05 dB", "[bside][part][level][slow]")
 {
     Rig reference ({ 48000.0, 2 }, bs::PartParams {});
     const auto a = reference.run (48000, { on (0, 60) });
@@ -191,7 +191,7 @@ TEST_CASE ("Part level: a jump from 0 to -24 dB while a note sounds has no step;
     CHECK (inRamp > 40); // it did ramp: the samples that lie on the way
 }
 
-TEST_CASE ("Part level: Lower's level does not change Upper's output (bit for bit); Upper's does not change Lower's", "[bside][part][level][shell]")
+TEST_CASE ("Part level: Lower's level does not change Upper's output (bit for bit); Upper's does not change Lower's", "[bside][part][level][shell][slow]")
 {
     constexpr int kBlock = 256, kBlocks = 200, kLead = 60; // the mixer's pan ramp settles during the silent lead
     struct Out

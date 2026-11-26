@@ -77,7 +77,7 @@ double measuredDelay (HostConfig h, int model, bool shared, int n)
 
 // ---- level ---------------------------------------------------------------------------------------------------
 
-TEST_CASE ("Part: Init's Chord phrase is within 1 dB of Vintage's Init, and a full-velocity eight-note chord stays below 0 dBFS (kChipGain)", "[bside][part][level]")
+TEST_CASE ("Part: Init's Chord phrase is within 1 dB of Vintage's Init, and a full-velocity eight-note chord stays below 0 dBFS (kChipGain)", "[bside][part][level][slow]")
 {
     // The rule of 8.21.2 (it replaces 8.21.1's "one Init note peaks at -12 dBFS +-0.5 dB"): the Chord phrase of the bank
     // tests (C4 E4 G4 C5 held 3 s, velocity 100), through the real BSideProcessor at 48 kHz, the limiter off, the default

@@ -379,7 +379,7 @@ TEST_CASE ("Bank: 16 programs A1 to B8 in slot order, own names, known categorie
 // ---- the level rule ----------------------------------------------------------------------------------------------
 
 TEST_CASE ("Bank level rule: every program loads, sounds, is finite, keeps its chord headroom, sits within 2 dB of its group, stays below the limiter's knee, round-trips its state, and releases when applied over held notes",
-           "[bside][bank][level]")
+           "[bside][bank][level][slow]")
 {
     // 8.21.2 after the drafting: sustained (the arpeggios too) and bass programs by their phrase RMS against their group's median;
     // percussion by its phrase PEAK against the median phrase peak of the sustained group, and its headroom with two keys down.
@@ -482,7 +482,7 @@ TEST_CASE ("Bank level rule: every program loads, sounds, is finite, keeps its c
 
 // ---- A2 to A8 ----------------------------------------------------------------------------------------------------
 
-TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato starts after 8 ticks and runs at 8.35 Hz, Solo with glide", "[bside][bank][program]")
+TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato starts after 8 ticks and runs at 8.35 Hz, Solo with glide", "[bside][bank][program][slow]")
 {
     Rig rig (1, false);
     CHECK (rig.get ("lower.assign.mode") == Catch::Approx (2.0f)); // Solo
@@ -594,7 +594,7 @@ TEST_CASE ("Bank A2 Moving Pulse: the pulse width sweeps by table, the vibrato s
     }
 }
 
-TEST_CASE ("Bank A3 Synced Climb: oscillator 2 synced to 1, oscillator 1 silent, the synced pitch stepping up and down by table", "[bside][bank][program]")
+TEST_CASE ("Bank A3 Synced Climb: oscillator 2 synced to 1, oscillator 1 silent, the synced pitch stepping up and down by table", "[bside][bank][program][slow]")
 {
     Rig rig (2, false);
     CHECK (rig.get ("lower.chip.model") == Catch::Approx (1.0f));
@@ -648,7 +648,7 @@ TEST_CASE ("Bank A3 Synced Climb: oscillator 2 synced to 1, oscillator 1 silent,
     CHECK (distance > 3.0);
 }
 
-TEST_CASE ("Bank A4 Glass Ring: the triangle ring-modulated by oscillator 3 for 10 ticks, oscillator 3 falling in pitch, then a plain triangle", "[bside][bank][program]")
+TEST_CASE ("Bank A4 Glass Ring: the triangle ring-modulated by oscillator 3 for 10 ticks, oscillator 3 falling in pitch, then a plain triangle", "[bside][bank][program][slow]")
 {
     Rig rig (3, false);
     CHECK (rig.get ("lower.chip.model") == Catch::Approx (1.0f));
@@ -703,7 +703,7 @@ TEST_CASE ("Bank A4 Glass Ring: the triangle ring-modulated by oscillator 3 for 
     CHECK (bandDistanceDb (ringEarly, ringLate) > 3.0);   // the attack and the tone differ
 }
 
-TEST_CASE ("Bank A5 Closing Door: sawtooth and pulse through the low-pass, a table sweep closing the cutoff, velocity to cutoff", "[bside][bank][program]")
+TEST_CASE ("Bank A5 Closing Door: sawtooth and pulse through the low-pass, a table sweep closing the cutoff, velocity to cutoff", "[bside][bank][program][slow]")
 {
     Rig rig (4, false);
     CHECK (rig.get ("lower.vel.cutoff") > 0.0f);
@@ -784,7 +784,7 @@ TEST_CASE ("Bank A6 Blip Bass: a two-tick octave-up blip from the wave lane, the
 }
 
 TEST_CASE ("Bank A7 and A8: the arpeggio is the wave lane's, at the tick rate, one key plays the chord; A8 is the minor counterpart at twice the rate with a pulse-width step per tick",
-           "[bside][bank][program]")
+           "[bside][bank][program][slow]")
 {
     const double f0 = hzOfNote (60);
     // A7: a major chord up and down, one pitch per tick
@@ -860,7 +860,7 @@ TEST_CASE ("Bank A7 and A8: the arpeggio is the wave lane's, at the tick rate, o
 
 // ---- B1 to B8 ----------------------------------------------------------------------------------------------------
 
-TEST_CASE ("Bank B1 Short Kick: a noise tick, then a triangle falling in pitch by table within eight ticks, the same for every key", "[bside][bank][program]")
+TEST_CASE ("Bank B1 Short Kick: a noise tick, then a triangle falling in pitch by table within eight ticks, the same for every key", "[bside][bank][program][slow]")
 {
     const int notes[] { 96, 55, 43, 36, 33, 31, 29, 28, 27 }; // the table's absolute pitches (=C7, =55 ...)
     std::vector<double> fallHz;
@@ -970,7 +970,7 @@ TEST_CASE ("Bank B2 Dry Snare: noise and pulse alternating by table, then noise 
             CHECK (doublesOscillator1 (s)); // the level: oscillator 2 plays the same drum in phase
 }
 
-TEST_CASE ("Bank B3 Tick Hat: short noise at a high pitch, decay only, mostly above 4 kHz", "[bside][bank][program]")
+TEST_CASE ("Bank B3 Tick Hat: short noise at a high pitch, decay only, mostly above 4 kHz", "[bside][bank][program][slow]")
 {
     Rig rig (10, false);
     const auto p = probe (rig, 0, { 48 }, 0.5, 0.1);
@@ -1039,7 +1039,7 @@ TEST_CASE ("Bank B3 Tick Hat: short noise at a high pitch, decay only, mostly ab
 }
 
 TEST_CASE ("Bank B1 to B3 in time: over the eight hits every onset delay is the same within 1 ms, every peak within 1 dB, and the three drums agree within 2 ms",
-           "[bside][bank][program][time]")
+           "[bside][bank][program][time][slow]")
 {
     // 8.21.2 after the owner's audition: the onset of a hit is the first sample at or above -30 dB of that hit's peak, counted from its note-on.
     const auto perf = phrase (Phrase::Percussion);
@@ -1122,7 +1122,7 @@ TEST_CASE ("Bank, Clean never waits: a hat with [restart] classic, lead 2 starts
 }
 
 TEST_CASE ("Bank B2 in time at wider spacings: with its restart section (classic, lead 2), every onset is within 1 ms of the first at 0.35, 0.5 and 0.7 s",
-           "[bside][bank][program][time]")
+           "[bside][bank][program][time][slow]")
 {
     // The spacings at which B2 waited 33 ms before Clean cleared the envelope counters at every note start (docs/bside-factory-sounds.md).
     for (const double spacing : { 0.35, 0.5, 0.7 })
@@ -1185,7 +1185,7 @@ TEST_CASE ("Bank B4 Slow Saw Pad: Model A, three detuned sawtooths through the l
     CHECK (reach < 0.30);
 }
 
-TEST_CASE ("Bank B5 Shared Chord Pad: Model A, Shared topology, chords into one filter, moderate resonance", "[bside][bank][program]")
+TEST_CASE ("Bank B5 Shared Chord Pad: Model A, Shared topology, chords into one filter, moderate resonance", "[bside][bank][program][slow]")
 {
     Rig rig (12, false);
     probe (rig, 0, { 60, 64, 67, 72 }, 1.0, 0.2);
@@ -1248,7 +1248,7 @@ TEST_CASE ("Bank B6 Band Sweep: noise through the band-pass, the cutoff swept by
     CHECK (below > 1.0);
 }
 
-TEST_CASE ("Bank B7 Pulse Over Pad: Dual, Lower a Model B pulse lead, Upper a Model A pad, panned apart", "[bside][bank][program]")
+TEST_CASE ("Bank B7 Pulse Over Pad: Dual, Lower a Model B pulse lead, Upper a Model A pad, panned apart", "[bside][bank][program][slow]")
 {
     Rig rig (14, false);
     const auto lowerProbe = probeMidi (rig, 0, { noteOn (at (0.1), 60), noteOn (at (0.1), 64) }, 0.7);
@@ -1298,7 +1298,7 @@ TEST_CASE ("Bank B7 Pulse Over Pad: Dual, Lower a Model B pulse lead, Upper a Mo
     CHECK (upperOnly < -3.0);
 }
 
-TEST_CASE ("Bank B8 Bass And Lead: Split at G3, a bass below it from Lower, a lead above it from Upper", "[bside][bank][program]")
+TEST_CASE ("Bank B8 Bass And Lead: Split at G3, a bass below it from Lower, a lead above it from Upper", "[bside][bank][program][slow]")
 {
     Rig rig (15, false);
     probeMidi (rig, 0, { noteOn (at (0.1), 48), noteOn (at (0.1), 64), noteOn (at (0.1), 54), noteOn (at (0.1), 55) }, 0.6);
@@ -1429,7 +1429,7 @@ ApplySteps stepsOf (Rig& rig, const Stereo& out)
 } // namespace
 
 TEST_CASE ("Bank: a program applied while notes sound fades them first: Vintage's step rule for all 16 programs over three held keys, from Init (Dual, both parts) and from the previous program",
-           "[bside][bank][apply]")
+           "[bside][bank][apply][slow]")
 {
     // Two rigs, each used for all 16 (a rig costs more than its render): one goes back to Init in Dual before every apply, the
     // other plays every program in turn and applies the next one over it (from B8 to A1 first).
@@ -1483,7 +1483,7 @@ TEST_CASE ("Bank: a program applied while notes sound fades them first: Vintage'
     SAY ("step rule failures: %d of %d\n", failures, 4 * kBankSize);
 }
 
-TEST_CASE ("Bank: a waveform changed by hand on a held note is a register write and steps the output (a property: no fade)", "[bside][bank][apply]")
+TEST_CASE ("Bank: a waveform changed by hand on a held note is a register write and steps the output (a property: no fade)", "[bside][bank][apply][slow]")
 {
     // docs/bside-factory-sounds.md: as on the chip, a waveform written to a sounding oscillator changes it at once; only a program
     // apply fades the part. A cutoff change (smoothed) does not step.
@@ -1563,7 +1563,7 @@ TEST_CASE ("Bank: a note played during an apply's fade starts after it with the 
     CHECK (control == 0x15);                                // A4's first row: triangle, ring, gate (the new program)
 }
 
-TEST_CASE ("Bank: a tone applied to one part fades that part only; the other part's output is bit-identical whatever the tone", "[bside][bank][apply]")
+TEST_CASE ("Bank: a tone applied to one part fades that part only; the other part's output is bit-identical whatever the tone", "[bside][bank][apply][slow]")
 {
     // Dual, both parts sounding, panned apart. A tone applied to Lower (A4's, then A7's): Upper (the right channel) is the same bit
     // for bit in both renders and does not fade; Lower fades.
@@ -1588,7 +1588,7 @@ TEST_CASE ("Bank: a tone applied to one part fades that part only; the other par
 }
 
 TEST_CASE ("Bank: an apply over held notes does not depend on the host's blocks (1, 61, 512): digital state exact, audio within -120 dB",
-           "[bside][bank][apply]")
+           "[bside][bank][apply][slow]")
 {
     struct Run
     {

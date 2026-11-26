@@ -58,7 +58,7 @@ void printMargins (const char* label, const char* channel, const Comparison& c)
 }
 } // namespace
 
-TEST_CASE ("B-Side render regression: every script matches its golden reference", "[render]")
+TEST_CASE ("B-Side render regression: every script matches its golden reference", "[render][slow]")
 {
     const auto files = scriptDir().findChildFiles (juce::File::findFiles, false, "*.txt");
     REQUIRE (files.size() == 6);
@@ -110,7 +110,7 @@ TEST_CASE ("B-Side render regression: every script matches its golden reference"
     }
 }
 
-TEST_CASE ("B-Side render regression: the program command loads B-Side's own bank", "[render]")
+TEST_CASE ("B-Side render regression: the program command loads B-Side's own bank", "[render][slow]")
 {
     const auto bySlot = renderScript (parseScript ("length 1.5\n0 program A2\n0.1 on 60 100\n"), kGoldenBlock);
     const auto byName = renderScript (parseScript ("length 1.5\n0 program Moving Pulse\n0.1 on 60 100\n"), kGoldenBlock);

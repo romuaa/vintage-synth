@@ -428,7 +428,7 @@ std::vector<double> cleanOnsets (chip::Model m, const Program& program, const pe
 } // namespace
 
 TEST_CASE ("Clean never waits: every hit starts as soon as the first, for restart modes off, classic and phase, leads 1 to 8, spacings 0.125 to 1 s, both models",
-           "[bside][engine][chip][restart]")
+           "[bside][engine][chip][restart][slow]")
 {
     // 8.21.2 "Clean never waits": under Clean no note's envelope start waits, whatever the restart mode, the lead or the spacing.
     // Two tones with attack 0 (the case the wait needs): the hat of B3 (its own envelope, noise) and a host-envelope pulse (ad 0a, sr 0a).

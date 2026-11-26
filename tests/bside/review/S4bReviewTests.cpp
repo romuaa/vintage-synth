@@ -493,7 +493,7 @@ TEST_CASE ("S4b review: drum hit-peak spread at other spacings than the gate's p
 // =====================================================================================================================
 
 TEST_CASE ("S4b review: the same program applied again over held keys does not fade: the shell releases the notes, which sound on in their release without a step",
-           "[bside][s4b-review]")
+           "[bside][s4b-review][slow]")
 {
     // A program whose parameters equal the ones in force is no "program applied" for the part (Part::applyBlockParams): no fade. The
     // shell still releases every voice on a preset change (BiTimbralProcessor::releaseForPresetChange), so the notes go into their
@@ -565,7 +565,7 @@ TEST_CASE ("S4b review: a program applied while a steal fade runs: the stealing 
 }
 
 TEST_CASE ("S4b review: in Dual, a program that changes only Upper fades only Upper; Lower's output is the same bit for bit as when the unchanged program is applied",
-           "[bside][s4b-review]")
+           "[bside][s4b-review][slow]")
 {
     const auto& bank = factoryBank();
     auto changed = bank.programs[14]; // B7 Pulse Over Pad, Dual
@@ -646,7 +646,7 @@ struct FixedPlayHead final : juce::AudioPlayHead
 };
 } // namespace
 
-TEST_CASE ("S4b review: A7's tick follows the host's tempo while the host plays (tick.rate Tempo, 12 per beat)", "[bside][s4b-review]")
+TEST_CASE ("S4b review: A7's tick follows the host's tempo while the host plays (tick.rate Tempo, 12 per beat)", "[bside][s4b-review][slow]")
 {
     for (const double bpm : { 90.0, 150.0 })
     {
@@ -671,7 +671,7 @@ TEST_CASE ("S4b review: A7's tick follows the host's tempo while the host plays 
 // =====================================================================================================================
 
 TEST_CASE ("S4b review: Clean's clear at every note start does not depend on the host's blocks: B2's and B3's phrases and B5's Shared retriggers at 1 and 256",
-           "[bside][s4b-review]")
+           "[bside][s4b-review][slow]")
 {
     struct Case
     {
@@ -713,7 +713,7 @@ TEST_CASE ("S4b review: Clean's clear at every note start does not depend on the
 // =====================================================================================================================
 
 TEST_CASE ("S4b review: a program that differs from the sounding one only in its table is not faded: the held note is released into the old table's release, the next note plays the new table",
-           "[bside][s4b-review]")
+           "[bside][s4b-review][slow]")
 {
     // 8.21.2 "An apply that changes only the table": nothing is faded (Part::applyBlockParams fades only when the parameters differ);
     // the shell's preset-change release (BiTimbralProcessor::releaseForPresetChange) ends the held note in the OLD table's release,

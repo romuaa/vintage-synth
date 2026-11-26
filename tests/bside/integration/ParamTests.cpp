@@ -977,7 +977,7 @@ TEST_CASE ("B-Side params: mix.level exists for both parts (-24 ... +6 dB, defau
     CHECK (all[75 + 64 + 63] == "upper.mix.level");
 }
 
-TEST_CASE ("B-Side params: a state and a program file saved before mix.level load with 0 dB and otherwise identical values", "[bside][params][level][presets]")
+TEST_CASE ("B-Side params: a state and a program file saved before mix.level load with 0 dB and otherwise identical values", "[bside][params][level][presets][slow]")
 {
     // The old form is a saved state / program file with the two IDs removed (no earlier fixtures are committed).
     Rig a;

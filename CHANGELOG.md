@@ -48,6 +48,8 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 - **CI input `tests`** (`full` default, `smoke`): the build rows run build, smoke tier, pluginval, artifact upload,
   then (full only) the slow tests. A release run needs `tests=full`. The run summary names the tier.
 - Test code: the B-Side shell file test names its temp folder with a UUID instead of the clock.
+- B-Side S4b's own tests follow the tiers: `bside_render` is registered through `vs_discover_tests`, and 30 test cases of the
+  branch (all taking 0.3 s or more on this Mac, 3 to 4 times that on a CI runner) are tagged `[slow]`; none needed `[serial]`.
 
 ### B-Side S4a: the chip part plays in the plugin (2026-11-24)
 - **Exitium B-Side now plays its chip.** The test tone is gone: each part is 16 note voices, each a whole chip chain

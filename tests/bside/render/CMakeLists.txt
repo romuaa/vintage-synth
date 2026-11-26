@@ -21,8 +21,9 @@ target_compile_definitions(bside_render PRIVATE
 target_link_libraries(bside_render PRIVATE bs_test_core Catch2::Catch2WithMain)
 set_target_properties(bside_render PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
-set(_bsrr_props LABELS render)
+# vs_discover_tests (tests/CMakeLists.txt) adds the tiers: label render stays, [slow] adds the label slow.
+set(_bsrr_props)
 if(UPDATE_GOLDENS)
     list(APPEND _bsrr_props ENVIRONMENT VS_UPDATE_GOLDENS=1)
 endif()
-catch_discover_tests(bside_render TEST_PREFIX "bside_render: " PROPERTIES ${_bsrr_props})
+vs_discover_tests(bside_render LABEL render TEST_PREFIX "bside_render: " PROPERTIES ${_bsrr_props})
