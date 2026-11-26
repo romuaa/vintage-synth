@@ -202,6 +202,7 @@ jobs_flag=() # ninja decides the parallelism (all cores).
 # run_ctest <build dir> [more ctest arguments]: the tests of the selected tier, TEST_JOBS at a time.
 run_ctest() {
   local b=$1; shift
+  "$here/check-tiers.sh" "$b" || return 1
   echo "test run: tier=$TIER jobs=$TEST_JOBS"
   ctest --test-dir "$b" --output-on-failure --parallel "$TEST_JOBS" "${tier_args[@]+"${tier_args[@]}"}" "$@"
 }

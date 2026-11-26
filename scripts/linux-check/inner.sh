@@ -37,6 +37,7 @@ test_jobs=$(bash /repo/scripts/test-jobs.sh)
 tier_args=()
 [ "$tier" = smoke ] && tier_args=(-LE slow)
 run_ctest() { # run_ctest <build dir> [more ctest arguments]
+  bash /repo/scripts/check-tiers.sh "$1"
   echo "test run: tier=$tier jobs=$test_jobs (container sees $(nproc) CPUs, $mem_gb GB)"
   xvfb-run -a ctest --test-dir "$1" --output-on-failure --parallel "$test_jobs" "${tier_args[@]+"${tier_args[@]}"}" "${@:2}"
 }

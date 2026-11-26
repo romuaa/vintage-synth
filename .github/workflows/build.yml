@@ -336,6 +336,7 @@ jobs:
       - name: Smoke tests (everything not tagged slow)
         shell: bash
         run: |
+          bash scripts/check-tiers.sh build
           jobs=$(bash scripts/test-jobs.sh)
           echo "test run: tier=smoke jobs=$jobs"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
@@ -712,6 +713,7 @@ jobs:
       # The tier the run asked for (the plan job's `tests`), in parallel.
       - name: Tests (ASan + UBSan)
         run: |
+          bash scripts/check-tiers.sh build
           jobs=$(bash scripts/test-jobs.sh)
           tier_args=()
           [[ "$TESTS" == smoke ]] && tier_args=(-LE slow)
