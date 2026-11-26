@@ -51,6 +51,34 @@ first when resuming.
 - **Docker:** the agents' leftovers were removed on 2026-11-24 (owner's word). The images
   `vs-linux-check:*` belong to the local gate and are rebuilt by it when missing.
 
+**Faster tests (2026-11-26, branch `ci/fast-tests`, contract `docs/architecture.md` 7.1; owner's
+"go").** Why: two Windows x64 CI jobs in a row were cancelled at the 60-minute limit (pull
+requests 47 and 48). The causes found: tests ran one at a time (20 to 28 minutes per target),
+164 of 1,229 tests carried 90 % of that time, and the Windows x64 compiler cache on `main` was
+stale after a compiler update on the runner image (0 % hits, a 31-minute build; a cache saved on
+a feature branch is not readable from another branch). The limit is not raised (owner).
+- **Built, reviewed independently, fixed:** tests tagged `[slow]` (182 of the 1,192 on `main`)
+  give a smoke tier (`ctest -LE slow`) and the unchanged full tier; 23 tests with a time limit
+  run alone (`[serial]`); every ctest call of the gates is parallel (`scripts/test-jobs.sh`,
+  `VS_TEST_JOBS`); `scripts/preflight.sh --quick` runs the smoke tier; `build.yml` has the input
+  `tests` (`full` default, `smoke`). The reviewer built `main` and the branch and found the same
+  1,192 tests and labels, and no failure in ten random-order runs at 4 to 54 jobs, also under
+  load; its findings (a guard script that could not fail, a docs check that did not read the
+  workflow's use of the tier) are fixed and shown failing on mutations.
+- **Orchestrator's gate on `05e175e`:** the full `scripts/preflight.sh` passed in 13m20s, all
+  seven steps, full tier, 18 jobs (the same gate took 85 minutes on the S4b branch). Read from
+  the gate's summary; `--quick` took 2m33s at the implementer's run.
+- **Not verified until the first dispatched run:** the workflow change itself, the guard script
+  under Git Bash on the Windows runners, the changed test files on MSVC and GCC x86_64, and the
+  CI targets (smoke within 10 minutes per row, full within 20, warm cache).
+- **After the merge, in this order:** one run on `main` (`-f targets=no-macos`, owner's "yes") to
+  refresh the compiler caches; bring `main` into `bside/s4b-sounds` and tag that branch's own
+  slow tests (about 25 tests exist only there; `bside: Bank level rule` takes 37 s); one run
+  there for Windows x64; then the owner's merge word for pull request 48.
+- **Open:** the two slowest tests (115 s and 77 s in CI) and the other heavy gates could be made
+  cheaper, each a judgement on what a smaller set still gates; the slow tests could get a job of
+  their own beside the build row if a full run misses 20 minutes.
+
 **Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20; shown as the latest release on GitHub since 2026-11-21, owner's word;
 tag `v0.9.0` at commit `116c5f8`: three zips and `SHA256SUMS.txt`). **M8 is done.**
 **Everything below is merged to `main`, B-Side S3a and S3b included (2026-11-24). Model A's
