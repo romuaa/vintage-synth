@@ -129,7 +129,7 @@ std::vector<float> renderRandom (Chip& c, std::uint64_t seed, std::uint64_t tota
 }
 } // namespace
 
-TEST_CASE ("render cost: the batched path renders exactly as the general path (random patches, writes, envelopes, blocks)", "[render][batch]")
+TEST_CASE ("render cost: the batched path renders exactly as the general path (random patches, writes, envelopes, blocks)", "[render][batch][slow]")
 {
     // Every output sample and the digital state bit-identical with the batched path on and off, the
     // renderer's diagnostics too; and the batched path is taken (it renders most samples of these patches).
@@ -170,7 +170,7 @@ TEST_CASE ("render cost: the batched path renders exactly as the general path (r
     CHECK (trials == 160);
 }
 
-TEST_CASE ("render cost: the batched path, under the state check, finds no mismatch and renders as without it", "[render][batch]")
+TEST_CASE ("render cost: the batched path, under the state check, finds no mismatch and renders as without it", "[render][batch][slow]")
 {
     for (std::uint64_t seed = 300; seed < 340; ++seed)
     {
@@ -190,7 +190,7 @@ TEST_CASE ("render cost: the batched path, under the state check, finds no misma
     }
 }
 
-TEST_CASE ("chip: an envelope that cannot change skips its repeating states exactly (frozen, sustain, every divider period)", "[bside][chip][equivalence]")
+TEST_CASE ("chip: an envelope that cannot change skips its repeating states exactly (frozen, sustain, every divider period)", "[bside][chip][equivalence][slow]")
 {
     // Frozen at zero after a release, and holding sustain levels whose divider periods are 1 .. 30; every
     // rate; long advances (the skip) against per-cycle stepping, also right after a rate change that leaves
@@ -229,7 +229,7 @@ TEST_CASE ("chip: an envelope that cannot change skips its repeating states exac
             }
 }
 
-TEST_CASE ("chip: the Model A pull-down in the fast path equals stepping (both shape sets, pulse gates, ring and sync around it)", "[bside][chip][equivalence]")
+TEST_CASE ("chip: the Model A pull-down in the fast path equals stepping (both shape sets, pulse gates, ring and sync around it)", "[bside][chip][equivalence][slow]")
 {
     // The fast path follows a pulling oscillator (8.15.2 (c) step 4) in closed form; here against per-cycle
     // stepping with the placeholder shapes too (their top bit stays up for a quarter period), pulse widths
@@ -310,7 +310,7 @@ TEST_CASE ("chip: the fast path ends a jump on a pull-down as stepping does (osc
         }
 }
 
-TEST_CASE ("render cost: the batched path renders exactly as the general path around Model A pull-downs and their landings", "[render][batch]")
+TEST_CASE ("render cost: the batched path renders exactly as the general path around Model A pull-downs and their landings", "[render][batch][slow]")
 {
     // Writes that switch slow Model A oscillators to saw combinations while their accumulators are in the upper
     // half: the chip pulls them down at a later landing (renderLanding), a time-based event the batched path
@@ -514,7 +514,7 @@ TEST_CASE ("render cost: combined waveforms above the register's range, step mom
                     }
 }
 
-TEST_CASE ("render cost: step moments only above the register's range, entered with hysteresis, close to one by one in the band", "[render][levels]")
+TEST_CASE ("render cost: step moments only above the register's range, entered with hysteresis, close to one by one in the band", "[render][levels][slow]")
 {
     // At and below the register's top nothing changes (output bit-identical with the moments off), also on a glide
     // up to it and at 2 % above it when coming from below (the entry hysteresis); from 4 % above it the moments
@@ -560,7 +560,7 @@ TEST_CASE ("render cost: step moments only above the register's range, entered w
         }
 }
 
-TEST_CASE ("render cost: switching to and from the step moments makes no click (single writes and glides across the limit)", "[render][levels]")
+TEST_CASE ("render cost: switching to and from the step moments makes no click (single writes and glides across the limit)", "[render][levels][slow]")
 {
     // 8.18: the switch between the methods must not click. Near a switch (+-40 samples) the in-band difference
     // from the one-by-one rendering may exceed the larger of the two sides' steady differences by at most 6 dB.
@@ -1121,7 +1121,7 @@ void checkSplits (std::uint64_t firstSeed, int count)
 }
 } // namespace
 
-TEST_CASE ("render: the output does not depend on where renderUntil stops without a write (random cases, below and above the register's top)", "[render][batch][split]")
+TEST_CASE ("render: the output does not depend on where renderUntil stops without a write (random cases, below and above the register's top)", "[render][batch][split][slow]")
 {
     // 8.17: any block split gives the same output. A stop inside a sample that no write follows must change
     // nothing (the program engine stops at every tick); render cost review, items 1 and 2.
@@ -1254,7 +1254,7 @@ AboveAliasWorst worstAboveAlias (const std::vector<double>& rates, const std::ve
 }
 } // namespace
 
-TEST_CASE ("render cost: the step moments alias at most -80 dB re the strongest line above the register's top", "[render][levels][alias]")
+TEST_CASE ("render cost: the step moments alias at most -80 dB re the strongest line above the register's top", "[render][levels][alias][slow]")
 {
     // The budget row of 8.4.5 for combined waveforms extended upwards (render cost review): combined waveforms
     // alias at most -80 dB re their strongest line in 0 .. 20 kHz, measured not bin-centred; plain, synced (a

@@ -314,7 +314,7 @@ LevelFit fitLevels (const tr::Spec& ref, const tr::Spec& ours, int first)
 }
 } // namespace
 
-TEST_CASE ("rendered converters against the reference features (envelope converter levels, waveform harmonics)", "[trace][reference][render][dac]")
+TEST_CASE ("rendered converters against the reference features (envelope converter levels, waveform harmonics)", "[trace][reference][render][dac][slow]")
 {
     // Tolerances (no number in 8.9.4 for the converters; ours, just above what our converter model
     // achieves, so that a coarser model fails): envelope converter (a_env_dac_*, 256 counter values, every

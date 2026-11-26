@@ -16,7 +16,7 @@ git clone --recurse-submodules https://github.com/romuaa/vintage-synth.git
 cd vintage-synth
 cmake -S . -B build/mac -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/mac --parallel
-ctest --test-dir build/mac --output-on-failure
+ctest --test-dir build/mac --output-on-failure --parallel 8   # add -LE slow to skip the slow tests (smoke tier)
 ```
 
 On Windows use the commands in the README. You do not need every platform: say in the pull request

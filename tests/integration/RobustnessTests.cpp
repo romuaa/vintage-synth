@@ -161,7 +161,7 @@ TEST_CASE ("Bypass: a Hold-latched arpeggio, effect tails and MIDI during bypass
     }
 }
 
-TEST_CASE ("Bypass toggled every block, blocks above the prepared size, mono bus, latency", "[wave3][bypass]")
+TEST_CASE ("Bypass toggled every block, blocks above the prepared size, mono bus, latency", "[wave3][bypass][slow]")
 {
     const int prepared = GENERATE (64, 256);
     const int block = GENERATE (1, 100, 700);
@@ -235,7 +235,7 @@ TEST_CASE ("Every integer and choice parameter is discrete with the right number
     CHECK (static_cast<juce::AudioProcessorParameter*> (split)->getNumSteps() == 128);
 }
 
-TEST_CASE ("Non-finite parameter values: the engine gets the parameter's default, the guard never fires", "[wave3][params][nan]")
+TEST_CASE ("Non-finite parameter values: the engine gets the parameter's default, the guard never fires", "[wave3][params][nan][slow]")
 {
     const float bad = GENERATE (std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
                                 -std::numeric_limits<float>::infinity());
@@ -604,7 +604,7 @@ void runFuzz (unsigned firstSeed, unsigned seeds, double maxSeconds)
 }
 } // namespace
 
-TEST_CASE ("Processor fuzz: nothing hangs, finite, silent at the end, block-size independent", "[wave3][fuzz]")
+TEST_CASE ("Processor fuzz: nothing hangs, finite, silent at the end, block-size independent", "[wave3][fuzz][slow][serial]")
 {
     runFuzz (1, 12, 6.0);
 }

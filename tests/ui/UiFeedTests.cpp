@@ -52,7 +52,7 @@ TEST_CASE ("UiFeed: peaks only rise until taken; the limiter gain only falls unt
     CHECK (f.takeLimiterGainMin() == Approx (1.0f));
 }
 
-TEST_CASE ("UiFeed: the held-order seqlock never hands out a torn copy (writer thread, 10^6 writes)", "[ui][feed]")
+TEST_CASE ("UiFeed: the held-order seqlock never hands out a torn copy (writer thread, 10^6 writes)", "[ui][feed][serial]")
 {
     UiFeed f;
     std::atomic<bool> stop { false };

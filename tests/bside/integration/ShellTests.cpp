@@ -204,7 +204,7 @@ TEST_CASE ("B-Side: a note renders finite, audible sound and is silent after rel
     CHECK (rig.proc.getLatencySamples() == 22);
 }
 
-TEST_CASE ("B-Side: the state round-trips, carries its tag and version, and refuses another instrument's", "[bside][shell][state]")
+TEST_CASE ("B-Side: the state round-trips, carries its tag and version, and refuses another instrument's", "[bside][shell][state][slow]")
 {
     Rig a (false), b (false);
     for (const char* id : { "fx.reverb.level", "fx.delay.time", "mix.balance", "arp.rate", "seq.step03.note", "master.limiter.ceiling" })
@@ -325,7 +325,8 @@ TEST_CASE ("B-Side: program, tone and bank files carry B-Side's identity and ref
 {
     Rig rig (false);
     auto& presets = rig.proc.getPresets();
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bside-shell-test-" + juce::String (juce::Time::currentTimeMillis()));
+    // A random name: ctest runs test processes in parallel (a name from the clock could repeat).
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bside-shell-test-" + juce::Uuid().toString());
     REQUIRE (dir.createDirectory());
 
     rig.set ("fx.delay.level", 0.6f);
@@ -440,7 +441,7 @@ TEST_CASE ("B-Side: Dual equals the sum of both parts rendered apart", "[bside][
     CHECK (worst <= 1.0e-6 * std::max (1.0, peak) * 8.0); // float tolerance: a few steps of the output
 }
 
-TEST_CASE ("B-Side: a structural switch on Lower leaves Upper's output bit-identical", "[bside][shell][part][switch]")
+TEST_CASE ("B-Side: a structural switch on Lower leaves Upper's output bit-identical", "[bside][shell][part][switch][slow]")
 {
     // Lower panned hard left, Upper hard right (the no-boost law: the far side is exactly 0): the right channel is
     // Upper alone. Every structural parameter of Lower switched while both play; chip.clock is global (both parts).

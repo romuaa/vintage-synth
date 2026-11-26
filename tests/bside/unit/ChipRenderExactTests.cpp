@@ -491,7 +491,7 @@ void checkSync (const SyncRow& r, double hz, const RateConfig& rc, SyncWorst& w,
 }
 } // namespace
 
-TEST_CASE ("render: synced targets at exact integer and small-rational ratios meet the sync budgets (not bin-centred)", "[render][alias][sync-exact]")
+TEST_CASE ("render: synced targets at exact integer and small-rational ratios meet the sync budgets (not bin-centred)", "[render][alias][sync-exact][slow]")
 {
     // The fast subset of the hidden scan below. At these ratios a sync reset falls on the same instant as one of
     // the target's own boundaries (its wrap or fold, or a cell of a combined waveform); before this step every

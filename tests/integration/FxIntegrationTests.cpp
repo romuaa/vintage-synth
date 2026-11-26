@@ -466,7 +466,7 @@ std::vector<Midi> m3Phrase (double fs)
 }
 } // namespace
 
-TEST_CASE ("Effects and arp/seq off: output bit-identical to the M3 pipeline", "[wave3][fx][bitexact]")
+TEST_CASE ("Effects and arp/seq off: output bit-identical to the M3 pipeline", "[wave3][fx][bitexact][slow]")
 {
     const double fs = GENERATE (48000.0, 96000.0);
     const int keyMode = GENERATE (0, 1); // Whole, Dual
@@ -630,7 +630,7 @@ Stereo renderNote (const std::function<void (Rig&)>& setup, double seconds = 2.0
 }
 } // namespace
 
-TEST_CASE ("Each effect is audible and stereo when on; the dry synth is mono at centre", "[wave3][fx]")
+TEST_CASE ("Each effect is audible and stereo when on; the dry synth is mono at centre", "[wave3][fx][slow]")
 {
     const double fs = GENERATE (48000.0, 96000.0, 192000.0);
     INFO ("rate " << fs);

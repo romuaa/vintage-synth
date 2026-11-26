@@ -2,10 +2,12 @@
 # Linux pre-flight check, run on a developer machine with Docker, before pushing.
 #
 #   scripts/linux-check.sh              GCC Release build of everything, both plugins (warnings are
-#                                       errors, all errors shown) + full ctest under xvfb (incl. both
+#                                       errors, all errors shown) + ctest under xvfb (incl. both
 #                                       host_smoke tests)
 #   scripts/linux-check.sh --sanitize   Clang ASan+UBSan build + tests (mirrors CI "linux-sanitizers",
 #                                       Ubuntu 24.04 image like CI)
+#   --tests smoke|full                  with either of the two: the test tier (default full; smoke = every
+#                                       test not tagged [slow], ctest -LE slow)
 #   scripts/linux-check.sh --shell      interactive shell in the container (source snapshot in /work/src)
 #   scripts/linux-check.sh --clean      remove the cached volume and images, then exit
 #
@@ -16,7 +18,8 @@
 # host the same script runs x86_64 Linux instead. pluginval has no ARM64 Linux release, so it is
 # not part of this check.
 # The container VM needs ~1 GB of memory per parallel compile; the script limits the job count to
-# the memory Docker reports (the default 8 GB Docker Desktop VM works).
+# the memory Docker reports (the default 8 GB Docker Desktop VM works). The tests run in parallel too,
+# as many at a time as the container has CPUs (scripts/test-jobs.sh; VS_TEST_JOBS=<n> overrides it).
 #
 # How it works: the repository and both submodules are mounted read-only; a snapshot of the tracked
 # and untracked-not-ignored files is rsynced into the named volume "vs-linux-check-build" together
@@ -37,14 +40,20 @@ VOLUME=vs-linux-check-build   # owned by the image's unprivileged build user
 die() { echo "linux-check: $*" >&2; exit 1; }
 
 mode=gcc
-case "${1:-}" in
-  ""|--gcc) mode=gcc ;;
-  --sanitize) mode=sanitize ;;
-  --shell) mode=shell ;;
-  --clean) mode=clean ;;
-  -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  *) die "unknown option '$1' (use --sanitize, --shell, --clean)" ;;
-esac
+tier=full
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --gcc) mode=gcc ;;
+    --sanitize) mode=sanitize ;;
+    --shell) mode=shell ;;
+    --clean) mode=clean ;;
+    --tests) [[ $# -ge 2 ]] || die "--tests needs smoke or full"
+             case $2 in smoke|full) tier=$2 ;; *) die "--tests must be smoke or full (got '$2')" ;; esac; shift ;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown option '$1' (use --sanitize, --tests smoke|full, --shell, --clean)" ;;
+  esac
+  shift
+done
 
 here=$(cd -P "$(dirname "$0")" && pwd)
 repo=$(cd -P "$here/.." && pwd)
@@ -116,9 +125,11 @@ args=(--rm --cap-add=SYS_PTRACE
   -v "$tmp/list":/list:ro)
 [[ -t 0 && -t 1 ]] && args+=(-it)
 
-echo "linux-check: mode=$mode image=$image"
+echo "linux-check: mode=$mode tier=$tier image=$image"
 rc=0
-docker run "${args[@]}" "$image" bash /repo/scripts/linux-check/inner.sh "$mode" || rc=$?
+# VS_TEST_JOBS (when set) reaches the container; otherwise it counts its own CPUs.
+[[ -n ${VS_TEST_JOBS-} ]] && args+=(-e VS_TEST_JOBS)
+docker run "${args[@]}" "$image" bash /repo/scripts/linux-check/inner.sh "$mode" "$tier" || rc=$?
 
 dur=$(( $(date +%s) - t_all ))
 if [[ $rc -eq 0 ]]; then

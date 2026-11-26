@@ -202,7 +202,7 @@ std::string familyOf (const std::string& name)
 }
 } // namespace
 
-TEST_CASE ("reference data: digital replay against our chip, exact at every checkpoint (8.15.8 exemption)", "[trace][reference][chip]")
+TEST_CASE ("reference data: digital replay against our chip, exact at every checkpoint (8.15.8 exemption)", "[trace][reference][chip][slow]")
 {
     const auto all = traces();
     if (all.empty())
@@ -361,7 +361,7 @@ TEST_CASE ("reference data: our fitted shapes against the S2a placeholder in the
     }
 }
 
-TEST_CASE ("reference data: analog tolerances against our chip", "[trace][reference][chip]")
+TEST_CASE ("reference data: analog tolerances against our chip", "[trace][reference][chip][slow]")
 {
     // Compare.h: filter corners, resonance peaks, distortion, voice DC steps (8.9.4), measured with
     // AnalogMeasure.h on our chain (Chip::render -> Filter -> OutputStage, tests/bside/trace/AnalogChain.h) at

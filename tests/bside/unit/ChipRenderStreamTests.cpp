@@ -120,7 +120,7 @@ double regOf (double hz) { return hz * 16777216.0 / 985248.0; }
 double lineOf (const Chip& c, int n) { return static_cast<double> (c.increment (n)) / 72057594037927936.0; }
 } // namespace
 
-TEST_CASE ("render: against the chip's own output stream (ring and sync from a pulled-down Model A source, pull-down gate)", "[render][stream]")
+TEST_CASE ("render: against the chip's own output stream (ring and sync from a pulled-down Model A source, pull-down gate)", "[render][stream][slow]")
 {
     struct Case
     {
@@ -221,7 +221,7 @@ TEST_CASE ("render: against the chip's own output stream (ring and sync from a p
     }
 }
 
-TEST_CASE ("render: no corrections and a physical peak over random patches without sync chains, both models", "[render][fuzz]")
+TEST_CASE ("render: no corrections and a physical peak over random patches without sync chains, both models", "[render][fuzz][slow]")
 {
     bst::Rng rng (77);
     // every waveform combination, the noise ones included (per-cycle mode: 0xa0, 0xb0, 0xc0, 0xe0, 0xf0)
@@ -517,7 +517,7 @@ ScheduleResult runSchedule (const Schedule& s)
 }
 } // namespace
 
-TEST_CASE ("render: random write schedules against the chip's own stream (every waveform, sync, ring, every write kind)", "[render][stream][schedule]")
+TEST_CASE ("render: random write schedules against the chip's own stream (every waveform, sync, ring, every write kind)", "[render][stream][schedule][slow]")
 {
     bst::Rng rng (2024);
     double worst = 0.0, rms = 0.0;
@@ -801,7 +801,7 @@ NearWriteResult nearWritePatch (int mode, std::uint64_t seed)
 }
 } // namespace
 
-TEST_CASE ("render: writes a few cycles into a sample, no prediction error above rounding", "[render][corrections]")
+TEST_CASE ("render: writes a few cycles into a sample, no prediction error above rounding", "[render][corrections][slow]")
 {
     // The review's harness, smaller (nearWritePatch, 300 patches per write kind). Corrections below 1e-4 of
     // a period round the sub-cycle time of a sync reset (docs/decisions.md S2b-2 row 17); a larger one is a

@@ -98,6 +98,34 @@ dated log below has the reasons.
 - **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new
   judgement call there (with the reason), and mark the ones the user should review.
 
+## Faster tests: tiers and parallel runs (2026-11-26)
+
+Owner decisions (2026-11-26): the build job's time limit is raised only as a last resort ("an
+hour is 55 minutes too much"); the plan of `docs/architecture.md` 7.1 is approved ("go"); one CI
+run on `main` after the merge refreshes the compiler caches ("yes"); pull request 48 waits for a
+Windows x64 run on the new workflow ("wait"); the local gate uses all 18 cores of the owner's Mac.
+
+Orchestrator's calls, all **(review)**:
+
+| # | Call | Reason |
+|---|---|---|
+| 1 | The slow tests run last in the build row, not in a job of their own beside it. | A second job needs the test programs and their data paths moved between runners, or a second build. One job keeps the full run simple; a job of its own stays possible if the measured full run misses its 20-minute target. |
+| 2 | `tests=full` is the default of the workflow input. | A dispatched run is the merge confirmation; the weaker tier must be asked for by name. |
+| 3 | `scripts/preflight.sh --quick` runs the smoke tier (`--tests full` gives the old content). | The quick run is the everyday loop; the default run stays the hand-over gate with every test. |
+| 4 | A test is slow from 1 s on any target of CI run 45706438078; the tag is in the test's source. | 164 tests carried 90 % of the time there; the tag is visible where the test is written, and no list outside the code can go stale. |
+| 5 | Tests with an asserted time limit or a time-boxed count run alone (`[serial]`, 23 tests); their thresholds are unchanged. | They measure the machine as well as the code; beside 17 other tests they would fail for the wrong reason. |
+| 6 | The job count is the logical core count, with no memory cap for tests (compiles keep theirs). | 18 sanitizer test processes fit in the container's 7 GB in every run made; `VS_TEST_JOBS` lowers it if a machine differs. |
+| 7 | The steps of the local gate still run one after another. | The whole gate fell from 85 to about 13 minutes with parallel tests alone; overlapping the Mac build and the container risked the container's memory before. Decide again if the gate grows. |
+| 8 | `host_smoke*` and the validator tests stay in the smoke tier although they take 1 to 2 s. | They are the proof that the built plugin loads; a quick run without them would say little. |
+| 9 | The executable is discovered four times (one per tag combination) instead of turning every Catch2 tag into a label. | The tags `[render]`, `[bside]` and `[trace]` are also plain tags elsewhere; as labels they would change what `ctest -L render` selects. |
+| 10 | Not done in this step: making single slow tests cheaper (the two slowest take 115 s and 77 s in CI). | It needs a judgement per test on what a smaller set still gates; its own item. |
+
+From the independent review: the first guard script compared `ctest -L slow` with `ctest -LE
+slow`, which are complements and always add up; with the label escaping broken on purpose 70
+slow tests fell into the smoke tier and the guard passed. It now compares ctest with Catch2's
+own lists per executable (contract 7.1.5 item 2, amended), and the docs check reads how
+`build.yml` uses the tier. Both were shown failing on the mutations.
+
 ## B-Side S3b-2: aliasing of the static curves (2026-11-23, all review)
 
 Contract: `docs/architecture.md` 8.19.4, part "S3b-2". Code: `source/bside/chip/HalfBand.*` (new), `ChipVoice.*`

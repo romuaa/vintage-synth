@@ -147,7 +147,7 @@ TEST_CASE ("Strict reader: caps on depth, members, elements, values and string l
     CHECK_FALSE (accepts ("[1,2,3,4,5]", small));
 }
 
-TEST_CASE ("Strict reader: time is linear in the input and memory is bounded by the caps", "[presets][json]")
+TEST_CASE ("Strict reader: time is linear in the input and memory is bounded by the caps", "[presets][json][serial]")
 {
     // The review's quadratic case (80k keys in one object took 2.56 s under ASan) and its memory case
     // (8 MB of "{}" raised peak memory by ~360 MB) now end at a cap after linear work.
@@ -466,7 +466,7 @@ FuzzResult fuzz (unsigned seed, double seconds, long maxIterations)
 }
 } // namespace
 
-TEST_CASE ("Fuzzing the strict reader: seeded, time-bounded; never a crash, accepted files are valid and stable", "[presets][json][fuzz]")
+TEST_CASE ("Fuzzing the strict reader: seeded, time-bounded; never a crash, accepted files are valid and stable", "[presets][json][fuzz][slow][serial]")
 {
     const auto r = fuzz (20261113u, 4.0, 60000);
     std::printf ("strict reader fuzz: %ld inputs, %ld accepted, slowest %.5f s (%zu bytes)\n", r.iterations, r.accepted, r.worstSeconds,

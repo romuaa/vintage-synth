@@ -258,7 +258,7 @@ TEST_CASE ("Soft limiter: block-size independent, also while the ceiling moves",
 // Through the processor
 // =================================================================================================
 
-TEST_CASE ("Output trim: the loudest dry chord peaks at or below -1 dBFS at the default master volume", "[wave4][output]")
+TEST_CASE ("Output trim: the loudest dry chord peaks at or below -1 dBFS at the default master volume", "[wave4][output][slow]")
 {
     Rig rig (48000.0, 512);
     rig.set ("key.mode", 1);
@@ -271,7 +271,7 @@ TEST_CASE ("Output trim: the loudest dry chord peaks at or below -1 dBFS at the 
     CHECK (peak > -4.0); // the trim is the documented -6.02 dB, not more
 }
 
-TEST_CASE ("Limiter through the processor: the ceiling holds for the loudest chord, dry and with extreme effects", "[wave4][output]")
+TEST_CASE ("Limiter through the processor: the ceiling holds for the loudest chord, dry and with extreme effects", "[wave4][output][slow]")
 {
     const float ceiling = GENERATE (-12.0f, -1.0f, 0.0f);
     const int effects = GENERATE (0, 1);
@@ -290,7 +290,7 @@ TEST_CASE ("Limiter through the processor: the ceiling holds for the loudest cho
     CHECK (rig.proc.getGuardTrips() == 0);
 }
 
-TEST_CASE ("Limiter through the processor: distortion of a chord 6 dB over the ceiling, and the transient overshoot", "[wave4][output]")
+TEST_CASE ("Limiter through the processor: distortion of a chord 6 dB over the ceiling, and the transient overshoot", "[wave4][output][slow]")
 {
     // The limiter-off output is exactly the limiter's input (same path, no limiter), so the two
     // renders isolate what the limiter does.
@@ -324,7 +324,7 @@ TEST_CASE ("Limiter through the processor: distortion of a chord 6 dB over the c
     CHECK (peakOut <= ceiling + kCeilingToleranceDb); // zero overshoot, also on the chord's onset
 }
 
-TEST_CASE ("Limiter through the processor: block-size independent with ceiling automation", "[wave4][output]")
+TEST_CASE ("Limiter through the processor: block-size independent with ceiling automation", "[wave4][output][slow]")
 {
     auto render = [] (int block) {
         Rig rig (48000.0, 512);
@@ -387,7 +387,7 @@ double maxGainStepDb (const Stereo& in, const Stereo& out, size_t from, size_t t
 }
 } // namespace
 
-TEST_CASE ("Limiter through the processor: a ceiling sweep moves the gain smoothly, both directions", "[wave4][output]")
+TEST_CASE ("Limiter through the processor: a ceiling sweep moves the gain smoothly, both directions", "[wave4][output][slow]")
 {
     // 0 -> -12 dB in 0.5 dB steps every 10 ms (an automation lane at block rate), then back up.
     std::vector<Rig::Change> ch;
@@ -409,7 +409,7 @@ TEST_CASE ("Limiter through the processor: a ceiling sweep moves the gain smooth
     CHECK (down > 0.0); // it did move
 }
 
-TEST_CASE ("Limiter through the processor: switching it while it reduces the gain is crossfaded, both directions", "[wave4][output]")
+TEST_CASE ("Limiter through the processor: switching it while it reduces the gain is crossfaded, both directions", "[wave4][output][slow]")
 {
     // Off at 30000 while it reduces the gain by about 10 dB, on again at 50000.
     const std::vector<Rig::Change> ch { { 30000, [] (Rig& r) { r.set ("master.limiter", 0); } },
