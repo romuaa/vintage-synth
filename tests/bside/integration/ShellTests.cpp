@@ -325,7 +325,8 @@ TEST_CASE ("B-Side: program, tone and bank files carry B-Side's identity and ref
 {
     Rig rig (false);
     auto& presets = rig.proc.getPresets();
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bside-shell-test-" + juce::String (juce::Time::currentTimeMillis()));
+    // A random name: ctest runs test processes in parallel (a name from the clock could repeat).
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bside-shell-test-" + juce::Uuid().toString());
     REQUIRE (dir.createDirectory());
 
     rig.set ("fx.delay.level", 0.6f);
