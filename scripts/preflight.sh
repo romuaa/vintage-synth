@@ -118,11 +118,10 @@ fi
 
 # The test tier: smoke (ctest -LE slow) or full (ctest). The hand-over gate runs full; "smoke" is only
 # accepted for an iteration run (--quick or --only), like a narrowed VS_PREFLIGHT_PLUGINS.
-if [[ $tests_opt == smoke && $mode_set != quick && ${#only[@]} -eq 0 ]]; then
+if [[ $tests_opt == smoke && $mode_set != quick && $mode_set != clean && ${#only[@]} -eq 0 ]]; then
   die "--tests smoke narrows the gate to the smoke tier: allowed only with --quick or --only (the default and --full runs always run the full tier)"
 fi
 TIER=${tests_opt:-$([[ $mode_set == quick ]] && echo smoke || echo full)}
-TEST_JOBS=$("$here/test-jobs.sh") || exit 2
 tier_args=()
 [[ $TIER == smoke ]] && tier_args=(-LE slow)
 
@@ -157,6 +156,12 @@ for s in "${ALL_STEPS[@]}"; do
   [[ $in_sel -eq 1 && $skipped -eq 0 ]] && run_steps+=("$s")
 done
 [[ ${#run_steps[@]} -gt 0 ]] || die "no steps selected"
+
+# The job count (and so a bad VS_TEST_JOBS) matters only when a selected step runs tests.
+TEST_JOBS=-
+for s in "${run_steps[@]}"; do
+  case $s in mac|linux|mac-sanitize|linux-sanitize) TEST_JOBS=$("$here/test-jobs.sh") || exit 2; break ;; esac
+done
 
 # ---- helpers ----------------------------------------------------------------------------------
 # The workflow files are the single source of truth for pinned versions and hashes.
