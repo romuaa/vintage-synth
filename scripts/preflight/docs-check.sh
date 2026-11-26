@@ -9,7 +9,9 @@
 #      the security.yml allow-list; self-tested by test-workflow-triggers.sh); the JSON row strings inside build.yml are valid JSON; and the
 #      "plan" step of build.yml, run for every `targets` value and every `tests` value, selects exactly the documented
 #      rows, jobs and test tier (the table below), refuses release=true with tests=smoke, and writes the
-#      tier into the run summary, so the `if:` conditions and the docs cannot drift apart.
+#      tier into the run summary, so the `if:` conditions and the docs cannot drift apart; and build.yml's use of
+#      the tier is read as text: one always-run -LE slow step and one -L slow step with if: tests == full per build
+#      row, the sanitizer job takes the tier from the plan.
 #   4. Source layout: source/common includes nothing from an instrument directory; the JUCE-free
 #      directories include no JUCE header; no two files differ only by case; no Python bytecode
 #      (`__pycache__/`, `*.pyc`, `*.pyo`) is tracked; no tracked file, text or binary, contains an
@@ -169,6 +171,42 @@ if command -v ruby >/dev/null 2>&1; then
     ok "build.yml permissions: default read; only the package job has contents: write and nothing more"
   else
     fail "build.yml permissions: $perm_report"
+  fi
+fi
+
+# How build.yml USES the plan's `tests` output (contract 7.1.5 item 2): in the build job exactly one ctest step runs
+# the smoke tier (-LE slow, always) and exactly one runs the slow tests (-L slow, only with tests=full); the
+# sanitizer job takes the tier from the plan and only `smoke` adds -LE slow. Plain text matching.
+if command -v ruby >/dev/null 2>&1; then
+  tier_report=$(ruby -ryaml -e '
+    y = YAML.load_file(".github/workflows/build.yml")
+    bad = []
+    ct = ->(job) { y["jobs"][job]["steps"].select { |s| s["run"].to_s.include?("ctest") } }
+    b = ct.("build")
+    smoke = b.select { |s| s["run"] =~ /-LE slow/ }
+    slow = b.select { |s| s["run"] =~ /(^|[ ])-L slow/ }
+    bad << "build job: #{b.size} ctest steps, expected 2" unless b.size == 2
+    bad << "build job: #{smoke.size} smoke-tier steps (-LE slow), expected 1" unless smoke.size == 1
+    bad << "build job: the smoke-tier step has an if: (#{smoke[0]["if"].inspect}), it must always run" if smoke.size == 1 && smoke[0].key?("if")
+    bad << "build job: #{slow.size} slow-test steps (-L slow), expected 1" unless slow.size == 1
+    if slow.size == 1 && slow[0]["if"].to_s.strip != "needs.plan.outputs.tests == '"'"'full'"'"'"
+      bad << "build job: the slow-test step has if: #{slow[0]["if"].inspect}, expected needs.plan.outputs.tests == '"'"'full'"'"'"
+    end
+    bad << "build job: a ctest step runs both tiers or neither" if (smoke & slow).any? || b.size != (smoke | slow).size
+    sj = y["jobs"]["linux-sanitizers"]
+    sc = ct.("linux-sanitizers")
+    bad << "sanitizer job: #{sc.size} ctest steps, expected 1" unless sc.size == 1
+    bad << "sanitizer job: TESTS is not taken from needs.plan.outputs.tests" unless sj["env"].to_h["TESTS"].to_s.delete(" ") == "${{needs.plan.outputs.tests}}"
+    if sc.size == 1
+      r = sc[0]["run"]
+      bad << "sanitizer job: -LE slow must appear once, only as tier_args when TESTS is smoke" unless r.scan(/-LE slow/).size == 1 && r.include?("[[ \"$TESTS\" == smoke ]] && tier_args=(-LE slow)")
+      bad << "sanitizer job: ctest does not use tier_args, or runs -L slow" unless r.include?("\"${tier_args[@]}\"") && r !~ /(^|[ ])-L slow/
+    end
+    puts bad' 2>&1)
+  if [[ -z $tier_report ]]; then
+    ok "build.yml tiers: build job = one always-run -LE slow step + one -L slow step only with tests=full; sanitizer job takes the tier from the plan"
+  else
+    fail "build.yml tiers: $tier_report"
   fi
 fi
 
