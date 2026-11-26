@@ -490,7 +490,7 @@ TEST_CASE ("Feed readers: audio alive, the playing step, the held-key memory", "
 // The preview equals what the processor plays
 // =================================================================================================
 
-TEST_CASE ("Preview: the model equals the events the processor delivers to the part (real processor, offline)", "[ui][arpseq][preview]")
+TEST_CASE ("Preview: the model equals the events the processor delivers to the part (real processor, offline)", "[ui][arpseq][preview][slow]")
 {
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
     int comparedNotes = 0;
@@ -523,7 +523,7 @@ TEST_CASE ("Preview: the model equals the events the processor delivers to the p
     CHECK (comparedNotes > 150);
 }
 
-TEST_CASE ("Preview: the page's example chord, routed by the key mode, equals what both parts play", "[ui][arpseq][preview]")
+TEST_CASE ("Preview: the page's example chord, routed by the key mode, equals what both parts play", "[ui][arpseq][preview][slow]")
 {
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
     struct Mode

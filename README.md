@@ -169,7 +169,7 @@ from the Vintage bundle it just validated, verifies the zip and loads the unpack
 ## Testing
 
 ```bash
-ctest --test-dir build/mac --output-on-failure        # unit tests + host smoke test
+ctest --test-dir build/mac --output-on-failure --parallel 8       # every test (the full tier); add -LE slow for the smoke tier
 build/mac/tests/voice_bench                           # CPU cost per voice
 VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # audition WAV + spectrogram
 ```
@@ -178,6 +178,10 @@ VS_RENDER_DIR=/some/dir build/mac/tests/VintageSynthTests "[.render]"   # auditi
   envelope and LFO timing, sample-accurate MIDI, determinism, the arpeggiator and sequencer, the
   effects, parameters and their text, presets and banks, state, and the editor (models, pictures, no
   allocation while painting, accessibility inventory).
+- **Test tiers:** a test case that takes 1 s or longer carries the Catch2 tag `[slow]` (ctest label `slow`).
+  `ctest -LE slow` is the quick *smoke* tier, plain `ctest` the *full* tier (the gate); `scripts/preflight.sh
+  --quick` runs smoke. Tests run in parallel (`scripts/test-jobs.sh`, `VS_TEST_JOBS=<n>` overrides); a test
+  tagged `[serial]` runs alone.
 - **Render regression** (ctest label `render`) compares rendered audio features with golden references.
 - **host_smoke** loads the built `.vst3` the way a DAW does and checks identity, parameters, rendering at
   44.1/48/96 kHz and state save/restore (`host_smoke --profile vintage|bside <bundle>`; ctest runs

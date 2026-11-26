@@ -37,7 +37,7 @@ cmake -S . -B build/win-x64   -A x64
 cmake -S . -B build/win-arm64 -A ARM64
 cmake --build build/win-x64   --config Release --parallel
 cmake --build build/win-arm64 --config Release --parallel
-ctest --test-dir build/win-x64 -C Release --output-on-failure
+ctest --test-dir build/win-x64 -C Release --output-on-failure --parallel 4
 ```
 
 CI instead runs Ninja inside the VS developer environment with sccache (see `.github/workflows/build.yml`).

@@ -623,7 +623,7 @@ Peak findPeak (const std::vector<float>& spec, int order, double expectedHz, dou
 double noteHz (double note) { return 440.0 * std::pow (2.0, (note - 69.0) / 12.0); }
 } // namespace
 
-TEST_CASE ("Poly: a 16-note chord renders 16 distinct pitches at equal level", "[part][poly]")
+TEST_CASE ("Poly: a 16-note chord renders 16 distinct pitches at equal level", "[part][poly][slow]")
 {
     VS_EVERY_RATE;
     Rig rig;
@@ -669,7 +669,7 @@ TEST_CASE ("Poly: a 16-note chord renders 16 distinct pitches at equal level", "
     }
 }
 
-TEST_CASE ("Poly: the 17th note steals the oldest voice with a 3 ms fade (no click) and starts 3 ms late", "[part][poly][steal]")
+TEST_CASE ("Poly: the 17th note steals the oldest voice with a 3 ms fade (no click) and starts 3 ms late", "[part][poly][steal][slow]")
 {
     VS_EVERY_RATE;
     // 16 low sines (32.7 .. 77.8 Hz) make a smooth signal whose largest sample-to-sample step is
@@ -984,7 +984,7 @@ TEST_CASE ("Mod wheel adds wheel x depth to the VCO LFO mod amount (same taper a
     CHECK (differenceDb (vco1Only (0.0f), vco1Only (1.0f)) < -120.0);
 }
 
-TEST_CASE ("Unison: voices detuned symmetrically across the spread, loudness about constant (1/sqrt n)", "[part][unison]")
+TEST_CASE ("Unison: voices detuned symmetrically across the spread, loudness about constant (1/sqrt n)", "[part][unison][slow]")
 {
     VS_EVERY_RATE;
     SECTION ("detune spread")
@@ -1125,7 +1125,7 @@ TEST_CASE ("Flipping the VCF slope on sounding voices crossfades the filter taps
     }
 }
 
-TEST_CASE ("Render does not depend on the host block size with 16 voices, steals, glide and pedal (Vintage 1)", "[part][control][poly]")
+TEST_CASE ("Render does not depend on the host block size with 16 voices, steals, glide and pedal (Vintage 1)", "[part][control][poly][slow]")
 {
     VS_EVERY_RATE;
     static constexpr int length = 3 * 48000;
@@ -1166,7 +1166,7 @@ TEST_CASE ("Render does not depend on the host block size with 16 voices, steals
     }
 }
 
-TEST_CASE ("Render does not depend on the host block size when a voice is reused after it went idle", "[part][control]")
+TEST_CASE ("Render does not depend on the host block size when a voice is reused after it went idle", "[part][control][slow]")
 {
     VS_EVERY_RATE;
     // A voice whose envelope finishes inside a sub-block used to keep its oscillators running to
@@ -1228,7 +1228,7 @@ double hfDifferenceDb (const std::vector<float>& a, const std::vector<float>& b,
 }
 } // namespace
 
-TEST_CASE ("Poly: a voice reused after idle starts ENV-1 from zero; renders independent of block size", "[part][control][poly]")
+TEST_CASE ("Poly: a voice reused after idle starts ENV-1 from zero; renders independent of block size", "[part][control][poly][slow]")
 {
     VS_EVERY_RATE;
     // ENV-1 release (1.6 s) far longer than ENV-2's (0.16 s): when ENV-2 finishes, ENV-1 is still
@@ -1297,7 +1297,7 @@ TEST_CASE ("Poly: a voice reused after idle starts ENV-1 from zero; renders inde
     CHECK (std::abs (hfFresh - hfReused) < 0.5);
 }
 
-TEST_CASE ("Poly: idle voices are reported in the order they finished, whatever the block size", "[part][control][poly]")
+TEST_CASE ("Poly: idle voices are reported in the order they finished, whatever the block size", "[part][control][poly][slow]")
 {
     VS_EVERY_RATE;
     // Voices of 41 and 40 finish 3 samples apart, often in the same sub-block. The voice that
@@ -1334,7 +1334,7 @@ TEST_CASE ("Poly: idle voices are reported in the order they finished, whatever 
     }
 }
 
-TEST_CASE ("Solo: a legato note change applies key-follow envelope times at the event", "[part][control][solo]")
+TEST_CASE ("Solo: a legato note change applies key-follow envelope times at the event", "[part][control][solo][slow]")
 {
     VS_EVERY_RATE;
     // Decision: key follow tracks the keyboard at the legato change (as a keyboard CV would), not
@@ -1376,7 +1376,7 @@ TEST_CASE ("Solo: a legato note change applies key-follow envelope times at the 
     CHECK (std::abs (reach - 0.3536) < 0.02);
 }
 
-TEST_CASE ("Unison: the level is the same on every note and equals one voice, also at detune 0", "[part][unison]")
+TEST_CASE ("Unison: the level is the same on every note and equals one voice, also at detune 0", "[part][unison][slow]")
 {
     VS_EVERY_RATE;
     auto soloLevel = [] {
@@ -1417,7 +1417,7 @@ TEST_CASE ("Unison: the level is the same on every note and equals one voice, al
         }
 }
 
-TEST_CASE ("Poly: a stolen note keeps its gate length (released during the fade it still sounds)", "[part][poly][steal]")
+TEST_CASE ("Poly: a stolen note keeps its gate length (released during the fade it still sounds)", "[part][poly][steal][slow]")
 {
     // High note (84) over a low sine chord; its contribution is measured as the energy of the first
     // difference of (render - the same render with the note at velocity 0). Velocity -> VCA is 1,

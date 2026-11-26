@@ -544,12 +544,12 @@ void runAll (std::uint64_t tableCases, std::uint64_t otherCases)
 }
 } // namespace
 
-TEST_CASE ("fuzz: seeded random and mutated inputs (short run)", "[bside][fuzz]")
+TEST_CASE ("fuzz: seeded random and mutated inputs (short run)", "[bside][fuzz][slow][serial]")
 {
     runAll (30000, 4000);
 }
 
-TEST_CASE ("fuzz: pathological inputs at the limits", "[bside][fuzz]")
+TEST_CASE ("fuzz: pathological inputs at the limits", "[bside][fuzz][serial]")
 {
     Stats st;
     const std::string head = "bside-table 1\n";

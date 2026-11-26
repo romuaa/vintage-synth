@@ -15,8 +15,21 @@ name: build
 #      no-macos   everything except the macOS row (macOS is fully covered locally and is the most
 #                 expensive runner)
 #      all        everything: the release confirmation, run on main before a release
-#  - Each run's summary page lists the commit and the selected rows, so a green run on the
-#    branch tip is the recorded confirmation for the merge. The workflow file must exist on the
+#  - Pick `tests` (default full):
+#      full       every test: the smoke tier first, then the slow tests after the artifact upload.
+#                 Only a full run on the branch tip is the recorded confirmation for a merge.
+#      smoke      only the smoke tier (every test not tagged [slow], `ctest -LE slow`): quick feedback
+#                 while iterating. Refused with release=true.
+#    The tests of every row and of the sanitizer job run in parallel (as many at a time as the runner
+#    has cores, scripts/test-jobs.sh; a test tagged [serial] runs alone). Row order: build, smoke tier
+#    (it includes the VST3 validator tests), pluginval, artifact upload, then the slow tests
+#    (`ctest -L slow`, only with tests=full). docs/architecture.md 7.1 has the contract.
+#  - Compiler cache: a cache saved by a run on a feature branch cannot be read from another branch;
+#    every branch starts from the cache last saved on main, and that cache goes stale when a runner
+#    image gets a new compiler (Windows x64, 2026-11: 0 % hits, a 31-minute build). Dispatch one run
+#    on main after a merge that changes many sources, and whenever a row reports a hit rate under 50 %.
+#  - Each run's summary page lists the commit, the selected rows and the test tier, so a green run on
+#    the branch tip is the recorded confirmation for the merge. The workflow file must exist on the
 #    default branch for the dispatch to be offered; run it from the branch you want to confirm.
 #  - Every job has a timeout, so a hung test can't burn hours. The security workflow (cheap,
 #    Linux only) is separate and keeps its own triggers.
@@ -35,8 +48,13 @@ on:
         type: choice
         options: [no-macos, windows, linux-x64, linux, all]
         default: no-macos
+      tests:
+        description: "Test tier: full = every test (the merge confirmation), smoke = everything not tagged slow. Default: full"
+        type: choice
+        options: [full, smoke]
+        default: full
       release:
-        description: "Release run: Vintage only, then pack the zips and create a DRAFT release (needs targets=all)"
+        description: "Release run: Vintage only, then pack the zips and create a DRAFT release (needs targets=all and tests=full)"
         type: boolean
         default: false
 
@@ -85,6 +103,7 @@ jobs:
       sanitizers: ${{ steps.plan.outputs.sanitizers }}
       windows_bundle: ${{ steps.plan.outputs.windows_bundle }}
       linux_bundle: ${{ steps.plan.outputs.linux_bundle }}
+      tests: ${{ steps.plan.outputs.tests }}
       release: ${{ inputs.release && 'true' || 'false' }}
       version: ${{ steps.release.outputs.version }}
     steps:
@@ -92,8 +111,18 @@ jobs:
         id: plan
         env:
           TARGETS: ${{ inputs.targets }}
+          TESTS: ${{ inputs.tests }}
+          RELEASE: ${{ inputs.release && 'true' || 'false' }}
         run: |
           set -euo pipefail
+          # The test tier: full = every test, smoke = everything not tagged [slow]. A release needs full.
+          case "$TESTS" in
+            full|smoke) ;;
+            *) echo "unknown tests '$TESTS'" >&2; exit 1 ;;
+          esac
+          if [[ "$RELEASE" == true && "$TESTS" != full ]]; then
+            echo "a release run needs tests=full (got '$TESTS')" >&2; exit 1
+          fi
           # Rows of the build matrix (JSON):
           #  macos-universal  macos-26 (Apple silicon, pinned, not -latest); ccache handles the
           #                   multi-arch (-arch arm64 -arch x86_64) universal compile.
@@ -125,10 +154,16 @@ jobs:
             echo "sanitizers=$sanitizers"
             echo "windows_bundle=$windows_bundle"
             echo "linux_bundle=$linux_bundle"
+            echo "tests=$TESTS"
           } >> "$GITHUB_OUTPUT"
           {
-            echo "### CI run: targets = \`$TARGETS\`"
+            echo "### CI run: targets = \`$TARGETS\`, tests = \`$TESTS\`"
             echo "- commit: \`$GITHUB_SHA\` (ref \`$GITHUB_REF_NAME\`)"
+            if [[ "$TESTS" == full ]]; then
+              echo "- test tier: **full** (every test; a green run on the branch tip is the merge confirmation)"
+            else
+              echo "- test tier: **smoke** (tests tagged slow are NOT run; this is not the merge confirmation)"
+            fi
             echo "- build rows: $(echo "$matrix" | jq -r 'map(.name) | join(", ")')"
             echo "- distribution tests: $distros, sanitizers: $sanitizers, Windows bundle: $windows_bundle, Linux bundle: $linux_bundle"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -294,14 +329,20 @@ jobs:
         shell: bash
         run: ${{ matrix.cache }} --show-stats || true
 
-      # host_smoke loads the VST3 through JUCE's host, which may want a display on Linux.
-      - name: Unit tests
+      # The smoke tier: every test not tagged [slow] (docs/architecture.md 7.1), in parallel. It includes
+      # host_smoke and host_smoke_bside, which load the VST3 through JUCE's host (a display on Linux), and
+      # the VST3 validator tests (VS_VST3_VALIDATOR is set in Configure; they are not slow, so no other
+      # step runs them again). The slow tests run after the artifact upload, below.
+      - name: Smoke tests (everything not tagged slow)
         shell: bash
         run: |
+          bash scripts/check-tiers.sh build
+          jobs=$(bash scripts/test-jobs.sh)
+          echo "test run: tier=smoke jobs=$jobs"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            xvfb-run -a ctest --test-dir build --output-on-failure
+            xvfb-run -a ctest --test-dir build --output-on-failure --parallel "$jobs" -LE slow
           else
-            ctest --test-dir build --output-on-failure
+            ctest --test-dir build --output-on-failure --parallel "$jobs" -LE slow
           fi
 
       # Per plugin: "<CMake target>|<product name>" (bundle: build/<target>_artefacts/Release/VST3/<product>.vst3).
@@ -420,6 +461,20 @@ jobs:
           retention-days: 7
           path: build/tests/host_smoke_artefacts/Release/host_smoke*
           if-no-files-found: error
+
+      # The slow tests (label slow): together with the smoke tier above exactly the full tier. Last in the
+      # row, so the bundles are already uploaded when they run. tests=smoke skips this step.
+      - name: Slow tests (the rest of the full tier)
+        if: needs.plan.outputs.tests == 'full'
+        shell: bash
+        run: |
+          jobs=$(bash scripts/test-jobs.sh)
+          echo "test run: tier=full (slow tests) jobs=$jobs"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run -a ctest --test-dir build --output-on-failure --parallel "$jobs" -L slow
+          else
+            ctest --test-dir build --output-on-failure --parallel "$jobs" -L slow
+          fi
 
   # The bundles built by the linux-x64 row (one per plugin) must load on other distributions than the image
   # they were built on. Each entry runs pluginval (strictness 10) inside a container of that
@@ -608,6 +663,7 @@ jobs:
     env:
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
       ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1
+      TESTS: ${{ needs.plan.outputs.tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -654,8 +710,15 @@ jobs:
         if: always()
         run: ccache --show-stats || true
 
+      # The tier the run asked for (the plan job's `tests`), in parallel.
       - name: Tests (ASan + UBSan)
-        run: xvfb-run -a ctest --test-dir build --output-on-failure -E '^(host_smoke|host_smoke_bside)$'
+        run: |
+          bash scripts/check-tiers.sh build
+          jobs=$(bash scripts/test-jobs.sh)
+          tier_args=()
+          [[ "$TESTS" == smoke ]] && tier_args=(-LE slow)
+          echo "test run: tier=$TESTS jobs=$jobs"
+          xvfb-run -a ctest --test-dir build --output-on-failure --parallel "$jobs" "${tier_args[@]}" -E '^(host_smoke|host_smoke_bside)$'
 
   # ---- Release (docs/architecture.md section 10): only when the run was dispatched with release=true ----
 

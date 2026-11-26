@@ -24,7 +24,7 @@ namespace
 const fs::path kDir { BS_REFERENCE_DIR };
 }
 
-TEST_CASE ("analog: the filter modes and their sums within the scripted-trace tolerance (a_modes_*)", "[trace][reference][chip][analog]")
+TEST_CASE ("analog: the filter modes and their sums within the scripted-trace tolerance (a_modes_*)", "[trace][reference][chip][analog][slow]")
 {
     // 8.9.4 "scripted traces": band energy per third octave per 25 ms frame within 3 dB per cell with at most 5 %
     // outliers, mean deviation at most 1 dB, overall level within 0.5 dB (Compare.h compareScripted), over every
@@ -73,7 +73,7 @@ TEST_CASE ("analog: the filter modes and their sums within the scripted-trace to
     }
 }
 
-TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace tolerance (a_routing_*)", "[trace][reference][chip][analog]")
+TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace tolerance (a_routing_*)", "[trace][reference][chip][analog][slow]")
 {
     // Through the real chain (AnalogChain.h renderChain: ChipVoice, the renderer's two buses), every routing of the
     // three voices and oscillator 3 off, each routing write at its cycle: the scripted tolerance over every frame.
@@ -133,7 +133,7 @@ TEST_CASE ("analog: routing and oscillator 3 off within the scripted-trace toler
     }
 }
 
-TEST_CASE ("analog: the triangle segment of a_dac_* through the chain: harmonics 2..8 within 3 dB (8.19.4)", "[trace][reference][chip][analog]")
+TEST_CASE ("analog: the triangle segment of a_dac_* through the chain: harmonics 2..8 within 3 dB (8.19.4)", "[trace][reference][chip][analog][slow]")
 {
     // a_dac_* s18: a 110 Hz triangle at full level on the direct path (RenderReferenceTests.cpp leaves it out: its
     // second harmonic, -34 dB on Model A and -40 dB on Model B, comes from after the converters). Through the real
@@ -229,7 +229,7 @@ void cornersAndPeaks (const char* filtered, const char* bypass, bool gate)
 }
 } // namespace
 
-TEST_CASE ("analog: Model A corners and peaks across cutoff, resonance, level and voices (a_s3a_*)", "[trace][reference][chip][analog]")
+TEST_CASE ("analog: Model A corners and peaks across cutoff, resonance, level and voices (a_s3a_*)", "[trace][reference][chip][analog][slow]")
 {
     // Round 2's corner and peak gates (8.19.1; our own traces, never used for fitting): resonance 0..15 at cutoffs
     // 300 .. 1900 (a_s3a_res), sustain 3 and 15 (a_s3a_level), three voices routed together (a_s3a_voices), corners
@@ -242,7 +242,7 @@ TEST_CASE ("analog: Model A corners and peaks across cutoff, resonance, level an
     cornersAndPeaks ("a_s3a_cutoff_a", "a_s3a_cutoff_bypass_a", false);
 }
 
-TEST_CASE ("analog: Model A held-tone distortion and two-tone products at held-out drives (a_s3a_dist_a)", "[trace][reference][chip][analog]")
+TEST_CASE ("analog: Model A held-tone distortion and two-tone products at held-out drives (a_s3a_dist_a)", "[trace][reference][chip][analog][slow]")
 {
     // Harmonics 2..5 against the fundamental, and for two tones (160 and 211 Hz) the products 2 f1, 2 f2, f2 - f1,
     // f1 + f2 against f1, from the segment spectra (toneLevelDb), +-3 dB where the reference's line lies above -60 dB.
@@ -289,7 +289,7 @@ TEST_CASE ("analog: Model A held-tone distortion and two-tone products at held-o
     std::printf ("[analog] a_s3a_dist_a: worst gated line %.2f dB (allowed 3)\n", worst);
 }
 
-TEST_CASE ("analog: the modes at cutoff 200 and 1500 within the scripted-trace tolerance (a_s3a_modes_a)", "[trace][reference][chip][analog]")
+TEST_CASE ("analog: the modes at cutoff 200 and 1500 within the scripted-trace tolerance (a_s3a_modes_a)", "[trace][reference][chip][analog][slow]")
 {
     // The bypass twin is gated; the filtered trace is reported, outside (finding 5 of the review stays open).
     for (const char* name : { "a_s3a_modes_a", "a_s3a_modes_bypass_a" })
@@ -308,7 +308,7 @@ TEST_CASE ("analog: the modes at cutoff 200 and 1500 within the scripted-trace t
     }
 }
 
-TEST_CASE ("analog: steps after volume, routing and resonance writes (a_s3a_steps_*)", "[trace][reference][chip][analog]")
+TEST_CASE ("analog: steps after volume, routing and resonance writes (a_s3a_steps_*)", "[trace][reference][chip][analog][slow]")
 {
     // The level of the first whole frame after each write against +-1 dB (the voice-DC tolerance of 8.9.4). Gated:
     // the volume writes (Model A). Reported: the routing and resonance writes on Model A (up to 2 dB outside,
@@ -345,7 +345,7 @@ TEST_CASE ("analog: steps after volume, routing and resonance writes (a_s3a_step
     }
 }
 
-TEST_CASE ("analog: Model A's corner steps per cutoff code from 479 -> 480 up to 1600 (a_cutcode_*)", "[trace][reference][chip][analog]")
+TEST_CASE ("analog: Model A's corner steps per cutoff code from 479 -> 480 up to 1600 (a_cutcode_*)", "[trace][reference][chip][analog][slow]")
 {
     // 8.19.3, scope O9; decisions "B-Side Model A cutoff steps, scope 512". The register walked one code at a time
     // across every multiple of 32 from 480 to 1600 (where the converter falls back), noise at a low level through the

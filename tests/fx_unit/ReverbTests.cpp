@@ -123,7 +123,7 @@ TEST_CASE ("Reverb: switching on and off is click-free", "[fx][reverb]")
     checkClickFreeToggle<Reverb> (rp (2.5f, 0.5f, 0.0f, 1.0f), rp (2.5f, 0.5f, 0.0f, 0.0f));
 }
 
-TEST_CASE ("Reverb: RT60 at 1 kHz within 15 % of the setting at every sample rate", "[fx][reverb]")
+TEST_CASE ("Reverb: RT60 at 1 kHz within 15 % of the setting at every sample rate", "[fx][reverb][slow]")
 {
     struct Case { double fs; float decay; float damping; };
     std::vector<Case> cases;
@@ -204,7 +204,7 @@ TEST_CASE ("Reverb: L/R tail correlation < 0.5", "[fx][reverb]")
         }
 }
 
-TEST_CASE ("Reverb: tail falls below -120 dBFS within tailSeconds", "[fx][reverb]")
+TEST_CASE ("Reverb: tail falls below -120 dBFS within tailSeconds", "[fx][reverb][slow]")
 {
     const double fs = 48000.0;
     for (const float decay : { 2.5f, 20.0f })
@@ -308,20 +308,20 @@ void checkNoRinging (const RingCase& c)
 }
 } // namespace
 
-TEST_CASE ("Reverb: no metallic ringing at 48 kHz (decay 1/4/20 s x damping 0/0.5/1)", "[fx][reverb]")
+TEST_CASE ("Reverb: no metallic ringing at 48 kHz (decay 1/4/20 s x damping 0/0.5/1)", "[fx][reverb][slow]")
 {
     for (const float decay : { 1.0f, 4.0f, 20.0f })
         for (const float damping : { 0.0f, 0.5f, 1.0f })
             checkNoRinging ({ 48000.0, decay, damping });
 }
 
-TEST_CASE ("Reverb: no metallic ringing at 96 kHz", "[fx][reverb]")
+TEST_CASE ("Reverb: no metallic ringing at 96 kHz", "[fx][reverb][slow]")
 {
     for (const auto& c : { RingCase { 96000.0, 1.0f, 1.0f }, RingCase { 96000.0, 4.0f, 0.5f }, RingCase { 96000.0, 20.0f, 1.0f } })
         checkNoRinging (c);
 }
 
-TEST_CASE ("Reverb: no metallic ringing at 192 kHz", "[fx][reverb]")
+TEST_CASE ("Reverb: no metallic ringing at 192 kHz", "[fx][reverb][slow]")
 {
     for (const auto& c : { RingCase { 192000.0, 1.0f, 1.0f }, RingCase { 192000.0, 4.0f, 0.5f }, RingCase { 192000.0, 20.0f, 0.0f } })
         checkNoRinging (c);

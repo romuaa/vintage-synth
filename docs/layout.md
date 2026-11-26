@@ -46,6 +46,7 @@ tests/bside/      bside_unit (JUCE-free, ctest label "bside") always; bside_inde
                   bs_test_core + BSideTests. `bside_unit "[.fuzz-long]"` is the hidden 10^6-case fuzz run
 presets/bside/factory/  B-Side factory programs (JSON, embedded)
 scripts/sanitize-targets.sh  the one list of sanitizer test targets (preflight, Linux container, CI)
+scripts/test-jobs.sh  the one place that says how many tests ctest runs side by side (preflight, Linux container, CI)
 resources/fonts/inter/  the embedded UI font with its licence (OFL.txt) and source record
 docs/ui/         wireframes and help-texts.md (the single source of the editor's help texts)
 tests/ui/        editor tests (part of VintageSynthTests); hidden "[.uishots]" and "[.uibench]"

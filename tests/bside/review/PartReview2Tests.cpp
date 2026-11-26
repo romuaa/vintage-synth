@@ -483,7 +483,7 @@ bool sameBitsF (const std::vector<float>& a, const std::vector<float>& b)
 
 // ==== 1. the block path ============================================================================================
 
-TEST_CASE ("Review2: the chain's block path gives the same bits as the per-sample path (randomised: every write kind, any call length, suspend, reset, reconfigure, variation)", "[review2][chain]")
+TEST_CASE ("Review2: the chain's block path gives the same bits as the per-sample path (randomised: every write kind, any call length, suspend, reset, reconfigure, variation)", "[review2][chain][slow]")
 {
     chainScanAll (2, 700, 11u);
 }
@@ -493,7 +493,7 @@ TEST_CASE ("Review2 (full): the chain's block path against the per-sample path, 
     chainScanAll (25, 1500, 90001u);
 }
 
-TEST_CASE ("Review2: Per Note through the part: every voice's block path off gives the same bits (random notes, steals, parameters)", "[review2][blockpath]")
+TEST_CASE ("Review2: Per Note through the part: every voice's block path off gives the same bits (random notes, steals, parameters)", "[review2][blockpath][slow]")
 {
     static const auto prog = compile (kLeadTable);
     int compared = 0;
@@ -591,7 +591,7 @@ void splitScan (std::uint32_t seed0, int seeds, bool structural, bool resets, bo
 }
 } // namespace
 
-TEST_CASE ("Review2: Shared with shares in flight (joins, leaves, steals, unison, no All Sound Off): host blocks change no digital state, audio within -120 dB", "[review2][blocks][shared]")
+TEST_CASE ("Review2: Shared with shares in flight (joins, leaves, steals, unison, no All Sound Off): host blocks change no digital state, audio within -120 dB", "[review2][blocks][shared][slow]")
 {
     double worst = 0.0;
     int states = 0;
@@ -599,7 +599,7 @@ TEST_CASE ("Review2: Shared with shares in flight (joins, leaves, steals, unison
     std::printf ("[review2 split Shared, no All Sound Off] largest audio difference %.3g, %d voice states differ\n", worst, states);
 }
 
-TEST_CASE ("Review2: Shared with shares in flight and All Sound Off in the stream: host blocks change no digital state, audio within -120 dB", "[review2][blocks][shared][allsoundoff]")
+TEST_CASE ("Review2: Shared with shares in flight and All Sound Off in the stream: host blocks change no digital state, audio within -120 dB", "[review2][blocks][shared][allsoundoff][slow]")
 {
     double worst = 0.0;
     int states = 0;
@@ -607,7 +607,7 @@ TEST_CASE ("Review2: Shared with shares in flight and All Sound Off in the strea
     std::printf ("[review2 split Shared, with All Sound Off] largest audio difference %.3g, %d voice states differ\n", worst, states);
 }
 
-TEST_CASE ("Review2: structural switches, reset and resume mid-ramp in random streams: host blocks change no digital state, audio within -120 dB", "[review2][blocks][switch]")
+TEST_CASE ("Review2: structural switches, reset and resume mid-ramp in random streams: host blocks change no digital state, audio within -120 dB", "[review2][blocks][switch][slow]")
 {
     double worst = 0.0;
     int states = 0;
@@ -668,7 +668,7 @@ void hangScan (std::uint32_t seed0, int seeds, int& hung)
 }
 } // namespace
 
-TEST_CASE ("Review2: random streams with switches during fades, steals during fades: after all keys are up every voice goes idle, nothing waits", "[review2][hang]")
+TEST_CASE ("Review2: random streams with switches during fades, steals during fades: after all keys are up every voice goes idle, nothing waits", "[review2][hang][slow]")
 {
     int hung = 0;
     hangScan (7000u, 8, hung);
@@ -747,7 +747,7 @@ LateResult lateNote (HostConfig h, int topology, int noteOnHost, int noteOffHost
 }
 } // namespace
 
-TEST_CASE ("Review2: a late note's release lands on the same part sample whatever the host's block length, Per Note and Shared, a second switch inside the fade", "[review2][late]")
+TEST_CASE ("Review2: a late note's release lands on the same part sample whatever the host's block length, Per Note and Shared, a second switch inside the fade", "[review2][late][slow]")
 {
     for (const int topology : { 0, 1 })
         for (const bool second : { false, true })
@@ -795,7 +795,7 @@ TEST_CASE ("Review2 (full): late-note release timing, every offset in the fade, 
 
 // ==== 5. Shared shares =============================================================================================
 
-TEST_CASE ("Review2: Shared: an idle voice leaves no later than Per Note while another note sounds (low-pass and band-pass, volume DC off and on, both models)", "[review2][shared][idle]")
+TEST_CASE ("Review2: Shared: an idle voice leaves no later than Per Note while another note sounds (low-pass and band-pass, volume DC off and on, both models)", "[review2][shared][idle][slow]")
 {
     // The contract: judged on its own contribution, an idle voice in Shared leaves within the same times as Per Note.
     // A held note A and a second note B, played for 0.3 s and released; the time from B's note-off until it leaves.
@@ -937,7 +937,7 @@ TEST_CASE ("Review2: after All Sound Off every chip of the part is at the part's
         }
 }
 
-TEST_CASE ("Review2: Shared, a note on a chip that All Sound Off stopped: the output does not depend on the host's blocks", "[review2][blocks][allsoundoff]")
+TEST_CASE ("Review2: Shared, a note on a chip that All Sound Off stopped: the output does not depend on the host's blocks", "[review2][blocks][allsoundoff][slow]")
 {
     // Gate 2 (8.21.1): audio within -120 dB for any block length. Fails by up to about -22 dB (Model B) and -26 dB (Model A), Shared only,
     // the random scan's case is the same on 43d8d08 (before this round): the stopped chip is a sample ahead of the part's clock (test above), so
@@ -964,7 +964,7 @@ TEST_CASE ("Review2: Shared, a note on a chip that All Sound Off stopped: the ou
 
 // ==== 7. Shared: the held notes' level when a note of another velocity joins =======================================
 
-TEST_CASE ("Review2: Shared: a note of another velocity that joins moves a held note's filtered sound to the mean of the note gains, without a step", "[review2][shared][velocity]")
+TEST_CASE ("Review2: Shared: a note of another velocity that joins moves a held note's filtered sound to the mean of the note gains, without a step", "[review2][shared][velocity][slow]")
 {
     // The contract (8.21.1 "Shared, levels"; Part.h "SHARES"): each chip's output, its share of the shared filter's output
     // included, is multiplied by its OWN note gain (Part::mixVoice), so the held note's filtered sound is heard at the

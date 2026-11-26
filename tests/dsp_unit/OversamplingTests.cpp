@@ -272,7 +272,7 @@ AliasResult measureAliasing (vs::dsp::Wave wave, double hz, float width, double 
 }
 } // namespace
 
-TEST_CASE ("Alias gate (<= -100 dB in 0..20 kHz up to a 5 kHz fundamental) in every oversampling configuration", "[os][m3][alias]")
+TEST_CASE ("Alias gate (<= -100 dB in 0..20 kHz up to a 5 kHz fundamental) in every oversampling configuration", "[os][m3][alias][slow]")
 {
     struct Wave
     {
@@ -415,7 +415,7 @@ constexpr struct
 } kOneX[] { { 88200.0, 1 }, { 96000.0, 1 }, { 192000.0, 1 }, { 192000.0, 2 } };
 } // namespace
 
-TEST_CASE ("Part at 1x (and 192 kHz 2x): static pitch error <= 0.1 cent, note-on sample-accurate, release to silence", "[os][m3][part]")
+TEST_CASE ("Part at 1x (and 192 kHz 2x): static pitch error <= 0.1 cent, note-on sample-accurate, release to silence", "[os][m3][part][slow]")
 {
     for (const auto& c : kOneX)
     {
@@ -458,7 +458,7 @@ TEST_CASE ("Part at 1x (and 192 kHz 2x): static pitch error <= 0.1 cent, note-on
     }
 }
 
-TEST_CASE ("Part at 1x: the steal fade is click-free and renders do not depend on the block size (Vintage 1)", "[os][m3][part][control]")
+TEST_CASE ("Part at 1x: the steal fade is click-free and renders do not depend on the block size (Vintage 1)", "[os][m3][part][control][slow]")
 {
     for (const auto& c : kOneX)
     {

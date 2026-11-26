@@ -159,7 +159,7 @@ std::vector<Spec> specs (Model m)
 }
 } // namespace
 
-TEST_CASE ("render: alias budgets, second measurement (Kaiser window, 20 fundamentals, not bin-centred)", "[render][alias][kaiser]")
+TEST_CASE ("render: alias budgets, second measurement (Kaiser window, 20 fundamentals, not bin-centred)", "[render][alias][kaiser][slow]")
 {
     std::vector<double> all, few;
     for (int i = 0; i < 20; ++i)

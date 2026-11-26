@@ -116,7 +116,7 @@ bool allFinite (const std::vector<float>& y)
 
 // ---- Time: no decision depends on the host's block length (gate 2) ---------------------------------------------
 
-TEST_CASE ("Review: irregular host blocks (1 .. 512, events anywhere) give the same digital state, ticks and audio", "[review][blocks]")
+TEST_CASE ("Review: irregular host blocks (1 .. 512, events anywhere) give the same digital state, ticks and audio", "[review][blocks][slow]")
 {
     std::mt19937 rng (1234);
     std::vector<int> irregular;
@@ -148,7 +148,7 @@ TEST_CASE ("Review: irregular host blocks (1 .. 512, events anywhere) give the s
 
 // ---- Time: an idle voice's chip time keeps running with the part's -----------------------------------------------
 
-TEST_CASE ("Review: every chip of the part is at the part's cycle after every block (idle, quiet path, Per Note, Shared)", "[review][time]")
+TEST_CASE ("Review: every chip of the part is at the part's cycle after every block (idle, quiet path, Per Note, Shared)", "[review][time][slow]")
 {
     for (const bool shared : { false, true })
         for (const HostConfig h : { HostConfig { 48000.0, 2 }, HostConfig { 44100.0, 4 }, HostConfig { 96000.0, 1 } })
@@ -216,7 +216,7 @@ bs::PartParams sawDirect (int model)
 }
 } // namespace
 
-TEST_CASE ("Review: a structural switch fades the sounding voices to silence without a step at the fade's end", "[review][switch]")
+TEST_CASE ("Review: a structural switch fades the sounding voices to silence without a step at the fade's end", "[review][switch][slow]")
 {
     struct Case
     {
@@ -345,7 +345,7 @@ TEST_CASE ("Review: a note played and released during a switch's fade keeps its 
 
 // ---- Shared topology ---------------------------------------------------------------------------------------------
 
-TEST_CASE ("Review: one voice in Shared equals Per Note bit for bit (odd blocks, a late note, a second note after the first left the sum)", "[review][shared]")
+TEST_CASE ("Review: one voice in Shared equals Per Note bit for bit (odd blocks, a late note, a second note after the first left the sum)", "[review][shared][slow]")
 {
     static const auto prog = compile ("bside-table 1\n[filter]\n    cutoff 1900\n    sweep -9 x200\n");
     for (const bool withTable : { false, true })
@@ -389,7 +389,7 @@ TEST_CASE ("Review: one voice in Shared equals Per Note bit for bit (odd blocks,
             }
 }
 
-TEST_CASE ("Review: Shared with several notes, releases in any order and a note joining: finite, bounded, every voice idle at the end", "[review][shared]")
+TEST_CASE ("Review: Shared with several notes, releases in any order and a note joining: finite, bounded, every voice idle at the end", "[review][shared][slow]")
 {
     static const auto prog = compile (kSweepTable);
     for (const int model : { 1, 0 })
@@ -426,7 +426,7 @@ TEST_CASE ("Review: Shared with several notes, releases in any order and a note 
 
 // ---- Robustness: extreme values, fast automation of every parameter, every structural switch ----------------------
 
-TEST_CASE ("Review: random parameters every block (incl. out-of-range values), random events: finite, bounded, no hang", "[review][robust]")
+TEST_CASE ("Review: random parameters every block (incl. out-of-range values), random events: finite, bounded, no hang", "[review][robust][slow]")
 {
     std::mt19937 rng (99);
     auto uni = [&] (float lo, float hi) { return lo + (hi - lo) * static_cast<float> (rng() % 10001) / 10000.0f; };
@@ -547,7 +547,7 @@ TEST_CASE ("Review: prepare again at another rate mid-note, reset and resume: fi
 
 // ---- Latency: an edge within 1 host sample of the reported latency, from the exact figure the part reports --------
 
-TEST_CASE ("Review: latency equal for both parts and models; the chain lengths fit the pad ring at every configuration", "[review][latency]")
+TEST_CASE ("Review: latency equal for both parts and models; the chain lengths fit the pad ring at every configuration", "[review][latency][slow]")
 {
     for (const auto& h : hostConfigs())
     {
@@ -576,7 +576,7 @@ TEST_CASE ("Review: host rates below 32 kHz (4x): the chain fits the 64-sample p
     }
 }
 
-TEST_CASE ("Review: Shared: a released note that goes idle and leaves the sum does not disturb a held note", "[review][shared]")
+TEST_CASE ("Review: Shared: a released note that goes idle and leaves the sum does not disturb a held note", "[review][shared][slow]")
 {
     // Note A held throughout; note B played briefly and released (release 0). Once B's envelopes are 0 it adds nothing
     // but its static level, so from then on the output must follow the run in which B was never played (as Per Note

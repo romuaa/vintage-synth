@@ -89,7 +89,7 @@ TEST_CASE ("Factory bank: 64 designed programs, all parse, distinct, known categ
     CHECK (perGroup[LevelGroup::Bass] >= 8);
 }
 
-TEST_CASE ("Every factory program sounds, is finite, and releases to silence within its reported tail", "[presets][factory]")
+TEST_CASE ("Every factory program sounds, is finite, and releases to silence within its reported tail", "[presets][factory][slow]")
 {
     const auto& bank = factoryBank();
     for (int slot = 0; slot < kPresetBankSize; ++slot)
@@ -110,7 +110,7 @@ TEST_CASE ("Every factory program sounds, is finite, and releases to silence wit
     }
 }
 
-TEST_CASE ("Factory level rule: comparable loudness per group, and chord headroom against Init", "[presets][factory][level]")
+TEST_CASE ("Factory level rule: comparable loudness per group, and chord headroom against Init", "[presets][factory][level][slow]")
 {
     const auto& bank = factoryBank();
     std::vector<double> rms (static_cast<size_t> (kPresetBankSize));
@@ -161,7 +161,7 @@ TEST_CASE ("Factory level rule: comparable loudness per group, and chord headroo
     }
 }
 
-TEST_CASE ("Factory bank and the output limiter: standard phrases stay below the knee", "[presets][factory][level]")
+TEST_CASE ("Factory bank and the output limiter: standard phrases stay below the knee", "[presets][factory][level][slow]")
 {
     // With the limiter on at its defaults (as a new instance plays): a program's standard phrase at
     // velocity 100 must not reach the knee, so the limiter does not shape the factory sounds. The

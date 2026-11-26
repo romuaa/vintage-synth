@@ -428,7 +428,7 @@ TEST_CASE ("Table manager: session tables round trip, in canonical text", "[pres
     CHECK (t.pm->tableError (0).isEmpty());
 }
 
-TEST_CASE ("Table manager: hostile session tables give that part no table and an error", "[presets][tables][manager][state][security]")
+TEST_CASE ("Table manager: hostile session tables give that part no table and an error", "[presets][tables][manager][state][security][serial]")
 {
     TableRig t;
     const auto restore = [&] (const juce::ValueTree& info)

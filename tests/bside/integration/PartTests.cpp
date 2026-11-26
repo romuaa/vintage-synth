@@ -104,7 +104,7 @@ TEST_CASE ("Part: Init's Chord phrase is within 1 dB of Vintage's Init, and a fu
 
 // ---- latency -------------------------------------------------------------------------------------------------
 
-TEST_CASE ("Part: one latency for both models, fixed at prepare; a note's first edge lands there at every factor of 4.4", "[bside][part][latency]")
+TEST_CASE ("Part: one latency for both models, fixed at prepare; a note's first edge lands there at every factor of 4.4", "[bside][part][latency][slow]")
 {
     for (const auto& h : hostConfigs())
     {
@@ -139,7 +139,7 @@ TEST_CASE ("Part: one latency for both models, fixed at prepare; a note's first 
     }
 }
 
-TEST_CASE ("Part: the latency pad holds the difference of the two chains with margin at 8, 11.025 and 16 kHz; both models' edges agree there", "[bside][part][latency]")
+TEST_CASE ("Part: the latency pad holds the difference of the two chains with margin at 8, 11.025 and 16 kHz; both models' edges agree there", "[bside][part][latency][slow]")
 {
     // 8.21.1 after the review: the pad delays the shorter chain by the difference of the two chains (63 internal samples
     // at 8 and 11.025 kHz, where the chains are 134 and 71 samples long: longer than the old ring of 64 themselves)
@@ -214,7 +214,7 @@ Run runScenario (int model, bool shared, int block, int total = 24000)
 }
 } // namespace
 
-TEST_CASE ("Part: block lengths 1, 7, 61 and 512 give the same digital state and ticks and the same audio; two instances are bit-identical", "[bside][part][blocks]")
+TEST_CASE ("Part: block lengths 1, 7, 61 and 512 give the same digital state and ticks and the same audio; two instances are bit-identical", "[bside][part][blocks][slow]")
 {
     for (const int model : { 1, 0 })
         for (const bool shared : { false, true })
@@ -267,7 +267,7 @@ struct NoteRig
 double cents (double a, double b) { return 1200.0 * std::log2 (a / b); }
 } // namespace
 
-TEST_CASE ("Part mapping: oscN.wave is the control register's waveform bits, Off leaves the oscillator off", "[bside][part][mapping]")
+TEST_CASE ("Part mapping: oscN.wave is the control register's waveform bits, Off leaves the oscillator off", "[bside][part][mapping][slow]")
 {
     const std::array<std::uint8_t, 9> bits { 0x00, 0x10, 0x20, 0x40, 0x80, 0x30, 0x50, 0x60, 0x70 };
     for (int w = 0; w < 9; ++w)
@@ -306,7 +306,7 @@ TEST_CASE ("Part mapping: sync, ring and the envelope settings are control bits 
     CHECK (r.reg (20) == 0xde);
 }
 
-TEST_CASE ("Part mapping: oscN.pw + macro.pw_offset is the pulse width 0 .. 4095, clamped", "[bside][part][mapping]")
+TEST_CASE ("Part mapping: oscN.pw + macro.pw_offset is the pulse width 0 .. 4095, clamped", "[bside][part][mapping][slow]")
 {
     for (const auto& c : std::vector<std::array<float, 3>> { { 50.0f, 0.0f, 2047.5f }, { 25.0f, 10.0f, 1023.75f + 409.6f }, { 90.0f, 50.0f, 4095.0f },
                                                             { 5.0f, -50.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 100.0f, 0.0f, 4095.0f } })
@@ -323,7 +323,7 @@ TEST_CASE ("Part mapping: oscN.pw + macro.pw_offset is the pulse width 0 .. 4095
     }
 }
 
-TEST_CASE ("Part mapping: oscN.filter, osc3.mute, filter.resonance and chip.volume are the routing bits, bit 7 of 0x18 and the two nibbles", "[bside][part][mapping]")
+TEST_CASE ("Part mapping: oscN.filter, osc3.mute, filter.resonance and chip.volume are the routing bits, bit 7 of 0x18 and the two nibbles", "[bside][part][mapping][slow]")
 {
     for (int mask = 0; mask < 8; ++mask)
     {
@@ -343,7 +343,7 @@ TEST_CASE ("Part mapping: oscN.filter, osc3.mute, filter.resonance and chip.volu
     }
 }
 
-TEST_CASE ("Part mapping: filter.mode is Off 0, Low 1, Band 2, High 4, Low+Band 3, Band+High 6, Low+High 5, All 7 in bits 4 to 6", "[bside][part][mapping]")
+TEST_CASE ("Part mapping: filter.mode is Off 0, Low 1, Band 2, High 4, Low+Band 3, Band+High 6, Low+High 5, All 7 in bits 4 to 6", "[bside][part][mapping][slow]")
 {
     const std::array<int, 8> want { 0, 1, 2, 4, 3, 6, 5, 7 };
     for (int m = 0; m < 8; ++m)
@@ -356,7 +356,7 @@ TEST_CASE ("Part mapping: filter.mode is Off 0, Low 1, Band 2, High 4, Low+Band 
     }
 }
 
-TEST_CASE ("Part mapping: the cutoff is filter.cutoff + key follow x 16 x (note - 60) - vel.cutoff x (1 - velocity) x 1024, then the macro offset, clamped", "[bside][part][mapping]")
+TEST_CASE ("Part mapping: the cutoff is filter.cutoff + key follow x 16 x (note - 60) - vel.cutoff x (1 - velocity) x 1024, then the macro offset, clamped", "[bside][part][mapping][slow]")
 {
     struct Case
     {
@@ -433,7 +433,7 @@ TEST_CASE ("Part mapping: chip.variation moves Model A's cutoff curve (smoothed)
     CHECK (std::abs (after - during) > 0.05 * std::abs (after - before));
 }
 
-TEST_CASE ("Part mapping: vel.volume is the note gain 1 - amount x (1 - velocity), smoothed over 5 ms on a retrigger", "[bside][part][mapping]")
+TEST_CASE ("Part mapping: vel.volume is the note gain 1 - amount x (1 - velocity), smoothed over 5 ms on a retrigger", "[bside][part][mapping][slow]")
 {
     for (const float amount : { 0.0f, 0.5f, 1.0f })
         for (const float velocity : { 1.0f, 0.5f, 0.2f })
@@ -894,7 +894,7 @@ TEST_CASE ("Part: a voice that starts from idle starts settled: the chain primed
         }
 }
 
-TEST_CASE ("Part: a voice that starts from idle holds nothing above -80 dB while its envelope is at 0 (Model A, volume DC on)", "[bside][part][settled]")
+TEST_CASE ("Part: a voice that starts from idle holds nothing above -80 dB while its envelope is at 0 (Model A, volume DC on)", "[bside][part][settled][slow]")
 {
     // Through the part: the first note on a voice and a note after it went idle, Per Note and Shared, direct and through
     // the filter. Host sample by host sample, as long as the voice's envelope counter is still 0 (a latency later), the
@@ -950,7 +950,7 @@ TEST_CASE ("Part: a voice that starts from idle holds nothing above -80 dB while
 
 // ---- Shared (8.21.1) ----------------------------------------------------------------------------------------------
 
-TEST_CASE ("Part Shared: one voice in Shared equals Per Note bit for bit at the part's output, the cutoff moving", "[bside][part][shared]")
+TEST_CASE ("Part Shared: one voice in Shared equals Per Note bit for bit at the part's output, the cutoff moving", "[bside][part][shared][slow]")
 {
     // a filter lane sweeps the cutoff every tick (moving: run per sample) and the host moves it too
     const auto prog = compile ("bside-table 1\n[filter]\n    cutoff 1500\n    sweep -50 x20\n    sweep +30 x20\n");
@@ -1041,7 +1041,7 @@ bs::PartParams smoothShared (int model, int topology = 1)
 }
 } // namespace
 
-TEST_CASE ("Part Shared: releases and leaves in any order: the notes that go on sounding are not disturbed, every voice leaves", "[bside][part][shared]")
+TEST_CASE ("Part Shared: releases and leaves in any order: the notes that go on sounding are not disturbed, every voice leaves", "[bside][part][shared][slow]")
 {
     // Three held notes, released in every order 700 ms apart (so that the others still sound when one leaves). Each released chip goes idle, hands its share of the
     // shared filter's output on and leaves the sum (within 505 ms of going idle, as Per Note); the chips that stay take
@@ -1284,7 +1284,7 @@ TEST_CASE ("Part Shared: the filter takes the most recent note's cutoff even whe
 
 // ---- structural switches (8.21.1) --------------------------------------------------------------------------------
 
-TEST_CASE ("Part: a structural switch fades the sounding voices over 3 ms, resets them into the new configuration; held keys do not retrigger", "[bside][part][switch]")
+TEST_CASE ("Part: a structural switch fades the sounding voices over 3 ms, resets them into the new configuration; held keys do not retrigger", "[bside][part][switch][slow]")
 {
     struct Sw
     {
@@ -1424,7 +1424,7 @@ TEST_CASE ("Part: a note played during a switch's fade starts after it, in the n
     CHECK (rig.part->numActiveVoices() == 0);
 }
 
-TEST_CASE ("Part: a note that starts late after a steal's fade keeps its length, released while it waits or after its start", "[bside][part][switch]")
+TEST_CASE ("Part: a note that starts late after a steal's fade keeps its length, released while it waits or after its start", "[bside][part][switch][slow]")
 {
     // Poly at 96 kHz x1 (one host sample is one internal sample; the fade is 288): 16 held notes, the 17th steals a
     // voice: the old note fades for 3 ms, then the new one starts. Its release comes as much later as it started (8.21.1
@@ -1470,7 +1470,7 @@ TEST_CASE ("Part: a note that starts late after a steal's fade keeps its length,
     }
 }
 
-TEST_CASE ("Part: a note played inside a switch's fade and released after its start keeps its length", "[bside][part][switch]")
+TEST_CASE ("Part: a note played inside a switch's fade and released after its start keeps its length", "[bside][part][switch][slow]")
 {
     // the reviewer's test releases the note while it still waits (Per Note); here the key also goes up after the note
     // has started, so the release is delayed by the start's own delay (288 - into), not by a whole fade; Per Note and
@@ -1516,7 +1516,7 @@ TEST_CASE ("Part: a note played inside a switch's fade and released after its st
     }
 }
 
-TEST_CASE ("Part: a late note's release falls on the same sample whatever the host's block length (Per Note and Shared)", "[bside][part][switch][blocks]")
+TEST_CASE ("Part: a late note's release falls on the same sample whatever the host's block length (Per Note and Shared)", "[bside][part][switch][blocks][slow]")
 {
     // A note played and released inside a switch's fade, and one played inside it and released after its start: its
     // release is counted in internal samples from its start, so the audio and the chips' state are the same for host

@@ -531,7 +531,7 @@ TEST_CASE ("M3 Dual -> Whole: Upper releases (no click), then stops being render
 // Mixer latch after a key-mode change (owner decision, M3 review)
 // =================================================================================================
 
-TEST_CASE ("M3 latch: after Dual -> Whole a Lower tail the balance had silenced stays silent until Lower plays again", "[m3][mixer][latch]")
+TEST_CASE ("M3 latch: after Dual -> Whole a Lower tail the balance had silenced stays silent until Lower plays again", "[m3][mixer][latch][slow]")
 {
     VS_EVERY_RATE;
     // Dual with balance +1 (Lower at 0), Lower hard left: L carries only Lower. A long Lower
@@ -564,7 +564,7 @@ TEST_CASE ("M3 latch: after Dual -> Whole a Lower tail the balance had silenced 
     }
 }
 
-TEST_CASE ("M3 latch: after Whole -> Dual a Lower tail keeps unity until Lower's next note, then moves to its balance gain", "[m3][mixer][latch]")
+TEST_CASE ("M3 latch: after Whole -> Dual a Lower tail keeps unity until Lower's next note, then moves to its balance gain", "[m3][mixer][latch][slow]")
 {
     VS_EVERY_RATE;
     // Whole, Lower hard left (L = Lower only), long release running at the change to Dual with
@@ -833,7 +833,7 @@ TEST_CASE ("M3 key-mode change releases every voice of both parts, keeps the con
     }
 }
 
-TEST_CASE ("M3 render does not depend on the host block size when every parameter change lands on the same sample (both parts, Vintage 1, voice reuse, mode changes)", "[m3][control]")
+TEST_CASE ("M3 render does not depend on the host block size when every parameter change lands on the same sample (both parts, Vintage 1, voice reuse, mode changes)", "[m3][control][slow]")
 {
     // What this proves: given the same parameter change samples, everything else (routing, both
     // parts, mixer, latch, Upper stopping and resuming) is independent of the host block size.
@@ -916,7 +916,7 @@ TEST_CASE ("M3 render does not depend on the host block size when every paramete
     }
 }
 
-TEST_CASE ("M3 key.mode and key.split_point take effect at the first sample of the host block that delivers them (accepted, documented)", "[m3][control][mode]")
+TEST_CASE ("M3 key.mode and key.split_point take effect at the first sample of the host block that delivers them (accepted, documented)", "[m3][control][mode][slow]")
 {
     // Hosts deliver parameter changes per block, so a key-mode change (which releases notes)
     // lands at a block-size-dependent time. Decision (M3 review): accept and document, no
@@ -985,7 +985,7 @@ TEST_CASE ("M3 event-buffer overflow reaches both parts (pedal down too): no han
     }
 }
 
-TEST_CASE ("M3 random event streams (panic, overflow, mode/split/assign changes) never hang a note", "[m3][robust]")
+TEST_CASE ("M3 random event streams (panic, overflow, mode/split/assign changes) never hang a note", "[m3][robust][slow]")
 {
     VS_EVERY_RATE;
     const std::uint32_t seeds = rate < 50000.0 ? 40u : 8u;

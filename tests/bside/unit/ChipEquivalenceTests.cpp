@@ -278,7 +278,7 @@ std::uint64_t longCycles()
 }
 } // namespace
 
-TEST_CASE ("chip: the fast path equals per-cycle stepping, 10^7 random cycles with random writes per model", "[bside][chip][equivalence]")
+TEST_CASE ("chip: the fast path equals per-cycle stepping, 10^7 random cycles with random writes per model", "[bside][chip][equivalence][slow]")
 {
     CHECK (runEquivalence (Model::A, false, 10000000, 1, false) >= 10000000);
     CHECK (runEquivalence (Model::B, false, 10000000, 2, false) >= 10000000);
@@ -327,7 +327,7 @@ TEST_CASE ("chip: one long span in sustain equals many short spans", "[bside][ch
     CHECK (c.state() == d.state());
 }
 
-TEST_CASE ("chip 8.4.2: the cycle of a sample start depends only on the sample index", "[bside][chip][time]")
+TEST_CASE ("chip 8.4.2: the cycle of a sample start depends only on the sample index", "[bside][chip][time][slow]")
 {
     for (const double rate : { 44100.0 * 4, 96000.0, 192000.0, 211200.0, 384000.0 })
         for (const std::uint32_t clockHz : { 985248u, 1022727u })
@@ -352,7 +352,7 @@ TEST_CASE ("chip 8.4.2: the cycle of a sample start depends only on the sample i
         }
 }
 
-TEST_CASE ("chip: the digital state does not depend on the block size or the internal rate", "[bside][chip][time]")
+TEST_CASE ("chip: the digital state does not depend on the block size or the internal rate", "[bside][chip][time][slow]")
 {
     // A schedule of writes at cycles. Every chip runs it sample by sample at its own internal rate and
     // block size, splitting a sample at a write's cycle (what the renderer does); the state right after

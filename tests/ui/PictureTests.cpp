@@ -62,7 +62,7 @@ double measuredDb (float cutoff, float resonance, bool slope24, float hpf, doubl
 }
 } // namespace
 
-TEST_CASE ("Filter curve: FilterResponse equals the real filter (linear region), 30 Hz ... fs/4, at every real-time voice rate", "[ui][pictures]")
+TEST_CASE ("Filter curve: FilterResponse equals the real filter (linear region), 30 Hz ... fs/4, at every real-time voice rate", "[ui][pictures][slow]")
 {
     // Real-time voice rates: 44.1 and 48 kHz hosts at 2x, 96 and 192 kHz hosts at 1x.
     // Resonance up to 0.95 (k = 3.94): the linear picture holds below self-oscillation (k < 4,

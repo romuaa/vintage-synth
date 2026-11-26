@@ -2,8 +2,13 @@
 # The local gate: every check this Mac can do, in one command. CI is a deliberate confirmation step
 # (see the header of .github/workflows/build.yml); this script is what you run before asking for it.
 #
-#   scripts/preflight.sh                 every local step (--full is the same)
-#   scripts/preflight.sh --quick         the everyday loop: docs + mac + linux
+#   scripts/preflight.sh                 every local step (--full is the same), the full test tier
+#   scripts/preflight.sh --quick         the everyday loop: docs + mac + linux, the smoke test tier
+#   scripts/preflight.sh --tests full|smoke
+#                                        the test tier of the steps that run tests: smoke = every test not
+#                                        tagged [slow] (ctest -LE slow), full = every test (ctest). Default:
+#                                        smoke with --quick, full otherwise; "smoke" is refused for the
+#                                        default and --full runs (only --quick or --only may narrow the gate)
 #   scripts/preflight.sh --only mac,docs run only these steps (repeatable)
 #   scripts/preflight.sh --skip scan     skip a step (repeatable)
 #   scripts/preflight.sh --keep-going    run every step even after a failure (default: stop at the first)
@@ -18,16 +23,21 @@
 #   scan           Trivy (vuln, secret, misconfig; HIGH/CRITICAL fail) from its pinned container image,
 #                  scanning a read-only snapshot of the tracked files (same settings as security.yml)
 #   mac            macOS universal Release build of both plugins, warnings as errors, lipo check of
-#                  both slices of each, full ctest, pluginval strictness 10 on each bundle (with its
+#                  both slices of each, ctest (tier above, parallel), pluginval strictness 10 on each bundle (with its
 #                  editor tests), then the release packer on the Vintage bundle it just validated:
 #                  pack the macOS zip, verify it from the zip alone, self-test the verifier, check the
 #                  checksums, and load the bundle unpacked from the zip in host_smoke
 #                  (scripts/package-release.sh, docs/architecture.md 10.4)
-#   linux          scripts/linux-check.sh: GCC, Linux ARM64 container, tests under xvfb, bundle check
+#   linux          scripts/linux-check.sh: GCC, Linux ARM64 container, tests (tier above, parallel) under xvfb, bundle check
 #   validator      Steinberg's VST3 validator, built once from the SDK commit pinned in build.yml (cached),
 #                  run on each bundle the `mac` step built; needs "N tests passed, 0 tests failed"
-#   mac-sanitize   arm64 RelWithDebInfo ASan+UBSan: unit tests and render regression
+#   mac-sanitize   arm64 RelWithDebInfo ASan+UBSan: unit tests and render regression (tier above, parallel)
 #   linux-sanitize scripts/linux-check.sh --sanitize (clang ASan+UBSan, Ubuntu 24.04, ARM64)
+#
+# Tests run in parallel (docs/architecture.md 7.1.2): as many at a time as the machine (or, in the Linux
+# steps, the Docker VM) has logical cores, from scripts/test-jobs.sh; VS_TEST_JOBS=<n> overrides it
+# (1 = serial). Every step that runs tests prints "test run: tier=<t> jobs=<n>" and the summary repeats it.
+# A test tagged [serial] always runs alone. The steps themselves still run one after another.
 #
 # Two plugins (Exitium Vintage Synth, Exitium B-Side): every step covers both. While iterating,
 #   VS_PREFLIGHT_PLUGINS=vintage|bside|all   (default all) limits the pluginval and validator runs of
@@ -36,7 +46,7 @@
 #
 # Steps run one after another, not concurrently: the macOS builds and the Docker VM already use all
 # cores, and concurrent runs would only make timings and memory-pressure failures (the container's
-# OOM killer) flaky. Nothing is written into the repository except build/preflight/ (git-ignored).
+# OOM killer) flaky (the tests inside a step do run in parallel, see above). Nothing is written into the repository except build/preflight/ (git-ignored).
 #
 # Where things go:
 #   build/preflight/mac, build/preflight/mac-san   CMake build trees (git-ignored via /build/)
@@ -80,12 +90,14 @@ need_docker() {
 
 # ---- options ----------------------------------------------------------------------------------
 selected=("${DEFAULT_STEPS[@]}")
-only=() skip=() keep_going=0 quiet=0 mode_set=""
+only=() skip=() keep_going=0 quiet=0 mode_set="" tests_opt=""
 split_into() { local -n arr=$1; local IFS=,; local x; for x in $2; do arr+=("$x"); done; }
 while [[ $# -gt 0 ]]; do
   case $1 in
     --quick) selected=("${QUICK_STEPS[@]}"); mode_set=quick ;;
     --full) selected=("${ALL_STEPS[@]}"); mode_set=full ;;
+    --tests) [[ $# -ge 2 ]] || die "--tests needs smoke or full"
+             case $2 in smoke|full) tests_opt=$2 ;; *) die "--tests must be smoke or full (got '$2')" ;; esac; shift ;;
     --only) [[ $# -ge 2 ]] || die "--only needs a step name"; split_into only "$2"; shift ;;
     --skip) [[ $# -ge 2 ]] || die "--skip needs a step name"; split_into skip "$2"; shift ;;
     --keep-going) keep_going=1 ;;
@@ -103,6 +115,15 @@ done
 if [[ $PLUGINS != all && $mode_set != quick && ${#only[@]} -eq 0 ]]; then
   die "VS_PREFLIGHT_PLUGINS=$PLUGINS limits the gate to one plugin: allowed only with --quick or --only (the default and --full runs always cover both); unset it"
 fi
+
+# The test tier: smoke (ctest -LE slow) or full (ctest). The hand-over gate runs full; "smoke" is only
+# accepted for an iteration run (--quick or --only), like a narrowed VS_PREFLIGHT_PLUGINS.
+if [[ $tests_opt == smoke && $mode_set != quick && $mode_set != clean && ${#only[@]} -eq 0 ]]; then
+  die "--tests smoke narrows the gate to the smoke tier: allowed only with --quick or --only (the default and --full runs always run the full tier)"
+fi
+TIER=${tests_opt:-$([[ $mode_set == quick ]] && echo smoke || echo full)}
+tier_args=()
+[[ $TIER == smoke ]] && tier_args=(-LE slow)
 
 valid_step() { local s; for s in "${ALL_STEPS[@]}"; do [[ $s == "$1" ]] && return 0; done; return 1; }
 for s in "${only[@]+"${only[@]}"}" "${skip[@]+"${skip[@]}"}"; do
@@ -135,6 +156,12 @@ for s in "${ALL_STEPS[@]}"; do
   [[ $in_sel -eq 1 && $skipped -eq 0 ]] && run_steps+=("$s")
 done
 [[ ${#run_steps[@]} -gt 0 ]] || die "no steps selected"
+
+# The job count (and so a bad VS_TEST_JOBS) matters only when a selected step runs tests.
+TEST_JOBS=-
+for s in "${run_steps[@]}"; do
+  case $s in mac|linux|mac-sanitize|linux-sanitize) TEST_JOBS=$("$here/test-jobs.sh") || exit 2; break ;; esac
+done
 
 # ---- helpers ----------------------------------------------------------------------------------
 # The workflow files are the single source of truth for pinned versions and hashes.
@@ -176,6 +203,14 @@ ensure_out_ignored() {
 }
 
 jobs_flag=() # ninja decides the parallelism (all cores).
+
+# run_ctest <build dir> [more ctest arguments]: the tests of the selected tier, TEST_JOBS at a time.
+run_ctest() {
+  local b=$1; shift
+  "$here/check-tiers.sh" "$b" || return 1
+  echo "test run: tier=$TIER jobs=$TEST_JOBS"
+  ctest --test-dir "$b" --output-on-failure --parallel "$TEST_JOBS" "${tier_args[@]+"${tier_args[@]}"}" "$@"
+}
 
 # The bundles this run checks, "Name.vst3" in build-tree order: one per plugin selected by
 # VS_PREFLIGHT_PLUGINS. bundle_path <build tree> <Name.vst3> prints the built bundle or nothing.
@@ -232,7 +267,7 @@ step_mac() {
     echo "bundle: $bundle"; echo "lipo: $archs"
     [[ $archs == *arm64* && $archs == *x86_64* ]] || { echo "the plugin binary $bin is not universal"; return 1; }
   done
-  ctest --test-dir "$b" --output-on-failure || return 1
+  run_ctest "$b" || return 1
   local pv=${PLUGINVAL:-}
   if [[ -z $pv ]]; then pv=$(fetch_pluginval macos) || return 1; fi
   [[ -x $pv ]] || { echo "PLUGINVAL='$pv' is not executable"; return 1; }
@@ -288,11 +323,11 @@ step_mac_sanitize() {
   cmake --build "$b" --target "${SAN_TARGETS[@]}" -- -k 0 || return 1
   san_report "$b" || return 1
   # Every test executable (not the plugins): host_smoke and host_smoke_bside need the bundles and are not built here.
-  ctest --test-dir "$b" --output-on-failure -E '^(host_smoke|host_smoke_bside)$'
+  run_ctest "$b" -E '^(host_smoke|host_smoke_bside)$'
 }
 
-step_linux() { need_docker; "$here/linux-check.sh"; }
-step_linux_sanitize() { need_docker; "$here/linux-check.sh" --sanitize; }
+step_linux() { need_docker; "$here/linux-check.sh" --tests "$TIER"; }
+step_linux_sanitize() { need_docker; "$here/linux-check.sh" --sanitize --tests "$TIER"; }
 
 # VST3 validator. Built once from the SDK commit pinned in build.yml (same steps and options as the CI
 # job), cached by SHA outside the repository. It is run directly against the bundle the `mac` step
@@ -347,6 +382,7 @@ ensure_out_ignored
 note "steps: ${run_steps[*]}$([[ $keep_going -eq 1 ]] && echo '  (keep going)')"
 note "logs: $LOGS/<step>.log   build trees: $OUT   caches: $CACHE"
 [[ -n $(git status --porcelain --untracked-files=no 2>/dev/null) ]] && note "note: the working tree has uncommitted changes (they are what gets checked)"
+note "tests: tier=$TIER (${tier_args[*]:-every test}), $TEST_JOBS parallel jobs on this machine (the Linux steps use the container's core count; VS_TEST_JOBS overrides)"
 note "machine load at start: $(uptime | sed 's/.*load averages*: //')"
 
 names=() results=() durs=()
@@ -381,9 +417,15 @@ done
 fmt_dur() { [[ $1 == - ]] && echo - || printf '%dm%02ds' $(( $1 / 60 )) $(( $1 % 60 )); }
 echo
 echo "=================== preflight summary ==================="
-printf '%-16s %-10s %s\n' STEP RESULT DURATION
-for i in "${!names[@]}"; do printf '%-16s %-10s %s\n' "${names[$i]}" "${results[$i]}" "$(fmt_dur "${durs[$i]}")"; done
-printf '%-16s %-10s %s\n' TOTAL "$([[ $overall -eq 0 ]] && echo PASS || echo FAIL)" "$(fmt_dur $(( SECONDS - t_all )))"
+# The tier and job count a step ran with: the marker line every ctest run prints ("-" if it ran no tests).
+tests_of() {
+  local m; m=$(sed -n 's/^.*test run: tier=\([a-z]*\) jobs=\([0-9]*\).*$/\1, \2 jobs/p' "$LOGS/$1.log" 2>/dev/null | head -n 1)
+  echo "${m:--}"
+}
+printf '%-16s %-10s %-10s %s\n' STEP RESULT DURATION TESTS
+for i in "${!names[@]}"; do printf '%-16s %-10s %-10s %s\n' "${names[$i]}" "${results[$i]}" "$(fmt_dur "${durs[$i]}")" "$([[ ${results[$i]} == "not run" ]] && echo - || tests_of "${names[$i]}")"; done
+printf '%-16s %-10s %-10s %s\n' TOTAL "$([[ $overall -eq 0 ]] && echo PASS || echo FAIL)" "$(fmt_dur $(( SECONDS - t_all )))"
+echo "test tier: $TIER ($([[ $TIER == smoke ]] && echo 'tests tagged [slow] not run: NOT the hand-over gate' || echo 'every test')); parallel jobs: $TEST_JOBS here, the container's own count in the Linux steps (VS_TEST_JOBS overrides)"
 echo "machine load at end: $(uptime | sed 's/.*load averages*: //')"
 case $PLUGINS in
   all) echo "plugins covered by pluginval and the validator: both (Exitium Vintage Synth, Exitium B-Side)" ;;

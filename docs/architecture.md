@@ -587,6 +587,97 @@ with the limiter on at −1 dB, and plays 6.02 dB quieter than before (the trim)
   float differences (arm64 / x64, clang / MSVC math libraries): compare perceptual features
   (band energies and envelope over time), not samples. Goldens themselves are created in M6.
 
+### 7.1 Test tiers and parallel test runs (owner decision, 2026-11-26)
+
+Why: in CI run 45706438078 the tests ran one at a time and took 20 to 28 minutes per target
+(1,229 tests on Linux x86_64: 25 of them took 53 % of the time, 164 took 90 %, the other 1,063
+took 2 minutes together). The owner wants feedback in minutes; the build job's 60-minute limit
+is not raised.
+
+#### 7.1.1 Two tiers
+
+| Tier | What it is | Selected by |
+|---|---|---|
+| **smoke** | Every test that is not marked slow, plus `host_smoke`, `host_smoke_bside` and the validator tests. | `ctest -LE slow` |
+| **full** | Every test. This is the gate; nothing is removed from it. | `ctest` |
+
+- A test is slow when it took 1 s or longer on any target of the reference run (45706438078:
+  Linux x86_64, Windows ARM64, the part of Windows x64 that ran). The mark is the Catch2 tag
+  `[slow]` in the test's source, so it is visible where the test is written; ctest sees it as the
+  label `slow`. The existing labels (`render`, `trace`, `bside`, `vst3`) keep selecting what they
+  select today.
+- Marking a test slow changes nothing in the test: no assertion, threshold, input set or
+  iteration count changes in this step.
+- The number of tests ctest knows per executable is the same before and after (hidden tests stay
+  hidden). The full tier runs exactly the set that ran before.
+- A new test that takes 1 s or longer in a Release build gets the tag when it is written.
+
+#### 7.1.2 Parallel runs
+
+- Every ctest invocation of the gates runs in parallel: the CI build rows, the CI sanitizer job,
+  and the `mac`, `mac-sanitize`, `linux` and `linux-sanitize` steps of `scripts/preflight.sh`.
+- The job count is the number of logical cores of the machine or container that runs the tests
+  (4 on the CI runners, 18 on the owner's Mac). `VS_TEST_JOBS=<n>` overrides it everywhere; `1`
+  gives the old serial run. The count used is printed before the tests start.
+- **Every test passes at any job count and in any order.** A test that shares something with
+  another test (a fixed file or folder name, a port, the display) is changed to use its own, or,
+  where that is not possible, the two are kept apart with ctest's `RESOURCE_LOCK`.
+- A test whose result depends on wall-clock time or on the scheduler (a time budget, a
+  thread-interleaving check with a deadline) runs alone (`RUN_SERIAL`), marked by the Catch2 tag
+  `[serial]`. Its threshold is not changed. The list of such tests is short and is reported.
+- Benchmarks (`voice_bench`, `fx_bench`, `chip_bench`, `part_bench`) are not tests and still run
+  alone at the orchestrator's gate.
+- The steps of `scripts/preflight.sh` still run one after another. Whether steps may overlap is
+  decided later from the measured step times.
+
+#### 7.1.3 The local gate
+
+- `scripts/preflight.sh` (default and `--full`): the full tier in every step that runs tests.
+  This stays the hand-over gate.
+- `scripts/preflight.sh --quick`: the smoke tier in its `mac` and `linux` steps.
+  `--tests full` makes a quick run use the full tier; `--tests smoke` is refused for the default
+  and `--full` runs (as a narrowed `VS_PREFLIGHT_PLUGINS` is).
+- The summary names the tier and the job count that ran.
+
+#### 7.1.4 CI (`build.yml`)
+
+- A new input `tests`: `full` (the default) or `smoke`. Only a `full` run on the branch tip is
+  the recorded confirmation for a merge. A release run needs `full`: the `plan` job refuses
+  `release=true` with `tests=smoke`.
+- Order in a build row: build, smoke tier, pluginval and the validator, artifact upload, then
+  (only with `tests=full`) the slow tests (`ctest -L slow`). Each test step is parallel. The
+  smoke tier and the slow tests together are exactly the full tier.
+- The sanitizer job runs the tier the run asked for, in parallel.
+- The run summary states the tier. The `plan` job stays the one place that maps inputs to what
+  runs, and `scripts/preflight/docs-check.sh` checks it for every value of `targets` and `tests`.
+- `timeout-minutes` of the build and sanitizer jobs stay at 60. No workflow gains a trigger.
+- **Compiler cache.** A cache saved by a run on a feature branch cannot be read from another
+  branch; every branch starts from the cache last saved on `main`. That cache goes stale when the
+  runner image gets a new compiler (Windows x64, 2026-11: 0 % hits, a 31-minute build). So the
+  orchestrator dispatches one run on `main` after a merge that changes many sources and whenever
+  a row reports a hit rate under 50 %.
+
+#### 7.1.5 Gates
+
+1. Local, on the owner's Mac: the full tier of the `mac` step passes five times in a row at the
+   default job count and once at `VS_TEST_JOBS=4`; the `mac-sanitize`, `linux` and
+   `linux-sanitize` steps pass at their default job count. Raw output is reported.
+2. `ctest -N` lists the same tests per executable as on `main`. The marks arrive in ctest: per
+   test executable, the number of tests Catch2 itself lists for `[slow]` (hidden ones excluded)
+   equals the number ctest labels `slow`, and likewise `[serial]` against `RUN_SERIAL`. A script
+   checks this before every test run of the gates, locally and in CI (`scripts/check-tiers.sh`);
+   it fails when a label is lost or split. (Comparing `-L slow` with `-LE slow` proves nothing:
+   the two are complements by definition.) The local docs check also reads `build.yml` itself:
+   each build row has one smoke-tier ctest call that always runs and one slow-test call that
+   runs only with `tests=full`.
+3. Step times before and after are reported for every step that runs tests.
+4. `scripts/preflight.sh` passes in full.
+5. One dispatched CI run with `tests=full` (orchestrator). Targets, with a warm cache: a smoke
+   run within 10 minutes per row, a full run within 20. A cold build is outside these targets.
+
+Not in this step: making single slow tests cheaper, running the slow tests in a job of their own
+beside the build row, overlapping the local gate's steps.
+
 ## 8. Second instrument: "B-Side" chip synth
 
 A second plugin in this repository, **Exitium B-Side**: a polyphonic synthesizer modelled on a

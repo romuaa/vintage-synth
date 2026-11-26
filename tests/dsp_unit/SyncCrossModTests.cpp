@@ -454,7 +454,7 @@ Equivalence compareRealTimeOffline (const Patch& patch, double rate)
 // The best alignment (tau) is printed; it varies by up to +-0.6 sample with the patch's spectrum
 // (the decimators' group delay is not flat), so latency is checked by the next test instead.
 // The plain references are reported, not asserted: they keep the higher offline factor by design.
-TEST_CASE ("Cross Mod: offline renders sound like real-time renders (partials within 1 dB, null below -45 dB)", "[os][xmod][offline]")
+TEST_CASE ("Cross Mod: offline renders sound like real-time renders (partials within 1 dB, null below -45 dB)", "[os][xmod][offline][slow]")
 {
     for (const double rate : { 48000.0, 96000.0 })
         for (const auto& patch : kPatches)

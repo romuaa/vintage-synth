@@ -131,7 +131,74 @@ target_link_libraries(VintageSynthTests PRIVATE
     Catch2::Catch2WithMain)
 
 include(${PROJECT_SOURCE_DIR}/external/Catch2/extras/Catch.cmake)
-catch_discover_tests(VintageSynthTests)
+
+# vs_discover_tests(<target> [LABEL <label>] [TEST_PREFIX <prefix>] [PROPERTIES <name> <value>...])
+#
+# catch_discover_tests plus the two test tiers and the serial rule of docs/architecture.md 7.1:
+#   Catch2 tag [slow]    -> ctest label "slow"      (smoke tier = ctest -LE slow, full tier = ctest)
+#   Catch2 tag [serial]  -> ctest property RUN_SERIAL (the test never runs beside another one)
+# LABEL is the label the whole executable has always had (render, trace, bside); a slow test of it
+# has both labels, so `ctest -L render` still selects exactly what it selected before.
+#
+# How: catch_discover_tests' own ADD_TAGS_AS_LABELS would turn every tag into a label (and replace
+# LABEL), and the tags [render], [bside] and [trace] are also in use as plain tags. So the executable is
+# discovered four times, once per combination of the two tags; the four specs do not overlap and
+# together cover every test. Each spec also excludes hidden tests ([.]), which stay hidden whatever
+# their other tags are, so the tests ctest knows are the same as with one plain discovery.
+function(vs_discover_tests target)
+    cmake_parse_arguments(VSDT "" "LABEL;TEST_PREFIX" "PROPERTIES" ${ARGN})
+    set(_common)
+    if(DEFINED VSDT_TEST_PREFIX)
+        list(APPEND _common TEST_PREFIX "${VSDT_TEST_PREFIX}")
+    endif()
+    # <name> <spec> <slow> <serial>
+    set(_parts
+        "slow_serial|[slow][serial]~[.]|1|1"
+        "slow|[slow]~[serial]~[.]|1|0"
+        "serial|[serial]~[slow]~[.]|0|1"
+        "rest|~[slow]~[serial]~[.]|0|0")
+    foreach(_part IN LISTS _parts)
+        string(REPLACE "|" ";" _f "${_part}")
+        list(GET _f 0 _name)
+        list(GET _f 1 _spec)
+        list(GET _f 2 _slow)
+        list(GET _f 3 _serial)
+        set(_props ${VSDT_PROPERTIES})
+        set(_labels)
+        if(DEFINED VSDT_LABEL)
+            list(APPEND _labels "${VSDT_LABEL}")
+        endif()
+        if(_slow)
+            list(APPEND _labels slow)
+        endif()
+        if(_serial)
+            list(APPEND _props RUN_SERIAL TRUE)
+        endif()
+        if(_labels)
+            # One value holding a list ("render;slow"). catch_discover_tests passes PROPERTIES on through
+            # several layers of CMake lists, each of which strips one level of escaping, so the semicolon
+            # carries eight backslashes to arrive as one value in the generated ctest file (found by
+            # trying; scripts/check-tiers.sh compares every executable's ctest labels with Catch2's own [slow] and [serial] lists
+            # and fails the gate if one is lost or split). The value must be
+            # passed quoted: expanding it from a list variable would split it here.
+            string(REPEAT "\\" 8 _escape)
+            string(REPLACE ";" "${_escape};" _labels_value "${_labels}")
+            catch_discover_tests(${target}
+                ${_common}
+                TEST_SPEC "${_spec}"
+                TEST_LIST ${target}_tests_${_name}
+                PROPERTIES LABELS "${_labels_value}" ${_props})
+        else()
+            catch_discover_tests(${target}
+                ${_common}
+                TEST_SPEC "${_spec}"
+                TEST_LIST ${target}_tests_${_name}
+                PROPERTIES ${_props})
+        endif()
+    endforeach()
+endfunction()
+
+vs_discover_tests(VintageSynthTests)
 
 # CPU benchmark (not a test; run manually or from the validate-plugin skill).
 add_executable(voice_bench benchmarks/VoiceBench.cpp)

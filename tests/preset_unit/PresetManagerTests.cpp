@@ -92,7 +92,7 @@ TEST_CASE ("Factory bank: values from the files land in their slots", "[presets]
     CHECK (feq (at (kSlotEffects, "fx.chorus.mode"), 2.0f));
 }
 
-TEST_CASE ("Every factory program survives a state round trip", "[presets][factory]")
+TEST_CASE ("Every factory program survives a state round trip", "[presets][factory][slow]")
 {
     // Sound, finiteness, release and level of every program: FactoryBankTests.cpp.
     for (int slot = 0; slot < kPresetBankSize; ++slot)
@@ -881,7 +881,7 @@ TEST_CASE ("The preset bar names a missing bank and shows a program that is in n
 }
 
 #if ! JUCE_WINDOWS
-TEST_CASE ("A session's bank reference cannot reach anything but an ordinary file in the banks folder, and never blocks", "[presets][state][security]")
+TEST_CASE ("A session's bank reference cannot reach anything but an ordinary file in the banks folder, and never blocks", "[presets][state][security][serial]")
 {
     // Every case: setStateInformation returns at once (it does no file I/O), the bank lookup on the
     // message thread returns promptly, the bank is reported missing and the sound is the session's.
@@ -1012,7 +1012,7 @@ TEST_CASE ("A session's bank reference cannot reach anything but an ordinary fil
     CHECK (other.presets().bankName() == "Outside");
 }
 
-TEST_CASE ("The bounded file reader reads only ordinary files, never more than the cap, and never blocks", "[presets][files][security]")
+TEST_CASE ("The bounded file reader reads only ordinary files, never more than the cap, and never blocks", "[presets][files][security][serial]")
 {
     TempDir temp;
     REQUIRE (temp.dir.createDirectory());
@@ -1089,7 +1089,7 @@ TEST_CASE ("Bank names a session may use", "[presets][state][security]")
     CHECK_FALSE (isSafeBankFileName (juce::String::fromUTF8 ("a\xe2\x80\x8b" "b.vsbank"), ext));  // zero-width space
 }
 
-TEST_CASE ("The largest legitimate bank fits the file cap", "[presets][files]")
+TEST_CASE ("The largest legitimate bank fits the file cap", "[presets][files][serial]")
 {
     // Every value at its longest text (a 9-digit mantissa with an exponent) and every name, category
     // and author at its longest UTF-8 form (4-byte characters). Measured, so the cap can be argued.
@@ -1295,7 +1295,7 @@ TEST_CASE ("Damaged session blobs are ignored without harm", "[presets][state]")
 // The audio hand-over
 // =================================================================================================
 
-TEST_CASE ("ApplyGate: requests are acknowledged by the audio side; waits are bounded", "[presets][gate]")
+TEST_CASE ("ApplyGate: requests are acknowledged by the audio side; waits are bounded", "[presets][gate][serial]")
 {
     ApplyGate gate;
     gate.setTimeouts (0, 0);
@@ -1400,7 +1400,7 @@ TEST_CASE ("While a preset is being applied the audio thread keeps its parameter
     CHECK (rig.proc.getAppliedFxSettings().reverb.level > 0.6f);
 }
 
-TEST_CASE ("Applying a program while notes sound releases them without a click", "[presets][manager][realtime]")
+TEST_CASE ("Applying a program while notes sound releases them without a click", "[presets][manager][realtime][slow]")
 {
     // A smooth sustained chord (sines, low cutoff), so a hard cut would be the biggest step in the
     // signal by far; the held keys are never released by the player.
@@ -1529,7 +1529,7 @@ TEST_CASE ("Program changes, MIDI Program Change and state restores never alloca
 #endif
 }
 
-TEST_CASE ("Applying presets while the audio thread runs: acknowledged, finite, no crash", "[presets][threads]")
+TEST_CASE ("Applying presets while the audio thread runs: acknowledged, finite, no crash", "[presets][threads][serial]")
 {
     PresetRig rig (48000.0, 128);
     rig.prepare();
@@ -1659,7 +1659,7 @@ int markerOf (const VintageSynthProcessor::BlockParams& b)
 }
 } // namespace
 
-TEST_CASE ("No block ever uses a mixed parameter set while programs are applied and states restored on other threads", "[presets][threads][handover]")
+TEST_CASE ("No block ever uses a mixed parameter set while programs are applied and states restored on other threads", "[presets][threads][handover][slow][serial]")
 {
     // A real audio thread renders blocks back to back while the message thread applies marker
     // programs and a host thread restores states of other marker programs. After every block the
@@ -1788,7 +1788,7 @@ TEST_CASE ("Menu results after the bar is gone, or a dismissed menu, do nothing"
     CHECK (rig.presets().currentIndex() == 2);
 }
 
-TEST_CASE ("Host calls from another thread during applies, restores, bypass and MIDI Program Changes: finite, no crash", "[presets][threads]")
+TEST_CASE ("Host calls from another thread during applies, restores, bypass and MIDI Program Changes: finite, no crash", "[presets][threads][slow][serial]")
 {
     // The review's stress (any host call from a host thread while the message thread applies and a
     // real audio thread renders, bypasses and receives Program Changes). Run under ThreadSanitizer

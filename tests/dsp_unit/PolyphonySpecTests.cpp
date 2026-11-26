@@ -331,7 +331,7 @@ struct JuceEnv
 // =================================================================================================
 // Poly
 // =================================================================================================
-TEST_CASE ("Spec Poly: N held notes sound as N distinct pitches", "[spec][poly]")
+TEST_CASE ("Spec Poly: N held notes sound as N distinct pitches", "[spec][poly][slow]")
 {
     VS_EVERY_RATE;
     // Lines are counted above -15 dB re the strongest: the VCF's nonlinearity adds a 3rd harmonic at about -23 dB.
@@ -449,7 +449,7 @@ std::vector<int> iota16()
 }
 } // namespace
 
-TEST_CASE ("Spec Poly: 17th note steals the oldest held voice when none is releasing", "[spec][poly][steal]")
+TEST_CASE ("Spec Poly: 17th note steals the oldest held voice when none is releasing", "[spec][poly][steal][slow]")
 {
     VS_EVERY_RATE;
     // 16 notes pressed in ascending order, then a 17th: the OLDEST held (first pressed, i = 0) goes.
@@ -474,7 +474,7 @@ TEST_CASE ("Spec Poly: 17th note steals the oldest held voice when none is relea
     }
 }
 
-TEST_CASE ("Spec Poly: 17th note steals the oldest voice in release before any held voice", "[spec][poly][steal]")
+TEST_CASE ("Spec Poly: 17th note steals the oldest voice in release before any held voice", "[spec][poly][steal][slow]")
 {
     VS_EVERY_RATE;
     // Release 4 s so the released voices are still sounding at the 17th note-on.
@@ -489,7 +489,7 @@ TEST_CASE ("Spec Poly: 17th note steals the oldest voice in release before any h
     expectExactlyNotes (Spectrum (r.out.data() + r.stealPos + 6000, 15), expected, 4.0);
 }
 
-TEST_CASE ("Spec Poly: with two voices in release exactly one is stolen and no held voice", "[spec][poly][steal]")
+TEST_CASE ("Spec Poly: with two voices in release exactly one is stolen and no held voice", "[spec][poly][steal][slow]")
 {
     VS_EVERY_RATE;
     // SPEC-AMBIGUITY: "oldest voice in release" may mean longest in release or earliest started.
@@ -506,7 +506,7 @@ TEST_CASE ("Spec Poly: with two voices in release exactly one is stolen and no h
     CHECK ((has58 != has66));
 }
 
-TEST_CASE ("Spec Poly: the most recently started note is never stolen", "[spec][poly][steal]")
+TEST_CASE ("Spec Poly: the most recently started note is never stolen", "[spec][poly][steal][slow]")
 {
     VS_EVERY_RATE;
     // 16 held, 17th at 50000, 18th 0.3 s later: the 17th must survive the second steal.
@@ -527,7 +527,7 @@ TEST_CASE ("Spec Poly: the most recently started note is never stolen", "[spec][
     CHECK (hasLine (peaks, noteHz (82), 4.0));
 }
 
-TEST_CASE ("Spec Poly: a stolen note starts 3 ms later than an unstolen one", "[spec][poly][steal]")
+TEST_CASE ("Spec Poly: a stolen note starts 3 ms later than an unstolen one", "[spec][poly][steal][slow]")
 {
     VS_EVERY_RATE;
     // The new note is 108 (4.2 kHz); the 16 or 15 held notes are 36..51 (< 190 Hz). A second difference
@@ -565,7 +565,7 @@ TEST_CASE ("Spec Poly: a stolen note starts 3 ms later than an unstolen one", "[
     CHECK (std::abs (delay - 144) <= 24);
 }
 
-TEST_CASE ("Spec Poly: stealing is click-free", "[spec][poly][steal]")
+TEST_CASE ("Spec Poly: stealing is click-free", "[spec][poly][steal][slow]")
 {
     VS_EVERY_RATE;
     // Sum of sines: the largest possible step is the sum of the per-tone maxima (computed from the
@@ -648,7 +648,7 @@ void runSoloOrder (const std::vector<SoloStep>& steps)
 }
 } // namespace
 
-TEST_CASE ("Spec Solo: last-note priority and return without retrigger (orders)", "[spec][solo]")
+TEST_CASE ("Spec Solo: last-note priority and return without retrigger (orders)", "[spec][solo][slow]")
 {
     VS_EVERY_RATE;
     SECTION ("60 64 67 72, release 72 64 67")
@@ -706,7 +706,7 @@ std::vector<float> renderUnison (int voicesIdx, float detune, int note, int orde
 }
 } // namespace
 
-TEST_CASE ("Spec Unison: 2/4/8/16 voices sound for one key, spread equals the detune setting", "[spec][unison]")
+TEST_CASE ("Spec Unison: 2/4/8/16 voices sound for one key, spread equals the detune setting", "[spec][unison][slow]")
 {
     VS_EVERY_RATE;
     // Note 81 (880 Hz): the lines are at least 4 bins apart in a 2^17 Hann FFT (n = 16, 50 ct: 1.7 Hz = 4.6 bins).
@@ -741,7 +741,7 @@ TEST_CASE ("Spec Unison: 2/4/8/16 voices sound for one key, spread equals the de
     }
 }
 
-TEST_CASE ("Spec Unison: loudness stays roughly constant across voice counts", "[spec][unison]")
+TEST_CASE ("Spec Unison: loudness stays roughly constant across voice counts", "[spec][unison][slow]")
 {
     VS_EVERY_RATE;
     // 1/sqrt(n) per voice keeps the POWER constant for uncorrelated (detuned) voices. Reference: one
@@ -801,7 +801,7 @@ TEST_CASE ("Spec Unison: monophonic, last-note priority", "[spec][unison]")
 // =================================================================================================
 // Assign mode / unison voice change
 // =================================================================================================
-TEST_CASE ("Spec: changing assign mode or unison count releases all voices, click-free, and notes keep working", "[spec][modechange]")
+TEST_CASE ("Spec: changing assign mode or unison count releases all voices, click-free, and notes keep working", "[spec][modechange][slow]")
 {
     VS_EVERY_RATE;
     const double amp = singleVoiceAmp();
@@ -898,7 +898,7 @@ TEST_CASE ("Spec Pedal: keys still held at pedal-up keep sounding", "[spec][peda
     CHECK (rmsOf (out, 100000, 20000) > 0.3);
 }
 
-TEST_CASE ("Spec Pedal: Solo and Unison hold the sounding note", "[spec][pedal]")
+TEST_CASE ("Spec Pedal: Solo and Unison hold the sounding note", "[spec][pedal][slow]")
 {
     VS_EVERY_RATE;
     for (const int mode : { 1, 2 })
@@ -1091,7 +1091,7 @@ TEST_CASE ("Spec Portamento: time 0 is off", "[spec][porta]")
     }
 }
 
-TEST_CASE ("Spec Portamento: 99 % of the interval at the set time, RC shape (up and down)", "[spec][porta]")
+TEST_CASE ("Spec Portamento: 99 % of the interval at the set time, RC shape (up and down)", "[spec][porta][slow]")
 {
     VS_EVERY_RATE;
     // Pitch in semitones over time follows from + (to - from) (1 - 0.01^(t/T)). Measured with a 25 ms
@@ -1216,7 +1216,7 @@ TEST_CASE ("Spec Velocity: VCA gain = 1 - amount x (1 - velocity)", "[spec][velo
     }
 }
 
-TEST_CASE ("Spec Velocity: VCF envelope depth is scaled by 1 - amount x (1 - velocity)", "[spec][velocity]")
+TEST_CASE ("Spec Velocity: VCF envelope depth is scaled by 1 - amount x (1 - velocity)", "[spec][velocity][slow]")
 {
     VS_EVERY_RATE;
     // A saw through the 24 dB filter at a low cutoff with a strong ENV-1 sweep (sustain 1): brightness
@@ -1263,7 +1263,7 @@ TEST_CASE ("Spec Velocity: VCF envelope depth is scaled by 1 - amount x (1 - vel
 // =================================================================================================
 // Bend, mod wheel
 // =================================================================================================
-TEST_CASE ("Spec Bend range: 0..12 semitones, full bend gives exactly the range", "[spec][bend]")
+TEST_CASE ("Spec Bend range: 0..12 semitones, full bend gives exactly the range", "[spec][bend][slow]")
 {
     VS_EVERY_RATE;
     // Tolerance 1 cent (the zero-crossing estimate over 0.75 s is good to ~0.05 cent, the exp2 approximation to 0.01).
@@ -1313,7 +1313,7 @@ double vibrato (float slider, float wheelDepth, float wheelPos, int target = 1)
 }
 } // namespace
 
-TEST_CASE ("Spec Mod wheel: adds wheel x depth to the VCO LFO mod amount", "[spec][wheel]")
+TEST_CASE ("Spec Mod wheel: adds wheel x depth to the VCO LFO mod amount", "[spec][wheel][slow]")
 {
     VS_EVERY_RATE;
     // Equivalence with the slider: wheel w at depth d on top of slider s must give the vibrato of a
@@ -1598,7 +1598,7 @@ std::vector<float> renderStream (const Stream& s, int numPeriods, int blockSize,
 }
 } // namespace
 
-TEST_CASE ("Spec robustness: random valid event streams stay finite and never hang a voice", "[spec][robust]")
+TEST_CASE ("Spec robustness: random valid event streams stay finite and never hang a voice", "[spec][robust][slow]")
 {
     VS_EVERY_RATE;
     constexpr int periods = 125; // 5 s
@@ -1614,7 +1614,7 @@ TEST_CASE ("Spec robustness: random valid event streams stay finite and never ha
     }
 }
 
-TEST_CASE ("Spec robustness: random streams render the same with host block sizes 64 and 480", "[spec][robust]")
+TEST_CASE ("Spec robustness: random streams render the same with host block sizes 64 and 480", "[spec][robust][slow]")
 {
     VS_EVERY_RATE;
     // Parameter changes sit on multiples of 1920 samples, which both block sizes hit exactly. The

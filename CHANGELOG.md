@@ -36,6 +36,19 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   33.3 ms). Twelve model-derived engine write traces gain one direct-clear marker each; no register write moved.
 - The six render goldens are regenerated (A2, B2 and B4 changed; A5, A7 and B7 are bit-identical).
 
+### Faster tests: two tiers and parallel runs (2026-11-26)
+- **Two test tiers.** A test case that took 1 s or longer in the reference CI run is tagged `[slow]` (ctest label
+  `slow`): *smoke* is everything else (`ctest -LE slow`), *full* is every test (`ctest`), unchanged in content. Test
+  cases whose result depends on elapsed time or the scheduler are tagged `[serial]` and run alone.
+- **Parallel ctest everywhere**: `scripts/preflight.sh` (mac, mac-sanitize, linux, linux-sanitize), the CI build
+  rows and the CI sanitizer job run as many tests at a time as the machine has logical cores
+  (`scripts/test-jobs.sh`; `VS_TEST_JOBS=<n>` overrides, `1` is the old serial run).
+- **`scripts/preflight.sh --quick` runs the smoke tier**; new `--tests smoke|full` (smoke is refused for the default
+  and `--full` runs); the summary names the tier and the job count.
+- **CI input `tests`** (`full` default, `smoke`): the build rows run build, smoke tier, pluginval, artifact upload,
+  then (full only) the slow tests. A release run needs `tests=full`. The run summary names the tier.
+- Test code: the B-Side shell file test names its temp folder with a UUID instead of the clock.
+
 ### B-Side S4a: the chip part plays in the plugin (2026-11-24)
 - **Exitium B-Side now plays its chip.** The test tone is gone: each part is 16 note voices, each a whole chip chain
   (renderer, filter, output stage), with the allocator, glide, bend, one vibrato oscillator per part, unison, velocity

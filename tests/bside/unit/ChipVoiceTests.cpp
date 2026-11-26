@@ -173,7 +173,7 @@ bool sameBits (const std::vector<double>& a, const std::vector<double>& b)
 }
 } // namespace
 
-TEST_CASE ("chain: bit-identical for any block split and stops that are not writes (random schedules of every write kind)", "[chain][split]")
+TEST_CASE ("chain: bit-identical for any block split and stops that are not writes (random schedules of every write kind)", "[chain][split][slow]")
 {
     for (const Model m : { Model::B, Model::A })
         for (std::uint64_t seed = 1; seed <= 4; ++seed)
@@ -292,7 +292,7 @@ std::vector<double> renderSwitching (Model m, double rate, const std::vector<Cha
 }
 } // namespace
 
-TEST_CASE ("chain: combined writes at the same and neighbouring cycles: any block split bit-identical, also across setFilter (nullptr) and back inside open windows", "[chain][split][shared]")
+TEST_CASE ("chain: combined writes at the same and neighbouring cycles: any block split bit-identical, also across setFilter (nullptr) and back inside open windows", "[chain][split][shared][slow]")
 {
     // 8.19.4 after the third review: every write lands where the contract says whatever other writes are pending, and
     // setFilter is safe at any time. Bursts of resonance, volume, mode, cutoff and routing writes at the same and
@@ -422,7 +422,7 @@ TEST_CASE ("chain: no allocation while rendering, writing or blending", "[chain]
     }
 }
 
-TEST_CASE ("chain: stable at every setting through the chain, a write every sample, silence after a loud input decays below -120 dB", "[chain][stability]")
+TEST_CASE ("chain: stable at every setting through the chain, a write every sample, silence after a loud input decays below -120 dB", "[chain][stability][slow]")
 {
     // 8.19.1's stability through the whole chain: three noise voices at full level routed to the filter, every mode
     // sum, resonance 0 and 15, cutoffs 0, 1024 and 2047, variation 0 / 0.5 / 1 (Model A), the lowest and highest
@@ -1257,7 +1257,7 @@ void runWriteGate (bool all, const std::vector<double>& rates, const std::vector
 }
 } // namespace
 
-TEST_CASE ("chain: writes every tick against an ideal render: the excess within the write budget (<= -90 dB to 2 kHz), resonance alone and with a volume, mode or cutoff write 10 cycles apart (96 kHz)", "[chain][alias][writes]")
+TEST_CASE ("chain: writes every tick against an ideal render: the excess within the write budget (<= -90 dB to 2 kHz), resonance alone and with a volume, mode or cutoff write 10 cycles apart (96 kHz)", "[chain][alias][writes][slow]")
 {
     // 8.19.4 after the third review: the full set (resonance alone 0 <-> 15 and 4 <-> 12 through the low-, band-, high-
     // and band + high-pass with volume DC on and off; with a volume, mode or cutoff write at 1, 10, 40 and 200 cycles,
@@ -1639,7 +1639,7 @@ TwinResult dynamicsTwin (Model m, double rate, const std::vector<AtWrite>& ws, i
 }
 } // namespace
 
-TEST_CASE ("chain: resonance changes in combination follow the documented rule exactly: several in one sample, two writes 0 to 10 cycles apart, the pending capacity at and beyond its limit", "[chain][writes][place][capacity]")
+TEST_CASE ("chain: resonance changes in combination follow the documented rule exactly: several in one sample, two writes 0 to 10 cycles apart, the pending capacity at and beyond its limit", "[chain][writes][place][capacity][slow]")
 {
     // ChipVoice.h "TIMING" (8.19.4 after the third review) states the rule for resonance changes in combination; a twin
     // (dynamicsTwin) runs it on the voice's own filter input and must equal the voice's filter output to 1e-12 of its
@@ -1707,7 +1707,7 @@ TEST_CASE ("chain: resonance changes in combination follow the documented rule e
     }
 }
 
-TEST_CASE ("chain: routing, volume and mode writes every tick meet the write budget before the board filters (<= -90 dB to 2 kHz)", "[chain][alias][writes]")
+TEST_CASE ("chain: routing, volume and mode writes every tick meet the write budget before the board filters (<= -90 dB to 2 kHz)", "[chain][alias][writes][slow]")
 {
     struct Row
     {
@@ -1912,7 +1912,7 @@ SharedResult sharedChips (Model m, int n, bool shared)
 }
 } // namespace
 
-TEST_CASE ("chain: the Shared topology with 1, 2 and 16 real chips against Per Note (Model B equal, Model A as OutputStage.h pins it)", "[chain][shared]")
+TEST_CASE ("chain: the Shared topology with 1, 2 and 16 real chips against Per Note (Model B equal, Model A as OutputStage.h pins it)", "[chain][shared][slow]")
 {
     // OutputStage.h "SHARED" through ChipVoice with real chips (8.19.4): Model B, n Shared chips give the output of n Per
     // Note chips (the DC step of a volume write within 0.05 dB, the audio's rms within 1 %), n = 1, 2, 16; Model A, the
@@ -2094,7 +2094,7 @@ double maxAbsDiff (const std::vector<double>& a, const std::vector<double>& b)
 }
 } // namespace
 
-TEST_CASE ("chain: Shared is exact per sample (one chip is Per Note bit for bit; any owner block length; routing, mute and volume writes)", "[chain][shared]")
+TEST_CASE ("chain: Shared is exact per sample (one chip is Per Note bit for bit; any owner block length; routing, mute and volume writes)", "[chain][shared][slow]")
 {
     // 8.19.4 "After the independent review": the static output the stages need is taken per bus sample. Routing
     // writes (oscillator 1 to the direct bus and back, oscillators 1 and 3 to the filter), oscillator 3's mute on and
@@ -2134,7 +2134,7 @@ TEST_CASE ("chain: Shared is exact per sample (one chip is Per Note bit for bit;
         }
 }
 
-TEST_CASE ("chain: the block path and the per-sample path give the same bits (writes of every kind, any call length, three rates)", "[chain][cost]")
+TEST_CASE ("chain: the block path and the per-sample path give the same bits (writes of every kind, any call length, three rates)", "[chain][cost][slow]")
 {
     // The cost round (docs/architecture.md 8.21.1 after the review): Per Note, renderUntil takes a block of samples in
     // one loop when nothing can happen inside it (ChipVoice::fastBlock) and falls back to the per-sample path around
@@ -2180,7 +2180,7 @@ TEST_CASE ("chain: the block path and the per-sample path give the same bits (wr
                 }
 }
 
-TEST_CASE ("chain: Shared by weight (finishSharedWeighted): weight 1 is Per Note bit for bit, 1 / n is finishShared, 0 is the chip's own output", "[chain][shared]")
+TEST_CASE ("chain: Shared by weight (finishSharedWeighted): weight 1 is Per Note bit for bit, 1 / n is finishShared, 0 is the chip's own output", "[chain][shared][slow]")
 {
     // The part's entry point for shares that move when a chip joins or leaves the sum (docs/architecture.md 8.21.1 after
     // the independent review): the owner gives each chip its weight per bus sample instead of the whole count.
