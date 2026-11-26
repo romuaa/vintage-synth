@@ -178,7 +178,8 @@ function(vs_discover_tests target)
             # One value holding a list ("render;slow"). catch_discover_tests passes PROPERTIES on through
             # several layers of CMake lists, each of which strips one level of escaping, so the semicolon
             # carries eight backslashes to arrive as one value in the generated ctest file (found by
-            # trying; scripts/check-tiers.sh fails the gate if a label ever gets split). The value must be
+            # trying; scripts/check-tiers.sh compares every executable's ctest labels with Catch2's own [slow] and [serial] lists
+            # and fails the gate if one is lost or split). The value must be
             # passed quoted: expanding it from a list variable would split it here.
             string(REPEAT "\\" 8 _escape)
             string(REPLACE ";" "${_escape};" _labels_value "${_labels}")
