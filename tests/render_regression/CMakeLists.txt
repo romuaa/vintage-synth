@@ -27,8 +27,9 @@ target_link_libraries(render_regression PRIVATE
     Catch2::Catch2WithMain)
 set_target_properties(render_regression PROPERTIES COMPILE_WARNING_AS_ERROR ON)
 
-set(_rr_props LABELS render)
+# vs_discover_tests (tests/CMakeLists.txt) adds the tiers: label render stays, [slow] adds the label slow.
+set(_rr_props)
 if(UPDATE_GOLDENS)
     list(APPEND _rr_props ENVIRONMENT VS_UPDATE_GOLDENS=1)
 endif()
-catch_discover_tests(render_regression PROPERTIES ${_rr_props})
+vs_discover_tests(render_regression LABEL render PROPERTIES ${_rr_props})
