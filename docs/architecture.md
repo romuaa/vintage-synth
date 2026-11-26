@@ -662,8 +662,14 @@ is not raised.
 1. Local, on the owner's Mac: the full tier of the `mac` step passes five times in a row at the
    default job count and once at `VS_TEST_JOBS=4`; the `mac-sanitize`, `linux` and
    `linux-sanitize` steps pass at their default job count. Raw output is reported.
-2. `ctest -N` lists the same number of tests per executable as on `main`; `ctest -N -L slow`
-   plus `ctest -N -LE slow` equals `ctest -N`.
+2. `ctest -N` lists the same tests per executable as on `main`. The marks arrive in ctest: per
+   test executable, the number of tests Catch2 itself lists for `[slow]` (hidden ones excluded)
+   equals the number ctest labels `slow`, and likewise `[serial]` against `RUN_SERIAL`. A script
+   checks this before every test run of the gates, locally and in CI (`scripts/check-tiers.sh`);
+   it fails when a label is lost or split. (Comparing `-L slow` with `-LE slow` proves nothing:
+   the two are complements by definition.) The local docs check also reads `build.yml` itself:
+   each build row has one smoke-tier ctest call that always runs and one slow-test call that
+   runs only with `tests=full`.
 3. Step times before and after are reported for every step that runs tests.
 4. `scripts/preflight.sh` passes in full.
 5. One dispatched CI run with `tests=full` (orchestrator). Targets, with a warm cache: a smoke
