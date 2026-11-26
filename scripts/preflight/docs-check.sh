@@ -7,8 +7,9 @@
 #   2. No "Claude-Session:" trailer in the commit messages of the current branch (relative to main).
 #   3. Every workflow YAML parses; trigger policy over every workflow (workflow_dispatch only, plus
 #      the security.yml allow-list; self-tested by test-workflow-triggers.sh); the JSON row strings inside build.yml are valid JSON; and the
-#      "plan" step of build.yml, run for every `targets` value, selects exactly the documented
-#      rows and jobs (the table below), so the `if:` conditions and the docs cannot drift apart.
+#      "plan" step of build.yml, run for every `targets` value and every `tests` value, selects exactly the documented
+#      rows, jobs and test tier (the table below), refuses release=true with tests=smoke, and writes the
+#      tier into the run summary, so the `if:` conditions and the docs cannot drift apart.
 #   4. Source layout: source/common includes nothing from an instrument directory; the JUCE-free
 #      directories include no JUCE header; no two files differ only by case; no Python bytecode
 #      (`__pycache__/`, `*.pyc`, `*.pyo`) is tracked; no tracked file, text or binary, contains an
@@ -98,20 +99,25 @@ else
   elif ! command -v jq >/dev/null 2>&1; then
     echo "docs-check: skip: jq not found (needed to run the CI plan step)"
   else
-    # target | rows | distros sanitizers windows_bundle linux_bundle   (the documented table)
+    # target | rows | distros sanitizers windows_bundle linux_bundle   (the documented table; the test tier,
+    # full or smoke, follows as the last flag, and every row is checked with both values of `tests`)
     while IFS='|' read -r target rows flags; do
+     for tier in full smoke; do
       : > "$tmp/out"; : > "$tmp/summary"
-      if ! TARGETS=$target GITHUB_OUTPUT=$tmp/out GITHUB_STEP_SUMMARY=$tmp/summary GITHUB_SHA=x GITHUB_REF_NAME=y \
+      if ! TARGETS=$target TESTS=$tier RELEASE=false GITHUB_OUTPUT=$tmp/out GITHUB_STEP_SUMMARY=$tmp/summary GITHUB_SHA=x GITHUB_REF_NAME=y \
            bash "$tmp/plan.sh" >/dev/null 2>"$tmp/err"; then
-        fail "plan step failed for targets=$target: $(head -n 1 "$tmp/err")"; continue
+        fail "plan step failed for targets=$target tests=$tier: $(head -n 1 "$tmp/err")"; continue
       fi
       got_rows=$(sed -n 's/^matrix=//p' "$tmp/out" | jq -r 'map(.name) | join(",")' 2>/dev/null)
       got_flags=$(grep -v '^matrix=' "$tmp/out" | sed 's/^[a-z_]*=//' | tr '\n' ' ' | sed 's/ $//')
-      if [[ $got_rows == "$rows" && $got_flags == "$flags" ]]; then
-        ok "plan targets=$target -> $rows | $flags"
+      want_flags="$flags $tier"
+      if [[ $got_rows == "$rows" && $got_flags == "$want_flags" ]] && grep -q "tests = \`$tier\`" "$tmp/summary" \
+         && grep -q "test tier: \*\*$tier\*\*" "$tmp/summary"; then
+        ok "plan targets=$target tests=$tier -> $rows | $want_flags"
       else
-        fail "plan targets=$target: got '$got_rows' | '$got_flags', documented '$rows' | '$flags'"
+        fail "plan targets=$target tests=$tier: got '$got_rows' | '$got_flags' (summary: $(grep -c "$tier" "$tmp/summary") lines name the tier), documented '$rows' | '$want_flags'"
       fi
+     done
     done <<'TABLE'
 windows|windows-x64,windows-arm64|false false true false
 linux-x64|linux-x64|true false false false
@@ -119,7 +125,24 @@ linux|linux-x64,linux-arm64|true true false true
 no-macos|windows-x64,windows-arm64,linux-x64,linux-arm64|true true true true
 all|macos-universal,windows-x64,windows-arm64,linux-x64,linux-arm64|true true true true
 TABLE
-    # The flag order above is: distros sanitizers windows_bundle linux_bundle (order of the echo lines).
+    # The flag order above is: distros sanitizers windows_bundle linux_bundle tests (order of the echo lines).
+    # The plan step refuses what it must: a release with the smoke tier, an unknown tier, an unknown target.
+    for bad in "no-macos smoke true" "no-macos bogus false" "bogus full false"; do
+      read -r b_targets b_tests b_release <<<"$bad"
+      : > "$tmp/out"; : > "$tmp/summary"
+      if TARGETS=$b_targets TESTS=$b_tests RELEASE=$b_release GITHUB_OUTPUT=$tmp/out GITHUB_STEP_SUMMARY=$tmp/summary GITHUB_SHA=x GITHUB_REF_NAME=y \
+           bash "$tmp/plan.sh" >/dev/null 2>&1; then
+        fail "plan step accepted targets=$b_targets tests=$b_tests release=$b_release (it must refuse)"
+      else
+        ok "plan step refuses targets=$b_targets tests=$b_tests release=$b_release"
+      fi
+    done
+    if TARGETS=all TESTS=full RELEASE=true GITHUB_OUTPUT=$tmp/out GITHUB_STEP_SUMMARY=$tmp/summary GITHUB_SHA=x GITHUB_REF_NAME=y \
+         bash "$tmp/plan.sh" >/dev/null 2>&1; then
+      ok "plan step accepts a release run with tests=full"
+    else
+      fail "plan step refuses targets=all tests=full release=true (it must accept)"
+    fi
   fi
 fi
 
