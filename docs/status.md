@@ -4,7 +4,7 @@ Where the project is, what is parked, what comes next, and the history of what w
 The orchestrator keeps this file current; `CLAUDE.md` links here. Read "Where the project is"
 first when resuming.
 
-## Where the project is (2026-11-25) — read this first when resuming
+## Where the project is (2026-11-26) — read this first when resuming
 
 **Resume here (written 2026-11-24, after the owner's "start S4").**
 - **S4 is in flight (owner's word, 2026-11-24).** The owner decided the Model A budget
@@ -27,8 +27,24 @@ first when resuming.
   rerun. **Open from this:** Windows unit tests take 26 to 28 minutes per job and the x64 build
   took 28 minutes; the job needs room under its limit before the next run (look at what the
   Windows tests spend their time on; a workflow change is its own pull request).
-- **S4b is built and awaits its CI run and the owner's merge word (2026-11-25, branch
-  `bside/s4b-sounds`).** `mix.level` per part (204 parameters), `kChipGain` 1.2822 (Init as
+- **RESUME EXACTLY HERE (written 2026-11-26): S4b is pull request 48 (branch
+  `bside/s4b-sounds`, open, mergeable); it waits for ONE owner answer, asked and not yet
+  answered: how to handle Windows x64.** CI run 45706438078 (dispatched once, on commit
+  `274bf15`): Linux x86_64, Linux ARM64, Windows ARM64, the Linux sanitizers and the seven
+  distro checks passed; the pull request's security scan and CodeQL passed. **Windows x64 was
+  cancelled by its 60-minute limit while the unit tests were still running** (build 31 min,
+  tests cut off after 26 min; pluginval did not run there), so the Windows and Linux bundle
+  jobs were skipped. No Windows x64 failure was seen and no pass either. The options put to
+  the owner: **A (recommended)** a separate one-line pull request raising the build job's
+  `timeout-minutes` from 60 to 90 in `.github/workflows/build.yml` (line 177), merged on the
+  owner's word, brought into `bside/s4b-sounds`, then one run with `-f targets=windows`
+  (warn the owner first), then the owner's merge word for pull request 48; **B** merge
+  pull request 48 now and record here that it merged without Windows x64 verification.
+  After the merge: delete the branch, update this file, and the Windows test time
+  (26 to 28 min per job) stays an open item. Nothing is running; no agent, worktree or
+  background job is left. The audition files are outside the repository (the developer
+  folder of `docs/bside-oracle-adapter.md`, subfolders `s4b-audition`, `-2`, `-3`).
+- **S4b is built (2026-11-25, branch `bside/s4b-sounds`); its state before the CI run:** `mix.level` per part (204 parameters), `kChipGain` 1.2822 (Init as
   loud as Vintage's Init), 16 factory programs with the level rule and per-program offsets,
   a program apply that fades the part, `bside_render` goldens for six programs. **The owner
   auditioned the bank in three rounds and accepted it** (`docs/decisions.md`, "S4b audition:
@@ -41,8 +57,7 @@ first when resuming.
   contract. The orchestrator's full `scripts/preflight.sh` passed on commit `4907ba4`
   (85 min, all seven steps, 1,235 tests on macOS) and every CPU gate passed at the
   orchestrator's bench (16 voices: 4.33 to 4.36 % on Model B, 9.59 to 9.63 % on Model A;
-  chain 26.7 to 26.9 ns and 57.4 to 57.5 ns). **Not yet confirmed: Windows and Linux x86_64
-  (one CI run).** Known risks for that run: the Windows x64 job's 60-minute limit (the new
+  chain 26.7 to 26.9 ns and 57.4 to 57.5 ns). **The CI run's result is in the item above.** Known risks for that run: the Windows x64 job's 60-minute limit (the new
   default tests add about 20 s locally) and the B4 golden's thin margin.
 - **S4b's readings await the owner's review:** rows 1 to 38 in `docs/decisions.md`, "S4b
   contract: orchestrator's calls".
