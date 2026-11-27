@@ -12,6 +12,7 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   build's project version, so the plugins cannot show each other's name. It is painted text (no focus, no help text),
   announced once to screen readers as "<name>, version <x.y.z>". The layout goldens gain the block's line. No parameter,
   state or audio change.
+
 ### Records and documentation after S4b (2026-11-27)
 - S4b is merged (pull request 48). The owner's decisions on B-Side's first release are recorded (`docs/decisions.md`,
   "B-Side's first release: owner decisions"): S5 after the release, one release for both plugins as 0.10.0, a factory
