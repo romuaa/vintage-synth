@@ -3397,6 +3397,28 @@ grey. Chorus needs no switch (its mode has Off).
   18 px beside the part switch. Global pages: neutral tint, "Showing: whole instrument" and both part
   colour chips. Editing Upper while `key.mode` is Whole shows a banner "Upper is not heard in Whole
   mode — switch to Dual or Split on the Play page".
+- **Product name (owner, 2026-11-27): every editor window shows which plugin it is.**
+  - *Custom frame (`EditorFrame`):* a name block at the bottom of the page rail, below the last
+    page button, on every page and at every size: the company name "EXITIUM" in the small
+    label style, the product name without the company ("Vintage Synth", "B-Side") below it in
+    the bold style, and the version ("0.9.0") below that in the dim style. The block is
+    painted text, not a control: it takes no focus, writes nothing, and has no help text. It
+    is laid out from the grid like the rest of the frame (112 px rail, 12 px gutters); a
+    product name that does not fit the width at the bold size is a build-time concern of the
+    caller, not something the frame measures while painting. `paint()` still allocates
+    nothing (9.5): the strings and fonts are made once.
+  - *Placeholder editor (`shell::InstrumentEditor`, B-Side until it has its own editor):* the
+    full name ("Exitium B-Side") and the version on one line above the preset bar.
+  - *Where the text comes from:* the full name is `AudioProcessor::getName()` (the plugin's
+    `PRODUCT_NAME`); the company is its first word and the product the rest; the version is
+    the build's project version. Shared code holds no product name as a literal, so the two
+    plugins can never show each other's name.
+  - *Accessibility:* the name is announced once as static text ("Exitium Vintage Synth,
+    version 0.9.0"); the editor's accessibility inventory test lists it.
+  - *Tests:* for each plugin, the editor made by `createEditor()` reports a name text equal to
+    `getName()` and the project version; in the custom frame the block lies inside the rail,
+    below the last page button and above the help line, at 75 %, 100 % and 200 %; the
+    whole-editor paint test still finds no allocation.
 - Help texts: `HelpTexts` parses the embedded `docs/ui/help-texts.md` (lines starting with
   ``- `id`: ``; `<part>.` → both prefixes; `NN` → 01–16 with the step number substituted into the
   text). The help line shows "Label: text"; for steps "Step 6 type: …".
