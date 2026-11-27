@@ -28,22 +28,36 @@ first when resuming.
   took 28 minutes; the job needs room under its limit before the next run (look at what the
   Windows tests spend their time on; a workflow change is its own pull request).
 - **RESUME EXACTLY HERE (written 2026-11-27): S4b is pull request 48 (branch
-  `bside/s4b-sounds`); it waits for its one CI run on the new workflow and then the owner's
-  merge word.** History: CI run 45706438078 (on `274bf15`) passed on Linux x86_64, Linux ARM64,
-  Windows ARM64, the sanitizers and the seven distro checks, but **Windows x64 was cancelled by
-  its 60-minute limit while the unit tests were still running** (no failure seen, no pass
-  either). The owner did not raise the limit; the tests were made faster instead ("Faster
-  tests" below, pull request 49, merged 2026-11-26). Since then, on this branch: `main` is
-  merged in (only `CHANGELOG.md` conflicted; both sides kept), `bside_render` is registered
-  through `vs_discover_tests`, and 30 of the branch's own test cases are tagged `[slow]`
-  (measured here at 0.3 s or more; tag strings only, no test body or threshold changed; none
-  needed `[serial]`). The branch has 1,235 tests, 212 of them slow. The orchestrator's full
-  `scripts/preflight.sh` passed on `1f6f139` (13m05s, all seven steps, full tier, 18 jobs).
-  **The CI run for this branch and its result are in the pull request; never claim Windows x64
-  green for S4b without it.** After the merge: delete the branches `bside/s4b-sounds` and
-  `bside/s4b-tiers` and the worktrees under `.claude/worktrees/`, and update this file. The
-  audition files are outside the repository (the developer folder of
-  `docs/bside-oracle-adapter.md`, subfolders `s4b-audition`, `-2`, `-3`).
+  `bside/s4b-sounds`, open, mergeable); it waits for TWO owner answers, asked and not yet
+  answered.** (1) The merge word for pull request 48. (2) "leave" or "split": whether to chase
+  the 20-minute target for a full CI run further (recommended: leave; "split" means the slow
+  tests in a job of their own beside the build row and the sanitizer tests over two jobs, as a
+  workflow change in its own pull request with one more run).
+  - **CI run 45903351762 on `4b53c8e` (`targets=no-macos`, `tests=full`): green at the first
+    attempt on every job**, Windows x64 included (both bundle jobs and the seven distro checks
+    too); the pull request's CodeQL and security scan passed. Job totals: Windows x64 23m49s
+    (build 10m22s on the refreshed compiler cache, smoke tests 0m57s, slow tests 10m35s),
+    Windows ARM64 17m31s, Linux x86_64 16m13s, Linux ARM64 11m28s, sanitizers 26m43s (tests
+    21m09s). Windows x64 and the sanitizer job are still over the 20-minute target, by test
+    time, not build time. A `tests=smoke` run has not been tried.
+  - **How the branch got here:** CI run 45706438078 (on `274bf15`) had Windows x64 cancelled by
+    its 60-minute limit while the unit tests were still running. The owner did not raise the
+    limit; the tests were made faster instead ("Faster tests" below, pull request 49, merged
+    2026-11-26). Then, on this branch: `main` merged in (only `CHANGELOG.md` conflicted; both
+    sides kept), `bside_render` registered through `vs_discover_tests`, and 30 of the branch's
+    own test cases tagged `[slow]` (measured here at 0.3 s or more; tag strings only, no test
+    body or threshold changed; none needed `[serial]`; done by an agent, diff read by the
+    orchestrator, no independent reviewer). 1,235 tests, 212 of them slow. The orchestrator's
+    full `scripts/preflight.sh` passed on `1f6f139` (13m05s, all seven steps, full tier, 18
+    jobs); the commits after it change only this file.
+  - **Left to clean up after the merge:** the remote branch `bside/s4b-sounds`; the local
+    branches `bside/s4b-sounds` (the main checkout is on it and is BEHIND the remote, still at
+    `d325554`: switch it to `main` and pull) and `bside/s4b-tiers`; the worktrees
+    `.claude/worktrees/fast-tests` (detached at `5fa04c4`) and `.claude/worktrees/s4b-tiers`.
+    Then update this file on a small branch. Nothing is running: no agent, no CI run, no
+    background job.
+  - The audition files are outside the repository (the developer folder of
+    `docs/bside-oracle-adapter.md`, subfolders `s4b-audition`, `-2`, `-3`).
 - **S4b is built (2026-11-25, branch `bside/s4b-sounds`); its state before the CI run:** `mix.level` per part (204 parameters), `kChipGain` 1.2822 (Init as
   loud as Vintage's Init), 16 factory programs with the level rule and per-program offsets,
   a program apply that fades the part, `bside_render` goldens for six programs. **The owner
