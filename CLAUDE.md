@@ -5,7 +5,7 @@ agent. Humans: start with `README.md` and `CONTRIBUTING.md`.
 
 Two plugins live here: **Exitium Vintage Synth**, a bi-timbral analog-style polysynth (two parts
 of 16 voices, arpeggiator, step sequencer, effects, presets, its own editor), and **Exitium
-B-Side**, a chip synth (parked until the Vintage release is out).
+B-Side**, a chip synth (in development, not yet released; see `docs/status.md`).
 
 **Never use third-party brand names, part numbers, logos or copied panel artwork** in code, UI,
 presets, docs, commit messages or briefs. The look, layout and naming are our own.

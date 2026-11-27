@@ -7,14 +7,18 @@ the M7 one. Each line is one check with its expected result.
 
 The host has no CPU meter: use Activity Monitor, and `voice_bench` for budgeting.
 
-## B-Side shell (until its chip sound exists)
-Open it with `scripts/dev-host.sh --plugin bside` (the "Exitium B-Side" node). Its sound is a sine per
-key (a placeholder), so these checks are about the plugin around it; the general sections below apply too.
-- Play keys: a sine per note, up to 16 at once, soft 5 ms start and stop, no clicks. Pitch bend moves it ±2 semitones.
+## B-Side (chip synth, placeholder editor)
+Open it with `scripts/dev-host.sh --plugin bside` (the "Exitium B-Side" node). It has no editor of its
+own yet; the general sections below apply too.
 - The editor shows the preset bar above the generic parameter list (master volume, key mode, split point,
-  balance, effects, arpeggiator/sequencer, limiter, then the chip parameters, which do nothing yet). The program menu lists 64 programs, all "Init".
-- Set Key Mode to Split or Dual: both parts sound (identically); the split point and balance act.
-- Switch the arpeggiator on and hold a chord: it arpeggiates the sine; reverb, delay and chorus act.
+  balance, effects, arpeggiator/sequencer, limiter, then the chip parameters of both parts). The program
+  menu lists 64 programs: the 16 factory programs (A1 to B8), then "Init".
+- Play keys on Init: a pulse tone per note, up to 16 notes at once, no clicks. Pitch bend moves it.
+- Load one program of each kind (a lead, a bass, a table arpeggio, a drum, a pad, the Dual program B7
+  and the Split program B8): each sounds like its name, and changing program while holding keys fades
+  the part without a click and leaves no hanging note.
+- Set Key Mode to Split or Dual: each part plays its own sound; the split point and balance act.
+- Switch the arpeggiator on and hold a chord: it arpeggiates the chip sound; reverb, delay and chorus act.
 - Save a program and a bank from the preset bar: files end in `.bsprog` and `.bsbank`, in `Documents/Exitium/B-Side/`.
   A Vintage Synth program file refuses to load into it, and the other way round.
 - Bypass the plugin while holding a chord: it fades out and stays silent; un-bypass: nothing hangs.

@@ -607,6 +607,9 @@ applied to one part (the other part bit-identical whatever the tone), and block 
 
 ## Run time
 
+Since the faster tests (2026-11-26) the slower test cases of this step are tagged `[slow]`: they run in
+the full tier, not in the smoke tier. The times below were measured before that.
+
 The default `BSideTests` run took 76 s on this Mac before this step (1:16, `time`, arm64 Release, no other
 build running) and 93 s after (+17 s; the limit is +20 s): the level test 12.3 s, the fifteen program tests
 0.1 to 0.6 s each (about 4 s together), the bank test 0.1 s, the rewritten level test of `PartTests.cpp`

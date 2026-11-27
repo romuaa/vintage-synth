@@ -101,9 +101,9 @@ cmake --build build/mac --parallel
 The plugin is at `build/mac/VintageSynth_artefacts/Release/VST3/Exitium Vintage Synth.vst3`. Copy it to
 `~/Library/Audio/Plug-Ins/VST3/` to use it in a DAW.
 
-**Two plugins.** The same build also produces **Exitium B-Side**, the second instrument (a chip synth, in
-development: it plays its chip model with two parts of 16 voices, but has no factory sounds and no
-editor of its own yet, see the [Roadmap](#roadmap)), at
+**Two plugins.** The same build also produces **Exitium B-Side**, the second instrument (a chip synth, not
+yet released: it plays its chip model with two parts of 16 voices and has 16 factory programs, but
+still uses the generic editor, see the [Roadmap](#roadmap)), at
 `build/mac/BSide_artefacts/Release/VST3/Exitium B-Side.vst3`. `-DVS_BUILD_BSIDE=OFF` builds only
 Exitium Vintage Synth and its tests, exactly as before B-Side existed. Build one plugin with
 `cmake --build build/mac --target VintageSynth_VST3` or `--target BSide_VST3`.
@@ -285,7 +285,7 @@ and has no release of its own. **B-Side is not part of 0.9.0.**
 | S2a | Chip digital core, exact against the reference per cycle | Done |
 | S2b | Own combined-waveform tables (fitted, never copied); band-limited waveform rendering | Done |
 | S2c | Patch program engine | Done |
-| S2 rest | Render cost step, parameters | Done; Model A rendering still above its cost target; alias follow-up step done (narrow pulses, exact sync ratios) |
+| S2 rest | Render cost step, parameters | Done; Model A costs about twice Model B and has its own CPU gate since S4; alias follow-up step done (narrow pulses, exact sync ratios) |
 | S3 | Filter and output path | Done |
 | S4 | Polyphony, wiring into the plugin, factory programs | Done (S4a the part, S4b the factory programs and their level rule) |
 
