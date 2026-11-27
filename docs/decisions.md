@@ -13,6 +13,12 @@ dated log below has the reasons.
   incompatible with AGPLv3 (check before adding any).
 - **Format: VST3 only.** No AU, CLAP, or standalone (add to `FORMATS` only if decided later).
 - **Voices: 16 per part** (32 total in Dual mode). This is the CPU budget target.
+- **B-Side CPU gates (owner decision O11, 2026-11-24):** Model B 5 % (16 voices), 10 % (Dual), 15 % (Dual
+  with the effects, and 16 voices at a 192 kHz host); Model A has its own gates at its measured cost: 11 %,
+  22 %, 27 % and 30 % (`docs/architecture.md` 8.21).
+- **Test tiers (owner, 2026-11-26):** smoke (every test not tagged `[slow]`) while iterating, full for every
+  gate; tests run in parallel everywhere (`docs/architecture.md` 7.1). The 20-minute target for a full CI
+  run is not chased further (owner, 2026-11-27).
 - **Character:** clean by default. One "Vintage" amount controls drift, voice-to-voice variation,
   and filter/envelope tolerance.
 - **Stack:** JUCE 9.0.5 and Catch2 v3.16.1 as git submodules in `external/`, pinned to exact tags.
@@ -42,14 +48,17 @@ dated log below has the reasons.
   The owner auditions at the end of M2, M5 and M6 and sets the UI direction before M7.
 - **Contracts:** `docs/architecture.md` defines the interfaces agents build against (note events,
   voice allocation, new parameters, effects, arp/seq). Change it only in its own commit.
-- **CI:** `.github/workflows/build.yml` builds, tests, and runs pluginval on macOS and Win x64.
-  Win ARM64 runs build, unit tests and host_smoke (there's no ARM64 pluginval). Check results with
+- **CI:** `.github/workflows/build.yml` builds and tests all five targets and runs pluginval on macOS,
+  Win x64 and Linux x86_64. Win ARM64 and Linux ARM64 run build, unit tests and host_smoke (there's no
+  ARM64 pluginval). It also has the sanitizer job, the distribution load tests and the release jobs; its
+  `tests` input chooses the smoke or the full tier (`docs/architecture.md` 7.1). Check results with
   `gh run list` / `gh run view <id> --log-failed` (gh is installed and authenticated). Never claim
   Windows is green without a passing run. CI builds every target with Ninja and a compiler cache
   (ccache on macOS, sccache on Windows) inside the newest Visual Studio found by `vswhere`; never
   hardcode a VS version. LTO applies to the shipped plugin only; tests and `voice_bench` link
   `vs_test_core` (same sources, no LTO), so add new source files to `VS_COMMON_SOURCES` or `VS_VINTAGE_SOURCES` (`VS_PLUGIN_SOURCES` is their union).
-  Runner images are pinned (`macos-26`, `windows-2025`, `windows-11-arm`, `ubuntu-26.04`);
+  Runner images are pinned (`macos-26`, `windows-2025`, `windows-11-arm`; `ubuntu-22.04` and
+  `ubuntu-22.04-arm` for the Linux build rows; `ubuntu-24.04` and `ubuntu-26.04` for the helper jobs);
   Dependabot doesn't bump them, so check github.com/actions/runner-images when touching CI.
   Pushing to `main` cancels a running build of `main` (concurrency group): wait for a run you
   still need before pushing again.
@@ -59,7 +68,7 @@ dated log below has the reasons.
   container, the security scan, repository hygiene (incl. a hashed brand-name check and "no session
   link in commits"). `--quick` while iterating, the default set before handing over.
 - **CI never runs by itself** (no PR, branch or `main` triggers on `build`). The orchestrator
-  dispatches it by hand, once per merge-ready branch, when Actions minutes are available:
+  dispatches it by hand, once per merge-ready branch (Actions are free since the repository is public; the rule stays):
   `gh workflow run build.yml --ref <branch> -f targets=no-macos` (`all` before a release; also
   `windows`, `linux`, `linux-x64`). Agents never trigger CI. **Windows and Linux x86_64 are
   confirmed by CI only**: never claim them green without a passing dispatched run. A dispatch only
@@ -98,12 +107,36 @@ dated log below has the reasons.
 - **Panel interpretation, DSP ranges and design choices:** see `docs/decisions.md`. Add every new
   judgement call there (with the reason), and mark the ones the user should review.
 
+## B-Side's first release: owner decisions (2026-11-27)
+
+Asked after S4b merged; the outline they refine is `docs/architecture.md` 8.11.
+
+| # | Question | Owner's decision |
+|---|---|---|
+| F1 | S5 (Shared Chip layout, chord-into-one-voice, Look-ahead restart, kit mode, global tick phase) before or after B-Side's first release? | **After.** The first release ships without S5; drums stay one sound per program until kit mode exists. |
+| F2 | How is B-Side released? | **One repository release with zips for both plugins, as version 0.10.0;** B-Side is marked as a beta in the notes. The build keeps one version number. B-Side's identity freezes when that release is published. |
+| F3 | Size of the factory bank. | **64 programs** (16 today). The new ones come from a survey of original tunes written for the chip: the most common, the most interesting and the most creative sounds found there. |
+| F4 | Which plugin is open? | **Both editor windows show the plugin's name**, Vintage's and B-Side's (contract: `docs/architecture.md` 9.3.8, "Product name"). |
+| F5 | The pages of B-Side's editor (Chip, Table, Play, Arp + Seq, Effects, Browser). | **Open.** The owner asked for the wireframe files first. B-Side has no wireframes yet; they are the first step of the editor work and need the owner's approval before any code. |
+
+Orchestrator's calls, all **(review)**:
+
+| # | Call | Reason |
+|---|---|---|
+| 1 | A factory program is our own recipe for a sound type (a technique), written from what the survey shows is typical. No tune's instrument data is copied as it is, no note sequence is used, and no tune title, composer or brand name enters the repository. The survey, its tune list and its listening examples stay outside the repository. | The brand rule and the licence: the bank ships under AGPLv3 with the source, so everything in it must be ours. A sound type is a technique; a tune's data is someone's work. |
+| 2 | The name sits at the bottom of the page rail of the custom frame (company, product, version), not in the top bar. | The top bar is full at the design size and its redesign is deferred by the owner; the rail has free room below the last page button on every page. The version is shown with it because a beta's users report against a version. The owner judges it by eye. |
+| 3 | B-Side shows its name now, in the placeholder editor, and again in its own editor when that exists. | The request is about both windows today; B-Side's own editor is weeks away. |
+
 ## Faster tests: tiers and parallel runs (2026-11-26)
 
 Owner decisions (2026-11-26): the build job's time limit is raised only as a last resort ("an
 hour is 55 minutes too much"); the plan of `docs/architecture.md` 7.1 is approved ("go"); one CI
 run on `main` after the merge refreshes the compiler caches ("yes"); pull request 48 waits for a
 Windows x64 run on the new workflow ("wait"); the local gate uses all 18 cores of the owner's Mac.
+
+Owner decision (2026-11-27, "leave"): the 20-minute target for a full CI run is not chased
+further. After CI run 45903351762 (Windows x64 23m49s, sanitizers 26m43s, every job green) the
+slow tests stay in the build row and the sanitizer tests in one job; call 1 below stands.
 
 Orchestrator's calls, all **(review)**:
 
@@ -398,7 +431,7 @@ Readings taken while writing contract 8.21. None changes a parameter ID or the s
 ### S4a: the implementer's readings (2026-11-24, all review)
 
 Taken while building the part against 8.21.1, where the contract was silent or its wording
-could not be met as written. Not yet checked by the independent review.
+could not be met as written. Checked afterwards by the independent review (the next section).
 
 | # | Point | Reading taken (reason) |
 |---|---|---|
@@ -441,7 +474,7 @@ independent review".
 ### S4a: readings of the fix round (2026-11-24, all review)
 
 Taken while fixing the review's findings and in the cost round. A second independent review of
-this round is not yet in.
+this round followed (the section after this one).
 
 | # | Point | Reading taken (reason) |
 |---|---|---|

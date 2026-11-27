@@ -27,12 +27,12 @@ source/vintage/   this instrument: PluginProcessor.* (VintageSynthProcessor : sh
                   path shared by Voice and the editor's oscilloscope)
   params/         PartParamList.h (X-macro list of all per-part params), PartMappings.h,
                   ParameterLayout (assembles the layout), StateVersion.h
-source/bside/     Exitium B-Side (second plugin): PluginProcessor.*, engine/TestTonePart (placeholder until
-                  S2/S4), params/, presets/ (JUCE-bound; BSideTables = the table validator and sink);
+source/bside/     Exitium B-Side (second plugin): PluginProcessor.*, engine/ (Part = one part of 16 chip
+                  voices, ProgramEngine = the patch program engine), params/, presets/ (JUCE-bound; BSideTables = the table validator and sink);
                   program/ProgramHandover.h (table to the audio thread); text/ program/ trace/ are JUCE-free (strict
                   readers, patch tables, trace formats); chip/ is the chip model (digital core, combined-waveform tables, the renderer, Filter, OutputStage,
                   ChipVoice = one chip's whole chain, HalfBand = the anti-alias filters of its static curves; JUCE-free);
-                  engine/ProgramEngine is the patch program engine (JUCE-free). Vintage and B-Side never
+                  engine/ProgramEngine itself is JUCE-free. Vintage and B-Side never
                   include each other
 tests/bside/reference/  generated reference data (traces, digital references, audio features);
                   regenerated only with the adapter outside the repository, reviewed like a golden
@@ -46,6 +46,7 @@ tests/bside/      bside_unit (JUCE-free, ctest label "bside") always; bside_inde
                   bs_test_core + BSideTests. `bside_unit "[.fuzz-long]"` is the hidden 10^6-case fuzz run
 presets/bside/factory/  B-Side factory programs (JSON, embedded)
 scripts/sanitize-targets.sh  the one list of sanitizer test targets (preflight, Linux container, CI)
+scripts/check-tiers.sh  checks that the [slow] and [serial] tags of the tests arrive in ctest as the two tiers (a preflight step)
 scripts/test-jobs.sh  the one place that says how many tests ctest runs side by side (preflight, Linux container, CI)
 resources/fonts/inter/  the embedded UI font with its licence (OFL.txt) and source record
 docs/ui/         wireframes and help-texts.md (the single source of the editor's help texts)

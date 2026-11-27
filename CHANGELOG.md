@@ -12,6 +12,23 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
   build's project version, so the plugins cannot show each other's name. It is painted text (no focus, no help text),
   announced once to screen readers as "<name>, version <x.y.z>". The layout goldens gain the block's line. No parameter,
   state or audio change.
+### Records and documentation after S4b (2026-11-27)
+- S4b is merged (pull request 48). The owner's decisions on B-Side's first release are recorded (`docs/decisions.md`,
+  "B-Side's first release: owner decisions"): S5 after the release, one release for both plugins as 0.10.0, a factory
+  bank of 64 programs, the product name in both editor windows.
+- Documentation reviewed against the code and corrected: the README's B-Side text, the B-Side section of the manual
+  test checklist (it still described the test tone), `docs/layout.md`, `docs/status.md` (one resume point; finished
+  narratives moved to History), the standing decisions, and status notes in `docs/architecture.md` sections 7, 8 and 10.
+
+### B-Side S4b: factory programs, level rule and goldens (2026-11-25)
+- **Sixteen factory programs, A1 to B8** (Init, three leads, two basses, two table arpeggios, three percussion sounds,
+  two Model A pads, one effect, one Dual layer, one Split), each with its own tables. The owner auditioned the bank in
+  three rounds and accepted it (the two entries below). Sounds, level groups and figures: `docs/bside-factory-sounds.md`.
+- **One new parameter per part, `mix.level`** (-24 to +6 dB, default 0 dB): the level rule's trim. B-Side has 204
+  parameters (was 202). `kChipGain` is 1.2822, so that Init is as loud as Exitium Vintage Synth's Init.
+- **Applying a program is silent:** the part's sounding voices fade over 3 ms before the new program takes effect; a
+  table-only apply releases the notes.
+- **Render goldens for six programs** (A2, A5, A7, B2, B4, B7) in `bside_render`.
 
 ### B-Side S4b: the second audition (2026-11-25)
 - **A2 Moving Pulse:** the glide to the played note is 40 % shorter (`porta.time` 0.3 to 0.232; a legato octave step is

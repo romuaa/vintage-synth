@@ -600,7 +600,7 @@ is a rule, a line here.
 | A new guard script passed on a tree it should have failed. | It compared `ctest -L slow` with `ctest -LE slow`: complements, so the sum always matches. | Check a derived value against an independent source (here Catch2's own test list), and show every new check failing on a mutation before trusting it. |
 | First run after the speed-up was *slower* (macOS 14 min vs 7, Win x64 21 vs 20, Win ARM64 15.5 vs 16). | Cold compiler cache (0 hits of ~250 compiles; ~100 MB stored), plus `vs_test_core` compiles JUCE a second time. Judge cache changes on the **second** run; check `--show-stats` hit rate in the "Compiler cache statistics" step. Warm run (2026-11-12, docs-only commit): macOS 3.5 min, Win x64 6.7 min, Win ARM64 5.9 min at 98.4 % hits, so the cache pays off. |
 | pluginval finishes in ~1–5 s in CI. | Not a bug: it ends with SUCCESS. The plugin has no GUI tests (`--skip-gui-tests`) and no inputs, so strictness 10 is quick. |
-| Code scanning upload returns 403 on this private repo. | No GitHub Advanced Security. Trivy results go to the log and a SARIF artifact; upload is behind `vars.CODE_SCANNING`. |
+| (While the repository was private:) code scanning upload returned 403. | No GitHub Advanced Security. Trivy results go to the log and a SARIF artifact; upload is behind `vars.CODE_SCANNING`. |
 
 ### Environment and tooling (this Mac)
 
