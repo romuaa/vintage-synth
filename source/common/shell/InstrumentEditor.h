@@ -53,9 +53,5 @@ private:
     juce::GenericAudioProcessorEditor parameters;
 };
 
-/** `new InstrumentEditor (owner, presets, version)`, for AudioProcessor::createEditor (keeps the GUI headers
-    out of the processor's header). The two-argument form declared in ShellSupport.h (the skeleton's default
-    createEditor) shows the name without a version. */
-juce::AudioProcessorEditor* createInstrumentEditor (juce::AudioProcessor& owner, presets::PresetManager& presets,
-                                                      const juce::String& version);
+/* createInstrumentEditor (owner, presets, version) is declared in ShellSupport.h and defined in InstrumentEditor.cpp. */
 } // namespace vs::shell

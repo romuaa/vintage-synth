@@ -109,7 +109,7 @@ void inspect (EditorRig& rig, Counts& counts, const juce::String& where)
         CHECK (c.isAccessible());
         CHECK (! takesClicks (c));
         CHECK (! c.getWantsKeyboardFocus());
-        CHECK (order.count (&c) == 1); // in the traversal order, so a screen reader reaches it (it is not a Tab stop: it does not want focus)
+        CHECK (c.getExplicitFocusOrder() > 0); // given a place in the reading order (EditorTests.cpp checks where), though it is not a Tab stop
     });
     CHECK (nameBlocks == 1);
     counts.nameBlocks += nameBlocks;

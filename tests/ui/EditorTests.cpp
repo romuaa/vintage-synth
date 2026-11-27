@@ -506,10 +506,10 @@ TEST_CASE ("Product name: the editor from createEditor() shows getName() split i
     VS_SKIP_EDITOR_UNDER_MAC_ASAN();
     EditorRig rig;
     const auto& block = rig.editor->getFrame().getProductBlock();
-    CHECK (block.getName().fullName() == rig.proc.getName());
-    CHECK (block.getName().company == "Exitium");
-    CHECK (block.getName().product == "Vintage Synth");
-    CHECK (block.getName().version == JucePlugin_VersionString);
+    CHECK (block.getProductName().fullName() == rig.proc.getName());
+    CHECK (block.getProductName().company == "Exitium");
+    CHECK (block.getProductName().product == "Vintage Synth");
+    CHECK (block.getProductName().version == JucePlugin_VersionString);
     const auto lines = block.getLines();
     CHECK (lines[0] == "EXITIUM");
     CHECK (lines[1] == "Vintage Synth");
@@ -567,6 +567,75 @@ TEST_CASE ("Product name: the block lies inside the rail, below the last page bu
         INFO ("line " << i << " \"" << lines[static_cast<size_t> (i)] << "\" is " << widths[i] << " px, the block is " << lb.getWidth() << " px");
         CHECK (widths[i] <= static_cast<float> (lb.getWidth()));
     }
+}
+
+TEST_CASE ("Product name: the three lines lie on three rows top to bottom without overlap; the product is bold, company and version are small", "[ui][editor][name][layout]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    auto& block = rig.editor->getFrame().getProductBlock();
+    const ui::PaintFonts fonts (rig.editor->getTheme());
+    const auto bounds = block.getLocalBounds().toFloat();
+    for (int i = 0; i < 3; ++i)
+    {
+        INFO ("line " << i);
+        CHECK (bounds.contains (block.lineArea (i)));
+        if (i > 0)
+            CHECK (block.lineArea (i).getY() >= block.lineArea (i - 1).getBottom());
+    }
+    CHECK (block.lineArea (0).getY() < block.lineArea (1).getY());
+    CHECK (block.lineArea (1).getY() < block.lineArea (2).getY());
+    CHECK (block.lineFont (0) == fonts.small);
+    CHECK (block.lineFont (1) == fonts.textBold);
+    CHECK (block.lineFont (2) == fonts.small);
+    CHECK (block.lineFont (1) != block.lineFont (0));
+}
+
+TEST_CASE ("Product name: the block is read after the help line and before the output popover, and is not a Tab stop", "[ui][editor][name][a11y]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    auto& frame = rig.editor->getFrame();
+    const int block = frame.getProductBlock().getExplicitFocusOrder();
+    CHECK (block > frame.getHelpLine().getExplicitFocusOrder());
+    CHECK (block < frame.getPopover().getExplicitFocusOrder());
+    CHECK (frame.getHelpLine().getExplicitFocusOrder() > 0);
+    CHECK (! frame.getProductBlock().getWantsKeyboardFocus());
+}
+
+TEST_CASE ("Product name: words are split at any white space and joined with one space; no name gives no text and no announcement", "[ui][name]")
+{
+    struct Case
+    {
+        const char* in;
+        const char* company;
+        const char* product;
+        const char* full;
+    };
+    const Case cases[] {
+        { "Exitium Vintage Synth", "Exitium", "Vintage Synth", "Exitium Vintage Synth" },
+        { "  Exitium B-Side  ", "Exitium", "B-Side", "Exitium B-Side" },
+        { "Exitium   Vintage  Synth", "Exitium", "Vintage Synth", "Exitium Vintage Synth" },
+        { "Exitium\tB-Side", "Exitium", "B-Side", "Exitium B-Side" },
+        { "Exitium \t \n Vintage\tSynth ", "Exitium", "Vintage Synth", "Exitium Vintage Synth" },
+        { "Exitium", "Exitium", "", "Exitium" },
+        { "", "", "", "" },
+        { " \t ", "", "", "" },
+    };
+    for (const auto& c : cases)
+    {
+        INFO ("name \"" << c.in << "\"");
+        const auto n = ui::ProductName::make (juce::String (c.in), "0.9.0");
+        CHECK (n.company == c.company);
+        CHECK (n.product == c.product);
+        CHECK (n.fullName() == c.full);
+        CHECK (n.announcement() == (juce::String (c.full).isEmpty() ? juce::String() : juce::String (c.full) + ", version 0.9.0"));
+        CHECK (n.line() == (juce::String (c.full).isEmpty() ? juce::String() : juce::String (c.full) + "  0.9.0"));
+    }
+    const auto noVersion = ui::ProductName::make ("Exitium B-Side", {});
+    CHECK (noVersion.announcement() == "Exitium B-Side");
+    CHECK (noVersion.line() == "Exitium B-Side");
+    CHECK (ui::ProductName::make ("", {}).announcement().isEmpty());
 }
 
 // =================================================================================================

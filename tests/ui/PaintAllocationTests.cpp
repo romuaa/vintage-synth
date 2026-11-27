@@ -12,6 +12,7 @@
 
 #include "EditorWalk.h"
 #include "NullGraphicsContext.h"
+#include "common/shell/InstrumentEditor.h"
 #include "common/ui/controls/Slider.h"
 
 #include <set>
@@ -167,6 +168,19 @@ TEST_CASE ("Paint allocations: no component of any page builds a string, path or
     }
     INFO (walked.components << " components visited, " << walked.measured << " measured, " << walked.juceOwn << " JUCE widgets skipped");
     CHECK (walked.measured > 200);
+}
+
+TEST_CASE ("Paint allocations: the placeholder editor's name line builds nothing while painting", "[ui][alloc][paint][name]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    shell::NameLine line (ui::ProductName::make ("Exitium B-Side", "0.9.0"));
+    line.setSize (560, shell::InstrumentEditor::kNameLineHeight);
+    REQUIRE (line.getText() == "Exitium B-Side  0.9.0");
+    NullGraphicsContext context;
+    bool stable = false;
+    const int n = allocationsOf (line, context, stable);
+    CHECK (stable);
+    CHECK (n == 0);
 }
 #endif
 

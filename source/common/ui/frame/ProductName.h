@@ -17,18 +17,47 @@ struct ProductName
 
     static ProductName make (const juce::String& fullName, const juce::String& versionText)
     {
-        const auto name = fullName.trim();
+        // Words are split at any white space (tabs, runs of spaces) and joined with one space.
+        juce::StringArray words;
+        juce::String word;
+        for (auto c : fullName)
+        {
+            if (juce::CharacterFunctions::isWhitespace (c))
+            {
+                if (word.isNotEmpty())
+                    words.add (word);
+                word = juce::String();
+            }
+            else
+                word += juce::String::charToString (c);
+        }
+        if (word.isNotEmpty())
+            words.add (word);
         ProductName p;
-        p.company = name.upToFirstOccurrenceOf (" ", false, false);
-        p.product = name.fromFirstOccurrenceOf (" ", false, false).trim();
+        if (words.size() > 0)
+        {
+            p.company = words[0];
+            words.remove (0);
+            p.product = words.joinIntoString (" ");
+        }
         p.version = versionText;
         return p;
     }
 
     /** "Exitium Vintage Synth" */
     juce::String fullName() const { return product.isEmpty() ? company : company + " " + product; }
-    /** The one-line text of the placeholder editor and the static text a screen reader announces:
-        "Exitium Vintage Synth, version 0.9.0". */
-    juce::String announcement() const { return version.isEmpty() ? fullName() : fullName() + ", version " + version; }
+    /** The static text a screen reader announces: "Exitium Vintage Synth, version 0.9.0"; just the name when there
+        is no version, and nothing when there is no name. */
+    juce::String announcement() const
+    {
+        const auto name = fullName();
+        return name.isEmpty() || version.isEmpty() ? name : name + ", version " + version;
+    }
+    /** The placeholder editor's one line: the name, two spaces, the version (either part may be missing). */
+    juce::String line() const
+    {
+        const auto name = fullName();
+        return name.isEmpty() ? juce::String() : (version.isEmpty() ? name : name + "  " + version);
+    }
 };
 } // namespace vs::ui

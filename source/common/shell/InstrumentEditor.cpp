@@ -5,7 +5,7 @@
 namespace vs::shell
 {
 NameLine::NameLine (const ui::ProductName& name)
-    : text (name.version.isEmpty() ? name.fullName() : name.fullName() + "  " + name.version)
+    : text (name.line())
 {
     setTitle (name.announcement());
     setComponentID ("ui.name");
@@ -57,10 +57,5 @@ juce::AudioProcessorEditor* createInstrumentEditor (juce::AudioProcessor& owner,
                                                       const juce::String& version)
 {
     return new InstrumentEditor (owner, presets, version);
-}
-
-juce::AudioProcessorEditor* createInstrumentEditor (juce::AudioProcessor& owner, presets::PresetManager& presets)
-{
-    return new InstrumentEditor (owner, presets, {});
 }
 } // namespace vs::shell

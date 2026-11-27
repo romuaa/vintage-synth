@@ -270,9 +270,9 @@ juce::Rectangle<float> ProductBlock::lineArea (int line) const noexcept
 
 void ProductBlock::resized()
 {
-    companyLine.setLine (companyText, fonts.small, lineArea (0), juce::Justification::centredLeft);
-    productLine.setLine (name.product, fonts.textBold, lineArea (1), juce::Justification::centredLeft);
-    versionLine.setLine (name.version, fonts.small, lineArea (2), juce::Justification::centredLeft);
+    companyLine.setLine (companyText, lineFont (0), lineArea (0), juce::Justification::centredLeft);
+    productLine.setLine (name.product, lineFont (1), lineArea (1), juce::Justification::centredLeft);
+    versionLine.setLine (name.version, lineFont (2), lineArea (2), juce::Justification::centredLeft);
 }
 
 void ProductBlock::paint (juce::Graphics& g)

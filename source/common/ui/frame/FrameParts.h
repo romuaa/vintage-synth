@@ -89,9 +89,11 @@ public:
     void paint (juce::Graphics&) override;
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
-    const ProductName& getName() const noexcept { return name; }
+    const ProductName& getProductName() const noexcept { return name; }
     /** The three painted lines top to bottom: company in capitals, product, version. */
     std::array<juce::String, 3> getLines() const { return { companyText, name.product, name.version }; }
+    /** The font a line is laid out in (0 company, 1 product, 2 version). */
+    const juce::Font& lineFont (int line) const noexcept { return line == 1 ? fonts.textBold : fonts.small; }
     /** Each line's row, in this component's coordinates. */
     juce::Rectangle<float> lineArea (int line) const noexcept;
 

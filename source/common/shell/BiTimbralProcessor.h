@@ -65,6 +65,13 @@
 #include "common/shell/EditorState.h"
 #include "common/shell/ShellSupport.h"
 
+// The default editor shows the build's version (9.3.8). JucePlugin_VersionString is a compile definition of the
+// plugin target and of the test cores that copy its definitions (both are the project version); every target that
+// includes this header has one of them.
+#ifndef JucePlugin_VersionString
+ #error "JucePlugin_VersionString is not defined: the skeleton's default editor shows it"
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <concepts>
@@ -284,7 +291,7 @@ public:
     static constexpr double kBypassFadeSeconds = 0.005;
 
     // ---- Editor: the preset bar above the generic editor until the instrument has its own UI ----
-    juce::AudioProcessorEditor* createEditor() override { return createInstrumentEditor (*this, pm()); }
+    juce::AudioProcessorEditor* createEditor() override { return createInstrumentEditor (*this, pm(), JucePlugin_VersionString); }
     bool hasEditor() const override { return true; }
 
     // ---- Info ----
