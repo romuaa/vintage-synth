@@ -15,12 +15,26 @@ first when resuming.
   original tunes; both editor windows show the plugin's name; B-Side's editor pages are
   still open. The steps, in order, each with its own contract before it starts (**none of
   these contracts exists yet, except the product name's**):
-  1. **Product name in both editors** (contract 9.3.8, branch `ui/plugin-name`): in work.
-     The owner judges it by eye before the merge.
+  1. **Product name in both editors** (contract 9.3.8, branch `ui/plugin-name`): built,
+     reviewed independently ("mergeable after small fixes"; fixed), and the orchestrator's
+     full `scripts/preflight.sh` passed on `1d0ea1e` (18m13s, all seven steps, full tier).
+     A first gate run had failed in the macOS sanitizer step on the new B-Side editor test:
+     the known false positive in the system's graphics code when an editor is created
+     (`docs/engineering-notes.md`); the test skips there like the Vintage editor tests.
+     **Waits for:** the owner's look at the pictures, one CI run for Windows and Linux
+     x86_64 (not dispatched yet; the owner is asked first), the owner's merge word.
+     **Open after it:** the eight pictures in `docs/images/` were taken before the name
+     block existed and do not show it.
   2. **Survey for the bank of 64** (developer-only, outside the repository, in the developer
-     folder of `docs/bside-oracle-adapter.md`, subfolder `bank64-survey`): in work. Its
-     result is a proposal of 48 new programs for the owner; the programs are written only
-     after the owner has seen it and the bank's contract (8.21.2) is extended.
+     folder of `docs/bside-oracle-adapter.md`, subfolder `bank64-survey`, `REPORT.md`): done.
+     300 tunes analysed from their register data (nothing listened to); 48 programs
+     proposed (11 leads, 8 basses, 7 arpeggios, 9 percussion sounds, 4 pads, 5 effects, 2
+     Dual, 2 Split), 35 as they are and 13 with a named compromise that S5 lifts. **Waits
+     for the owner:** "go" on the list, the arpeggio speed (frame or tempo) and whether to
+     fill all 64 slots now. Then: the bank's contract (8.21.2) is extended, the programs are
+     written and rendered, and the owner auditions them. A finding for the S5 contract:
+     pulse-width and filter movement that keeps running across notes is common in the tunes
+     and is not on the S5 list.
   3. **B-Side editor design:** wireframes and help texts in `docs/ui/` for the owner's
      approval; no code before that. Today `docs/ui/wireframes/` holds Vintage's eight
      pictures only.

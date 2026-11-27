@@ -3,6 +3,18 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## Product name in the editors (2026-11-27)
+
+- **Every test that creates an editor skips under the macOS sanitizer build, B-Side's too.** The new B-Side test
+  created the placeholder editor and the gate's macOS sanitizer step aborted: a heap overflow reported inside the
+  system's graphics code, reached from the resize corner loading a cursor (the false positive already known from the
+  Vintage editor tests). Rule: a test that calls `createEditor()` starts with the skip macro of its test set
+  (`VS_SKIP_EDITOR_UNDER_MAC_ASAN()` in `tests/ui/`, `VS_BS_SKIP_EDITOR_UNDER_MAC_ASAN()` in B-Side's shell tests).
+  The author's arm64 build and smoke tier cannot show this; only the sanitizer step does.
+- **A check that a visible component "is in the focus order" cannot fail.** The general focus traverser lists every
+  visible child whatever its focus settings. The reviewer's mutations showed it; the order is now checked through the
+  explicit focus order against its neighbours.
+
 ## B-Side S4b: the owner's audition round (2026-11-25)
 
 - **A drum that "is not in time" needs a per-hit measurement, not an ear.** Render the phrase through the real
