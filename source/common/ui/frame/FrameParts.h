@@ -7,8 +7,10 @@
 #include "common/ui/HelpTexts.h"
 #include "common/ui/PaintFonts.h"
 #include "common/ui/PreparedText.h"
+#include "common/ui/frame/ProductName.h"
 #include "common/ui/Theme.h"
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -73,6 +75,34 @@ private:
     std::vector<Page> pages;
     std::vector<std::unique_ptr<Button>> buttons;
     int current = 0, accentPart = 0;
+};
+
+/** The product name block at the bottom of the page rail (9.3.8): "EXITIUM", the product name in bold and
+    the version, three painted lines. Not a control: no focus, no mouse, no help text; a screen reader
+    announces it once as static text ("Exitium Vintage Synth, version 0.9.0"). The text is laid out when
+    the size changes, never in paint() (9.5). */
+class ProductBlock final : public juce::Component
+{
+public:
+    ProductBlock (const Theme& t, const ProductName& name);
+    void resized() override;
+    void paint (juce::Graphics&) override;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+
+    const ProductName& getName() const noexcept { return name; }
+    /** The three painted lines top to bottom: company in capitals, product, version. */
+    std::array<juce::String, 3> getLines() const { return { companyText, name.product, name.version }; }
+    /** Each line's row, in this component's coordinates. */
+    juce::Rectangle<float> lineArea (int line) const noexcept;
+
+    static constexpr int kLines = 3;
+    static constexpr int kHeight = kLines * metrics::kLabelRow;
+
+private:
+    PaintFonts fonts;
+    ProductName name;
+    juce::String companyText;
+    PreparedText companyLine, productLine, versionLine;
 };
 
 /** Bottom row: "Label: text" of the hovered or focused control, else the page's hint. */

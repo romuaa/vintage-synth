@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### Editors: the product name (2026-11-27)
+- **Every editor window now says which plugin it is.** Exitium Vintage Synth shows a name block at the bottom of the page
+  rail on every page and size ("EXITIUM", "Vintage Synth", the version); Exitium B-Side's placeholder editor shows
+  "Exitium B-Side" and the version on one line above the preset bar. The text comes from the processor's own name and the
+  build's project version, so the plugins cannot show each other's name. It is painted text (no focus, no help text),
+  announced once to screen readers as "<name>, version <x.y.z>". The layout goldens gain the block's line. No parameter,
+  state or audio change.
+
 ### B-Side S4b: the second audition (2026-11-25)
 - **A2 Moving Pulse:** the glide to the played note is 40 % shorter (`porta.time` 0.3 to 0.232; a legato octave step is
   within 50 cents of the target after 166 ms, was 280 ms). Nothing else in A2 changed.

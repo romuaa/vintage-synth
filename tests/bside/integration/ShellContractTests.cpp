@@ -9,6 +9,7 @@
 #include "bside/PluginProcessor.h"
 #include "bside/presets/BSidePresets.h"
 #include "common/params/GlobalParams.h"
+#include "common/shell/InstrumentEditor.h"
 
 #include <string>
 
@@ -90,6 +91,41 @@ TEST_CASE ("Skeleton: the plugin name comes from the instrument, not from the bu
     CHECK (bside.getName() == "Exitium B-Side");
     CHECK (bside.getName() == JucePlugin_Name);
     CHECK (juce::String (bs::BSideProcessor::kName) == JucePlugin_Name);
+}
+
+TEST_CASE ("Product name: B-Side's placeholder editor shows getName() and the project version on one line above the preset bar", "[shell][identity][editor]")
+{
+    JuceEnv env;
+    bs::BSideProcessor bside;
+    std::unique_ptr<juce::AudioProcessorEditor> made (bside.createEditor());
+    auto* editor = dynamic_cast<vs::shell::InstrumentEditor*> (made.get());
+    REQUIRE (editor != nullptr);
+
+    const auto& name = editor->getProductName();
+    CHECK (name.fullName() == bside.getName());
+    CHECK (name.company == "Exitium");
+    CHECK (name.product == "B-Side");
+    CHECK (name.version == JucePlugin_VersionString);
+    CHECK (editor->getNameLine().getText() == bside.getName() + "  " + JucePlugin_VersionString);
+    CHECK (editor->getNameLine().getTitle() == bside.getName() + ", version " + JucePlugin_VersionString);
+    const auto handler = editor->getNameLine().createAccessibilityHandler();
+    REQUIRE (handler != nullptr);
+    CHECK (handler->getRole() == juce::AccessibilityRole::staticText);
+
+    // One line, above the preset bar (not over it), inside the window.
+    const auto line = editor->getNameLine().getBounds();
+    CHECK (line.getY() == 0);
+    CHECK (line.getBottom() <= editor->getBar().getY());
+    CHECK (line.getWidth() == editor->getWidth());
+    CHECK (line.getHeight() == vs::shell::InstrumentEditor::kNameLineHeight);
+
+    // The name is the processor's own, never a literal of the shared editor: a second instrument shows its own.
+    MiniProcessor mini (bs::createParameterLayout(), true);
+    std::unique_ptr<juce::AudioProcessorEditor> other (mini.createEditor());
+    auto* otherEditor = dynamic_cast<vs::shell::InstrumentEditor*> (other.get());
+    REQUIRE (otherEditor != nullptr);
+    CHECK (otherEditor->getProductName().fullName() == "Mini Test Instrument");
+    CHECK (otherEditor->getNameLine().getText() == "Mini Test Instrument");
 }
 
 TEST_CASE ("Skeleton: a complete instrument constructs and verifies", "[shell][contract]")

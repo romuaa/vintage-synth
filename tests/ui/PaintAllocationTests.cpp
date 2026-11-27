@@ -157,7 +157,7 @@ TEST_CASE ("Paint allocations: no component of any page builds a string, path or
 
     // The walk reached what it should: a few classes from each corner of the editor.
     for (const char* name : { "Slider", "SegmentedSwitch", "Toggle", "Panel", "ResponseCurveView", "ScopeView", "KeyboardStrip", "StepGrid", "ProgramGrid",
-                              "ChipStrip", "PageRail", "PartSwitch", "OutputMeter", "HelpLine", "HelpBubble", "OutputPopover", "EnvelopeView", "LfoView", "PianoRollView" })
+                              "ChipStrip", "PageRail", "ProductBlock", "PartSwitch", "OutputMeter", "HelpLine", "HelpBubble", "OutputPopover", "EnvelopeView", "LfoView", "PianoRollView" })
     {
         bool found = false;
         for (const auto& t : walked.types)

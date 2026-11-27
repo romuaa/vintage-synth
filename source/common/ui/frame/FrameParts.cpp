@@ -253,6 +253,43 @@ void drawPageIcon (juce::Graphics& g, PageIcon icon, juce::Rectangle<float> a, j
     g.strokePath (stroke, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
+// ---- ProductBlock ----
+
+ProductBlock::ProductBlock (const Theme& t, const ProductName& n) : fonts (t), name (n), companyText (n.company.toUpperCase())
+{
+    setTitle (name.announcement());
+    setComponentID ("ui.name");
+    setInterceptsMouseClicks (false, false);
+    setWantsKeyboardFocus (false);
+}
+
+juce::Rectangle<float> ProductBlock::lineArea (int line) const noexcept
+{
+    return { 0.0f, static_cast<float> (line * metrics::kLabelRow), static_cast<float> (getWidth()), static_cast<float> (metrics::kLabelRow) };
+}
+
+void ProductBlock::resized()
+{
+    companyLine.setLine (companyText, fonts.small, lineArea (0), juce::Justification::centredLeft);
+    productLine.setLine (name.product, fonts.textBold, lineArea (1), juce::Justification::centredLeft);
+    versionLine.setLine (name.version, fonts.small, lineArea (2), juce::Justification::centredLeft);
+}
+
+void ProductBlock::paint (juce::Graphics& g)
+{
+    g.setColour (colour (Tok::TextSecondary));
+    companyLine.draw (g);
+    g.setColour (colour (Tok::TextPrimary));
+    productLine.draw (g);
+    g.setColour (colour (Tok::TextSecondary));
+    versionLine.draw (g);
+}
+
+std::unique_ptr<juce::AccessibilityHandler> ProductBlock::createAccessibilityHandler()
+{
+    return std::make_unique<juce::AccessibilityHandler> (*this, juce::AccessibilityRole::staticText);
+}
+
 // ---- HelpLine ----
 
 HelpLine::HelpLine (const Theme& t) : fonts (t)

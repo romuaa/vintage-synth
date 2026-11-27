@@ -2,6 +2,7 @@
 
 #include "bside/presets/BSidePresets.h"
 #include "bside/presets/BSideTables.h"
+#include "common/shell/InstrumentEditor.h"
 
 #include <algorithm>
 
@@ -148,6 +149,11 @@ double BSideProcessor::synthTailSeconds() const noexcept
                 longestMs = std::max (longestMs, map::envNominalMs (map::EnvStage::Release, release[n]));
     }
     return 3.0 * static_cast<double> (longestMs) / 1000.0;
+}
+
+juce::AudioProcessorEditor* BSideProcessor::createEditor()
+{
+    return vs::shell::createInstrumentEditor (*this, getPresets(), kVersion);
 }
 
 void BSideProcessor::migrateState (juce::ValueTree& state)

@@ -52,7 +52,7 @@ VintageEditor::VintageEditor (VintageSynthProcessor& p)
       mirror (p),
       ctx { mirror, theme, registry, help },
       bar (p.getPresets()),
-      frame (ctx, vintagePages(), bar),
+      frame (ctx, vintagePages(), bar, ProductName::make (p.getName(), VintageSynthProcessor::kVersion)),
       vblank (this, [this] { onVBlank(); })
 {
     setLookAndFeel (&theme);

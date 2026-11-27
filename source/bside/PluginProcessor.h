@@ -41,12 +41,17 @@ public:
 
     /** The plugin's name as hosts list it (the skeleton's getName); equals the build's JucePlugin_Name (tested). */
     static constexpr const char* kName = "Exitium B-Side";
+    /** The build's project version (the placeholder editor shows it, 9.3.8); see VintageSynthProcessor::kVersion. */
+    static constexpr const char* kVersion = JucePlugin_VersionString;
 
     // State identity (used by the skeleton's get/setStateInformation).
     static constexpr const char* kStateTag = "BSideState";
     static constexpr int kStateVersion = bs::kStateVersion;
     /** Brings a state tree saved by an older version up to the current one. */
     static void migrateState (juce::ValueTree& state);
+
+    /** The placeholder editor, told this plugin's name (getName()) and version (kVersion) for its title line (9.3.8). */
+    juce::AudioProcessorEditor* createEditor() override;
 
     /** The compiled patch table of a part (0 Lower, 1 Upper) as the audio thread reads it (S2c): see
         program/ProgramHandover.h. Applying a program or tone, setTable and a state restore publish here
