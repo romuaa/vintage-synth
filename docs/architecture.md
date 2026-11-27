@@ -1169,7 +1169,7 @@ The filter object is a separate class (`chip/Filter.h`) that the chip uses by re
 
 | Policy | Behaviour |
 |---|---|
-| Clean (default) | As Precondition; and when a note starts on a voice that did not get the full lead (retrigger, steal, no restart section), the rate counter and divider are set to 0 directly (not a chip operation): the envelope never waits. |
+| Clean (default) | As Precondition; and at every note start the rate counter and divider of all three oscillators are set to 0 directly (not a chip operation), before tick 0's writes: the envelope never waits (8.21.2). |
 | Precondition | An idle voice gets the restart writes as soon as it is idle and stays in that state; a note on it then starts normally. A voice re-used sooner may show the envelope delay quirk. |
 | Authentic | No preconditioning and no reset: only what the table's rows do. |
 | Look-ahead (S5) | Notes are delayed by `gateoff` ticks so the restart runs before each note; the latency is reported. |
@@ -1340,6 +1340,7 @@ Per part (63), N = 1, 2, 3, the three `oscN.*` blocks in order:
 Global, appended last: `chip.clock` (Chip Clock: 50 Hz system, 60 Hz system; default 50 Hz system), S2.
 
 **Host parameter count after S2: 75 + 2 × 63 + 1 = 202.**
+**After S4b: 75 + 2 × 64 + 1 = 204** (`mix.level` appended per part, 8.21.2).
 
 - **Automatable:** every host parameter. **Macros over table data:** `tick.*` (speed of every
   lane), `macro.pw_offset`, `macro.cutoff_offset` (added after the lane value, smoothed),
@@ -1784,8 +1785,8 @@ The full list of readings, with reasons, is `docs/decisions.md` "B-Side S2c" (ro
 - **Restart section and policies (8.6.4):** Authentic applies no part of the restart section
   (no idle writes, no tick-0 writes, no `firstwave`, no reset on a steal, no direct clear).
   Precondition and Clean write the restart state when the voice goes idle, and at tick 0 on a
-  retrigger that was not preconditioned; Clean also clears the envelope counters directly when
-  the voice did not get the full lead. A stolen voice is reset (keeping time) and then gets the
+  retrigger that was not preconditioned; Clean also clears the envelope counters directly at
+  every note start (8.21.2). A stolen voice is reset (keeping time) and then gets the
   restart writes. Without a restart section, Precondition and Clean clear a still-high gate
   before a retrigger (owner to confirm). `firstwave` applies per active oscillator and ends at
   the table's first control write, at tick 1 or at note-off, whichever comes first.
@@ -2697,16 +2698,161 @@ rebuilds per resonance write (`ChipVoice.h`, "RESONANCE") and the part's own ove
     silent block, the per-interval host inputs). The gate is read as the best of three runs
     inside one invocation, passing in three invocations in a row.
 
-#### 8.21.2 S4b: patches, level rule, goldens, audition (outline; completed before it starts)
-- 10 to 20 factory programs in `presets/bside/factory/` with their tables: drums, a chip arpeggio,
-  a pulse lead, a filter bass, sync and ring leads, Model A pads (8.10). Own names; no
-  third-party names of any kind.
-- The level rule of 6b.4, restated for B-Side's programs and tested for every program;
-  `kChipGain` may move once.
-- `bside_render`: render-regression goldens for 6 programs (it moves from the future to the
-  required sanitizer targets).
-- An audition render per program with a contact sheet, outside the repository, for the owner's
-  audition gate.
+#### 8.21.2 S4b: factory sounds, level rule, goldens, audition (contract, 2026-11-24)
+
+Branch `bside/s4b-sounds`, one pull request, merged only after the owner's audition. Readings
+marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
+
+- **One new parameter, first and alone (skill `add-parameter`; serial step).** `mix.level`
+  ("Level") per part, -24 to +6 dB, default 0 dB, appended to `PartParamList.h`; a smoothed
+  gain on the part's sum before the one conversion to float. As built (review): the gain ramps
+  linearly per sample over 5 ms from a target latched at the block's start (steps at the 1 ms
+  control points would be up to 19 % of the signal); within 0.001 dB of 0 dB the gain is
+  exactly 1, because a host's normalised round trip of 0 dB reads back as 3.6e-7 dB.
+  At 0 dB the output is bit-identical to before (pinned by a fingerprint on macOS arm64). It is the only thing the level rule trims
+  (review: the chip's volume register has 16 steps and moves Model A's DC, so it cannot trim).
+  B-Side has had no release: appending is free; `stateVersion` stays 1; state and programs
+  saved before load with 0 dB (tested). The parameter count becomes 204 and the gate "the
+  parameter dump is identical to `main`'s" of 8.21.1 becomes "identical except the two
+  appended IDs".
+- **The bank: 16 programs, A1 to B8,** in `presets/bside/factory/`, each with its tables in the
+  text format of 8.6.5 as amended (8.13 to 8.16). A1 stays Init. Own names of the kind Vintage's
+  bank uses (two or three plain words); no third-party names of any kind, no names of tunes,
+  games, composers or machines. Slot, category, what it must be, and what the owner listens for:
+
+  | Slot | Category | Sound specification |
+  |---|---|---|
+  | A1 | Init | as it is |
+  | A2 | Lead | pulse lead, Model B: pulse-width sweep from the pulse lane, delayed vibrato from the frequency lane, Solo with glide |
+  | A3 | Lead | hard-sync lead, Model B: oscillator 2 synced to 1, the sweep macro moving the synced pitch |
+  | A4 | Lead | ring-modulated lead, Model B: triangle ring-modulated by oscillator 3, bell-like attack falling to a plain tone |
+  | A5 | Bass | filter bass, Model B: sawtooth and pulse through the low-pass, a table sweep closing the cutoff, velocity to cutoff |
+  | A6 | Bass | pulse bass, Model B: a one-tick octave-up blip at the start from the wave lane, then a narrow pulse; no filter |
+  | A7 | Arpeggio | chip arpeggio, Model B: a major chord arpeggiated by the wave lane at the tick rate (one key plays the chord), tick synced to tempo |
+  | A8 | Arpeggio | minor counterpart with a faster tick multiplier and a pulse-width step per tick |
+  | B1 | Percussion | kick: a triangle falling in pitch by table within a few ticks, noise tick at the start |
+  | B2 | Percussion | snare: noise and pulse alternating by table (the form of 8.6.6's example, our own values) |
+  | B3 | Percussion | hat: short high noise, decay only; a longer open variant on velocity above 100 is not required |
+  | B4 | Pad | Model A pad: three detuned sawtooths through the low-pass with resonance, slow attack, Per Note |
+  | B5 | Pad | Model A Shared pad: chords into one filter (the summed distortion), Shared topology, moderate resonance |
+  | B6 | Sound FX | noise sweep: noise through the band-pass, cutoff swept by the filter lane, long release |
+  | B7 | Dual | layer: Lower a Model B pulse lead, Upper a Model A pad, panned apart |
+  | B8 | Split | split: a bass (the kind of A5) below the split point, a lead (the kind of A2) above |
+
+  Every program sounds on its first key without touching a control, uses only parameters and
+  table commands that exist, loads through the real preset path and survives a state
+  round-trip. Effects and the arpeggiator of the shell may be used (A7 and A8 use the table,
+  not the shell's arpeggiator, so that they show the chip technique).
+- **Level rule (6b.4, restated; tested for every program).** Measured through the real preset
+  path at 48 kHz, velocity 100, default master volume, output limiter off, with the phrase of
+  the program's category as `docs/factory-sounds.md` defines them (Percussion uses eight hits
+  0.25 s apart; Arpeggio a held C4 for 4 s, since one key plays the chord; Init the Chord
+  phrase): a full-velocity eight-note chord stays below 0 dBFS and at most 3 dB above Init's
+  (RMS and peak); each phrase is within 2 dB (unweighted RMS) of the median of its level group
+  (sustained, percussive, bass); with the limiter on at its defaults no phrase reaches its
+  knee. Programs are trimmed with `mix.level` only. Phrases, groups and measured figures go
+  into a new `docs/bside-factory-sounds.md`.
+- **After the drafting (2026-11-24; these win over the points above; all review):**
+  - **Level groups.** The table arpeggios (A7, A8) are one held voice and belong to the
+    **sustained** group, not the percussive one. **Percussion is judged by its peak:** a drum
+    hit's phrase peak is within 2 dB of the median phrase peak of the sustained group, so a
+    drum sits as loud as a lead note. For percussion the eight-note chord check is only
+    "below 0 dBFS with two keys down": eight identical fixed-pitch hits summing in phase is
+    not a playing situation and must not set the level (the draft had the drums and
+    arpeggios 13 dB below the leads for that reason). A program that cannot reach its level
+    inside `mix.level`'s range is raised in its content (chip volume, sustain), not by
+    widening the range.
+  - **Applying a program is silent.** A program applied while notes sound fades the part's
+    sounding voices over 3 ms and makes them idle, as a structural switch does, **before**
+    the new program's parameters and table take effect; held keys do not retrigger. Gate:
+    Vintage's step rule (the largest step after the apply is at most 3 times the largest
+    before it plus 0.002) for all 16 programs applied over three held keys, in both
+    directions; the drafting's hidden known-defect test becomes this default test, split so
+    that its other half stays documented: **a waveform parameter changed on a held note is a
+    register write and steps the output, as on the chip;** that is a property, stated in
+    `docs/bside-factory-sounds.md`, not a defect.
+  - **An apply that changes only the table (review finding D1).** When the new program's
+    parameters equal the ones in force, nothing is faded: the shell releases the held notes
+    as for any preset change, they end in the old table's release, and the new table plays
+    from the next note. The step rule holds for it as well (tested). The fade above is for
+    applies whose parameters differ.
+  - **A3** steps oscillator 2's pitch row by row in its wave lane; no macro moves a lane's
+    pitch (a wave-lane pitch sweep scaled by `macro.sweep_depth` does not exist and is not
+    added in S4).
+  - **Assertions the gain moved by definition:** the Shared idle-leave bound (+5 to +8 ms: the
+    quiet level is a fixed -120 dB at the part's output) and the random-parameter peak bound
+    (4.0 to 5.3, the gain's factor).
+- **After the owner's audition (2026-11-25; owner decisions; these win over the points above):**
+  - **Kept as drafted:** A1, A3, A4, A5, A7, A8, B2, B5, B6, B7, B8. **The steal** stays as it
+    is under Clean and under Authentic (no softening). **`kChipGain`** stays at its new value.
+  - **A2 Moving Pulse:** the vibrato starts earlier and is slower. **A6 Blip Bass:** the blip
+    at the note's start is a little longer; nothing else changes. Each change is stated with
+    its measured figure before and after in `docs/bside-factory-sounds.md`.
+  - **Level offsets.** A program may carry an offset from its group's target, set by the
+    owner's ear and listed per program in `docs/bside-factory-sounds.md`; the level test holds
+    each program within 2 dB of its group's target plus its offset, and a group's median is
+    taken over the programs with offset 0. First offsets: **B1 Short Kick +3 dB** (and deeper:
+    more of its energy below 125 Hz, measured), **B3 Tick Hat +5 dB, B4 Slow Saw Pad +3 dB.**
+    The headroom checks hold unchanged. Whatever `mix.level` cannot give is raised in content.
+  - **Percussion is in time (new gate, B1 to B3).** Over the eight hits of the percussion
+    phrase, the onset of every hit (the first sample above -30 dB of that hit's peak) comes
+    the same time after its note-on within 1 ms, every hit's peak is within 1 dB of the
+    others', and the three drums' onset delays agree within 2 ms, so a kit plays together.
+    The delay itself is as short as the program's restart allows and is reported.
+  - The six goldens are regenerated once after these changes; the changed programs go to the
+    owner as a second, short audition before the merge.
+  - **Second audition (2026-11-25, owner):** A6, B1, B3 and B4 are right as changed. **A2:**
+    the glide to the played note is faster (its time about 40 % shorter, measured), so the
+    target note sounds longer. **Kit balance** (the three drums played together): the offsets
+    become **B1 +4.5 dB, B2 +1.5 dB, B3 +3.5 dB.** Goldens that move are regenerated.
+    **Third audition (same day):** A2 is right; the hat goes down another 1.5 dB
+    (**B3 +2.0 dB**), and with that the owner accepts the kit and the bank.
+  - **Clean never waits (engine defect found by the timing gate; this wins over 8.6.4 and
+    8.16).** With `[restart] mode classic, lead 2`, a note on a voice that had its full lead
+    could still start 33 ms late (about 32 770 cycles: the idle rate counter keeps looping, and in one phase of ten the
+    gate write's one-step decay compare lets it step past the attack match), on B3 at every second hit and on B2 at wider spacings. Under **Clean** the
+    envelope counters of all three oscillators are cleared directly at **every** note start
+    (tick 0, before the tick's writes), whether or not the voice had its full lead. Precondition
+    and Authentic are unchanged. Gate: for restart modes off, classic and phase, leads 1 to 8,
+    hit spacings 0.125 to 1.0 s and both models, every hit's onset is within 1 ms of the
+    first hit's under Clean; the hidden known-defect test becomes a default test. B2 goes back
+    to its drafted restart section (the owner kept it as drafted); B3 keeps `mode off`.
+    Goldens and reference data that move are regenerated and listed with the reason.
+- **`kChipGain` moves once (review).** Its calibration changes from "the Init note's onset peak
+  at -12 dBFS" (8.21.1) to: **Init's Chord phrase measures within 1 dB (unweighted RMS) of
+  Exitium Vintage Synth's Init on the same phrase,** measured the same way, so the two
+  instruments sit at the same loudness in a session. The eight-note chord headroom above
+  still holds; if both cannot hold, the headroom wins and the difference is reported. The
+  level test of 8.21.1 is rewritten to this rule in the same commit, and `host_smoke`'s note
+  window follows.
+- **`bside_render`: render-regression goldens for 6 programs** (A2, A5, A7, B2, B4, B7) through
+  the shared harness (`tests/render_regression/RenderHarness`) with a B-Side instance: scripts
+  in `tests/bside/render/scripts`, references in `tests/bside/render/golden`, the same
+  features and tolerances as Vintage's, `-DUPDATE_GOLDENS=ON` as there; ctest label `render`.
+  It moves from `SAN_FUTURE_TARGETS` to the required sanitizer targets. Each golden is shown
+  to fail on a changed parameter of its program. The goldens are regenerated once after the
+  owner's audition if sounds change.
+- **Gates:** every program loads, sounds, is finite, meets the level rule and survives a state
+  round-trip (one test over the bank); the hygiene check passes on `presets/`; the CPU gates
+  of 8.21 still pass (`mix.level` costs nothing measurable); every gate of 8.21.1 still green;
+  `scripts/preflight.sh` in full; one dispatched CI run. The default test run stays inside the
+  time the Windows x64 job needs (it was cancelled by its 60-minute limit on S4a's run): new
+  default tests add at most 20 s on this Mac, and the step reports where the Windows test time
+  goes.
+- **Audition (owner gate; outside the repository,** under the developer folder of
+  `docs/bside-oracle-adapter.md`**).** One rendered phrase per program (WAV, 48 kHz, 24 bit)
+  and a contact sheet (slot, name, category, what to listen for). With them the three points
+  S4a left for the owner's ear, each as a pair to compare: (1) a steal with 16 held notes
+  against the same phrase without the stealing note, under Clean and under Authentic; (2) a
+  soft note joining a held loud note in Shared against Per Note, on both models; (3) Init's
+  note before and after the `kChipGain` move. The owner's verdict on each is recorded as an
+  owner decision; a change that follows is its own step.
+- **Order and routing:** the parameter step (**sonnet**); the sound drafting with the level
+  test and the document (**sonnet**, from the table above; never by ear claims: every
+  description it writes is backed by a measurement or left out); `bside_render` (**sonnet**);
+  an independent review of the tables and tests (**opus**: does each program do what its row
+  says, measured; can each test fail); the orchestrator's gate; the audition render; the
+  owner. Serial throughout: every step touches the bank or the part.
 
 ## 9. M7 — custom editor
 

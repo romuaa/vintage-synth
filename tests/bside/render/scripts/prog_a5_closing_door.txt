@@ -1,0 +1,24 @@
+# B-Side factory program A5 (Closing Door, a Model B filter bass: a table sweep closes the cutoff, velocity moves
+# the cutoff): staccato low notes, the first four at velocity 120 and the next four at velocity 50.
+rate 48000
+channels 2
+length 3.0
+
+0.00 program A5
+
+0.10 on 36 120
+0.32 off 36
+0.40 on 36 120
+0.62 off 36
+0.70 on 48 120
+0.92 off 48
+1.00 on 43 120
+1.22 off 43
+1.30 on 36 50
+1.52 off 36
+1.60 on 36 50
+1.82 off 36
+1.90 on 48 50
+2.12 off 48
+2.20 on 43 50
+2.42 off 43

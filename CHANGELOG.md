@@ -5,6 +5,37 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### B-Side S4b: the second audition (2026-11-25)
+- **A2 Moving Pulse:** the glide to the played note is 40 % shorter (`porta.time` 0.3 to 0.232; a legato octave step is
+  within 50 cents of the target after 166 ms, was 280 ms). Nothing else in A2 changed.
+- **Kit balance:** the drums' offsets become B1 +4.5 dB, B2 +1.5 dB, B3 +3.5 dB; only `mix.level` moved (B1 +6.0, 0.26 dB
+  under its target at the top of the range; B2 +3.2; B3 +4.2). Tables, tone and timing are unchanged. Third audition: the hat
+  goes down another 1.5 dB, B3 offset +2.0 dB, `mix.level` +2.7 (peak -18.47 dBFS, RMS -36.04 dB, two-key chord peak -11.77 dBFS,
+  hit peak spread 0.63 dB, onset spread 0.31 ms; the other figures are unchanged).
+- The render goldens of A2 and B2 are regenerated; A5, A7, B4 and B7 are bit-identical. Figures in
+  `docs/bside-factory-sounds.md`.
+
+### B-Side S4b: the owner's audition round (2026-11-25)
+- **Factory bank, after the owner's audition (programs A2, A6, B1, B2, B3, B4):** A2 Moving Pulse's vibrato starts
+  after 8 ticks (159.6 ms, was 299.3 ms) at 8.35 Hz (was 12.53 Hz); A6 Blip Bass's octave blip lasts two ticks
+  (39.0 ms, was 19.0 ms); B1 Short Kick falls to 38.9 Hz over eight ticks (more of its energy below 125 Hz: -2.1 dB
+  against -4.2 dB); B3 Tick Hat has three oscillators at `=E7` through a high-pass at 500 with resonance 2, no
+  restart section; B2 Dry Snare keeps its drafted restart section (`classic`, lead 2); B4 Slow Saw Pad is 3 dB louder. Figures before and after in
+  `docs/bside-factory-sounds.md`.
+- **Level offsets:** the level rule takes a per-program offset from its group's target (B1 +3 dB, B3 +5 dB, B4 +3 dB, B1 to B3 changed in the second audition above;
+  a group's median over the programs with offset 0). `mix.level` is still -24 to +6 dB.
+- **Percussion in time (new gate):** over the eight hits of the percussion phrase every onset delay is the same within
+  1 ms, every peak within 1 dB, and the three drums' delays agree within 2 ms (B1 to B3: 0.54 to 0.90 ms, spread 0.62
+  to 0.84 dB; B3 had hits 33.9 ms late on every second hit).
+- **Clean never waits (engine fix):** under the Clean restart policy a note on a voice that had its full lead could
+  start 33.3 ms late (32 768 cycles): the idle restart state keeps the envelope's rate counter looping, and a gate edge
+  that met it at its match stepped it past an attack-0 match. Clean now clears the envelope counters of all three
+  oscillators at every note start; Precondition and Authentic are unchanged. New gate: restart modes off, classic and
+  phase, leads 1 to 8, hit spacings 0.125 to 1.0 s, both models: every onset within 1 ms of the first (was up to
+  33.25 ms). The former hidden known-defect test is a default test; B2 at 0.35, 0.5 and 0.7 s is within 0.19 ms (was
+  33.3 ms). Twelve model-derived engine write traces gain one direct-clear marker each; no register write moved.
+- The six render goldens are regenerated (A2, B2 and B4 changed; A5, A7 and B7 are bit-identical).
+
 ### Faster tests: two tiers and parallel runs (2026-11-26)
 - **Two test tiers.** A test case that took 1 s or longer in the reference CI run is tagged `[slow]` (ctest label
   `slow`): *smoke* is everything else (`ctest -LE slow`), *full* is every test (`ctest`), unchanged in content. Test
@@ -17,6 +48,8 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 - **CI input `tests`** (`full` default, `smoke`): the build rows run build, smoke tier, pluginval, artifact upload,
   then (full only) the slow tests. A release run needs `tests=full`. The run summary names the tier.
 - Test code: the B-Side shell file test names its temp folder with a UUID instead of the clock.
+- B-Side S4b's own tests follow the tiers: `bside_render` is registered through `vs_discover_tests`, and 30 test cases of the
+  branch (all taking 0.3 s or more on this Mac, 3 to 4 times that on a CI runner) are tagged `[slow]`; none needed `[serial]`.
 
 ### B-Side S4a: the chip part plays in the plugin (2026-11-24)
 - **Exitium B-Side now plays its chip.** The test tone is gone: each part is 16 note voices, each a whole chip chain

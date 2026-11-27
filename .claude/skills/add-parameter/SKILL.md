@@ -15,7 +15,10 @@ DSP) are in `PartMappings.h`; the layout, the display text and `PartParamBinding
 `read (PartParams&)`) are in `ParameterLayout.*`; globals are appended in `createParameterLayout()`.
 Append only (the contract fixes the order), then update `kPartParamCount` / `kParameterCount`,
 `tests/bside/integration/ParamTests.cpp` (its table is written by hand), the counts in `ShellTests.cpp`
-and `tests/host_smoke/HostSmoke.cpp` (`kBSide`). B-Side smoothing is not built yet.
+and `tests/host_smoke/HostSmoke.cpp` (`kBSide`). B-Side smooths its continuous parameters in the part
+(`Part::followParams`, `source/bside/engine/Part.cpp`): the 17 listed in its `goals` array move over 5 ms at the 1 ms control
+points, and `mix.level` has its own per-sample 5 ms linear ramp on the part's sum (target latched at the block start). A new
+continuous B-Side parameter is smoothed only if added there.
 
 **Smoothing is not automatic for new continuous parameters.** Appending to the X-macro creates the
 parameter and its binding, but `PartModulator::next` (`vintage/engine/Modulation.cpp`) only smooths the
@@ -34,7 +37,7 @@ Host sessions store parameters by ID. Breaking IDs silently breaks users' songs.
    params go in `createParameterLayout()` (`source/vintage/params/ParameterLayout.cpp`).
    Put the value → unit mapping in `source/vintage/params/PartMappings.h` (shared ones in
    `source/common/params/Mappings.h`) so the display text and DSP agree.
-   Update the expected count in `tests/host_smoke/HostSmoke.cpp` (172 for Vintage, 202 for B-Side).
+   Update the expected count in `tests/host_smoke/HostSmoke.cpp` (172 for Vintage, 204 for B-Side).
 2. **Append only:** add the new parameter at the end of the layout. After v1.0, never rename,
    remove, reorder, or change the range or type of an existing ID. Instead, add a new ID and
    migrate to it.

@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Blip Bass",
+  "category": "Bass",
+  "author": "Exitium",
+  "global": {},
+  "lower": {
+    "osc1.wave": 3,
+    "osc1.filter": 0,
+    "osc1.decay": 6,
+    "osc1.sustain": 12,
+    "osc1.release": 3,
+    "assign.mode": 2,
+    "mix.level": 1.6
+  },
+  "upper": {},
+  "tables": {
+    "lower": [
+      "bside-table 1",
+      "[wave1]",
+      "    wave pulse+gate +12 ticks 2",
+      "    pitch +0",
+      "    end",
+      "[pulse1]",
+      "    set 512"
+    ]
+  }
+}

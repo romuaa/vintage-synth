@@ -125,8 +125,8 @@ TEST_CASE ("B-Side: the 75 shared parameters come first, in the contract's order
 {
     Rig rig (false);
     const auto& params = rig.proc.getParameters();
-    REQUIRE (params.size() == bs::kParameterCount); // 75 shared + 2 x 63 per part + chip.clock (8.7; ParamTests.cpp)
-    REQUIRE (bs::kParameterCount == 202);
+    REQUIRE (params.size() == bs::kParameterCount); // 75 shared + 2 x 64 per part + chip.clock (8.7, 8.21.2; ParamTests.cpp)
+    REQUIRE (bs::kParameterCount == 204);
     REQUIRE (bs::kShellParameterCount == 75);
 
     juce::StringArray ids;
@@ -154,12 +154,16 @@ TEST_CASE ("B-Side: the 75 shared parameters come first, in the contract's order
     CHECK (rig.get ("master.limiter.ceiling") == Catch::Approx (-1.0f));
 }
 
-TEST_CASE ("B-Side: 64 programs, all Init, in an 8 x 8 bank with B-Side's own preset identity", "[bside][shell][presets]")
+TEST_CASE ("B-Side: 64 programs (the 16 of the factory bank, then Init), in an 8 x 8 bank with B-Side's own preset identity", "[bside][shell][presets]")
 {
     Rig rig (false);
     CHECK (rig.proc.getNumPrograms() == 64);
     CHECK (rig.proc.getCurrentProgram() == 0);
-    for (int i = 0; i < 64; ++i)
+    // Before S4b (8.21.2) all 64 were Init; the bank's 16 programs A1 to B8 are tested in BankTests.cpp, the rest are still Init.
+    CHECK (rig.proc.getProgramName (0) == "Init");
+    CHECK (rig.proc.getProgramName (1) == "Moving Pulse");
+    CHECK (rig.proc.getProgramName (15) == "Bass And Lead");
+    for (int i = 16; i < 64; ++i)
         REQUIRE (rig.proc.getProgramName (i) == "Init");
 
     auto& presets = rig.proc.getPresets();
@@ -172,7 +176,7 @@ TEST_CASE ("B-Side: 64 programs, all Init, in an 8 x 8 bank with B-Side's own pr
     CHECK (schema.instrument().toneExtension == ".bstone");
     CHECK (schema.instrument().bankExtension == ".bsbank");
     CHECK (presets.positionName (63) == "H8");
-    CHECK (schema.numParams() == 202);
+    CHECK (schema.numParams() == 204);
     // Master volume and the limiter are session settings: not part of a program.
     CHECK (schema.isExcluded (schema.indexOf ("master.volume")));
     CHECK (schema.isExcluded (schema.indexOf ("master.limiter")));
@@ -552,6 +556,7 @@ TEST_CASE ("B-Side: processBlock does not allocate (arp, effects, key modes, byp
 TEST_CASE ("B-Side: processBlock does not allocate with chip notes, steals, unison, a table applied while playing and every structural switch", "[bside][shell][realtime][part]")
 {
     Rig rig;
+    rig.proc.getPresets().getGate().setTimeouts (0, 0); // the applies below: no wait for an acknowledgement on this thread
     rig.set ("key.mode", 1.0f); // Dual: both parts
     auto& state = rig.proc.getState();
     const auto table = vs::bside::program::readTable ("bside-table 1\n[restart]\nmode classic\n[wave1]\n    wave pulse+gate +0\nloop:\n    pitch +12\n    pitch +0\n    jump loop\n"
@@ -582,11 +587,13 @@ TEST_CASE ("B-Side: processBlock does not allocate with chip notes, steals, unis
         float value;
     };
     const std::vector<Change> changes {
-        { 20, "lower.assign.mode", 1.0f },    { 40, "lower.assign.unison_voices", 3.0f }, { 60, "lower.chip.model", 0.0f },
-        { 80, "lower.filter.topology", 1.0f }, { 100, "chip.clock", 1.0f },              { 120, "lower.chip.resolution", 1.0f },
-        { 140, "lower.chip.volume_dc", 1.0f },  { 150, "upper.chip.model", 0.0f },        { 160, "lower.assign.mode", 2.0f },
-        { 170, "lower.porta.time", 0.5f },      { 180, "lower.chip.variation", 90.0f },   { 190, "lower.filter.topology", 0.0f },
-        { 200, "lower.tick.rate", 2.0f },       { 210, "lower.assign.mode", 0.0f },
+        { 20, "lower.assign.mode", 1.0f },    { 30, "lower.mix.level", -18.0f },          { 40, "lower.assign.unison_voices", 3.0f },
+        { 60, "lower.chip.model", 0.0f },     { 70, "upper.mix.level", 6.0f },            { 71, "upper.mix.level", -24.0f }, // a ramp cut by the next
+        { 80, "lower.filter.topology", 1.0f }, { 100, "chip.clock", 1.0f },               { 120, "lower.chip.resolution", 1.0f },
+        { 130, "lower.mix.level", 0.0f },     { 140, "lower.chip.volume_dc", 1.0f },      { 150, "upper.chip.model", 0.0f },
+        { 160, "lower.assign.mode", 2.0f },   { 170, "lower.porta.time", 0.5f },          { 180, "lower.chip.variation", 90.0f },
+        { 190, "lower.filter.topology", 0.0f }, { 200, "lower.tick.rate", 2.0f },         { 210, "lower.assign.mode", 0.0f },
+        { 220, "lower.mix.level", -6.0f },    { 240, "upper.mix.level", 0.0f },
     };
     // the counter must see an allocation on this thread
     vs::seq::test::AllocationCounter counter;
@@ -597,6 +604,7 @@ TEST_CASE ("B-Side: processBlock does not allocate with chip notes, steals, unis
     }
     const int base = counter.count();
     REQUIRE (base > 0);
+    int excluded = 0;
     std::size_t next = 0;
     for (int b = 0; b < 260; ++b)
     {
@@ -608,10 +616,22 @@ TEST_CASE ("B-Side: processBlock does not allocate with chip notes, steals, unis
         if (b == 110)
             rig.proc.tableHandover (0).publish (table.program); // a table applied while playing (inside no hold: the
                                                                  // audio side's claim and commit run in processBlock)
+        // programs and a tone applied while notes sound (8.21.2: the part fades first): the apply itself runs on the message
+        // thread and allocates there, so what it allocates on this thread is not counted
+        if (b == 45 || b == 125 || b == 185 || b == 235)
+        {
+            const int before = counter.count();
+            if (b == 185)
+                REQUIRE (rig.proc.getPresets().applyToneFromSlot (13, 1, 0).isEmpty()); // B6's Upper tone onto Lower
+            else
+                REQUIRE (rig.proc.getPresets().selectProgram (b == 45 ? 12 : (b == 125 ? 14 : 1))); // B5 (Shared, Model A), B7, A2
+            excluded += counter.count() - before;
+        }
         buffer.clear();
         rig.proc.processBlock (buffer, blocks[static_cast<size_t> (b)]);
     }
-    CHECK (counter.count() == base);
+    CHECK (counter.count() - excluded == base);
     CHECK (rig.proc.getLowerPart().switchesDone() >= 5);
+    CHECK (rig.proc.getLowerPart().appliesFaded() >= 3);
 }
 #endif

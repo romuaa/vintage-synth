@@ -3,6 +3,32 @@
 Things that went wrong or surprised us, the fix, and the rule that follows from each.
 `docs/decisions.md` records *what* we chose; this file records the *traps*. Newest milestone first.
 
+## B-Side S4b: the owner's audition round (2026-11-25)
+
+- **A drum that "is not in time" needs a per-hit measurement, not an ear.** Render the phrase through the real
+  processor and take, per hit, the first sample above -30 dB of that hit's peak after its note-on, and its peak
+  (`hitTimings` in `BankSound.h`). The cause was a 33 ms envelope wait on every second hit.
+- **`[restart]` `classic` with the Clean policy left a full-lead note waiting 33.3 ms (32 768 cycles) for its
+  envelope.** Found in the audition round and first worked around in content (`mode off`). Rule: a drum's gate
+  test covers several hit spacings, not only the phrase of the contract.
+- **A preconditioned state is not a settled state (fixed in S4b, "Clean never waits").** The audition round read
+  the cause off `ProgramEngine::noteOn` (no clear after the full lead) and assumed that a restart state older than
+  the lead leaves the envelope ready. Proven at cycle level instead (`ProgramEngineChipTests.cpp`, "Clean never
+  waits: the mechanism"): the restart state's release rate 0 keeps the idle rate counter looping over 0..8 for as
+  long as the voice is idle; a gate edge's phase pipeline sets the decay match for one step before the attack match,
+  so a note whose cycle finds the counter at 8 (reset not yet pending) steps it to 9, past an attack-0 match (8), and
+  the attack waits a full lap of 32 767 positions. One phase in ten, whatever the lead; the spacing of the hits picks
+  the phase. Fixed by clearing the counters at every note start under Clean, on the note's cycle before tick 0's
+  writes. Rules: **prove a timing mechanism at the cycle where it happens (engine plus chip, state read back per
+  cycle) before writing a remedy into the contract; a state that a counter keeps cycling through is never "ready"
+  by age; scan the phase (every cycle of the loop), not a handful of spacings.**
+- **A level raised by oscillators costs more than it gives.** Three oscillators in phase gave +3.4 dB of peak and
+  +7 dB of the slow DC tail that the envelope pushes through the board's 1.2 Hz high-pass (B3). A silence check on
+  a decayed drum must take the RMS with the window's mean removed, or it measures level, not length.
+- **The peak of a noise hit is a draw.** It depends on which noise values fall in the loudest few milliseconds
+  (the register is not reset by the test bit, 8.15.5); a bound of 1 dB over eight hits is met by choosing content
+  and checking the spread at several hit spacings, not by a rule of the program.
+
 ## B-Side S4a: the part around the chip (2026-11-24)
 
 - **An author's "all gates pass" missed five audible or timing defects.** Each was found by a

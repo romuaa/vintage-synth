@@ -1,0 +1,46 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Dry Snare",
+  "category": "Percussion",
+  "author": "Exitium",
+  "global": {},
+  "lower": {
+    "osc1.wave": 4,
+    "osc1.filter": 0,
+    "osc2.wave": 4,
+    "osc2.filter": 0,
+    "tick.mult": 2,
+    "mix.level": 3.2
+  },
+  "upper": {},
+  "tables": {
+    "lower": [
+      "bside-table 1",
+      "[restart]",
+      "mode classic",
+      "lead 2",
+      "[wave1]",
+      "    adsr 0 7 0 7, wave noise+gate =D7",
+      "    wave pulse+gate =G3",
+      "    wave noise+gate =C7",
+      "    wave pulse+gate =E3",
+      "    wave noise+gate =B6 ticks 6",
+      "    wave noise =B6",
+      "    end",
+      "[wave2]",
+      "    adsr 0 7 0 7, wave noise+gate =D7",
+      "    wave pulse+gate =G3",
+      "    wave noise+gate =C7",
+      "    wave pulse+gate =E3",
+      "    wave noise+gate =B6 ticks 6",
+      "    wave noise =B6",
+      "    end",
+      "[pulse1]",
+      "    set 1536",
+      "[pulse2]",
+      "    set 1536"
+    ]
+  }
+}

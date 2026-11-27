@@ -273,10 +273,11 @@ Design choices and their reasons are in [docs/decisions.md](docs/decisions.md); 
 
 A second instrument is in development in this repository: **Exitium B-Side**, a polyphonic synth
 modelled on a classic 3-voice sound chip from early-1980s home computers, as its own plugin sharing
-the common engine code (`source/bside/`, built unless `-DVS_BUILD_BSIDE=OFF`). The plugin is still a
-shell with the shared parameters, programs, state, arpeggiator and effects around a placeholder
-test-tone part: it makes no chip sound yet. The chip model exists as a tested library that is not
-wired in. **B-Side was paused for the first release of Exitium Vintage Synth** and is not part of 0.9.0.
+the common engine code (`source/bside/`, built unless `-DVS_BUILD_BSIDE=OFF`). The plugin plays:
+two parts of 16 chip voices with both chip models, the patch program engine, the shared
+arpeggiator and effects, and 16 factory programs (`presets/bside/factory`, described in
+[`docs/bside-factory-sounds.md`](docs/bside-factory-sounds.md)). It still uses the generic editor
+and has no release of its own. **B-Side is not part of 0.9.0.**
 
 | B-Side step | Scope | Status |
 |---|---|---|
@@ -285,8 +286,8 @@ wired in. **B-Side was paused for the first release of Exitium Vintage Synth** a
 | S2b | Own combined-waveform tables (fitted, never copied); band-limited waveform rendering | Done |
 | S2c | Patch program engine | Done |
 | S2 rest | Render cost step, parameters | Done; Model A rendering still above its cost target; alias follow-up step done (narrow pulses, exact sync ratios) |
-| S3 | Filter and output path | Started (filter in work on a branch), paused |
-| S4 | Polyphony, wiring into the plugin, factory patches | Not started |
+| S3 | Filter and output path | Done |
+| S4 | Polyphony, wiring into the plugin, factory programs | Done (S4a the part, S4b the factory programs and their level rule) |
 
 ## License
 

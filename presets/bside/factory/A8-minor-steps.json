@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "instrument": "b-side",
+  "kind": "program",
+  "name": "Minor Steps",
+  "category": "Arpeggio",
+  "author": "Exitium",
+  "global": {},
+  "lower": {
+    "osc1.wave": 3,
+    "osc1.release": 4,
+    "filter.cutoff": 1800,
+    "filter.resonance": 2,
+    "tick.rate": 2,
+    "tick.sync": 1,
+    "tick.mult": 2,
+    "mix.level": -2.2
+  },
+  "upper": {},
+  "tables": {
+    "lower": [
+      "bside-table 1",
+      "[wave1]",
+      "    wave pulse+gate +0 ticks 0",
+      "loop:",
+      "    pitch +0",
+      "    pitch +3",
+      "    pitch +7",
+      "    pitch +10",
+      "    pitch +12",
+      "    pitch +10",
+      "    pitch +7",
+      "    pitch +3",
+      "    jump loop",
+      "release:",
+      "    gate off",
+      "    end",
+      "[pulse1]",
+      "    set 640",
+      "    pingpong 640 3200 128"
+    ]
+  }
+}

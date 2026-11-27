@@ -165,11 +165,16 @@ if(VS_BUILD_BSIDE)
         integration/ShellTests.cpp
         integration/PartTests.cpp
         integration/PartAliasTests.cpp
+        integration/PartLevelTests.cpp
         integration/StateDumpTests.cpp
         integration/TablePresetTests.cpp
         integration/ParamTests.cpp
+        integration/BankTests.cpp
+        integration/BankRender.cpp
+        integration/BankAuditionPairs.cpp
         review/PartReviewTests.cpp
-        review/PartReview2Tests.cpp)
+        review/PartReview2Tests.cpp
+        review/S4bReviewTests.cpp)
     target_link_libraries(BSideTests PRIVATE
         bs_test_core
         Catch2::Catch2WithMain)
@@ -182,4 +187,8 @@ if(VS_BUILD_BSIDE)
     add_executable(part_bench benchmarks/PartBench.cpp)
     target_link_libraries(part_bench PRIVATE bs_test_core)
     set_target_properties(part_bench PROPERTIES COMPILE_WARNING_AS_ERROR ON)
+
+    # bside_render (ctest label render): golden renders of six factory programs through the shared render harness
+    # (tests/bside/render/CMakeLists.txt).
+    add_subdirectory(render)
 endif()

@@ -10,10 +10,10 @@
 
 namespace bs
 {
-/** Exitium B-Side's host parameters (docs/architecture.md 8.3, 8.7), 202 in this order:
+/** Exitium B-Side's host parameters (docs/architecture.md 8.3, 8.7), 204 in this order:
     the 75 shared globals (master.volume, key.mode, key.split_point, mix.balance, the 11 effect
     parameters, the 58 arpeggiator/sequencer parameters, master.limiter, master.limiter.ceiling),
-    then the 63 per-part parameters of the lower part (lower.*), the same 63 of the upper part
+    then the 64 per-part parameters of the lower part (lower.*), the same 64 of the upper part
     (upper.*; both generated from PartParamList.h), then chip.clock. The IDs, their order and their
     ranges are part of the host-facing contract: only append. */
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -24,7 +24,7 @@ inline constexpr int kShellParameterCount = 75;
 inline constexpr int kLowerFirstIndex = kShellParameterCount;
 inline constexpr int kUpperFirstIndex = kShellParameterCount + kPartParamCount;
 inline constexpr int kChipClockIndex = kShellParameterCount + 2 * kPartParamCount;
-/** Number of host parameters of the plugin after S2: 75 + 2 x 63 + 1 = 202. */
+/** Number of host parameters of the plugin after S2: 75 + 2 x 64 + 1 = 204. */
 inline constexpr int kParameterCount = kChipClockIndex + 1;
 
 /** The first well-formed number in typed text: an optional sign, digits, an optional fraction, an optional exponent;

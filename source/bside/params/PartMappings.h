@@ -128,6 +128,18 @@ inline constexpr std::array<int, 4> kTickSyncPerBeat { 6, 12, 24, 48 };
 inline constexpr std::array<int, 4> kUnisonVoiceCounts { 2, 4, 8, 16 };
 
 // ---- Vibrato -------------------------------------------------------------------------------------------
+/** The part's level (mix.level, dB) as a linear gain on its sum. Exactly 1.0 at 0 dB, and within 0.001 dB of it (so the 0 dB case changes no bit);
+    a non-finite value is 0 dB; the range is -24 ... +6 dB. */
+inline double levelGain (double db) noexcept
+{
+    if (! std::isfinite (db))
+        return 1.0;
+    db = db < -24.0 ? -24.0 : (db > 6.0 ? 6.0 : db);
+    // within 0.001 dB of 0 the gain is exactly 1.0: a host hands over 0 dB as a normalised value, which comes back as
+    // 3.6e-7 dB, and that must not change a bit
+    return db < -0.001 || db > 0.001 ? std::pow (10.0, db / 20.0) : 1.0;
+}
+
 inline constexpr float kVibratoMinHz = 0.5f;
 inline constexpr float kVibratoMaxHz = 12.0f;
 } // namespace bs::map

@@ -113,7 +113,6 @@ class Voice:
         self.fw = [False] * 3
         self.in_restart = False
         self.restart_state = None
-        self.restart_cycle = 0
 
     # -- low level emission, in register terms
     def w(self, cycle, reg, val):
@@ -241,7 +240,6 @@ class Voice:
             return
         self.do_restart(c, self.restart)
         self.in_restart = True
-        self.restart_cycle = c
         self.restart_state = dict(self.restart)
 
     # -- notes
@@ -265,14 +263,12 @@ class Voice:
             if mode_on:
                 self.do_restart(c, self.restart)
                 self.in_restart = True
-                self.restart_cycle = c
                 self.restart_state = dict(self.restart)
         if self.in_restart and self.restart_state != self.restart:
             self.in_restart = False
         if policy == 'clean':
-            full = self.in_restart and c - self.restart_cycle >= self.restart['lead'] * self.period
-            if not full:
-                self.out.append((c, 'clear', 0, 0))
+            # 8.21.2 "Clean never waits": the direct clear at every note start, full lead or not
+            self.out.append((c, 'clear', 0, 0))
         if policy != 'authentic' and not mode_on:
             for n in range(3):
                 if self.sh['ctrl'][n] & 1:

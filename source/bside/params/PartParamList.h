@@ -16,7 +16,7 @@
 //
 // SMOOTHING (not built in this step, nothing reads these on the audio thread yet): the continuous
 // parameters are the F entries: oscN.fine, oscN.pw, filter.cutoff, filter.key_follow, chip.variation,
-// tick.free_hz, macro.*, vel.*, vibrato.rate, mod.wheel_vibrato, unison.detune, porta.time, mix.pan.
+// tick.free_hz, macro.*, vel.*, vibrato.rate, mod.wheel_vibrato, unison.detune, porta.time, mix.pan, mix.level.
 // The I entries (integers) and the C entries (switches and choices) are stepped and are never smoothed.
 
 #include <array>
@@ -56,7 +56,8 @@ enum class Disp
     UnisonCents,   // 0 ... 1 shown as 0 ... 50 ct
     Unit,          // 0 ... 1 shown as a percentage ("50 %"), as Vintage's velocity amounts
     Porta,         // 0 ... 1 shown as Vintage shows portamento time
-    Pan            // -1 ... +1, as Vintage
+    Pan,           // -1 ... +1, as Vintage
+    Db             // plain decibels, "+3.0 dB"
 };
 
 /** How a stepped integer parameter is shown and parsed. */
@@ -87,7 +88,7 @@ enum class IntDisp
     C (osc##N##Ring,    "osc" #N ".ring",    "Osc " #N " Ring Mod",    vs::kOffOnLabels, 0)                  \
     C (osc##N##Filter,  "osc" #N ".filter",  "Osc " #N " Filter",      vs::kOffOnLabels, 1)
 
-// The 63 per-part parameters, in the contract's order.
+// The 64 per-part parameters, in the contract's order.
 #define BS_PART_PARAMS(F, C, I)                                                                                         \
     BS_OSC_PARAMS (1, ::bs::kOscWavePulse, F, C, I)                                                                                       \
     BS_OSC_PARAMS (2, ::bs::kOscWaveOff, F, C, I)                                                                                       \
@@ -121,10 +122,11 @@ enum class IntDisp
     F (portaTime,       "porta.time",           "Portamento Time",      0.0f, 1.0f, 0.0f, Porta)                        \
     C (portaMode,       "porta.mode",           "Portamento Mode",      kPortaModeLabels, 0)                            \
     C (bendRange,       "bend.range",           "Bend Range",           kBendRangeLabels, 2)                            \
-    F (mixPan,          "mix.pan",              "Pan",                  -1.0f, 1.0f, 0.0f, Pan)
+    F (mixPan,          "mix.pan",              "Pan",                  -1.0f, 1.0f, 0.0f, Pan)                         \
+    F (mixLevel,        "mix.level",            "Level",                -24.0f, 6.0f, 0.0f, Db)
 
 /** Number of per-part parameters (8.7). */
-inline constexpr int kPartParamCount = 63;
+inline constexpr int kPartParamCount = 64;
 
 /** Plain snapshot of one part's parameters. Defaults equal the host defaults. */
 struct PartParams

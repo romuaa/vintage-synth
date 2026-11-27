@@ -56,7 +56,6 @@ void ProgramEngine::prepare (const EngineConfig& config) noexcept
         f = false;
     restartActive = false;
     inRestartState = false;
-    restartCycle = 0;
     restartState = Restart {};
 }
 
@@ -300,7 +299,6 @@ void ProgramEngine::enterIdle (std::uint64_t cycle, const Restart& restart, Rest
     }
     applyRestart (cycle, restart, sink);
     inRestartState = true;
-    restartCycle = cycle;
     restartState = restart;
 }
 
@@ -336,7 +334,6 @@ void ProgramEngine::noteOn (std::uint64_t cycle, const Program& program, Restart
         {
             applyRestart (cycle, prog.restart, sink);
             inRestartState = true;
-            restartCycle = cycle;
             restartState = prog.restart;
         }
     }
@@ -344,13 +341,13 @@ void ProgramEngine::noteOn (std::uint64_t cycle, const Program& program, Restart
     if (inRestartState && std::memcmp (&restartState, &prog.restart, sizeof (Restart)) != 0)
         inRestartState = false; // preconditioned with another restart section: does not count
 
+    // Clean never waits (8.21.2): the envelope counters are cleared at every note start, on the note's cycle and before
+    // tick 0's writes, whether or not the voice had its full lead. A full lead does not make the clear unnecessary: the
+    // restart state (sr 00) keeps the idle rate counter looping over 0..8, and a gate edge that finds it at 8 (reset not
+    // yet pending) steps it to 9 under the one-step decay compare of the gate's pipeline, past an attack-0 match: the
+    // attack then waits 32 768 cycles (docs/engineering-notes.md).
     if (policy == RestartPolicy::clean)
-    {
-        const std::uint64_t lead = static_cast<std::uint64_t> (prog.restart.lead) * period;
-        const bool fullLead = inRestartState && cycle >= restartCycle && cycle - restartCycle >= lead;
-        if (! fullLead)
-            sink.clearEnvelopeTimers (cycle);
-    }
+        sink.clearEnvelopeTimers (cycle);
     if (policy != RestartPolicy::authentic && ! restartOn)
     {
         // A retrigger always starts an attack: a gate that is still high is cleared first.

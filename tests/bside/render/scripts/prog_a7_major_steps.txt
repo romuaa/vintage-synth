@@ -1,0 +1,10 @@
+# B-Side factory program A7 (Major Steps, a Model B chip arpeggio: the wave lane steps through a major chord at the
+# tick rate, one key plays the chord): one held key.
+rate 48000
+channels 2
+length 3.4
+
+0.00 program A7
+
+0.10 on 60 100
+3.00 off 60

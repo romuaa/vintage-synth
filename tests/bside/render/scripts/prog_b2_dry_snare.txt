@@ -1,0 +1,15 @@
+# B-Side factory program B2 (Dry Snare, noise and pulse alternating by table): four hits of one key.
+rate 48000
+channels 2
+length 2.2
+
+0.00 program B2
+
+0.10 on 48 100
+0.30 off 48
+0.60 on 48 100
+0.80 off 48
+1.10 on 48 100
+1.30 off 48
+1.60 on 48 100
+1.80 off 48

@@ -1,0 +1,16 @@
+# B-Side factory program B4 (Slow Saw Pad, a Model A pad: three detuned sawtooths through the low-pass with
+# resonance, slow attack, Per Note): a chord and its release.
+rate 48000
+channels 2
+length 6.0
+
+0.00 program B4
+
+0.10 on 60 100
+0.10 on 64 100
+0.10 on 67 100
+0.10 on 72 100
+2.60 off 60
+2.60 off 64
+2.60 off 67
+2.60 off 72
