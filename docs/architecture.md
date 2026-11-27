@@ -3417,7 +3417,9 @@ grey. Chorus needs no switch (its mode has Off).
   - *Custom frame (`EditorFrame`):* a name block at the bottom of the page rail, below the last
     page button, on every page and at every size: the company name "EXITIUM" in the small
     label style, the product name without the company ("Vintage Synth", "B-Side") below it in
-    the bold style, and the version ("0.9.0") below that in the dim style. The block is
+    the bold style, and the version ("0.9.0") below that in the small label style. Company and
+    version use the secondary text colour (`text.secondary`), never the disabled one: they are
+    information, not an inactive control. The block is
     painted text, not a control: it takes no focus, writes nothing, and has no help text. It
     is laid out from the grid like the rest of the frame (112 px rail, 12 px gutters); a
     product name that does not fit the width at the bold size is a build-time concern of the
@@ -3427,7 +3429,10 @@ grey. Chorus needs no switch (its mode has Off).
     full name ("Exitium B-Side") and the version on one line above the preset bar.
   - *Where the text comes from:* the full name is `AudioProcessor::getName()` (the plugin's
     `PRODUCT_NAME`); the company is its first word and the product the rest; the version is
-    the build's project version. Shared code holds no product name as a literal, so the two
+    the build's project version. Words are split at any white space and joined with one
+    space; an empty name gives no text and no announcement. The skeleton's default
+    `createEditor()` passes the version too, so an instrument that does not override it still
+    shows it. Shared code holds no product name as a literal, so the two
     plugins can never show each other's name.
   - *Accessibility:* the name is announced once as static text ("Exitium Vintage Synth,
     version 0.9.0"); the editor's accessibility inventory test lists it.
