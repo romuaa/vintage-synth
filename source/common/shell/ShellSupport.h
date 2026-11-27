@@ -72,8 +72,8 @@ juce::AudioProcessor* createPluginProcessor()
 }
 
 /** The shared placeholder editor (InstrumentEditor.h; declared here to keep the GUI headers out of
-    the processor's header). Message thread. */
-juce::AudioProcessorEditor* createInstrumentEditor (juce::AudioProcessor& owner, presets::PresetManager& presets);
+    the processor's header). It shows `owner.getName()` and `version` above the preset bar (9.3.8). Message thread. */
+juce::AudioProcessorEditor* createInstrumentEditor (juce::AudioProcessor& owner, presets::PresetManager& presets, const juce::String& version);
 
 namespace detail
 {

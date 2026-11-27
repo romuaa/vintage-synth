@@ -9,8 +9,25 @@
 #include "bside/PluginProcessor.h"
 #include "bside/presets/BSidePresets.h"
 #include "common/params/GlobalParams.h"
+#include "common/shell/InstrumentEditor.h"
 
 #include <string>
+
+// The same rule as VS_SKIP_EDITOR_UNDER_MAC_ASAN in tests/ui/EditorRig.h: constructing a component makes macOS's
+// graphics libraries parse system files, where AddressSanitizer reports inside Apple's CoreGraphics (not our code).
+#if defined(__has_feature)
+ #if __has_feature(address_sanitizer)
+  #define VS_BS_ASAN 1
+ #endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+ #define VS_BS_ASAN 1
+#endif
+#if defined(VS_BS_ASAN) && defined(__APPLE__)
+ #define VS_BS_SKIP_EDITOR_UNDER_MAC_ASAN() SKIP ("not run under macOS AddressSanitizer: system graphics library reports")
+#else
+ #define VS_BS_SKIP_EDITOR_UNDER_MAC_ASAN() ((void) 0)
+#endif
 
 namespace
 {
@@ -90,6 +107,49 @@ TEST_CASE ("Skeleton: the plugin name comes from the instrument, not from the bu
     CHECK (bside.getName() == "Exitium B-Side");
     CHECK (bside.getName() == JucePlugin_Name);
     CHECK (juce::String (bs::BSideProcessor::kName) == JucePlugin_Name);
+}
+
+TEST_CASE ("Product name: B-Side's placeholder editor shows getName() and the project version on one line above the preset bar", "[shell][identity][editor]")
+{
+    VS_BS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    JuceEnv env;
+    bs::BSideProcessor bside;
+    std::unique_ptr<juce::AudioProcessorEditor> made (bside.createEditor());
+    auto* editor = dynamic_cast<vs::shell::InstrumentEditor*> (made.get());
+    REQUIRE (editor != nullptr);
+
+    const auto& name = editor->getProductName();
+    CHECK (name.fullName() == bside.getName());
+    CHECK (name.company == "Exitium");
+    CHECK (name.product == "B-Side");
+    CHECK (name.version == JucePlugin_VersionString);
+    CHECK (editor->getNameLine().getText() == bside.getName() + "  " + JucePlugin_VersionString);
+    CHECK (editor->getNameLine().getTitle() == bside.getName() + ", version " + JucePlugin_VersionString);
+    const auto handler = editor->getNameLine().createAccessibilityHandler();
+    REQUIRE (handler != nullptr);
+    CHECK (handler->getRole() == juce::AccessibilityRole::staticText);
+
+    // Not a control: no mouse, no focus.
+    bool onThis = true, onChildren = true;
+    editor->getNameLine().getInterceptsMouseClicks (onThis, onChildren);
+    CHECK (! onThis);
+    CHECK (! editor->getNameLine().getWantsKeyboardFocus());
+
+    // One line, above the preset bar (not over it), inside the window.
+    const auto line = editor->getNameLine().getBounds();
+    CHECK (line.getY() == 0);
+    CHECK (line.getBottom() <= editor->getBar().getY());
+    CHECK (line.getWidth() == editor->getWidth());
+    CHECK (line.getHeight() == vs::shell::InstrumentEditor::kNameLineHeight);
+
+    // The name is the processor's own, never a literal of the shared editor: a second instrument shows its own.
+    MiniProcessor mini (bs::createParameterLayout(), true);
+    std::unique_ptr<juce::AudioProcessorEditor> other (mini.createEditor());
+    auto* otherEditor = dynamic_cast<vs::shell::InstrumentEditor*> (other.get());
+    REQUIRE (otherEditor != nullptr);
+    CHECK (otherEditor->getProductName().fullName() == "Mini Test Instrument");
+    CHECK (otherEditor->getProductName().version == JucePlugin_VersionString); // the skeleton's default editor passes the version too
+    CHECK (otherEditor->getNameLine().getText() == juce::String ("Mini Test Instrument  ") + JucePlugin_VersionString);
 }
 
 TEST_CASE ("Skeleton: a complete instrument constructs and verifies", "[shell][contract]")

@@ -54,8 +54,9 @@ public:
         juce::String hint;  // the help line's text while nothing is hovered
     };
 
-    /** `presetArea`: the preset component shown in the top bar (owned by the caller). */
-    EditorFrame (UiContext& ctx, std::vector<Page> pages, juce::Component& presetArea);
+    /** `presetArea`: the preset component shown in the top bar (owned by the caller). `product`: the name block
+        at the bottom of the page rail (9.3.8); the caller makes it from getName() and its own version. */
+    EditorFrame (UiContext& ctx, std::vector<Page> pages, juce::Component& presetArea, const ProductName& product);
     ~EditorFrame() override;
 
     /** Pages are added in the order of `pages` (owned by the caller), shown one at a time. */
@@ -95,6 +96,7 @@ public:
     OutputPopover& getPopover() noexcept { return popover; }
     PartSwitch& getPartSwitch() noexcept { return partSwitch; }
     PageRail& getRail() noexcept { return rail; }
+    ProductBlock& getProductBlock() noexcept { return productBlock; }
     juce::Rectangle<int> pageArea() const;
 
     /** Help for a component (hover or focus): the help line now, the bubble after 600 ms. */
@@ -130,6 +132,7 @@ private:
     juce::Component& presetArea;
     PartSwitch partSwitch;
     PageRail rail;
+    ProductBlock productBlock;
     OutputMeter meter;
     Slider master;
     std::unique_ptr<LimitChip> limitChip;

@@ -5,6 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/). Released so far: 0.9
 
 ## [Unreleased]
 
+### Editors: the product name (2026-11-27)
+- **Every editor window now says which plugin it is.** Exitium Vintage Synth shows a name block at the bottom of the page
+  rail on every page and size ("EXITIUM", "Vintage Synth", the version); Exitium B-Side's placeholder editor shows
+  "Exitium B-Side" and the version on one line above the preset bar. The text comes from the processor's own name and the
+  build's project version, so the plugins cannot show each other's name. It is painted text (no focus, no help text),
+  announced once to screen readers as "<name>, version <x.y.z>". The name is split at any white space and joined with
+  single spaces; an empty name shows and announces nothing. The skeleton's default `createEditor()` shows the version
+  too. The layout goldens gain the block's line. No parameter, state or audio change.
+
 ### Records and documentation after S4b (2026-11-27)
 - S4b is merged (pull request 48). The owner's decisions on B-Side's first release are recorded (`docs/decisions.md`,
   "B-Side's first release: owner decisions"): S5 after the release, one release for both plugins as 0.10.0, a factory

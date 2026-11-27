@@ -126,6 +126,8 @@ Orchestrator's calls, all **(review)**:
 | 1 | A factory program is our own recipe for a sound type (a technique), written from what the survey shows is typical. No tune's instrument data is copied as it is, no note sequence is used, and no tune title, composer or brand name enters the repository. The survey, its tune list and its listening examples stay outside the repository. | The brand rule and the licence: the bank ships under AGPLv3 with the source, so everything in it must be ours. A sound type is a technique; a tune's data is someone's work. |
 | 2 | The name sits at the bottom of the page rail of the custom frame (company, product, version), not in the top bar. | The top bar is full at the design size and its redesign is deferred by the owner; the rail has free room below the last page button on every page. The version is shown with it because a beta's users report against a version. The owner judges it by eye. |
 | 3 | B-Side shows its name now, in the placeholder editor, and again in its own editor when that exists. | The request is about both windows today; B-Side's own editor is weeks away. |
+| 4 | Company and version are drawn in the secondary text colour, not a dimmer one. | The disabled colour is reserved for inactive controls and fails the contrast rule for information. (The contract first said "dim"; amended after the review.) |
+| 5 | The shared skeleton's default editor passes the build's version itself; B-Side has no editor override. | An instrument that does not override `createEditor()` would otherwise show a name without a version. The skeleton's header fails to compile where the version definition is missing. |
 
 ## Faster tests: tiers and parallel runs (2026-11-26)
 

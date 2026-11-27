@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "EditorRig.h"
+#include "EditorWalk.h"
 #include "../preset_unit/PresetTestHelpers.h"
 
 #include <chrono>
@@ -494,6 +495,147 @@ TEST_CASE ("Layout snapshot: the Sound page's component bounds equal the golden 
             REQUIRE (file.existsAsFile());
             CHECK (file.loadFileAsString().removeCharacters ("\r") == dump); // line ends may be converted on Windows
         }
+}
+
+// =================================================================================================
+// Product name (9.3.8): the block at the bottom of the page rail
+// =================================================================================================
+
+TEST_CASE ("Product name: the editor from createEditor() shows getName() split into company and product, and the project version", "[ui][editor][name]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    const auto& block = rig.editor->getFrame().getProductBlock();
+    CHECK (block.getProductName().fullName() == rig.proc.getName());
+    CHECK (block.getProductName().company == "Exitium");
+    CHECK (block.getProductName().product == "Vintage Synth");
+    CHECK (block.getProductName().version == JucePlugin_VersionString);
+    const auto lines = block.getLines();
+    CHECK (lines[0] == "EXITIUM");
+    CHECK (lines[1] == "Vintage Synth");
+    CHECK (lines[2] == JucePlugin_VersionString);
+    CHECK (block.getTitle() == rig.proc.getName() + ", version " + JucePlugin_VersionString);
+    // Not a control: no mouse, no focus, no help text.
+    bool onThis = true, onChildren = true;
+    block.getInterceptsMouseClicks (onThis, onChildren);
+    CHECK (! onThis);
+    CHECK (! block.getWantsKeyboardFocus());
+    CHECK (! block.getProperties().contains (ui::helpIdProperty()));
+}
+
+TEST_CASE ("Product name: the block lies inside the rail, below the last page button and above the help line, on every page at 75, 100 and 200 %", "[ui][editor][name][layout]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    auto& ed = *rig.editor;
+    auto& frame = ed.getFrame();
+    auto& block = frame.getProductBlock();
+    auto& rail = frame.getRail();
+    REQUIRE (rail.getNumChildComponents() > 0);
+    auto* lastButton = rail.getChildComponent (rail.getNumChildComponents() - 1);
+    const ui::PaintFonts fonts (ed.getTheme());
+    const auto inEditor = [&] (juce::Component& c) { return ed.getLocalArea (&c, c.getLocalBounds()); };
+
+    for (int percent : { 75, 100, 200 })
+    {
+        ed.setSizePercent (percent);
+        for (const auto& [page, part] : allPages())
+        {
+            showPage (rig, page, part);
+            INFO ("size " << percent << " %, page " << page << " part " << part);
+            REQUIRE (block.isVisible());
+            const auto b = inEditor (block), r = inEditor (rail), help = inEditor (frame.getHelpLine()), last = inEditor (*lastButton);
+            CHECK (r.contains (b));
+            CHECK (b.getY() >= last.getBottom());
+            CHECK (b.getBottom() <= help.getY());
+            CHECK (b.getHeight() > 0);
+        }
+    }
+    // The same in the frame's own grid (logical px), where the numbers are the contract's: the rail is 112 wide, the block is
+    // inside its 12 px gutters, ends one gutter above the help line, and each painted line fits the block's width.
+    ed.setSizePercent (100);
+    const auto lb = block.getBounds();
+    CHECK (lb.getX() >= ui::metrics::kGutter);
+    CHECK (lb.getRight() <= ui::metrics::kRail - ui::metrics::kGutter);
+    CHECK (lb.getBottom() == ui::metrics::kDesignHeight - ui::metrics::kHelpLine - ui::metrics::kGutter);
+    CHECK (lb.getY() >= lastButton->getBounds().getBottom() + rail.getY());
+    const auto lines = block.getLines();
+    const float widths[] { ui::PreparedText::widthOf (lines[0], fonts.small), ui::PreparedText::widthOf (lines[1], fonts.textBold),
+                           ui::PreparedText::widthOf (lines[2], fonts.small) };
+    for (int i = 0; i < 3; ++i)
+    {
+        INFO ("line " << i << " \"" << lines[static_cast<size_t> (i)] << "\" is " << widths[i] << " px, the block is " << lb.getWidth() << " px");
+        CHECK (widths[i] <= static_cast<float> (lb.getWidth()));
+    }
+}
+
+TEST_CASE ("Product name: the three lines lie on three rows top to bottom without overlap; the product is bold, company and version are small", "[ui][editor][name][layout]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    auto& block = rig.editor->getFrame().getProductBlock();
+    const ui::PaintFonts fonts (rig.editor->getTheme());
+    const auto bounds = block.getLocalBounds().toFloat();
+    for (int i = 0; i < 3; ++i)
+    {
+        INFO ("line " << i);
+        CHECK (bounds.contains (block.lineArea (i)));
+        if (i > 0)
+            CHECK (block.lineArea (i).getY() >= block.lineArea (i - 1).getBottom());
+    }
+    CHECK (block.lineArea (0).getY() < block.lineArea (1).getY());
+    CHECK (block.lineArea (1).getY() < block.lineArea (2).getY());
+    CHECK (block.lineFont (0) == fonts.small);
+    CHECK (block.lineFont (1) == fonts.textBold);
+    CHECK (block.lineFont (2) == fonts.small);
+    CHECK (block.lineFont (1) != block.lineFont (0));
+}
+
+TEST_CASE ("Product name: the block is read after the help line and before the output popover, and is not a Tab stop", "[ui][editor][name][a11y]")
+{
+    VS_SKIP_EDITOR_UNDER_MAC_ASAN();
+    EditorRig rig;
+    auto& frame = rig.editor->getFrame();
+    const int block = frame.getProductBlock().getExplicitFocusOrder();
+    CHECK (block > frame.getHelpLine().getExplicitFocusOrder());
+    CHECK (block < frame.getPopover().getExplicitFocusOrder());
+    CHECK (frame.getHelpLine().getExplicitFocusOrder() > 0);
+    CHECK (! frame.getProductBlock().getWantsKeyboardFocus());
+}
+
+TEST_CASE ("Product name: words are split at any white space and joined with one space; no name gives no text and no announcement", "[ui][name]")
+{
+    struct Case
+    {
+        const char* in;
+        const char* company;
+        const char* product;
+        const char* full;
+    };
+    const Case cases[] {
+        { "Exitium Vintage Synth", "Exitium", "Vintage Synth", "Exitium Vintage Synth" },
+        { "  Exitium B-Side  ", "Exitium", "B-Side", "Exitium B-Side" },
+        { "Exitium   Vintage  Synth", "Exitium", "Vintage Synth", "Exitium Vintage Synth" },
+        { "Exitium\tB-Side", "Exitium", "B-Side", "Exitium B-Side" },
+        { "Exitium \t \n Vintage\tSynth ", "Exitium", "Vintage Synth", "Exitium Vintage Synth" },
+        { "Exitium", "Exitium", "", "Exitium" },
+        { "", "", "", "" },
+        { " \t ", "", "", "" },
+    };
+    for (const auto& c : cases)
+    {
+        INFO ("name \"" << c.in << "\"");
+        const auto n = ui::ProductName::make (juce::String (c.in), "0.9.0");
+        CHECK (n.company == c.company);
+        CHECK (n.product == c.product);
+        CHECK (n.fullName() == c.full);
+        CHECK (n.announcement() == (juce::String (c.full).isEmpty() ? juce::String() : juce::String (c.full) + ", version 0.9.0"));
+        CHECK (n.line() == (juce::String (c.full).isEmpty() ? juce::String() : juce::String (c.full) + "  0.9.0"));
+    }
+    const auto noVersion = ui::ProductName::make ("Exitium B-Side", {});
+    CHECK (noVersion.announcement() == "Exitium B-Side");
+    CHECK (noVersion.line() == "Exitium B-Side");
+    CHECK (ui::ProductName::make ("", {}).announcement().isEmpty());
 }
 
 // =================================================================================================

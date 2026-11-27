@@ -43,6 +43,10 @@ public:
 
     /** The plugin's name as hosts list it (the skeleton's getName); equals the build's JucePlugin_Name (tested). */
     static constexpr const char* kName = "Exitium Vintage Synth";
+    /** The build's project version, which the editor shows (9.3.8). JucePlugin_VersionString is a definition of the
+        plugin target and of vs_test_core (copied from it), so it is always the Vintage target's here; the custom
+        editor is plugin code and receives it as an argument rather than reading the macro in shared frame code. */
+    static constexpr const char* kVersion = JucePlugin_VersionString;
 
     // State identity (used by the skeleton's get/setStateInformation).
     static constexpr const char* kStateTag = "VintageSynthState";

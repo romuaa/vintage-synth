@@ -88,13 +88,31 @@ std::set<const juce::Component*> focusOrder (juce::Component& root)
 
 struct Counts
 {
-    int clickable = 0, containers = 0, displays = 0, targets = 0;
+    int clickable = 0, containers = 0, displays = 0, targets = 0, nameBlocks = 0;
     std::set<std::string> targetTypes;
 };
 
 void inspect (EditorRig& rig, Counts& counts, const juce::String& where)
 {
     const auto order = focusOrder (*rig.editor);
+    // The product name (9.3.8) is static text, announced once per editor: not clickable, so the walk below does not list it.
+    int nameBlocks = 0;
+    forEachVisible (*rig.editor, [&] (juce::Component& c) {
+        if (classNameOf (c) != "ProductBlock")
+            return;
+        ++nameBlocks;
+        INFO (where << ": the product name block");
+        const auto owned = c.createAccessibilityHandler();
+        REQUIRE (owned != nullptr);
+        CHECK (owned->getRole() == juce::AccessibilityRole::staticText);
+        CHECK (owned->getTitle() == juce::String (VintageSynthProcessor::kName) + ", version " + JucePlugin_VersionString);
+        CHECK (c.isAccessible());
+        CHECK (! takesClicks (c));
+        CHECK (! c.getWantsKeyboardFocus());
+        CHECK (c.getExplicitFocusOrder() > 0); // given a place in the reading order (EditorTests.cpp checks where), though it is not a Tab stop
+    });
+    CHECK (nameBlocks == 1);
+    counts.nameBlocks += nameBlocks;
     forEachVisible (*rig.editor, [&] (juce::Component& c) {
         if (! takesClicks (c))
             return;
@@ -158,6 +176,7 @@ TEST_CASE ("Accessibility inventory: every clickable component on every page has
     INFO (counts.clickable << " clickable components, " << counts.containers << " containers, " << counts.displays << " displays, " << counts.targets
                            << " keyboard targets");
     CHECK (counts.targets > 300);
+    CHECK (counts.nameBlocks > 30); // one on each page of each sweep
     // The inventory reaches the kinds of control this test exists for.
     for (const char* name : { "Slider", "SegmentedSwitch", "Toggle", "PowerSwitch", "KeyboardStrip", "ProgramGrid", "ChipStrip", "ToneSourceSwitch",
                               "PartSwitch", "Button", "GraphHandle" })

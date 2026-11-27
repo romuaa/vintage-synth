@@ -8,6 +8,7 @@ Editor 0 0 1360 784
     page.arpseq 12 372 88 82
     page.effects 12 462 88 82
     page.browser 12 552 88 82
+  ui.name 12 694 88 54
   - 396 8 510 32
     < 4 3 28 26
     > 34 3 28 26

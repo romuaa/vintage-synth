@@ -152,7 +152,7 @@ private:
 
 // ---- EditorFrame ----
 
-EditorFrame::EditorFrame (UiContext& c, std::vector<Page> p, juce::Component& preset)
+EditorFrame::EditorFrame (UiContext& c, std::vector<Page> p, juce::Component& preset, const ProductName& product)
     : ctx (c),
       fonts (c.theme),
       editingFont (c.theme.font (kTextEditing, true)),
@@ -166,6 +166,7 @@ EditorFrame::EditorFrame (UiContext& c, std::vector<Page> p, juce::Component& pr
                     list.push_back ({ pg.title, pg.icon });
                 return list;
             }()),
+      productBlock (c.theme, product),
       meter (c.theme),
       master (c, "master.volume", "Master", -1),
       helpLine (c.theme),
@@ -176,7 +177,7 @@ EditorFrame::EditorFrame (UiContext& c, std::vector<Page> p, juce::Component& pr
     limitChip = std::make_unique<LimitChip> (*this);
     scrim = std::make_unique<Scrim> (*this);
 
-    for (auto* comp : std::initializer_list<juce::Component*> { &rail, &partSwitch, &presetArea, &meter, &master, limitChip.get(), &chevron,
+    for (auto* comp : std::initializer_list<juce::Component*> { &rail, &productBlock, &partSwitch, &presetArea, &meter, &master, limitChip.get(), &chevron,
                                                                  &sizeButton, &helpLine })
         addAndMakeVisible (*comp);
     addChildComponent (*scrim);
@@ -223,7 +224,8 @@ EditorFrame::EditorFrame (UiContext& c, std::vector<Page> p, juce::Component& pr
         comp->setExplicitFocusOrder (order++);
     firstPageFocusOrder = order;
     helpLine.setExplicitFocusOrder (order + 1);
-    popover.setExplicitFocusOrder (order + 2);
+    productBlock.setExplicitFocusOrder (order + 2); // static text: read after the help line, not a Tab stop
+    popover.setExplicitFocusOrder (order + 3);
 
     addMouseListener (this, true); // hover help for every child
     juce::Desktop::getInstance().addFocusChangeListener (this);
@@ -248,6 +250,8 @@ void EditorFrame::resized()
     // Fixed logical layout (9.2.4): the editor scales this whole component.
     rail.setBounds (0, kTopBar, kRail, kDesignHeight - kTopBar - kHelpLine);
     helpLine.setBounds (0, kDesignHeight - kHelpLine, kDesignWidth, kHelpLine);
+    // The name block: the bottom of the rail, one gutter above the help line, inside the rail's gutters (9.3.8).
+    productBlock.setBounds (kGutter, kDesignHeight - kHelpLine - kGutter - ProductBlock::kHeight, kRail - 2 * kGutter, ProductBlock::kHeight);
     partSwitch.setBounds (kGutter, 8, 200, 32);
     presetArea.setBounds (396, 8, 510, 32);
     meter.setBounds (918, 6, 96, 36);
