@@ -44,10 +44,10 @@ Host sessions store parameters by ID. Breaking IDs silently breaks users' songs.
 3. **Definition:** range, skew, default, unit, value-to-text and text-to-value.
    Switches are `AudioParameterChoice` with readable labels ("-24 dB", "ENV-2").
 4. **DSP:** read the value through a cached atomic pointer. Smooth continuous params; switches aren't smoothed.
-5. **State:** before v1.0, `stateVersion` stays 1 (no released states); skip the rest of this step.
+5. **State:** before v1.0, `stateVersion` stays 1 (0.9.0 is a beta whose state format may still change; the format freezes at 1.0.0); skip the rest of this step.
    From v1.0 on, bump `stateVersion` in `source/vintage/params/StateVersion.h` and add a migration step
    (old state → default or derived value). Add a test that loads a stored old-version state file
-   (no such fixtures exist yet; create the folder with the first one).
+   (one old-state fixture exists, `tests/fixtures/state_m5.bin`; add one for each bump).
 6. **Presets:** give every factory preset a sensible value. The preset loader must accept files
    that lack the field.
 7. **UI and MIDI:** attach the parameter to a control. Add a default CC only if the CC map has room,

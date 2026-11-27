@@ -4,35 +4,36 @@ Where the project is, what is parked, what comes next, and the history of what w
 The orchestrator keeps this file current; `CLAUDE.md` links here. Read "Where the project is"
 first when resuming.
 
-## Where the project is (2026-11-26) — read this first when resuming
+## Where the project is (2026-11-27) — read this first when resuming
 
-**Resume here (written 2026-11-24, after the owner's "start S4").**
-- **S4 is in flight (owner's word, 2026-11-24).** The owner decided the Model A budget
-  (O11: Model A gets its own gate at its measured cost; Model B keeps 5 % / 10 %). The
-  contract is `docs/architecture.md` 8.21: **S4a** (the part and its wiring into the plugin,
-  branch `bside/s4a-part`, its own pull request) and then **S4b** (factory patches, level
-  rule, render goldens, the owner's audition; outline only, completed before it starts).
-  The orchestrator's nine readings in that contract are `docs/decisions.md`, "B-Side S4
-  contract", all marked for the owner's review; row 1 sets Model A's figures at 11 % (16
-  voices), 22 % (Dual), 27 % (Dual with effects) and 30 % (16 voices at a 192 kHz host),
-  where the owner was told "about 10 % and 20 %".
-- **S4a is merged (pull request 47, 2026-11-24, owner's word "merge").** Built, reviewed twice
-  by independent reviewers with their own tests, fixed twice. The orchestrator's full
-  `scripts/preflight.sh` passed on the final code (80 min, all seven steps) and every CPU gate
-  passed at the orchestrator's bench (16 voices: 4.39 to 4.51 % on Model B, 9.71 to 9.73 % on
-  Model A). **CI run 45455730779: Windows ARM64, Linux x86_64, Linux ARM64, the sanitizers and
-  the distro checks passed. Windows x64 is not a green job:** its build, unit tests and
-  pluginval steps all succeeded, but the job hit its 60-minute limit during clean-up and was
-  marked cancelled, so the Windows bundle job did not run. The owner chose to merge without a
-  rerun. **Open from this:** Windows unit tests take 26 to 28 minutes per job and the x64 build
-  took 28 minutes; the job needs room under its limit before the next run (look at what the
-  Windows tests spend their time on; a workflow change is its own pull request).
-- **RESUME EXACTLY HERE (written 2026-11-27): S4b is pull request 48 (branch
-  `bside/s4b-sounds`, open, mergeable); it waits for TWO owner answers, asked and not yet
-  answered.** (1) The merge word for pull request 48. (2) "leave" or "split": whether to chase
-  the 20-minute target for a full CI run further (recommended: leave; "split" means the slow
-  tests in a job of their own beside the build row and the sanitizer tests over two jobs, as a
-  workflow change in its own pull request with one more run).
+**RESUME EXACTLY HERE (written 2026-11-27).**
+- **S4b is merged (pull request 48, merge commit
+  `c3078d0`, owner's word "merge", 2026-11-27). S4 is done. The work now is B-Side's first
+  release.** The owner's decisions on its scope are `docs/decisions.md`, "B-Side's first
+  release: owner decisions" (F1 to F5): S5 comes after the release; one repository release
+  for both plugins as version 0.10.0; a factory bank of 64 programs drawn from a survey of
+  original tunes; both editor windows show the plugin's name; B-Side's editor pages are
+  still open. The steps, in order, each with its own contract before it starts (**none of
+  these contracts exists yet, except the product name's**):
+  1. **Product name in both editors** (contract 9.3.8, branch `ui/plugin-name`): in work.
+     The owner judges it by eye before the merge.
+  2. **Survey for the bank of 64** (developer-only, outside the repository, in the developer
+     folder of `docs/bside-oracle-adapter.md`, subfolder `bank64-survey`): in work. Its
+     result is a proposal of 48 new programs for the owner; the programs are written only
+     after the owner has seen it and the bank's contract (8.21.2) is extended.
+  3. **B-Side editor design:** wireframes and help texts in `docs/ui/` for the owner's
+     approval; no code before that. Today `docs/ui/wireframes/` holds Vintage's eight
+     pictures only.
+  4. **B-Side editor build**, page by page, as M7 was done.
+  5. **Packaging:** the packer, the identity check and the release run extended to B-Side.
+  6. **Release 0.10.0:** rehearsal run, the owner's hands-on check, the owner publishes.
+  - **CI time: the owner said "leave" (2026-11-27).** The 20-minute target for a full CI run
+    is not chased further; the slow tests stay in the build row and the sanitizer tests in
+    one job (`docs/decisions.md`, "Faster tests").
+  - **Cleaned up after the merge (2026-11-27):** the remote branch `bside/s4b-sounds`
+    (deleted by GitHub), the local branches `bside/s4b-sounds` and `bside/s4b-tiers`, the
+    worktrees `.claude/worktrees/fast-tests` and `.claude/worktrees/s4b-tiers`. Branches
+    left: `main`, `bside/s3a-modela` and `study/crossmod-aliasing` (both kept on purpose).
   - **CI run 45903351762 on `4b53c8e` (`targets=no-macos`, `tests=full`): green at the first
     attempt on every job**, Windows x64 included (both bundle jobs and the seven distro checks
     too); the pull request's CodeQL and security scan passed. Job totals: Windows x64 23m49s
@@ -50,15 +51,28 @@ first when resuming.
     orchestrator, no independent reviewer). 1,235 tests, 212 of them slow. The orchestrator's
     full `scripts/preflight.sh` passed on `1f6f139` (13m05s, all seven steps, full tier, 18
     jobs); the commits after it change only this file.
-  - **Left to clean up after the merge:** the remote branch `bside/s4b-sounds`; the local
-    branches `bside/s4b-sounds` (the main checkout is on it and is BEHIND the remote, still at
-    `d325554`: switch it to `main` and pull) and `bside/s4b-tiers`; the worktrees
-    `.claude/worktrees/fast-tests` (detached at `5fa04c4`) and `.claude/worktrees/s4b-tiers`.
-    Then update this file on a small branch. Nothing is running: no agent, no CI run, no
-    background job.
   - The audition files are outside the repository (the developer folder of
     `docs/bside-oracle-adapter.md`, subfolders `s4b-audition`, `-2`, `-3`).
-- **S4b is built (2026-11-25, branch `bside/s4b-sounds`); its state before the CI run:** `mix.level` per part (204 parameters), `kChipGain` 1.2822 (Init as
+
+**B-Side S4, how it went (2026-11-24 to 2026-11-27; all merged).**
+- **S4 is done.** The owner decided Model A's CPU budget (O11: Model A has its own gate at its
+  measured cost; Model B keeps 5 % / 10 %). The contract is `docs/architecture.md` 8.21:
+  S4a (the part and its wiring into the plugin) and S4b (factory programs, level rule, render
+  goldens, the owner's audition). The orchestrator's nine readings in that contract
+  (`docs/decisions.md`, "B-Side S4 contract") were confirmed by the owner on 2026-11-24;
+  row 1 sets Model A's figures at 11 % (16 voices), 22 % (Dual), 27 % (Dual with effects)
+  and 30 % (16 voices at a 192 kHz host).
+- **S4a is merged (pull request 47, 2026-11-24, owner's word "merge").** Built, reviewed twice
+  by independent reviewers with their own tests, fixed twice. The orchestrator's full
+  `scripts/preflight.sh` passed on the final code (80 min, all seven steps) and every CPU gate
+  passed at the orchestrator's bench (16 voices: 4.39 to 4.51 % on Model B, 9.71 to 9.73 % on
+  Model A). **CI run 45455730779: Windows ARM64, Linux x86_64, Linux ARM64, the sanitizers and
+  the distro checks passed. Windows x64 is not a green job:** its build, unit tests and
+  pluginval steps all succeeded, but the job hit its 60-minute limit during clean-up and was
+  marked cancelled, so the Windows bundle job did not run. The owner chose to merge without a
+  rerun. The Windows x64 time problem was handled by "Faster tests" below
+  (pull request 49).
+- **What S4b is (built 2026-11-25, merged 2026-11-27, pull request 48):** `mix.level` per part (204 parameters), `kChipGain` 1.2822 (Init as
   loud as Vintage's Init), 16 factory programs with the level rule and per-program offsets,
   a program apply that fades the part, `bside_render` goldens for six programs. **The owner
   auditioned the bank in three rounds and accepted it** (`docs/decisions.md`, "S4b audition:
@@ -71,8 +85,8 @@ first when resuming.
   contract. The orchestrator's full `scripts/preflight.sh` passed on commit `4907ba4`
   (85 min, all seven steps, 1,235 tests on macOS) and every CPU gate passed at the
   orchestrator's bench (16 voices: 4.33 to 4.36 % on Model B, 9.59 to 9.63 % on Model A;
-  chain 26.7 to 26.9 ns and 57.4 to 57.5 ns). **The CI run's result is in the item above.** Known risks for that run: the Windows x64 job's 60-minute limit (the new
-  default tests add about 20 s locally) and the B4 golden's thin margin.
+  chain 26.7 to 26.9 ns and 57.4 to 57.5 ns). CI run 45903351762 was
+  green on every job (the resume item above).
 - **S4b's readings await the owner's review:** rows 1 to 38 in `docs/decisions.md`, "S4b
   contract: orchestrator's calls".
 - **Open after S4b:** B1 has no level trim left upwards (`mix.level` at +6 dB); the drums'
@@ -81,15 +95,14 @@ first when resuming.
   33 ms, as on the chip.
 - **S4a's readings await the owner's review:** 20 by the implementer, 8 from the fix round and
   the calls on both reviews, all in `docs/decisions.md` under "B-Side S4 contract".
-- **Owner decisions that bound S4** (`docs/decisions.md`, O1 to O10): Model B is accepted by
+- **Owner decisions that bound S4** (`docs/decisions.md`, O1 to O11): Model B is accepted by
   ear; no further effort goes into Model A's sound (O10); its open points below are known
   deviations, not work items, unless the owner reopens them.
 - **Open, recorded, not being worked on:** Model A's sweep opens later but faster than the
   reference and closes the same way; its cutoff steps below code 480; the 16 pinned
   overdriven Model A alias rows; mode-plus-cutoff write rows at -83 to -86 dB against the
   reviewers' ideals (unestablished); cutoff-table rebuilds on every resonance write
-  (avoidable cost); thin margins (write gate -90.7 dB against -90; the CI sanitizer job runs
-  close to its 60-minute limit).
+  (avoidable cost); a thin margin (write gate -90.7 dB against -90).
 - **Kept on purpose:** remote branches `bside/s3a-modela` (the signal-dependent Model A form,
   not accepted, exists nowhere else) and `study/crossmod-aliasing`. Developer-only material
   under `~/Library/Caches/bside-oracle/` (listening files, review harnesses) survives a
@@ -97,7 +110,7 @@ first when resuming.
 - **Docker:** the agents' leftovers were removed on 2026-11-24 (owner's word). The images
   `vs-linux-check:*` belong to the local gate and are rebuilt by it when missing.
 
-**Faster tests (2026-11-26, branch `ci/fast-tests`, contract `docs/architecture.md` 7.1; owner's
+**Faster tests (pull request 49, merged 2026-11-26; contract `docs/architecture.md` 7.1; owner's
 "go").** Why: two Windows x64 CI jobs in a row were cancelled at the 60-minute limit (pull
 requests 47 and 48). The causes found: tests ran one at a time (20 to 28 minutes per target),
 164 of 1,229 tests carried 90 % of that time, and the Windows x64 compiler cache on `main` was
@@ -142,16 +155,16 @@ a feature branch is not readable from another branch). The limit is not raised (
   job totals: Linux ARM64 13m19s, Windows ARM64 17m29s, Linux x86_64 23m20s (its build took
   9m12s and its slow tests 11m19s here, against 5m36s and 6m30s in the run before: runner
   variance, not measured further), sanitizers 26m06s.
-- **Open:** the sanitizer job's 25 minutes of tests (candidates: a larger runner, or splitting
-  its tests over two jobs); whether the pluginval host crash in the middle of a run returns (seen
-  once; then decide between a retry of the whole pluginval call and nothing); the two slowest
-  tests (115 s and 77 s in CI) and the other heavy gates could be made
-  cheaper, each a judgement on what a smaller set still gates; the slow tests could get a job of
-  their own beside the build row if a full run misses 20 minutes.
+- **Open:** whether the pluginval host crash in the middle of a run returns (seen once; then
+  decide between a retry of the whole pluginval call and nothing); the two slowest tests
+  (115 s and 77 s in CI) and the other heavy gates could be made cheaper, each a judgement on
+  what a smaller set still gates. **Closed by the owner ("leave", 2026-11-27):** the
+  20-minute target is not chased further, so no larger runner, no split sanitizer job and no
+  job of their own for the slow tests.
 
 **Exitium Vintage Synth 0.9.0 (a public beta) is released** (2026-11-20; shown as the latest release on GitHub since 2026-11-21, owner's word;
 tag `v0.9.0` at commit `116c5f8`: three zips and `SHA256SUMS.txt`). **M8 is done.**
-**Everything below is merged to `main`, B-Side S3a and S3b included (2026-11-24). Model A's
+**Everything below is merged to `main`, B-Side S3 and S4 included (2026-11-27). Model A's
 dynamics stay open as a known deviation (owner decisions O4, O5, O7 and O10).** **All five targets are confirmed** (2026-11-20): macOS by the local gate; Windows
 x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the repository became public
 ("First CI runs" below).
@@ -159,14 +172,17 @@ x64 and ARM64 and Linux x86_64 and ARM64 by the first CI runs after the reposito
 - **Exitium Vintage Synth is feature-complete up to M7:** engine, effects, arp/seq, presets and
   64 factory programs, the custom editor with all pages (M7a–M7f). The owner has tried and
   approved every page.
-- **Exitium B-Side:** the plugin is still the S1 shell with test tones. The chip model exists as
-  a JUCE-free library, not wired in: digital core (S2a), own combined-waveform tables (S2b-1),
-  program engine (S2c), band-limited rendering before the filter (S2b-2).
+- **Exitium B-Side:** S1 to S4 are merged (2026-11-27). The plugin plays its chip model: two
+  parts of 16 note voices, both chip models with their filters, the patch program engine,
+  16 factory programs (A1 to B8) and 204 host parameters. It still uses the placeholder
+  editor and has no release; the owner's decisions on its first release (0.10.0) are in
+  `docs/decisions.md`, "B-Side's first release: owner decisions".
 
 **Repository housekeeping (2026-11-16, owner's word):** all merged branches are deleted, on GitHub
-and locally. Besides the work in flight two branches exist: `main` and `study/crossmod-aliasing` (kept and pushed by owner
+and locally. Kept since then: `study/crossmod-aliasing` (pushed by owner
 decision: the Cross Mod aliasing study's experimental code, built against the old `source/dsp/`
 layout, never to be merged as is; the reference for the deferred "Clean" Cross Mod switch).
+The branches kept today are listed under "Kept on purpose" above.
 GitHub deletes a PR's branch on merge; delete the local branch after each merge too.
 
 **Skill `orchestrate` exists twice (2026-11-16):** the owner's personal, generic one
@@ -176,6 +192,76 @@ read this repository's file, which holds only what is specific to this project (
 worktrees, gates, model routing, commit rules) and overrides it. If a session did not read the
 repository's file, read it by hand before orchestrating. Checked 2026-11-16: `/orchestrate`
 loads the personal skill and reaches the repository's file through that instruction.
+
+**Public since 2026-11-20** (owner flipped visibility after the pre-public audit; its decisions
+are in `docs/decisions.md`, "Pre-public audit"). Actions are free now, and CI still runs only when
+the orchestrator dispatches it (see "Decisions").
+
+**First CI runs (2026-11-20), all dispatched by hand:**
+- Run 44627905615 (`main`, `no-macos`): Linux ARM64 and the sanitizer job passed; Linux x86_64
+  built and passed its unit tests, then hit the job's 30-minute limit (cold cache); Windows failed
+  to build, in B-Side test, tool and benchmark sources only (`getenv` as an error, a
+  signed/unsigned comparison, `1L << 40` with a 32-bit `long`).
+- Run 44634121070 (`m8/ci-fixes`, `no-macos`): every Linux job green (x86_64 with pluginval and
+  the validator, the seven distro load tests, sanitizers, ARM64); Windows built, 2 tests failed
+  on both rows (test assumptions: `/proc/...` is writable on Windows, a path separator).
+- Run 44638566407 (`m8/ci-fixes`, `windows`): Windows x64 (tests, pluginval, validator), Windows
+  ARM64 (tests, host_smoke) and the merged Windows bundle green.
+- **Release rehearsal:** run 44695944505 (`main` at `116c5f8`, `all`, `release=true`): every job
+  green at the first attempt (all five targets, both merged bundles, the seven distro load
+  tests, sanitizers, `pack`, the three `zip-smoke` jobs, `package`). It created the **draft
+  release `v0.9.0`** (three zips and `SHA256SUMS.txt`, target commit `116c5f8`; no tag exists
+  until the owner publishes). The orchestrator downloaded the zips: checksums match and
+  `package-release.sh verify` passes on each.
+
+**Next steps:**
+1. **Vintage:** 0.9.0 is released (2026-11-20; M8 is done). The identity (class IDs, bundle
+   ID, codes) is frozen. The next release is 0.10.0, together with B-Side (skill `release`).
+   How M8 went: History, "Vintage M8".
+2. **B-Side:** S1 to S4 are merged. Next: the six steps of the resume item at the top
+   (product name in both editors, the survey for the bank of 64, editor design, editor
+   build, packaging, release 0.10.0). S5 comes after that release (owner decision F1).
+
+**Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
+equal width, playing from the computer keyboard, a "Clean" Cross Mod switch, **a go-through of the factory
+preset set (2026-11-19: some presets sound exactly the same)**. **Not done anywhere:**
+a real screen-reader pass; a hands-on check on Windows ARM64 or Linux ARM64.
+
+**How work is run:** skill `orchestrate` (brief → implementer → independent reviewer → fixes →
+orchestrator's full `scripts/preflight.sh` → PR → merge only on the owner's word). Lessons of
+this wave are in `docs/engineering-notes.md`; the main one: an independent reviewer with its own
+harness found real defects in every step, also after an author reported "all gates pass".
+Developer-only tools outside the repository (reference adapter, tune-to-trace tool, rendered
+listening files) live under `~/Library/Caches/bside-oracle/`; nothing there is named in the
+repository.
+
+## History (newest facts first within each area)
+
+- **Vintage M8, as it went (record, moved here 2026-11-27; written as a list of next steps).** **started 2026-11-19.** Order: (a) **done:** pre-public audit of the
+  whole history, the workflow-trigger check in the local gate, the "nan" fix of the shared text
+  parser (`common/params/ParamFactory.cpp`) and the tip cleanup after the audit; (b) **done:** the owner made the repository public;
+  (c) **done:** the first Windows and Linux x86_64 runs and their fixes ("First CI runs"
+  above); (d) packaging: version 0.9.0, one
+  zip per platform, licences and install notes inside, a manual release workflow, B-Side
+  excluded (`VS_BUILD_BSIDE=OFF`) **(built as contract 10: `scripts/package-release.sh`,
+  the `release` input of `build.yml`)**; (e) **done:** the release rehearsal
+  (`gh workflow run build.yml --ref main -f targets=all -f release=true`) gave the draft
+  release `v0.9.0`; (f) **done (2026-11-20):** the owner installed from the zips and tried the plugin by hand in
+  Cubase 15 Pro on macOS, Reaper on an Arch-based Linux, and Reaper and Cubase 15 Pro on
+  Windows 11, automation record and playback included; no defect found; demo video
+  https://youtu.be/IdVCa7lpVsQ; two other people praised the usability. Published on the
+  owner's word as a pre-release; the owner had that mark removed on 2026-11-21. **The identity (class IDs, bundle ID, codes) is frozen from
+  now on.** The next release is made as the skill `release` describes.
+  **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
+  keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
+  arpeggiator are fine. Not done: a real screen-reader pass.
+
+### B-Side S3 and the state when parked (records, moved here 2026-11-27)
+
+Written while the work was in flight and kept as written: "in flight", "waiting for the owner",
+"open findings" and "unmerged" describe those days. Today S3a, S3b and S4 are all merged, the
+branch `bside/s3a-filter` is gone, the S4 budget question was answered by owner decision O11,
+and the obligations for S4 were met in S4a.
 
 **B-Side is resumed (owner's word, 2026-11-22)** after the 0.9.0 release it waited for (owner
 decision 2026-11-19: Vintage first). The owner's three answers on resuming are in
@@ -424,64 +510,7 @@ the parked figures).
   trace and a noise-before-first-shift trace; an independent model for the program engine's
   goldens; defects 3 and 4 of 8.18.1.
 
-**Public since 2026-11-20** (owner flipped visibility after the pre-public audit; its decisions
-are in `docs/decisions.md`, "Pre-public audit"). Actions are free now, and CI still runs only when
-the orchestrator dispatches it (see "Decisions").
-
-**First CI runs (2026-11-20), all dispatched by hand:**
-- Run 44627905615 (`main`, `no-macos`): Linux ARM64 and the sanitizer job passed; Linux x86_64
-  built and passed its unit tests, then hit the job's 30-minute limit (cold cache); Windows failed
-  to build, in B-Side test, tool and benchmark sources only (`getenv` as an error, a
-  signed/unsigned comparison, `1L << 40` with a 32-bit `long`).
-- Run 44634121070 (`m8/ci-fixes`, `no-macos`): every Linux job green (x86_64 with pluginval and
-  the validator, the seven distro load tests, sanitizers, ARM64); Windows built, 2 tests failed
-  on both rows (test assumptions: `/proc/...` is writable on Windows, a path separator).
-- Run 44638566407 (`m8/ci-fixes`, `windows`): Windows x64 (tests, pluginval, validator), Windows
-  ARM64 (tests, host_smoke) and the merged Windows bundle green.
-- **Release rehearsal:** run 44695944505 (`main` at `116c5f8`, `all`, `release=true`): every job
-  green at the first attempt (all five targets, both merged bundles, the seven distro load
-  tests, sanitizers, `pack`, the three `zip-smoke` jobs, `package`). It created the **draft
-  release `v0.9.0`** (three zips and `SHA256SUMS.txt`, target commit `116c5f8`; no tag exists
-  until the owner publishes). The orchestrator downloaded the zips: checksums match and
-  `package-release.sh verify` passes on each.
-
-**Next steps:**
-1. **Vintage, M8** (skill `release`): **started 2026-11-19.** Order: (a) **done:** pre-public audit of the
-   whole history, the workflow-trigger check in the local gate, the "nan" fix of the shared text
-   parser (`common/params/ParamFactory.cpp`) and the tip cleanup after the audit; (b) **done:** the owner made the repository public;
-   (c) **done:** the first Windows and Linux x86_64 runs and their fixes ("First CI runs"
-   above); (d) packaging: version 0.9.0, one
-   zip per platform, licences and install notes inside, a manual release workflow, B-Side
-   excluded (`VS_BUILD_BSIDE=OFF`) **(built as contract 10: `scripts/package-release.sh`,
-   the `release` input of `build.yml`)**; (e) **done:** the release rehearsal
-   (`gh workflow run build.yml --ref main -f targets=all -f release=true`) gave the draft
-   release `v0.9.0`; (f) **done (2026-11-20):** the owner installed from the zips and tried the plugin by hand in
-   Cubase 15 Pro on macOS, Reaper on an Arch-based Linux, and Reaper and Cubase 15 Pro on
-   Windows 11, automation record and playback included; no defect found; demo video
-   https://youtu.be/IdVCa7lpVsQ; two other people praised the usability. Published on the
-   owner's word as a pre-release; the owner had that mark removed on 2026-11-21. **The identity (class IDs, bundle ID, codes) is frozen from
-   now on.** The next release is made as the skill `release` describes.
-   **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
-   keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
-   arpeggiator are fine. Not done: a real screen-reader pass.
-2. **B-Side:** S3a and S3b are merged. **S4a is merged; S4b awaits its CI run and the owner's merge
-   word ("Resume here" at the top).** Then B-Side's own release work as
-   listed in the parked state.
-
-**Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
-equal width, playing from the computer keyboard, a "Clean" Cross Mod switch, **a go-through of the factory
-preset set (2026-11-19: some presets sound exactly the same)**. **Not done anywhere:**
-a real screen-reader pass; a hands-on check on Windows ARM64 or Linux ARM64.
-
-**How work is run:** skill `orchestrate` (brief → implementer → independent reviewer → fixes →
-orchestrator's full `scripts/preflight.sh` → PR → merge only on the owner's word). Lessons of
-this wave are in `docs/engineering-notes.md`; the main one: an independent reviewer with its own
-harness found real defects in every step, also after an author reported "all gates pass".
-Developer-only tools outside the repository (reference adapter, tune-to-trace tool, rendered
-listening files) live under `~/Library/Caches/bside-oracle/`; nothing there is named in the
-repository.
-
-## History (newest facts first within each area)
+### Earlier history
 
 - **B-Side alias follow-up step is merged to `main`** (PR #33, owner approved 2026-11-19; contract as built: architecture 8.20.1; decisions "B-Side alias
   follow-up step"). Narrow Model B pulses: the cause was the float conversion of the output (its
