@@ -4,7 +4,7 @@ Where the project is, what is parked, what comes next, and the history of what w
 The orchestrator keeps this file current; `CLAUDE.md` links here. Read "Where the project is"
 first when resuming.
 
-## Where the project is (2026-11-26) — read this first when resuming
+## Where the project is (2026-11-27) — read this first when resuming
 
 **Resume here (written 2026-11-24, after the owner's "start S4").**
 - **S4 is in flight (owner's word, 2026-11-24).** The owner decided the Model A budget
@@ -27,12 +27,21 @@ first when resuming.
   rerun. **Open from this:** Windows unit tests take 26 to 28 minutes per job and the x64 build
   took 28 minutes; the job needs room under its limit before the next run (look at what the
   Windows tests spend their time on; a workflow change is its own pull request).
-- **RESUME EXACTLY HERE (written 2026-11-27): S4b is pull request 48 (branch
-  `bside/s4b-sounds`, open, mergeable); it waits for TWO owner answers, asked and not yet
-  answered.** (1) The merge word for pull request 48. (2) "leave" or "split": whether to chase
-  the 20-minute target for a full CI run further (recommended: leave; "split" means the slow
-  tests in a job of their own beside the build row and the sanitizer tests over two jobs, as a
-  workflow change in its own pull request with one more run).
+- **RESUME EXACTLY HERE (written 2026-11-27): S4b is merged (pull request 48, merge commit
+  `c3078d0`, owner's word "merge", 2026-11-27). S4 is done. Nothing is in flight; the next
+  item is the scope of B-Side's first release, which waits for the owner.** The owner asked
+  for a proposal ("propose", 2026-11-27); the orchestrator put one to the owner in the
+  session (the outline it starts from is `docs/architecture.md` 8.11, S5 and S6). Once the
+  owner has answered: record the answer in `docs/decisions.md`, write the contract of the
+  first step in its own commit, then brief agents. **No contract exists yet for anything
+  after S4.**
+  - **CI time: the owner said "leave" (2026-11-27).** The 20-minute target for a full CI run
+    is not chased further; the slow tests stay in the build row and the sanitizer tests in
+    one job (`docs/decisions.md`, "Faster tests").
+  - **Cleaned up after the merge (2026-11-27):** the remote branch `bside/s4b-sounds`
+    (deleted by GitHub), the local branches `bside/s4b-sounds` and `bside/s4b-tiers`, the
+    worktrees `.claude/worktrees/fast-tests` and `.claude/worktrees/s4b-tiers`. Branches
+    left: `main`, `bside/s3a-modela` and `study/crossmod-aliasing` (both kept on purpose).
   - **CI run 45903351762 on `4b53c8e` (`targets=no-macos`, `tests=full`): green at the first
     attempt on every job**, Windows x64 included (both bundle jobs and the seven distro checks
     too); the pull request's CodeQL and security scan passed. Job totals: Windows x64 23m49s
@@ -50,12 +59,7 @@ first when resuming.
     orchestrator, no independent reviewer). 1,235 tests, 212 of them slow. The orchestrator's
     full `scripts/preflight.sh` passed on `1f6f139` (13m05s, all seven steps, full tier, 18
     jobs); the commits after it change only this file.
-  - **Left to clean up after the merge:** the remote branch `bside/s4b-sounds`; the local
-    branches `bside/s4b-sounds` (the main checkout is on it and is BEHIND the remote, still at
-    `d325554`: switch it to `main` and pull) and `bside/s4b-tiers`; the worktrees
-    `.claude/worktrees/fast-tests` (detached at `5fa04c4`) and `.claude/worktrees/s4b-tiers`.
-    Then update this file on a small branch. Nothing is running: no agent, no CI run, no
-    background job.
+  - Nothing is running: no agent, no CI run, no background job.
   - The audition files are outside the repository (the developer folder of
     `docs/bside-oracle-adapter.md`, subfolders `s4b-audition`, `-2`, `-3`).
 - **S4b is built (2026-11-25, branch `bside/s4b-sounds`); its state before the CI run:** `mix.level` per part (204 parameters), `kChipGain` 1.2822 (Init as
@@ -464,9 +468,9 @@ the orchestrator dispatches it (see "Decisions").
    **Owner's studio check passed for now (2026-11-19):** played in the dev host from a USB MIDI
    keyboard; sound, MIDI Program Changes from the keyboard, mod wheel, pitch bend and the
    arpeggiator are fine. Not done: a real screen-reader pass.
-2. **B-Side:** S3a and S3b are merged. **S4a is merged; S4b awaits its CI run and the owner's merge
-   word ("Resume here" at the top).** Then B-Side's own release work as
-   listed in the parked state.
+2. **B-Side:** S3a and S3b are merged. **S4a and S4b are merged (S4 is done, 2026-11-27).** Next: the
+   owner's answer on the scope of B-Side's first release ("Resume here" at the top), then the
+   contract of its first step. The outline so far is `docs/architecture.md` 8.11 (S5, S6).
 
 **Deferred by the owner ("later"):** final Browser category colours, a top-bar redesign, digits of
 equal width, playing from the computer keyboard, a "Clean" Cross Mod switch, **a go-through of the factory

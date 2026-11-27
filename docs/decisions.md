@@ -105,6 +105,10 @@ hour is 55 minutes too much"); the plan of `docs/architecture.md` 7.1 is approve
 run on `main` after the merge refreshes the compiler caches ("yes"); pull request 48 waits for a
 Windows x64 run on the new workflow ("wait"); the local gate uses all 18 cores of the owner's Mac.
 
+Owner decision (2026-11-27, "leave"): the 20-minute target for a full CI run is not chased
+further. After CI run 45903351762 (Windows x64 23m49s, sanitizers 26m43s, every job green) the
+slow tests stay in the build row and the sanitizer tests in one job; call 1 below stands.
+
 Orchestrator's calls, all **(review)**:
 
 | # | Call | Reason |
