@@ -673,7 +673,9 @@ is not raised.
 3. Step times before and after are reported for every step that runs tests.
 4. `scripts/preflight.sh` passes in full.
 5. One dispatched CI run with `tests=full` (orchestrator). Targets, with a warm cache: a smoke
-   run within 10 minutes per row, a full run within 20. A cold build is outside these targets.
+   run within 10 minutes per row, a full run within 20. A cold build is outside these targets. (Owner,
+   2026-11-27: the 20 minutes stay a target and are not chased further; the measured full run,
+   Windows x64 23m49s and the sanitizer job 26m43s in run 45903351762, stands.)
 
 Not in this step: making single slow tests cheaper, running the slow tests in a job of their own
 beside the build row, overlapping the local gate's steps.
@@ -688,9 +690,11 @@ file). The chip is described functionally; its two revisions are **Model A** (ea
 distorting filter, large part-to-part variation) and **Model B** (later: clean filter). The
 emulator used as a test oracle is "the reference emulator", never named.
 
-Status: S0 is done (`source/common/`). Sections 8.1–8.10 are the contract for S1–S4. S5 and S6 are
-outlined in 8.11 and get their own contract before they start. Items marked **(Qn)** depend on a
-pending owner decision (8.12); until it is made, build against the default stated there.
+Status (2026-11-27): S0 to S4 are done and merged (S4a: pull request 47; S4b: pull request 48).
+Sections 8.1–8.10 are the contract S1–S4 were built against; where a later "as built" or
+"Amendments" subsection (8.13 to 8.21) differs, the later one wins. What comes after S4 is outlined
+in 8.11 and gets its own contract before it starts. Items marked **(Qn)** record an owner decision
+of 8.12; all eight are answered.
 
 | Term | Meaning |
 |---|---|
@@ -746,7 +750,7 @@ tests/bside/             unit/ (JUCE-free), integration/, trace/ (traces/, refer
 | `validator` | Runs on each bundle the mac step built. |
 | `mac-sanitize`, `linux`, `linux-sanitize` | Sanitizer target lists add `bside_unit BSideTests bside_render bside_trace`; `inner.sh` builds all. |
 | `docs` | Include rule for both instruments, the three new JUCE-free directories; the name check already covers new files. |
-| CI `build.yml` | Every row builds both; pluginval, validator and bundle merge (Windows, Linux) per bundle; one artifact per plugin. Unverified until CI returns (listed in `CLAUDE.md`). |
+| CI `build.yml` | Every row builds both; pluginval, validator and bundle merge (Windows, Linux) per bundle; one artifact per plugin. Confirmed by CI since the first dispatched runs (2026-11-20). |
 | Iteration | `VS_PREFLIGHT_PLUGINS` = `vintage`, `bside` or `all` (default `all`) limits the mac step's pluginval/validator while iterating. The hand-over gate always runs `all`. |
 
 S1b reports the gate time before and after (cold and warm). Target: the full default gate grows by
@@ -871,6 +875,10 @@ includes and type names.
 | Build (S1b) | `VS_BUILD_BSIDE` (default ON); one function configures both plugin targets; the JUCE modules of both test cores are compiled once in `vs_juce_modules` with Vintage's definitions (a core that ever needs plugin-specific module behaviour must leave it); `scripts/sanitize-targets.sh` is the one list of sanitizer test targets, and a defined test target that is not listed fails the gate |
 
 ### 8.3 S1b: B-Side plugin shell
+**As built later:** this is the shell as S1b built it. S4a replaced `TestTonePart` with the chip part
+(8.21.1), B-Side has 204 parameters (8.7) and 16 factory programs (8.21.2). Read the figures below
+as S1b's.
+
 - `BSideProcessor : shell::BiTimbralProcessor<BSideProcessor>` with a placeholder part
   `TestTonePart`: one sine per note (VoiceAllocator, Poly, 16 voices), 5 ms linear attack and
   release, host rate, latency 0. Replaced in S2/S4; it exists so the whole chain (router, arp/seq,
@@ -1464,6 +1472,13 @@ same traces are replay inputs, which proves the program engine and the chip toge
 |---|---|
 | S5 | Shared Chip layout (one chip per part, up to three notes, one per oscillator, shared filter; an allocator voice limit ≤ 16); chord-into-one-voice (`key1`–`key3`); Look-ahead restart (latency = `gateoff` ticks, changed only at prepare); kit mode (key ranges → sub-tables); optional global tick phase |
 | S6 | Table editor UI, Hz display of the cutoff, presets and factory bank, release together with Exitium Vintage Synth's M7–M8 |
+
+**Owner decisions of 2026-11-27 (`docs/decisions.md`, "B-Side's first release", F1 to F5; these win
+over the table above):** B-Side's first release comes **before S5**. It contains B-Side's own editor
+(the pages are still open; wireframes first), the cutoff shown in Hz, a factory bank of 64 programs,
+and the packaging of B-Side, and it is released together with Exitium Vintage Synth as version
+0.10.0 (Vintage's M7 and M8 are done; 0.9.0 shipped without B-Side). S5 follows that release. Each
+step gets its own contract before it starts.
 
 ### 8.12 Owner decisions (2026-11-14)
 | Q | Decision |
@@ -2481,9 +2496,9 @@ Full record: `docs/decisions.md` "B-Side alias follow-up step" (rows 1-13). Revi
 ### 8.21 S4 in two steps (contract, 2026-11-24; refines 8.5 and the S4 row of 8.10; owner decision O11)
 S4 turns the chip chain into the instrument. Two steps, each its own pull request: **S4a**, the
 part and its wiring into the plugin; **S4b**, the factory patches, the level rule, the render
-goldens and the owner's audition. S4b starts when S4a has merged, and its detail (8.21.2) is
-completed here before it starts. The readings marked (review) are `docs/decisions.md`, "B-Side
-S4 contract", rows 1 to 9.
+goldens and the owner's audition. Both are merged (S4a: pull request 47, 2026-11-24; S4b: pull request 48, 2026-11-27); the
+detail of S4b (8.21.2) was completed here before it started. The orchestrator's readings are
+`docs/decisions.md`, "B-Side S4 contract", rows 1 to 9 (confirmed by the owner, 2026-11-24).
 
 **CPU gates (O11; these win over 8.5).** Host rate 48 kHz (2×) unless stated, the gate patch of
 8.5 (all three oscillators sounding: pulse with a width write every tick, sawtooth, a combined
@@ -2700,7 +2715,8 @@ rebuilds per resonance write (`ChipVoice.h`, "RESONANCE") and the part's own ove
 
 #### 8.21.2 S4b: factory sounds, level rule, goldens, audition (contract, 2026-11-24)
 
-Branch `bside/s4b-sounds`, one pull request, merged only after the owner's audition. Readings
+Built on the branch `bside/s4b-sounds` (deleted after the merge), one pull request, merged after the
+owner's audition. Readings
 marked (review) are the orchestrator's and are logged in `docs/decisions.md`.
 
 - **One new parameter, first and alone (skill `add-parameter`; serial step).** `mix.level`
@@ -3518,6 +3534,9 @@ M7 code starts only after **S1a has merged** (both touch the editor and the proc
 
 The first release has **no code signing and no installers**. A release is one zip per platform
 that the user unpacks and copies into the VST3 folder. B-Side is not part of it.
+
+**This section is the contract of 0.9.0.** Version 0.10.0 includes B-Side (owner decision F2,
+2026-11-27); the packaging contract of that step will amend 10.1 to 10.3 before the step starts.
 
 ### 10.1 Release assets
 
